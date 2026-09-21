@@ -1,0 +1,33 @@
+# 凭证 / 环境变量
+.env
+.env.*
+!.env.example
+
+# 用户测试照片（真实照片不入库）
+test-photos/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.heic
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+.next/
+
+# 输出产物
+out/
+output/
+*.out.png
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
