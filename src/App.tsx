@@ -1,30 +1,82 @@
-import { useEffect, useRef } from 'react'
-import { TonePipeline } from './render/pipeline'
-import { ZERO, toUnit } from './core/adjustments'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import Canvas from './ui/Canvas'
+import Uploader from './ui/Uploader'
+import AdjustmentPanel from './ui/AdjustmentPanel'
+import { decodeImageFile, type DecodedImage } from './image/decode'
+import { ZERO, toUnit, type Adjustments } from './core/adjustments'
 
 export default function App() {
-  const ref = useRef<HTMLCanvasElement>(null)
-  useEffect(() => {
-    const canvas = ref.current!
-    const pipe = new TonePipeline(canvas)
-    // 造一张测试图。上半/下半颜色不同、左上角有白方块——
-    // 这样"上下颠倒"或"左右镜像"是**看得出来**的。
-    // （早先的版本左右分色、上下对称，恰好掩盖了 V 轴翻转的 bug。）
-    const c = document.createElement('canvas')
-    c.width = c.height = 256
-    const ctx = c.getContext('2d')!
-    ctx.fillStyle = '#808080'                    // 上半：中灰
-    ctx.fillRect(0, 0, 256, 128)
-    ctx.fillStyle = '#cc6633'                    // 下半：橙
-    ctx.fillRect(0, 128, 256, 128)
-    ctx.fillStyle = '#ffffff'                    // 左上角白方块
-    ctx.fillRect(0, 0, 56, 56)
-    createImageBitmap(c).then(bm => {
-      pipe.setImage({ bitmap: bm, width: 256, height: 256 })
-      pipe.resizeToImage()
-      pipe.render(toUnit({ ...ZERO, exposure: 40, saturation: 50, temperature: 30 }))
-    })
-    return () => pipe.dispose()
+  const [image, setImage] = useState<DecodedImage | null>(null)
+  const [params, setParams] = useState<Adjustments>(ZERO)
+  const [showPanel, setShowPanel] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const canvasElRef = useRef<HTMLCanvasElement | null>(null)
+  const originalFileRef = useRef<File | null>(null)
+  const imageRef = useRef<DecodedImage | null>(null)
+
+  const unit = useMemo(() => toUnit(params), [params])
+
+  const onPick = useCallback(async (file: File) => {
+    setBusy(true)
+    try {
+      const img = await decodeImageFile(file)
+      // 先释放上一张：ImageBitmap 占的是 GPU 内存，不关会一直攒着
+      imageRef.current?.bitmap.close()
+      imageRef.current = img
+      originalFileRef.current = file
+      setImage(img)
+      setParams(ZERO)
+    } catch (e) {
+      console.error(e)
+      alert('这张图打不开，换一张试试')
+    } finally {
+      setBusy(false)
+    }
   }, [])
-  return <canvas ref={ref} style={{ maxWidth: '90vw', maxHeight: '90vh' }} />
+
+  // 导出：画布尺寸就是原图尺寸——调色不缩图（spec §4.4）
+  const onSave = useCallback(() => {
+    const canvas = canvasElRef.current
+    if (!canvas) return
+    canvas.toBlob(b => {
+      if (!b) return
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(b)
+      a.download = 'ruixing.png'
+      a.click()
+      URL.revokeObjectURL(a.href)
+    }, 'image/png')
+  }, [])
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <span className="brand">RuiXing</span>
+        {image && (
+          <div className="actions">
+            <button onClick={() => setShowPanel(v => !v)}>微调</button>
+            <button className="primary" onClick={onSave}>保存</button>
+          </div>
+        )}
+      </header>
+
+      <main className="stage">
+        {!image && !busy && <Uploader onPick={onPick} />}
+        {busy && <div className="hint">正在打开照片…</div>}
+        {image && (
+          <div className="workspace">
+            <Canvas image={image} unit={unit} canvasRef={canvasElRef} />
+          </div>
+        )}
+      </main>
+
+      {image && showPanel && (
+        <AdjustmentPanel
+          value={params}
+          onChange={setParams}
+          onReset={() => setParams(ZERO)}
+        />
+      )}
+    </div>
+  )
 }

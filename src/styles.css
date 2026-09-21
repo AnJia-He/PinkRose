@@ -16,11 +16,53 @@ body {
   font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
 }
 
-.app {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 28px;
-  color: var(--muted);
+/* 这里原来是 Task 6 临时自测页的 .app（28px、居中），已删——
+   它的 align-items/justify-content/font-size 会和新布局打架。 */
+
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px; border-bottom: 1px solid #2a2e35;
 }
+.brand { font-weight: 600; letter-spacing: .05em; }
+.actions { display: flex; gap: 8px; }
+
+button {
+  background: var(--panel); color: var(--text); border: 1px solid #2f343c;
+  border-radius: 8px; padding: 6px 14px; cursor: pointer; font: inherit;
+}
+button:hover { border-color: #4a515b; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
+
+.workspace { max-width: 100%; max-height: 100%; display: flex; }
+.canvas { max-width: 100%; max-height: 78vh; object-fit: contain; border-radius: 8px; }
+
+.uploader {
+  border: 2px dashed #3a4048; border-radius: 14px; padding: 60px 80px;
+  cursor: pointer; color: var(--muted);
+}
+.uploader input { display: none; }
+.uploader:hover { border-color: var(--accent); color: var(--text); }
+
+.hint { color: var(--muted); }
+
+.panel {
+  border-top: 1px solid #2a2e35; background: var(--panel);
+  padding: 14px 20px; max-height: 42vh; overflow-y: auto;
+}
+.panel-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 10px; color: var(--muted);
+}
+.presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+
+.slider {
+  display: grid; grid-template-columns: 64px 1fr 44px;
+  align-items: center; gap: 12px; margin: 6px 0;
+}
+.slider-label { color: var(--muted); font-size: 13px; }
+.slider-value { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+.slider input { width: 100%; }
