@@ -11,6 +11,10 @@ test-photos/
 *.webp
 *.heic
 
+# 例外：实验证据图要入库（设计文档引用它们，丢了就没法复现结论）
+!spike/evidence/*.jpg
+!spike/evidence/*.png
+
 # Python
 __pycache__/
 *.py[cod]

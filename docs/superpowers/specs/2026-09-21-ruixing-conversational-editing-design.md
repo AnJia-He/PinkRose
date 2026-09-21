@@ -538,14 +538,16 @@ AI 的不确定性被关在这两个函数的边界之外，其余全是确定�
 
 ## 附：实测记录索引
 
-所有实验代码与对比图在 [`spike/`](spike/)（标注为一次性探针，可删）：
+所有实验代码在 [`spike/`](spike/)（标注为一次性探针，可删），对比图在 [`spike/evidence/`](spike/evidence/)：
 
 | 文件 | 验证了什么 |
 |---|---|
-| `probe_edit.py` | `/images/edits` 基本可用、u1.5-fast 能编辑 |
-| `probe_round3.py` | **锁定尺寸 vs auto 的构图漂移**（最关键的发现） |
-| `probe_round4_face.py` | 真人脸保真度：全局指令 58.6% vs 局部指令 13.3% |
-| `face_zoom.jpg` / `face_zoom2.jpg` | 脸部放大对比（"AI 美颜脸"实锤） |
-| `circle_demo.jpg` | 圈选引导编辑可行 |
-| `style_on_face_demo.jpg` | 参考图色调迁移到人像 |
-| `multi_decisive.jpg` | 多图输入确实生效（色彩迁移精确匹配） |
+| `spike/probe_edit.py` | `/images/edits` 基本可用、u1.5-fast 能编辑 |
+| `spike/probe_round3.py` | **锁定尺寸 vs auto 的构图漂移**（最关键的发现） |
+| `spike/probe_round4_face.py` | 真人脸保真度：全局指令 58.6% vs 局部指令 13.3% |
+| `spike/evidence/input_scene.jpg` | 合成风景测试底图（两张测试底图留着，实验可复现） |
+| `spike/evidence/real_1027.jpg` | 真人脸测试底图 |
+| `spike/evidence/face_zoom.jpg` · `face_zoom2.jpg` | 脸部放大对比（"AI 美颜脸"实锤） |
+| `spike/evidence/circle_demo.jpg` | 圈选引导编辑可行 |
+| `spike/evidence/style_on_face_demo.jpg` | 参考图色调迁移到人像 |
+| `spike/evidence/multi_ref_demo.jpg` | 多图输入确实生效（色彩迁移精确匹配） |
