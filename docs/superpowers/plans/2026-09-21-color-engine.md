@@ -1382,7 +1382,7 @@ export default function Uploader({ onPick }: Props) {
 - [ ] **Step 2: 写 `src/ui/Canvas.tsx`**
 
 ```tsx
-import { useEffect, useRef, type RefObject } from 'react'
+import { useEffect, useRef, type MutableRefObject } from 'react'
 import { TonePipeline } from '../render/pipeline'
 import type { DecodedImage } from '../image/decode'
 import type { Unit } from '../core/tone'
@@ -1391,12 +1391,15 @@ type Props = {
   image: DecodedImage | null
   unit: Unit
   /** App 需要拿到 canvas 元素来做导出 */
-  canvasRef: RefObject<HTMLCanvasElement | null>
+  canvasRef: MutableRefObject<HTMLCanvasElement | null>
 }
 
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
 export default function Canvas({ image, unit, canvasRef }: Props) {
-  const innerRef = useRef<HTMLCanvasElement>(null)
+  // 泛型必须写 <HTMLCanvasElement | null>。
+  // 写成 <HTMLCanvasElement> 得到的是 Readonly 的 RefObject，
+  // 下面 ref 回调里 innerRef.current = node 会报 TS2540。
+  const innerRef = useRef<HTMLCanvasElement | null>(null)
   const pipeRef = useRef<TonePipeline | null>(null)
 
   useEffect(() => {
@@ -1415,11 +1418,21 @@ export default function Canvas({ image, unit, canvasRef }: Props) {
     }
   }, [])
 
+  // ① 图片换了才上传纹理、重设画布尺寸。
+  //    这两件事都很贵——上传一次 1200 万像素的纹理、重设画布尺寸会清空
+  //    并重新分配绘图缓冲。**绝不能跟着滑块走。**
   useEffect(() => {
     const pipe = pipeRef.current
     if (!pipe || !image) return
     pipe.setImage(image)
     pipe.resizeToImage()
+  }, [image])
+
+  // ② 换图后、以及拖滑块时，都只更新 uniform 重绘一次。
+  //    不碰纹理、不碰画布尺寸（spec §5.2：拖滑块只更新 uniform → 60fps）。
+  useEffect(() => {
+    const pipe = pipeRef.current
+    if (!pipe || !image) return
     pipe.render(unit)
   }, [image, unit])
 
@@ -1507,6 +1520,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const originalFileRef = useRef<File | null>(null)
+  const imageRef = useRef<DecodedImage | null>(null)
 
   const unit = useMemo(() => toUnit(params), [params])
 
@@ -1514,6 +1528,9 @@ export default function App() {
     setBusy(true)
     try {
       const img = await decodeImageFile(file)
+      // 先释放上一张：ImageBitmap 占的是 GPU 内存，不关会一直攒着
+      imageRef.current?.bitmap.close()
+      imageRef.current = img
       originalFileRef.current = file
       setImage(img)
       setParams(ZERO)
