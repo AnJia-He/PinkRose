@@ -451,10 +451,12 @@ git commit -m "feat(core): 八参数模型、钳制、增量合并"
 **Interfaces:**
 - Consumes: `Adjustments`, `toUnit`（Task 2）
 - Produces:
+  - `type Unit = Record<keyof Adjustments, number>`
+  - `type RGB = [number, number, number]`
   - `srgbToLinear(c: number): number` / `linearToSrgb(c: number): number`
-  - `applyTone(rgb: [number, number, number], unit: Record<keyof Adjustments, number>): [number, number, number]`
-    输入输出均为 `[0, 1]` 区间的 sRGB 值。`unit` 是 `toUnit()` 的输出。
-  - `applyToneToImageData(data: Uint8ClampedArray, unit): void` — 原地批量处理 RGBA
+  - `luma(r: number, g: number, b: number): number`
+  - `clamp01(v: number): number`
+  - `applyTone(rgb: RGB, u: Unit): RGB` — 输入输出均为 `[0, 1]` 区间的 sRGB 值
 
 **为什么这份实现存在：** 着色器无法单元测试，这份 TS 实现是它的"标准答案"。两边的输出必须一致（Task 5 会做比对测试）。
 
