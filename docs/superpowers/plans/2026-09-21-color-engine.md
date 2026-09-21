@@ -1812,11 +1812,21 @@ async function withExif(blob: Blob, originalFile: File): Promise<Blob> {
   const originalDataUrl = await fileToDataUrl(originalFile)
   const exifObj = piexif.load(originalDataUrl)
 
-  // 尺寸会变，这两个字段必须清掉，否则看图软件会显示错误信息
+  // 尺寸会变，这四个字段必须清掉，否则看图软件会显示错误信息
   delete exifObj['0th']?.[piexif.ImageIFD.ImageWidth]
   delete exifObj['0th']?.[piexif.ImageIFD.ImageLength]
   delete exifObj['Exif']?.[piexif.ExifIFD.PixelXDimension]
   delete exifObj['Exif']?.[piexif.ExifIFD.PixelYDimension]
+
+  // Orientation 也必须清掉，这条最容易漏。
+  //
+  // 解码时 createImageBitmap 的 imageOrientation 默认是 'from-image'，
+  // 意思是**已经按 EXIF 把画面摆正了**——canvas 上是正立的像素网格。
+  // 若再把原始的 Orientation=6（含义是"显示时顺时针转 90°"）写回去，
+  // 看图软件会对着已经正立的图**再转一次**，导出图的方向就错了。
+  //
+  // 竖拍的手机照片几乎全都带 Orientation=6，所以这条不处理必然翻车。
+  delete exifObj['0th']?.[piexif.ImageIFD.Orientation]
 
   const exifBytes = piexif.dump(exifObj)
   const newDataUrl = await blobToDataUrl(blob)
