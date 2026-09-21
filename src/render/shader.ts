@@ -45,12 +45,26 @@ uniform float uVignette;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
+// 注意 max(..., 0.0) 这两处不是多余的：
+//   mix(x, y, a) 的语义是 x*(1-a) + y*a —— 两个分支**都会被求值**，
+//   而 GLSL 规定 pow 的底数为负时结果未定义（实际会出 NaN），
+//   NaN * 0 仍是 NaN，所以哪怕该分支最终会被丢弃，也会把 NaN 带进结果。
+//
+//   底数确实可能为负：温度 +100 时蓝通道减 0.1（暗部即负），
+//   或清晰度在高反差边缘欠冲（base=0.1 / blur=0.5 → -0.14）。
+//
+//   tone.ts 用的是三元运算符，负值根本不进 pow，所以那边没这个问题——
+//   这是 TS 与 GLSL 的真实行为分歧，不是精度差异。
 vec3 srgbToLinear(vec3 c) {
-  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+  return mix(c / 12.92,
+             pow(max((c + 0.055) / 1.055, vec3(0.0)), vec3(2.4)),
+             step(vec3(0.04045), c));
 }
 
 vec3 linearToSrgb(vec3 c) {
-  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+  return mix(c * 12.92,
+             1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055,
+             step(vec3(0.0031308), c));
 }
 
 void main() {
@@ -94,9 +108,14 @@ void main() {
   c = vec3(l2) + (c - vec3(l2)) * (1.0 + uSaturation);
 
   // 6. 暗角
+  //
+  //    只钳下界（max），不钳上界。负的 uVignette 会让 vig > 1——
+  //    那是「提亮四角」。若在这里钳到 1，滑块的负半程就完全没反应
+  //    （滑块范围是 -100~100，负半程却是死的，用户会以为坏了）。
+  //    溢出由最后那句 clamp(c, 0.0, 1.0) 兜住。
   vec2 d = uv - 0.5;
   float vig = 1.0 - uVignette * dot(d, d) * 3.5;
-  c *= clamp(vig, 0.0, 1.0);
+  c *= max(vig, 0.0);
 
   fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }

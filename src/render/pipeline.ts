@@ -15,6 +15,7 @@ export class TonePipeline {
   private program: WebGLProgram
   private texture: WebGLTexture
   private vao: WebGLVertexArrayObject
+  private buffer: WebGLBuffer
   private uniforms = new Map<UniformName, WebGLUniformLocation | null>()
   private uTexel: WebGLUniformLocation | null = null
   private imageW = 0
@@ -42,6 +43,8 @@ export class TonePipeline {
     gl.enableVertexAttribArray(aPos)
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0)
     this.vao = vao!
+    // 存下来，dispose 时要删——不然每 new 一个 TonePipeline 就漏一个 buffer
+    this.buffer = buf!
 
     const tex = gl.createTexture()
     gl.bindTexture(gl.TEXTURE_2D, tex)
@@ -120,6 +123,7 @@ export class TonePipeline {
     gl.deleteProgram(this.program)
     gl.deleteTexture(this.texture)
     gl.deleteVertexArray(this.vao)
+    gl.deleteBuffer(this.buffer)
   }
 }
 
