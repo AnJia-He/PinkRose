@@ -4,6 +4,7 @@ import Uploader from './ui/Uploader'
 import AdjustmentPanel from './ui/AdjustmentPanel'
 import { decodeImageFile, type DecodedImage } from './image/decode'
 import { ZERO, toUnit, type Adjustments } from './core/adjustments'
+import { exportImage } from './export/save'
 
 export default function App() {
   const [image, setImage] = useState<DecodedImage | null>(null)
@@ -34,18 +35,22 @@ export default function App() {
     }
   }, [])
 
+  const [saving, setSaving] = useState(false)
+
   // 导出：画布尺寸就是原图尺寸——调色不缩图（spec §4.4）
-  const onSave = useCallback(() => {
+  const onSave = useCallback(async () => {
     const canvas = canvasElRef.current
-    if (!canvas) return
-    canvas.toBlob(b => {
-      if (!b) return
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(b)
-      a.download = 'ruixing.png'
-      a.click()
-      URL.revokeObjectURL(a.href)
-    }, 'image/png')
+    const file = originalFileRef.current
+    if (!canvas || !file) return
+    setSaving(true)
+    try {
+      await exportImage(canvas, file, 'image/jpeg', 0.95)
+    } catch (e) {
+      console.error(e)
+      alert('保存失败，再试一次')
+    } finally {
+      setSaving(false)
+    }
   }, [])
 
   return (
@@ -55,7 +60,9 @@ export default function App() {
         {image && (
           <div className="actions">
             <button onClick={() => setShowPanel(v => !v)}>微调</button>
-            <button className="primary" onClick={onSave}>保存</button>
+            <button className="primary" onClick={onSave} disabled={saving}>
+              {saving ? '保存中…' : '保存'}
+            </button>
           </div>
         )}
       </header>
