@@ -922,9 +922,14 @@ export async function decodeImageFile(file: File): Promise<DecodedImage> {
     colorSpaceConversion: 'default',   // 让浏览器做色彩空间转换
     premultiplyAlpha: 'none',
   })
-  const bitmap = await toSrgbBitmap(raw)
-  raw.close()
-  return { bitmap, width: bitmap.width, height: bitmap.height }
+  try {
+    const bitmap = await toSrgbBitmap(raw)
+    return { bitmap, width: bitmap.width, height: bitmap.height }
+  } finally {
+    // 必须是 finally：toSrgbBitmap 抛错时也得释放。
+    // ImageBitmap 占的是 GPU 内存，泄漏几次就能把标签页拖垮。
+    raw.close()
+  }
 }
 
 /**
