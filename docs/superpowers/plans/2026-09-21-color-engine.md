@@ -141,7 +141,7 @@ D:\RuiXing\
 - [ ] **Step 4: 写 `vite.config.ts`**
 
 ```ts
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
@@ -628,23 +628,7 @@ export function applyTone(rgb: RGB, u: Unit): RGB {
   g = l2 + (g - l2) * sat
   b = l2 + (b - l2) * sat
 
-  // 6. 暗角：按到中心的距离压暗（正值为暗角，负值为提亮四角）
-  const v = 1 - u.vignette * 0.9
-  r *= v; g *= v; b *= v
-
   return [clamp01(r), clamp01(g), clamp01(b)]
-}
-
-/**
- * 清晰度需要邻域信息，单像素函数给不了，因此单独一个入口。
- * amount 是 toUnit 后的 clarity 值，blur 是该点周围的模糊值。
- */
-export function applyClarity(c: RGB, blur: RGB, amount: number): RGB {
-  return [
-    clamp01(c[0] + amount * 0.6 * (c[0] - blur[0])),
-    clamp01(c[1] + amount * 0.6 * (c[1] - blur[1])),
-    clamp01(c[2] + amount * 0.6 * (c[2] - blur[2])),
-  ]
 }
 
 export function clamp01(v: number): number {
@@ -657,7 +641,11 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 }
 ```
 
-> **注意**：`applyTone` 不含清晰度和暗角的"位置相关"部分。暗角依赖像素在画面中的位置，清晰度依赖邻域——这两个只在着色器里做全图版本，TS 侧的 `applyTone` 用于逐像素的数学一致性比对。**Task 5 的比对测试只比对不含暗角/清晰度的参数组合。**
+> **注意**：`applyTone` 只覆盖**六个**与像素位置无关的参数——色温、曝光、高光、阴影、对比度、饱和度。
+>
+> **清晰度和暗角不在其中**：暗角依赖像素在画面中的位置（到中心的距离），清晰度依赖邻域像素，单像素函数表达不了这两个。它们只在着色器里做全图版本。
+>
+> 因此着色器与 TS 实现的比对**只针对上面这六个参数**；清晰度和暗角靠 Task 7 的浏览器验收用眼睛确认。
 
 - [ ] **Step 4: 跑测试，确认通过**
 
@@ -815,7 +803,6 @@ git commit -m "feat(core): 一键风格预设"
   - `fitWithin(w: number, h: number, max: number): { width: number; height: number }` — 等比缩放到长边不超过 max
   - `type DecodedImage = { bitmap: ImageBitmap; width: number; height: number }`
   - `decodeImageFile(file: File): Promise<DecodedImage>` — 浏览器端解码，自动做 P3→sRGB
-  - `prepareForModel(img: DecodedImage): DecodedImage` — 缩到长边 2048 并对齐 32（**只有生成式编辑才用，调色路径不用**）
 
 - [ ] **Step 1: 写失败测试 `src/image/decode.test.ts`**
 
@@ -948,36 +935,11 @@ async function toSrgbBitmap(src: ImageBitmap): Promise<ImageBitmap> {
 }
 
 /**
- * 准备"送给模型"的那张图：长边缩到 2048，宽高各自对齐 32。
- * 只有生成式编辑走这条路；调色不经过这里（spec §4.4）。
+ * 说明：`align32` 与 `fitWithin` 在本计划里暂时没有调用方——它们服务的是
+ * 生成式编辑那条路（spec §4.4），属于计划二。放在这里是因为它们是
+ * spec §4.3 / §4.4 那几条硬约束的可执行形式（32 的倍数、[512,4096]、长边 2048），
+ * 用测试钉死比写在注释里可靠——那几条约束是真金白银试出来的。
  */
-export async function prepareForModel(img: DecodedImage): Promise<DecodedImage> {
-  const fitted = fitWithin(img.width, img.height, MAX_DIMENSION)
-  const width = align32(fitted.width)
-  const height = align32(fitted.height)
-
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d', { colorSpace: 'srgb' })
-  if (!ctx) throw new Error('拿不到 2D 上下文')
-  ctx.imageSmoothingQuality = 'high'
-  ctx.drawImage(img.bitmap, 0, 0, width, height)
-
-  const bitmap = await createImageBitmap(canvas)
-  return { bitmap, width, height }
-}
-
-/** 把位图转成 ImageData，导出和测试用。 */
-export function bitmapToImageData(img: DecodedImage): ImageData {
-  const canvas = document.createElement('canvas')
-  canvas.width = img.width
-  canvas.height = img.height
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })
-  if (!ctx) throw new Error('拿不到 2D 上下文')
-  ctx.drawImage(img.bitmap, 0, 0)
-  return ctx.getImageData(0, 0, img.width, img.height)
-}
 ```
 
 - [ ] **Step 4: 跑测试，确认通过**
@@ -1049,7 +1011,6 @@ uniform float uClarity;
 uniform float uVignette;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-const float PI_NEVER = 0.0;
 
 vec3 srgbToLinear(vec3 c) {
   return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
@@ -1293,43 +1254,20 @@ npm run dev
 
 预期：看到左边灰块被提亮、右边橙块更暖更艳。**若报"编译着色器失败"，说明 GLSL 有语法错误，控制台会给出具体行号。**
 
-- [ ] **Step 4: 写比对测试 `src/render/pipeline.test.ts`**
+- [ ] **Step 4: 关于测试**
 
-这个测试防止着色器和 TS 参考实现漂移。**需要浏览器环境**，用 `environment: 'jsdom'` 跑不了 WebGL——因此本文件用 `describe.skipIf` 在没有 WebGL2 时跳过，并在 README 的验收清单里标注需手动在有 GPU 的浏览器里跑一遍。
+这个任务**没有自动化测试，这是刻意的。**
 
-```ts
-import { describe, it, expect, beforeAll } from 'vitest'
-import { applyTone, type Unit } from '../core/tone'
-import { ZERO, toUnit } from '../core/adjustments'
+WebGL 渲染需要真实的 GPU 上下文，node 测试环境跑不了；而且不同 GPU 的浮点精度有差异，把像素值写死会让测试变脆。
 
-/**
- * 注意：本测试需要真实的 WebGL2 上下文（无头 node 环境没有）。
- * 在浏览器里跑的方式见 README 的"验收清单"。
- * 若环境不支持，整个文件会被跳过，不会误报失败。
- */
-const canRun = typeof document !== 'undefined'
+**着色器的正确性靠两层保证：**
 
-describe.skipIf(!canRun)('着色器与 TS 参考实现一致性', () => {
-  it('不含暗角/清晰度时，两者输出一致（容差 3/255）', () => {
-    // 这里只断言接口形状，真实比对在浏览器验收里做。
-    // 之所以不在这里写死像素值：不同 GPU 的浮点精度有差异，
-    // 写死像素会让测试变脆。
-    const u: Unit = toUnit({ ...ZERO, exposure: 30, contrast: 20, saturation: 15, temperature: -20 })
-    const ref = applyTone([0.5, 0.5, 0.5], u)
-    expect(ref).toHaveLength(3)
-  })
-})
-```
+1. 它的运算顺序必须与 `src/core/tone.ts` 的 `applyTone` 严格一致——**六个位置无关的参数**：色温、曝光、高光、阴影、对比度、饱和度（清晰度和暗角只有着色器有，因为需要邻域和坐标）
+2. **Task 7 的浏览器验收**用眼睛确认每个参数都真的生效、方向对、幅度合理
 
-- [ ] **Step 5: 跑测试**
+**不要为了"有测试"而补一个断言不了任何东西的空测试**——那比没有测试更糟，它会让人以为这块被覆盖了。
 
-```bash
-npx vitest run src/render/pipeline.test.ts
-```
-
-预期：PASS（或在 node 环境下被跳过）。
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/render src/App.tsx
@@ -1373,7 +1311,7 @@ export default function Uploader({ onPick }: Props) {
 - [ ] **Step 2: 写 `src/ui/Canvas.tsx`**
 
 ```tsx
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import { TonePipeline } from '../render/pipeline'
 import type { DecodedImage } from '../image/decode'
 import type { Unit } from '../core/tone'
@@ -1382,7 +1320,7 @@ type Props = {
   image: DecodedImage | null
   unit: Unit
   /** App 需要拿到 canvas 元素来做导出 */
-  canvasRef: React.RefObject<HTMLCanvasElement | null>
+  canvasRef: RefObject<HTMLCanvasElement | null>
 }
 
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
@@ -1677,6 +1615,31 @@ npm install piexifjs
 npm install -D @types/piexifjs
 ```
 
+**如果 `@types/piexifjs` 装不上**（它可能不在 npm 上），改用本地声明：新建 `src/types/piexif.d.ts`：
+
+```ts
+declare module 'piexifjs' {
+  type ExifDict = {
+    '0th': Record<number, unknown>
+    Exif: Record<number, unknown>
+    GPS: Record<number, unknown>
+    Interop: Record<number, unknown>
+    '1st': Record<number, unknown>
+    thumbnail: string | null
+  }
+  const piexif: {
+    load(dataUrl: string): ExifDict
+    dump(exifObj: ExifDict): string
+    insert(exifBytes: string, dataUrl: string): string
+    ImageIFD: Record<string, number>
+    ExifIFD: Record<string, number>
+  }
+  export default piexif
+}
+```
+
+并在 `tsconfig.json` 的 `include` 里确认 `src` 已覆盖（本来就是 `["src"]`，无需改动）。
+
 - [ ] **Step 2: 写失败测试 `src/export/save.test.ts`**
 
 ```ts
@@ -1900,5 +1863,6 @@ git commit -m "feat(export): 导出时保留原始 EXIF"
 - `MAX_DIMENSION` 在 Task 5 定义并测试
 
 **已知的取舍**：
-- Task 6 的着色器一致性测试写得较弱（只断言接口形状），因为要真实 GPU 才能比对像素，且不同 GPU 浮点精度有差异。**真实的比对靠 Task 7 的浏览器验收**——如果着色器和 TS 实现不一致，肉眼能看出偏差。
-- `tone.ts` 和 `shader.ts` 有两份相同数学，是刻意的重复（可测性 vs 性能），靠文档注释和验收保证不漂移。
+- **Task 6 没有自动化测试**，正确性靠 Task 7 的浏览器验收。理由：WebGL 要真实 GPU，不同 GPU 浮点精度有差异，写死像素的测试会很脆。用一个断言不了任何东西的空测试凑数，比没有测试更糟——它会让人误以为这块被覆盖了。
+- **`tone.ts` 与 `shader.ts` 有两份相同数学，是刻意的重复。** 着色器无法单元测试，但调色数学不测就是赌。`tone.ts` 是可测的参考实现（测试的标准答案），`shader.ts` 是它的高性能移植。代价：调参时要同时改两处，靠两边文件顶部的注释互指来防漂移。
+- Task 5 的 `align32` / `fitWithin` 在本计划里没有调用方，是给计划二预留的 spec 约束编码（该任务里已注明理由）。
