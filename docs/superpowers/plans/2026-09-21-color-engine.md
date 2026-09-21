@@ -1828,6 +1828,22 @@ async function withExif(blob: Blob, originalFile: File): Promise<Blob> {
   // 竖拍的手机照片几乎全都带 Orientation=6，所以这条不处理必然翻车。
   delete exifObj['0th']?.[piexif.ImageIFD.Orientation]
 
+  // 原图内嵌的缩略图（IFD1）也必须清掉，这条同样容易漏。
+  //
+  // 两个后果，发生概率差很多：
+  //   1. **常见**：它是修改前的画面预览，会被原样带进导出文件。
+  //      文件管理器/相册的缩略图模式会显示修图前的样子，与像素矛盾。
+  //      真实手机照片几乎都带 IFD1，所以这条是普遍问题。
+  //   2. **罕见但严重**：piexif.dump 对缩略图有 64000 字节上限，超了就抛错；
+  //      那个错误会被 exportImage 的 catch 吞掉，用户拿到的文件
+  //      **完全没有 EXIF**（拍摄时间/GPS 全丢）且无任何提示。
+  //      但触发窗口很窄：APP1 段长是 16 位、整段上限 65535，缩略图
+  //      物理上不可能超过约 65186 字节，只有 64000~65186 这一段才会中。
+  //
+  // 修它零风险、代价不对称，所以修。
+  delete exifObj['1st']
+  delete exifObj.thumbnail
+
   const exifBytes = piexif.dump(exifObj)
   const newDataUrl = await blobToDataUrl(blob)
   return dataUrlToBlob(piexif.insert(exifBytes, newDataUrl))
