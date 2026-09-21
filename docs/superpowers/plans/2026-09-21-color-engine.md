@@ -595,8 +595,16 @@ export function linearToSrgb(c: number): number {
 }
 
 /**
- * 八个参数依次作用在一个 sRGB 颜色上。
- * 顺序与 render/shader.ts 的 GLSL 实现严格一致，改一边必须改另一边。
+ * 六个「与像素位置无关」的参数依次作用在一个 sRGB 颜色上：
+ * 色温 → 曝光 → 高光/阴影 → 对比度 → 饱和度。
+ *
+ * 另外两个参数**故意不在这里**：
+ *   - 清晰度（clarity）需要邻域像素的模糊值
+ *   - 暗角（vignette）需要像素在画面中的坐标
+ * 单像素函数表达不了它们，两者只在 render/shader.ts 里做全图版本。
+ *
+ * 本函数的运算顺序与 render/shader.ts 的 GLSL 实现严格一致，
+ * 改一边必须同步改另一边。
  */
 export function applyTone(rgb: RGB, u: Unit): RGB {
   let [r, g, b] = rgb
