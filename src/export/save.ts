@@ -62,6 +62,21 @@ async function withExif(blob: Blob, originalFile: File): Promise<Blob> {
   // 竖拍的手机照片几乎全都带 Orientation=6，所以这条不处理必然翻车。
   delete exifObj['0th']?.[piexif.ImageIFD.Orientation]
 
+  // 原图内嵌的缩略图（IFD1）也必须清掉，这条同样容易漏。
+  //
+  // 两个理由：
+  //   1. 它是**修改前**的画面预览。导出文件里带着一张旧预览，
+  //      文件管理器/相册的缩略图模式会显示修图前的样子，与像素本身矛盾。
+  //   2. piexif.dump 对缩略图有 64KB 上限，超了会抛错；那个错误会被
+  //      下面的 catch 吞掉，用户拿到的就会是**完全没有 EXIF** 的文件——
+  //      拍摄时间和 GPS 全丢，恰好是这个任务存在的意义所在。
+  delete exifObj['1st']
+  // 注：@types/piexifjs 把 thumbnail 声明成 `string`（不是 `string | null`），
+  // 所以这里只能 delete，不能赋 null。对 piexif.dump 而言效果一样——
+  // 它的判据是 `("thumbnail" in exif_dict) && (exif_dict["thumbnail"] != null)`
+  // （piexif.js:197），删掉键与赋 null 都会让这个条件为假。
+  delete exifObj.thumbnail
+
   const exifBytes = piexif.dump(exifObj)
   const newDataUrl = await blobToDataUrl(blob)
   return dataUrlToBlob(piexif.insert(exifBytes, newDataUrl))
