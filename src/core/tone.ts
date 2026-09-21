@@ -44,10 +44,22 @@ export function applyTone(rgb: RGB, u: Unit): RGB {
   r *= ev; g *= ev; b *= ev
   r = linearToSrgb(r); g = linearToSrgb(g); b = linearToSrgb(b)
 
-  // 3. 高光 / 阴影：按亮度加权
+  // 3. 高光 / 阴影：按亮度加权，再乘上各自**剩余的余量**，系数取 1.0。
+  //
+  //    余量因子 (1 - l) / l 不是装饰，没有它会毁掉两端细节：
+  //    高光 +100 时所有 luma ≳ 0.79 的像素会被推过 1.0 再被末步 clamp 削平
+  //    （0.79 → 1.0，0.85 → 1.0），高光梯度整个消失——亮天空/雪地/海滩
+  //    正好是旅游照的典型场景；阴影 -100 同理把 luma ≲ 0.15 压成纯黑。
+  //
+  //    系数为什么恰好是 1.0：增益 = smoothstep(...) * C * (1 - l)，而
+  //    smoothstep ≤ 1，所以增益 ≤ C * (1 - l)；C = 1.0 时
+  //    l + 增益 ≤ l + (1 - l) = 1，**数学上永不越界**——即刚好用满剩余余量
+  //    又不穿过端点。C > 1 会重新开始削平（C = 2 时 0.85 又变回 1.0），
+  //    C 太小则滑块拉满也几乎看不出效果（0.35 时最大增益只有 0.045）。
+  //    取 1.0 时最大增益约 0.13（luma ≈ 0.79 处），幅度可感知且梯度完好。
   const l = luma(r, g, b)
-  const hiW = smoothstep(0.5, 1.0, l) * 0.35 * u.highlights
-  const loW = (1 - smoothstep(0.0, 0.5, l)) * 0.35 * u.shadows
+  const hiW = smoothstep(0.5, 1.0, l) * 1.0 * u.highlights * (1 - l)
+  const loW = (1 - smoothstep(0.0, 0.5, l)) * 1.0 * u.shadows * l
   r += hiW + loW; g += hiW + loW; b += hiW + loW
 
   // 4. 对比度：围绕中灰支点

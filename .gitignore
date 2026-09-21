@@ -26,6 +26,9 @@ node_modules/
 dist/
 .next/
 
+# TypeScript 增量构建产物（npm run build 的 tsc -b 会在仓库根留下它）
+*.tsbuildinfo
+
 # 输出产物
 out/
 output/

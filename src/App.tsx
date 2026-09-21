@@ -1,9 +1,9 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import Canvas from './ui/Canvas'
 import Uploader from './ui/Uploader'
 import AdjustmentPanel from './ui/AdjustmentPanel'
 import { decodeImageFile, type DecodedImage } from './image/decode'
-import { ZERO, toUnit, type Adjustments } from './core/adjustments'
+import { ZERO, type Adjustments } from './core/adjustments'
 import { exportImage } from './export/save'
 
 export default function App() {
@@ -14,8 +14,6 @@ export default function App() {
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const originalFileRef = useRef<File | null>(null)
   const imageRef = useRef<DecodedImage | null>(null)
-
-  const unit = useMemo(() => toUnit(params), [params])
 
   const onPick = useCallback(async (file: File) => {
     setBusy(true)
@@ -72,7 +70,9 @@ export default function App() {
         {busy && <div className="hint">正在打开照片…</div>}
         {image && (
           <div className="workspace">
-            <Canvas image={image} unit={unit} canvasRef={canvasElRef} />
+            {/* params 直接传下去：[-100,100] → [-1,1] 的换算只发生在
+                TonePipeline.render 里（唯一入口） */}
+            <Canvas image={image} params={params} canvasRef={canvasElRef} />
           </div>
         )}
       </main>

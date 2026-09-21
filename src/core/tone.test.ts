@@ -95,3 +95,70 @@ describe('applyTone', () => {
     }
   })
 })
+
+/**
+ * 高光/阴影按「剩余余量」缩放（spec 复审后的修复）。
+ *
+ * 不带余量因子时，高光 +100 会把 luma ≳ 0.79 的像素统统推过 1.0，
+ * 被末步 clamp 削平成纯白（0.79 → 1.0，0.85 → 1.0）：高光梯度消失，
+ * 而亮天空/雪地/海滩正是旅游照的典型场景。阴影 -100 是镜像的暗部版本。
+ */
+describe('高光/阴影的余量压缩：收敛到端点而不是穿过它', () => {
+  const gray = (v: number): [number, number, number] => [v, v, v]
+
+  describe('高光（亮部）', () => {
+    const hi100 = toUnit({ ...ZERO, highlights: 100 })
+    const hi0 = toUnit({ ...ZERO, highlights: 0 })
+
+    it('+100 时 luma 0.85 的输出严格小于 1.0（不再削平）', () => {
+      const out = applyTone(gray(0.85), hi100)[0]
+      expect(out).toBeLessThan(1)
+      // 同时仍是「提亮」方向
+      expect(out).toBeGreaterThan(0.85)
+    })
+
+    it('+100 时 0.79 的输出严格小于 0.85 的输出（梯度保留）', () => {
+      const dark = applyTone(gray(0.79), hi100)[0]
+      const light = applyTone(gray(0.85), hi100)[0]
+      expect(dark).toBeLessThan(light)
+    })
+
+    it('+100 时三个通道一起被提亮（灰度输入仍是灰度）', () => {
+      const out = applyTone(gray(0.85), hi100)
+      expect(out[1]).toBeCloseTo(out[0], 6)
+      expect(out[2]).toBeCloseTo(out[0], 6)
+    })
+
+    it('0 时输出与输入完全一致（余量因子不能引入任何变化）', () => {
+      const out = applyTone(gray(0.85), hi0)
+      expect(out[0]).toBeCloseTo(0.85, 5)
+      expect(out[1]).toBeCloseTo(0.85, 5)
+      expect(out[2]).toBeCloseTo(0.85, 5)
+    })
+  })
+
+  describe('阴影（暗部，负方向）', () => {
+    const shNeg100 = toUnit({ ...ZERO, shadows: -100 })
+    const sh0 = toUnit({ ...ZERO, shadows: 0 })
+
+    it('-100 时 luma 0.15 的输出严格大于 0（不再压成纯黑）', () => {
+      const out = applyTone(gray(0.15), shNeg100)[0]
+      expect(out).toBeGreaterThan(0)
+      // 同时仍是「压暗」方向
+      expect(out).toBeLessThan(0.15)
+    })
+
+    it('-100 时 0.21 的输出严格大于 0.15 的输出（梯度保留）', () => {
+      const darker = applyTone(gray(0.15), shNeg100)[0]
+      const lighter = applyTone(gray(0.21), shNeg100)[0]
+      expect(darker).toBeLessThan(lighter)
+    })
+
+    it('0 时输出与输入完全一致（余量因子不能引入任何变化）', () => {
+      const out = applyTone(gray(0.15), sh0)
+      expect(out[0]).toBeCloseTo(0.15, 5)
+      expect(out[1]).toBeCloseTo(0.15, 5)
+      expect(out[2]).toBeCloseTo(0.15, 5)
+    })
+  })
+})

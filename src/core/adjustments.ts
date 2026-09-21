@@ -14,17 +14,31 @@ export const PARAM_KEYS = [
   'saturation', 'temperature', 'clarity', 'vignette',
 ] as const satisfies readonly (keyof Adjustments)[]
 
-export const ZERO: Adjustments = {
+/**
+ * 全零参数。
+ *
+ * Object.freeze 是必须的：它是模块级单例，被 React state 按引用持有、
+ * 又被当成重置目标（`setParams(ZERO)`）。谁要是原地改了它（`ZERO.x = 1`），
+ * 污染的是所有人的重置目标，而且现象极难查。冻结后这类写法会立刻报错。
+ * 正常的更新路径（`{...ZERO, x: 1}`）不受影响。
+ */
+export const ZERO: Adjustments = Object.freeze({
   exposure: 0, contrast: 0, highlights: 0, shadows: 0,
   saturation: 0, temperature: 0, clarity: 0, vignette: 0,
-}
+})
 
 /** 参数统一范围：[-100, 100] */
 export const PARAM_MIN = -100
 export const PARAM_MAX = 100
 
+/**
+ * 非有限值（NaN / ±Infinity）一律当中立 0。
+ *
+ * 只写 Math.min(100, NaN) 是没用的——结果还是 NaN，它会一路穿过
+ * clampAdjustments / toUnit 进到 shader uniform 里，画面整体坏掉且无从排查。
+ */
 const clampOne = (v: number): number =>
-  Math.max(PARAM_MIN, Math.min(PARAM_MAX, v))
+  Number.isFinite(v) ? Math.max(PARAM_MIN, Math.min(PARAM_MAX, v)) : 0
 
 /** 把八个字段各自钳到 [-100, 100]。纯函数，不改入参。 */
 export function clampAdjustments(a: Adjustments): Adjustments {
@@ -59,13 +73,13 @@ export function applyDeltas(base: Adjustments, deltas: Partial<Adjustments>): Ad
 export function toUnit(a: Adjustments): Record<keyof Adjustments, number> {
   const c = clampAdjustments(a)
   return {
-    exposure: c.exposure / 100,
-    contrast: c.contrast / 100,
-    highlights: c.highlights / 100,
-    shadows: c.shadows / 100,
-    saturation: c.saturation / 100,
-    temperature: c.temperature / 100,
-    clarity: c.clarity / 100,
-    vignette: c.vignette / 100,
+    exposure: c.exposure / PARAM_MAX,
+    contrast: c.contrast / PARAM_MAX,
+    highlights: c.highlights / PARAM_MAX,
+    shadows: c.shadows / PARAM_MAX,
+    saturation: c.saturation / PARAM_MAX,
+    temperature: c.temperature / PARAM_MAX,
+    clarity: c.clarity / PARAM_MAX,
+    vignette: c.vignette / PARAM_MAX,
   }
 }

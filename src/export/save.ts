@@ -39,7 +39,10 @@ export async function exportImage(
   a.href = url
   a.download = buildFilename(originalFile.name, format)
   a.click()
-  URL.revokeObjectURL(url)
+  // 不能在这里同步 revoke：Safari 有「同一个任务里被 revoke 的下载会被取消」
+  // 的历史问题，而重编码后的 12–48 MP JPEG 正是那种大 blob。保存又是本产品
+  // 在 iPhone 上的终点动作，赌不起——推迟到下载真正开始之后再释放。
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 async function withExif(blob: Blob, originalFile: File): Promise<Blob> {

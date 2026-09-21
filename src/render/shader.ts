@@ -9,18 +9,25 @@
  *
  * 改任何一边都必须同步改另一边。**本渲染器没有自动化测试**——
  * WebGL 要真实 GPU，写死像素的测试会很脆；正确性靠 Task 7 的浏览器验收。
+ *
+ * 另外：GLSL 字符串里的注释一律用 ASCII 英文。WebGL 规范对 shader source
+ * 的字符集有限制，中文注释在无头 Chromium 里能过，但真实设备驱动上
+ * 可能直接编译失败，而失败是全量的（整个程序编译不过）。
+ * 本文件里 GLSL **字符串之外**的 TS 注释仍按项目习惯用中文。
  */
 export const VERTEX_SRC = `#version 300 es
 in vec2 aPos;
 out vec2 vUv;
 void main() {
-  // V 轴必须翻转。
-  // texImage2D 把图像的第一行（顶行）放在 t=0，而 gl_Position.y = -1
-  // 是屏幕底部——不翻的话画面上下颠倒。
+  // The V axis must be flipped.
+  // texImage2D puts the image's first row (the top row) at t=0, while
+  // gl_Position.y = -1 is the bottom of the screen -- without the flip the
+  // image renders upside down.
   //
-  // 注意：源是 ImageBitmap 时 UNPACK_FLIP_Y_WEBGL 会被 WebGL 忽略
-  // （规范如此；ImageBitmap 的方向由创建时的 imageOrientation 决定），
-  // 所以那个开关修不了这件事，只能在着色器里翻。
+  // Note: when the source is an ImageBitmap, WebGL ignores
+  // UNPACK_FLIP_Y_WEBGL (per spec; an ImageBitmap's orientation is decided
+  // by the imageOrientation option given at creation time), so that switch
+  // cannot fix this -- it has to be done in the shader.
   vUv = vec2(aPos.x * 0.5 + 0.5, 0.5 - aPos.y * 0.5);
   gl_Position = vec4(aPos, 0.0, 1.0);
 }
@@ -33,7 +40,7 @@ in vec2 vUv;
 out vec4 fragColor;
 
 uniform sampler2D uImage;
-uniform vec2  uTexel;       // 1.0 / 纹理尺寸
+uniform vec2  uTexel;       // 1.0 / texture size
 uniform float uExposure;
 uniform float uContrast;
 uniform float uHighlights;
@@ -45,16 +52,18 @@ uniform float uVignette;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
-// 注意 max(..., 0.0) 这两处不是多余的：
-//   mix(x, y, a) 的语义是 x*(1-a) + y*a —— 两个分支**都会被求值**，
-//   而 GLSL 规定 pow 的底数为负时结果未定义（实际会出 NaN），
-//   NaN * 0 仍是 NaN，所以哪怕该分支最终会被丢弃，也会把 NaN 带进结果。
+// The two max(..., 0.0) calls below are NOT redundant:
+//   mix(x, y, a) means x*(1-a) + y*a -- BOTH branches are always evaluated,
+//   and GLSL leaves pow with a negative base undefined (in practice it
+//   yields NaN). NaN * 0 is still NaN, so even the branch that ends up
+//   discarded drags NaN into the result.
 //
-//   底数确实可能为负：温度 +100 时蓝通道减 0.1（暗部即负），
-//   或清晰度在高反差边缘欠冲（base=0.1 / blur=0.5 → -0.14）。
+//   The base really can go negative: temperature +100 subtracts 0.1 from the
+//   blue channel (negative in the darks), or clarity undershoots on a
+//   high-contrast edge (base=0.1 / blur=0.5 -> -0.14).
 //
-//   tone.ts 用的是三元运算符，负值根本不进 pow，所以那边没这个问题——
-//   这是 TS 与 GLSL 的真实行为分歧，不是精度差异。
+//   tone.ts uses a ternary, so negative bases never reach pow there -- that
+//   is a real behavioural difference between TS and GLSL, not just precision.
 vec3 srgbToLinear(vec3 c) {
   return mix(c / 12.92,
              pow(max((c + 0.055) / 1.055, vec3(0.0)), vec3(2.4)),
@@ -70,12 +79,13 @@ vec3 linearToSrgb(vec3 c) {
 void main() {
   vec2 uv = vUv;
 
-  // 0. 清晰度 —— 必须放在整条调色链的最前面，作用在原始纹理上。
+  // 0. Clarity -- must come FIRST in the chain, operating on the raw texture.
   //
-  //    放在后面是错的：那时 c 已经过曝光/对比度等处理，而 blur 采的还是
-  //    原始像素，(c - blur) 里就混进一个全局亮度差，拖清晰度会顺带把
-  //    整张图弄亮或弄暗。放在最前面时，平坦区域的 c - blur 恒为 0，
-  //    清晰度就只影响局部细节。
+  //    Putting it later is wrong: c would already be exposure/contrast
+  //    adjusted while blur still samples the raw pixels, so (c - blur) picks
+  //    up a global brightness difference and moving the clarity slider would
+  //    also brighten or darken the whole image. First in the chain, c - blur
+  //    is identically 0 on flat areas and clarity only touches local detail.
   vec3 base = texture(uImage, uv).rgb;
   vec3 blur = (
       texture(uImage, uv + vec2(-uTexel.x, 0.0)).rgb
@@ -85,34 +95,51 @@ void main() {
   ) * 0.25;
   vec3 c = base + uClarity * 0.6 * (base - blur);
 
-  // 1. 色温
+  // 1. Temperature
   c.r += uTemperature * 0.10;
   c.b -= uTemperature * 0.10;
 
-  // 2. 曝光（线性空间）
+  // 2. Exposure (linear space)
   c = srgbToLinear(c);
   c *= pow(2.0, uExposure);
   c = linearToSrgb(c);
 
-  // 3. 高光 / 阴影
+  // 3. Highlights / shadows -- weight by luma, then scale by the headroom
+  //    each pixel has left. Must match tone.ts exactly.
+  //
+  //    The (1.0 - l) / l headroom factors are not decoration: without them
+  //    highlights +100 pushes every pixel above luma ~0.79 past 1.0 and the
+  //    final clamp flattens it (0.79 -> 1.0, 0.85 -> 1.0), destroying the
+  //    highlight gradient -- bright sky / snow / beach is the archetypal
+  //    travel photo; shadows -100 does the same at the dark end (luma below
+  //    ~0.15 crushed to pure black).
+  //
+  //    Why the coefficient is exactly 1.0: gain = smoothstep(...) * C * (1-l),
+  //    and smoothstep <= 1, so gain <= C * (1-l); with C = 1.0,
+  //    l + gain <= l + (1-l) = 1 -- it can never cross the endpoint, i.e. it
+  //    uses up exactly all the remaining headroom. C > 1 reintroduces
+  //    clipping (at C = 2, 0.85 is back to 1.0); C too small makes the slider
+  //    a no-op at full travel (C = 0.35 caps the gain at 0.045). At C = 1.0
+  //    the peak gain is ~0.13 (near luma 0.79): visible, gradient intact.
   float l = dot(c, LUMA);
-  float hiW = smoothstep(0.5, 1.0, l) * 0.35 * uHighlights;
-  float loW = (1.0 - smoothstep(0.0, 0.5, l)) * 0.35 * uShadows;
+  float hiW = smoothstep(0.5, 1.0, l) * 1.0 * uHighlights * (1.0 - l);
+  float loW = (1.0 - smoothstep(0.0, 0.5, l)) * 1.0 * uShadows * l;
   c += vec3(hiW + loW);
 
-  // 4. 对比度（中灰支点）
+  // 4. Contrast (pivot at mid grey)
   c = (c - 0.5) * (1.0 + uContrast) + 0.5;
 
-  // 5. 饱和度
+  // 5. Saturation
   float l2 = dot(c, LUMA);
   c = vec3(l2) + (c - vec3(l2)) * (1.0 + uSaturation);
 
-  // 6. 暗角
+  // 6. Vignette
   //
-  //    只钳下界（max），不钳上界。负的 uVignette 会让 vig > 1——
-  //    那是「提亮四角」。若在这里钳到 1，滑块的负半程就完全没反应
-  //    （滑块范围是 -100~100，负半程却是死的，用户会以为坏了）。
-  //    溢出由最后那句 clamp(c, 0.0, 1.0) 兜住。
+  //    Only clamp the lower bound (max), not the upper one. A negative
+  //    uVignette makes vig > 1 -- that is "brighten the corners". Clamping to
+  //    1 here would kill the whole negative half of the slider (its range is
+  //    -100~100, and a dead half makes users think it is broken).
+  //    The final clamp(c, 0.0, 1.0) catches the overflow.
   vec2 d = uv - 0.5;
   float vig = 1.0 - uVignette * dot(d, d) * 3.5;
   c *= max(vig, 0.0);

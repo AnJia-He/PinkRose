@@ -29,6 +29,19 @@ describe('clampAdjustments', () => {
     clampAdjustments(input)
     expect(input.exposure).toBe(999)
   })
+
+  it('NaN / ±Infinity 一律当中立 0（否则会一路穿进 shader uniform）', () => {
+    const out = clampAdjustments({
+      ...ZERO,
+      exposure: NaN, contrast: Infinity, shadows: -Infinity,
+      highlights: 30, saturation: NaN,
+    })
+    expect(out.exposure).toBe(0)
+    expect(out.contrast).toBe(0)
+    expect(out.shadows).toBe(0)
+    expect(out.saturation).toBe(0)
+    expect(out.highlights).toBe(30)
+  })
 })
 
 describe('applyDeltas', () => {
@@ -61,5 +74,33 @@ describe('toUnit', () => {
 
   it('中间值线性映射（50 -> 0.5）', () => {
     expect(toUnit({ ...ZERO, saturation: 50 }).saturation).toBe(0.5)
+  })
+
+  it('八个通道各读各的字段（互不串位）', () => {
+    // 每个通道喂一个互不相同的值：若映射写错（例如 clarity 读成 contrast），
+    // 这条会立刻红。只抽样 4 个通道是抓不到串位的。
+    const u = toUnit({
+      exposure: 10, contrast: 20, highlights: 30, shadows: 40,
+      saturation: 50, temperature: 60, clarity: 70, vignette: 80,
+    })
+    expect(u.exposure).toBe(0.1)
+    expect(u.contrast).toBe(0.2)
+    expect(u.highlights).toBe(0.3)
+    expect(u.shadows).toBe(0.4)
+    expect(u.saturation).toBe(0.5)
+    expect(u.temperature).toBe(0.6)
+    expect(u.clarity).toBe(0.7)
+    expect(u.vignette).toBe(0.8)
+  })
+
+  it('负值同样逐通道对应', () => {
+    const u = toUnit({
+      exposure: -10, contrast: -20, highlights: -30, shadows: -40,
+      saturation: -50, temperature: -60, clarity: -70, vignette: -80,
+    })
+    expect(u).toEqual({
+      exposure: -0.1, contrast: -0.2, highlights: -0.3, shadows: -0.4,
+      saturation: -0.5, temperature: -0.6, clarity: -0.7, vignette: -0.8,
+    })
   })
 })
