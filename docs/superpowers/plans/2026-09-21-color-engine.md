@@ -1001,14 +1001,27 @@ git commit -m "feat(image): 解码、P3→sRGB 转换、尺寸对齐到 32 倍�
 /**
  * 八参数调色，单个 fragment shader 一次算完（spec §5.2）。
  *
- * 本文件的运算顺序必须与 src/core/tone.ts 的 applyTone 严格一致。
- * 改任何一边都必须同步改另一边，并跑 pipeline.test.ts 的比对测试。
+ * 调色链的顺序必须与 src/core/tone.ts 的 applyTone 严格一致——两者共有
+ * 六个参数：色温 / 曝光 / 高光 / 阴影 / 对比度 / 饱和度。
+ *
+ * 清晰度和暗角**只有本文件有**：它们分别需要邻域像素和像素坐标，
+ * tone.ts 的单像素函数表达不了，没有可对照的实现。
+ *
+ * 改任何一边都必须同步改另一边。**本渲染器没有自动化测试**——
+ * WebGL 要真实 GPU，写死像素的测试会很脆；正确性靠 Task 7 的浏览器验收。
  */
 export const VERTEX_SRC = `#version 300 es
 in vec2 aPos;
 out vec2 vUv;
 void main() {
-  vUv = aPos * 0.5 + 0.5;
+  // V 轴必须翻转。
+  // texImage2D 把图像的第一行（顶行）放在 t=0，而 gl_Position.y = -1
+  // 是屏幕底部——不翻的话画面上下颠倒。
+  //
+  // 注意：源是 ImageBitmap 时 UNPACK_FLIP_Y_WEBGL 会被 WebGL 忽略
+  // （规范如此；ImageBitmap 的方向由创建时的 imageOrientation 决定），
+  // 所以那个开关修不了这件事，只能在着色器里翻。
+  vUv = vec2(aPos.x * 0.5 + 0.5, 0.5 - aPos.y * 0.5);
   gl_Position = vec4(aPos, 0.0, 1.0);
 }
 `
@@ -1042,7 +1055,21 @@ vec3 linearToSrgb(vec3 c) {
 
 void main() {
   vec2 uv = vUv;
-  vec3 c = texture(uImage, uv).rgb;
+
+  // 0. 清晰度 —— 必须放在整条调色链的最前面，作用在原始纹理上。
+  //
+  //    放在后面是错的：那时 c 已经过曝光/对比度等处理，而 blur 采的还是
+  //    原始像素，(c - blur) 里就混进一个全局亮度差，拖清晰度会顺带把
+  //    整张图弄亮或弄暗。放在最前面时，平坦区域的 c - blur 恒为 0，
+  //    清晰度就只影响局部细节。
+  vec3 base = texture(uImage, uv).rgb;
+  vec3 blur = (
+      texture(uImage, uv + vec2(-uTexel.x, 0.0)).rgb
+    + texture(uImage, uv + vec2( uTexel.x, 0.0)).rgb
+    + texture(uImage, uv + vec2(0.0, -uTexel.y)).rgb
+    + texture(uImage, uv + vec2(0.0,  uTexel.y)).rgb
+  ) * 0.25;
+  vec3 c = base + uClarity * 0.6 * (base - blur);
 
   // 1. 色温
   c.r += uTemperature * 0.10;
@@ -1066,16 +1093,7 @@ void main() {
   float l2 = dot(c, LUMA);
   c = vec3(l2) + (c - vec3(l2)) * (1.0 + uSaturation);
 
-  // 6. 清晰度（3x3 拉普拉斯锐化）
-  vec3 blur = (
-      texture(uImage, uv + vec2(-uTexel.x, 0.0)).rgb
-    + texture(uImage, uv + vec2( uTexel.x, 0.0)).rgb
-    + texture(uImage, uv + vec2(0.0, -uTexel.y)).rgb
-    + texture(uImage, uv + vec2(0.0,  uTexel.y)).rgb
-  ) * 0.25;
-  c += uClarity * 0.6 * (c - blur);
-
-  // 7. 暗角
+  // 6. 暗角
   vec2 d = uv - 0.5;
   float vig = 1.0 - uVignette * dot(d, d) * 3.5;
   c *= clamp(vig, 0.0, 1.0);
@@ -1154,7 +1172,8 @@ export class TonePipeline {
     this.imageW = img.width
     this.imageH = img.height
     gl.bindTexture(gl.TEXTURE_2D, this.texture)
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+    // 这里不用（也设不了）UNPACK_FLIP_Y_WEBGL：源是 ImageBitmap 时
+    // WebGL 会忽略该开关，上下方向由顶点着色器翻转 V 轴处理。
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img.bitmap)
   }
 
@@ -1189,7 +1208,12 @@ export class TonePipeline {
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
 
-  /** 仅测试用：读回画布像素（RGBA, 8bit, 行优先）。 */
+  /**
+   * 仅测试用：读回画布像素（RGBA, 8bit）。
+   *
+   * 行序遵循 GL 约定——**自下而上**，与图片文件的自上而下相反。
+   * 直接把这批字节当图片编码会上下颠倒，用之前要先翻行。
+   */
   readPixels(): Uint8Array {
     const gl = this.gl
     const w = this.canvas.width
@@ -1249,14 +1273,18 @@ export default function App() {
   useEffect(() => {
     const canvas = ref.current!
     const pipe = new TonePipeline(canvas)
-    // 造一张测试图：左半灰、右半彩
+    // 造一张测试图。上半/下半颜色不同、左上角有白方块——
+    // 这样"上下颠倒"或"左右镜像"是**看得出来**的。
+    // （早先的版本左右分色、上下对称，恰好掩盖了 V 轴翻转的 bug。）
     const c = document.createElement('canvas')
     c.width = c.height = 256
     const ctx = c.getContext('2d')!
-    ctx.fillStyle = '#808080'
-    ctx.fillRect(0, 0, 128, 256)
-    ctx.fillStyle = '#cc6633'
-    ctx.fillRect(128, 0, 128, 256)
+    ctx.fillStyle = '#808080'                    // 上半：中灰
+    ctx.fillRect(0, 0, 256, 128)
+    ctx.fillStyle = '#cc6633'                    // 下半：橙
+    ctx.fillRect(0, 128, 256, 128)
+    ctx.fillStyle = '#ffffff'                    // 左上角白方块
+    ctx.fillRect(0, 0, 56, 56)
     createImageBitmap(c).then(bm => {
       pipe.setImage({ bitmap: bm, width: 256, height: 256 })
       pipe.resizeToImage()
