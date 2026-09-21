@@ -905,6 +905,7 @@ export function fitWithin(w: number, h: number, max: number): Size {
 }
 
 export type DecodedImage = {
+  /** 调用方负责在不再使用时调用 bitmap.close()——它占用的是 GPU 内存 */
   bitmap: ImageBitmap
   width: number
   height: number
@@ -933,8 +934,15 @@ export async function decodeImageFile(file: File): Promise<DecodedImage> {
 }
 
 /**
- * 把任意色域的位图重绘到 sRGB 画布上再取回。
- * createImageBitmap 在部分浏览器上不保证输出 sRGB，重绘一次最稳。
+ * 把任意色域的位图重绘到 sRGB 画布上，再取回位图。
+ *
+ * 转换发生在 drawImage 那一行：2D 画布会按画布自身的色彩空间
+ * （这里显式指定 srgb）解释源图并写入。若源图本来已是 sRGB，
+ * 这一步就是恒等转换——所以**不会转换两次**。
+ *
+ * 早期版本在这里还调过一次 getImageData + putImageData，是多余的：
+ * 它只是把同一批字节读出来再原样写回，却要多分配一个全分辨率的
+ * 缓冲区（1200 万像素的照片约 49 MB）并强制一次 GPU 回读。
  */
 async function toSrgbBitmap(src: ImageBitmap): Promise<ImageBitmap> {
   const canvas = document.createElement('canvas')
@@ -942,10 +950,7 @@ async function toSrgbBitmap(src: ImageBitmap): Promise<ImageBitmap> {
   canvas.height = src.height
   const ctx = canvas.getContext('2d', { colorSpace: 'srgb' })
   if (!ctx) throw new Error('拿不到 2D 上下文，无法做色彩空间转换')
-  ctx.drawImage(src, 0, 0)
-  // getImageData 读回的必定是 sRGB 数值
-  const data = ctx.getImageData(0, 0, canvas.width, canvas.height)
-  ctx.putImageData(data, 0, 0)
+  ctx.drawImage(src, 0, 0)   // ← 色彩空间转换就发生在这一行
   return createImageBitmap(canvas)
 }
 
