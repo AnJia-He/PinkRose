@@ -8,7 +8,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     // 开发时前端在 5173、后端在 8787。走同源代理，省掉 CORS。
-    proxy: { '/api': 'http://localhost:8787' },
+    // 让手机能连上来试（同一个 wifi 下用电脑的局域网地址打开）。
+    // 只暴露前端这一侧：后端只听本机，vite 的代理在电脑上替手机转发。
+    host: true,
+    proxy: { '/api': 'http://127.0.0.1:8787' },
     fs: {
       // 后端的代码住在这个 root 里面（HeadEnd/BackEnd/），而 dev 服务器默认会把
       // root 下任何文件按 URL 发出去——不挡的话，浏览器能直接读到后端源码

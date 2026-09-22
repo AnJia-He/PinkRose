@@ -27,7 +27,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-const BASE = process.env.SMOKE_BASE ?? 'http://localhost:8787'
+const BASE = process.env.SMOKE_BASE ?? 'http://127.0.0.1:8787'
 // 两种底图，各有各的理由：
 //   IMG      —— 真照片（1200×800），用来测路由/建议。它不关心尺寸，测的是模型读不读得懂人话。
 //   EDIT_IMG —— 1024×768 的示意图，**宽高都是 32 的倍数**，用来测 /api/edit。

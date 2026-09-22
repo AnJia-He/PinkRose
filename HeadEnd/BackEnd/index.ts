@@ -29,9 +29,16 @@ const server = createApp({
   queue,
 })
 
-server.listen(config.port, () => {
-  console.log(`RuiXing server  http://localhost:${config.port}`)
+// ⚠️ 只听本机（127.0.0.1）。手机走 vite 的代理（代理跑在这台电脑上），
+// 所以后端**不需要**出现在局域网上——开出去等于把「没有鉴权、没有限流、
+// 但花的是真钱」的接口给整个 wifi 用。
+//
+// 写 127.0.0.1 而不是 localhost：后者在 Windows 上可能先解析成 IPv6 的 ::1，
+// 而这里绑的是 IPv4，会连不上。同一个理由，vite 的代理目标也写成 127.0.0.1。
+server.listen(config.port, '127.0.0.1', () => {
+  console.log(`RuiXing server  http://127.0.0.1:${config.port}`)
   console.log(`  ${describeConfig(config)}`)
+  console.log(`  （只听本机。手机要访问的话，从前端的 ${'5173'} 端口走代理进来）`)
 })
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
