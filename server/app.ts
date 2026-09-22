@@ -6,12 +6,13 @@ import { HttpError, readJsonBody, sendError, sendJson } from './http.ts'
 import type { SerialQueue } from './queue.ts'
 import { handleRoute } from './route.ts'
 import type { SenseNovaClient } from './sn.ts'
+import { handleSuggest } from './suggest.ts'
 
 export type AppDeps = {
   config: Config
   /** 静态资源目录（npm run build 的产物）。测试里不传。 */
   staticDir?: string
-  /** 不传时 /api/route 会返回 503 —— 让"没接线"可见，而不是静默失败。 */
+  /** 不传时 /api/route 与 /api/suggest 都会返回 503 —— 让"没接线"可见，而不是静默失败。 */
   client?: SenseNovaClient
   queue?: SerialQueue
 }
@@ -53,6 +54,14 @@ async function handle(deps: AppDeps, req: import('node:http').IncomingMessage,
       }
       const body = await readJsonBody(req)
       sendJson(res, 200, await handleRoute(body, { client: deps.client, queue: deps.queue }))
+      return
+    }
+    if (req.method === 'POST' && path === '/api/suggest') {
+      if (!deps.client || !deps.queue) {
+        throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
+      }
+      const body = await readJsonBody(req)
+      sendJson(res, 200, await handleSuggest(body, { client: deps.client, queue: deps.queue }))
       return
     }
     throw new HttpError('BAD_REQUEST', `没有这个接口：${path}`, 404)
