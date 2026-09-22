@@ -1055,6 +1055,21 @@ describe('chatJson', () => {
     await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'hi' }])
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe('Bearer sk-test')
   })
+
+  // ↓ 第 15 条，修复轮 1 追加（首轮审查发现的，见 Step 4 后面的说明）
+  it('读正文时连接中断也抛可重试的 SnError，不是裸 TypeError', async () => {
+    // fetch 在**响应头**到达时就 resolve 了，正文是随后独立的一次网络往返：
+    // 连接下载到一半被重置、或 AbortSignal.timeout 掐在几 MB 的 edit 正文
+    // 传输途中，都落在这一步。裸异常逃出去的话，调用方按
+    // `SnError && retryable` 判断要不要重试的网关会把它当成永久失败——
+    // 于是"一次抖动"变成用户可见的硬错误，正是本文件要挡的那类静默故障。
+    const impl = (async () => new Response(
+      new ReadableStream({ start: c => c.error(new TypeError('terminated')) }),
+    )) as unknown as typeof fetch
+    const e = await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'h' }]).catch(e => e)
+    expect(e).toBeInstanceOf(SnError)
+    expect(e.retryable).toBe(true)
+  })
 })
 
 describe('edit', () => {
