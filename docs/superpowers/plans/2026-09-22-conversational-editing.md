@@ -627,6 +627,10 @@ async function boot(): Promise<string> {
   return `http://127.0.0.1:${(server.address() as { port: number }).port}`
 }
 
+// ⚠️ 上面是 Task 1 当时的快照。**Task 6 把它改成了 `boot(extra: Partial<AppDeps> = {})`**
+// ——因为不注入 deps 时，`/api/route` 的 503 守卫会先于 `readJsonBody` 触发，
+// 超限那条测试永远拿不到 413。以 Task 6 Step 6 的版本为准。
+
 describe('createApp', () => {
   it('GET /api/health 返回 ok', async () => {
     const base = await boot()
