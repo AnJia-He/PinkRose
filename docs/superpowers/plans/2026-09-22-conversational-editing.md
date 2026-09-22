@@ -41,7 +41,7 @@ spec §8.1 的 MVP 清单里，下面这些**明确不在本计划**：
 | 项 | 为什么推后 |
 |---|---|
 | **历史缩略图 UI**（§2.4 点哪句回到哪句） | 本计划只做**最小可用的快照**（保证生成式编辑可回退，§7.5 要求），缩略图那套 UI 属于计划三 |
-| **点选兜底**（§6.3 图上点一下 = 画标记） | 依赖画布交互层，计划三。**协议里已经返回 `needsDisambiguation`，前端暂时不消费它** |
+| **点选兜底**（§6.3 图上点一下 = 画标记） | 依赖画布交互层，计划三。协议里返回的 `needsDisambiguation` **前端已经消费**——拿不准时只追一句澄清、**不调生成**（见 Task 9 的 `applyDecision`），"图上点一下"那种完整形态仍在计划三 |
 | **按住看原图**（§2.5） | 纯 UI，计划三 |
 | **「一次做完 / 一步步来」用户可选**（§2.2） | 本计划**默认一次做完**（路由器的 `both` 已经处理多意图）。"一步步来"是个 UI 模式，需要一个"做一步停一步"的开关，归计划三 |
 | **多图「我要这种色调」**（§4.6） | 需要 Reinhard color transfer，是独立一块，归计划三 |
@@ -1611,7 +1611,7 @@ MSG
 **Interfaces:**
 - Consumes: `RouteDecision` / `ParamDeltas` / `Route`（Task 1）、`PARAM_KEYS` / `PARAM_MIN` / `PARAM_MAX`（`src/core/adjustments.ts`，**纯类型常量，无 DOM 依赖，后端可以直接 import**）
 - Produces:
-  - `parseDecision(raw: unknown): RouteDecision` —— 从 LLM 的原始输出（可能是对象、可能是带 ``` 围栏的字符串）解出决策
+  - `parseDecision(raw: unknown, userText = ''): RouteDecision` —— 从 LLM 的原始输出（可能是对象、可能是带 ``` 围栏的字符串）解出决策；**解析不了时用 `userText`（用户原话）当降级 prompt**，第二参数省略则退回旧行为
   - `fallbackDecision(text: string): RouteDecision` —— 降级（spec §4.7）
   - `normalizeDeltas(v: unknown): ParamDeltas`
   - `inferRoute(hasParams: boolean, hasEdit: boolean): Route`
@@ -1736,6 +1736,12 @@ describe('parseDecision', () => {
     expect(d.route).toBe('generate')
   })
 
+  it('解析失败时用传进来的用户原话当 prompt，而不是模型输出', () => {
+    expect(parseDecision('这不是 JSON', '天太灰了').editPrompt).toBe('天太灰了')
+    // 不传第二个参数时退回旧行为（既有测试依赖这个）
+    expect(parseDecision('这不是 JSON').editPrompt).toBe('这不是 JSON')
+  })
+
   it('deltas 全为空且没有 edit_prompt 时走 params，并标记 degraded', () => {
     // "走 params 但什么也没动"和"走 generate 但 prompt 是空的"都是空操作
     // （前端的 runGenerate 第一行就是 if (!editPrompt) return）。
@@ -1857,9 +1863,13 @@ export function normalizeDeltas(v: unknown): ParamDeltas {
  * 从模型的原始输出解出决策。**永远不抛错**——所有异常路径都收敛成
  * 一个可用的 RouteDecision。调用方不需要 try/catch。
  */
-export function parseDecision(raw: unknown): RouteDecision {
+export function parseDecision(raw: unknown, userText = ''): RouteDecision {
   const obj = coerceToObject(raw)
-  if (!obj) return fallbackDecision(typeof raw === 'string' ? raw : '')
+  // 解析不了时**用用户的原话**当 prompt，绝不能用模型吐出来的那坨东西。
+  // 实测过后果：模型返回被截断的 JSON，降级分支拿它当编辑指令送进图像模型，
+  // 结果把背景里的人换成了一个写实的陌生男人——用户看到的是莫名其妙的改动。
+  // 第二参数可选：不传时退回旧行为，Task 4 的既有测试因此保持不变。
+  if (!obj) return fallbackDecision(userText || (typeof raw === 'string' ? raw : ''))
 
   const paramDeltas = normalizeDeltas(obj.param_deltas ?? obj.paramDeltas)
   // 只看"有没有真正要动的参数"。
@@ -2396,14 +2406,19 @@ describe('handleRoute', () => {
   // 名字与断言都改准了：模型吐垃圾时，parseDecision 的内部收敛和 handleRoute
   // 的 catch **都会**给出 degraded: true，所以单看 degraded 区分不出两条降级路径
   // （实测：把 parseDecision(content) 换成 parseDecision(JSON.parse(content))，
-  // 弱版本照样绿）。它确实咬住了"不抛错"，但名字声称得比它强。
-  // 下面补的 editPrompt 断言才真正区分二者：走 catch 的话 prompt 是**用户原话**，
-  // 只有 validate 那条容错解析器接住了，才会留下模型原文。
-  it('模型吐垃圾时不抛错，且由 parseDecision 收敛（不是 catch 兜的）', async () => {
+  // 弱版本照样绿）。
+  //
+  // 原来这条靠"两条路径的 editPrompt 不同"来区分二者（走 catch 是用户原话，
+  // 走容错解析器是模型原文）。**那个区分力本来就不该存在**：spec §4.7 要求
+  // 降级时一律用用户原话当 prompt，两条路径收敛到同一个结果才是对的。
+  // 旧实现把模型吐出来的那坨东西（实测是一段被截断的 JSON）当编辑指令送进
+  // 图像模型，把背景里的人换成了一个写实的陌生男人——用户看到莫名其妙的改动。
+  it('模型吐垃圾时，走的是降级且 prompt 是用户原话（不是模型吐的垃圾）', async () => {
+    // 这条在**旧代码下必红**：旧实现把模型的原始输出当 prompt 送进了图像模型。
     const { client } = clientReplying('这不是 JSON')
-    const res = await handleRoute(body, deps(client))
+    const res = await handleRoute({ ...body, text: '天太灰了' }, deps(client))
     expect(res.decision.degraded).toBe(true)
-    expect(res.decision.editPrompt).toBe('这不是 JSON')
+    expect(res.decision.editPrompt).toBe('天太灰了')
   })
 
   it('缺 text 抛 BAD_REQUEST', async () => {
@@ -2461,7 +2476,7 @@ describe('handleRoute', () => {
 | `normalizeParams` 换成 `return v as Adjustments` | `params 字段缺失或不是对象时按全零处理，是对象时走钳制` |
 | `route.ts` 的 `ROUTER_SYSTEM` 换成 `SUGGEST_SYSTEM` | `把模型的 JSON 解成决策` |
 | `MAX_USER_TEXT` 改成 2500 | `超长输入被截断，不是原样送给模型` |
-| `parseDecision(content)` 换成 `parseDecision(JSON.parse(content))` | `模型吐垃圾时不抛错，且由 parseDecision 收敛（不是 catch 兜的）` |
+| `parseDecision(content, req.text)` 换成 `parseDecision(content)`（丢掉用户原话） | `模型吐垃圾时，走的是降级且 prompt 是用户原话（不是模型吐的垃圾）` |
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -2499,7 +2514,7 @@ export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteR
         ],
       },
     ]), 'route')
-    return { decision: parseDecision(content) }
+    return { decision: parseDecision(content, req.text) }
   } catch (e) {
     // spec §4.7：路由失败不能让用户看见报错，降级成"原文当 prompt 走生成"。
     // 重试已经由队列做过了，走到这儿就是真的不行了。
@@ -3922,6 +3937,16 @@ export default function App() {
 
     const mid = say(d.reply || '好了。')
     setCards([])
+
+    // 模型自己说"我不确定你说的是哪一个"时**不能动手**——
+    // 一边问一边改是最糟的组合：用户还没回答，钱已经花了（一次约 12,900 tokens），
+    // 而且改的可能是错的那个人。参数那半照常应用（免费可逆），只拦生成。
+    // （图上点一下的完整形态在计划三；这里先把"拿不准就别动手"做对。）
+    if (d.needsDisambiguation) {
+      say('照片里人有点多，你说的是哪一个？')
+      return
+    }
+
     if (d.route === 'generate' || d.route === 'both') {
       await runGenerate(d.editPrompt, mid, nextParams)
     }
@@ -4214,6 +4239,12 @@ Expected: `{"ok":true}`。再 `npm run dev`，开 `http://localhost:5173/`。
 2. **生成用的是原图**：在上一步之后连做两次生成 → 第二次的结果**不会**比第一次更暖/更亮（那说明参数被烤进去了）。
 3. **失败不丢参数**：生成过程中断网 → 出现「再试一次」，**滑块位置一个都没变**。
 4. **串行**：快速连发三条 → 后端终端里的 `[queue]` 行不交错，按顺序处理。
+
+**追加一条（裁定 ④，2026-09-22）**：`needsDisambiguation: true` 的决策**不许**触发 `/api/edit`——
+模型自己说"不确定是哪一个"时只追一句澄清，参数那半照常应用（免费可逆）。
+验证在**浏览器层打桩**（`/api/route` 回 `needsDisambiguation: true`，`/api/edit` 一旦被调用就记一笔），
+**不打真 API、不花钱**：期望 `edit_calls = 0`、澄清句排在模型回复之后、参数照常生效；
+把那个早返回删掉则 `edit_calls = 1`，必红。
 
 - [ ] **Step 17: 提交**
 

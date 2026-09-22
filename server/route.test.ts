@@ -61,14 +61,19 @@ describe('handleRoute', () => {
   // 名字与断言都改准了：模型吐垃圾时，parseDecision 的内部收敛和 handleRoute
   // 的 catch **都会**给出 degraded: true，所以单看 degraded 区分不出两条降级路径
   // （实测：把 parseDecision(content) 换成 parseDecision(JSON.parse(content))，
-  // 弱版本照样绿）。它确实咬住了"不抛错"，但名字声称得比它强。
-  // 下面补的 editPrompt 断言才真正区分二者：走 catch 的话 prompt 是**用户原话**，
-  // 只有 validate 那条容错解析器接住了，才会留下模型原文。
-  it('模型吐垃圾时不抛错，且由 parseDecision 收敛（不是 catch 兜的）', async () => {
+  // 弱版本照样绿）。
+  //
+  // 原来这条靠"两条路径的 editPrompt 不同"来区分二者（走 catch 是用户原话，
+  // 走容错解析器是模型原文）。**那个区分力本来就不该存在**：spec §4.7 要求
+  // 降级时一律用用户原话当 prompt，两条路径收敛到同一个结果才是对的。
+  // 旧实现把模型吐出来的那坨东西（实测是一段被截断的 JSON）当编辑指令送进
+  // 图像模型，把背景里的人换成了一个写实的陌生男人——用户看到莫名其妙的改动。
+  it('模型吐垃圾时，走的是降级且 prompt 是用户原话（不是模型吐的垃圾）', async () => {
+    // 这条在**旧代码下必红**：旧实现把模型的原始输出当 prompt 送进了图像模型。
     const { client } = clientReplying('这不是 JSON')
-    const res = await handleRoute(body, deps(client))
+    const res = await handleRoute({ ...body, text: '天太灰了' }, deps(client))
     expect(res.decision.degraded).toBe(true)
-    expect(res.decision.editPrompt).toBe('这不是 JSON')
+    expect(res.decision.editPrompt).toBe('天太灰了')
   })
 
   it('缺 text 抛 BAD_REQUEST', async () => {

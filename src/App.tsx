@@ -112,6 +112,16 @@ export default function App() {
 
     const mid = say(d.reply || '好了。')
     setCards([])
+
+    // 模型自己说"我不确定你说的是哪一个"时**不能动手**——
+    // 一边问一边改是最糟的组合：用户还没回答，钱已经花了（一次约 12,900 tokens），
+    // 而且改的可能是错的那个人。参数那半照常应用（免费可逆），只拦生成。
+    // （图上点一下的完整形态在计划三；这里先把"拿不准就别动手"做对。）
+    if (d.needsDisambiguation) {
+      say('照片里人有点多，你说的是哪一个？')
+      return
+    }
+
     if (d.route === 'generate' || d.route === 'both') {
       await runGenerate(d.editPrompt, mid, nextParams)
     }

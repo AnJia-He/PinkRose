@@ -115,6 +115,12 @@ describe('parseDecision', () => {
     expect(d.route).toBe('generate')
   })
 
+  it('解析失败时用传进来的用户原话当 prompt，而不是模型输出', () => {
+    expect(parseDecision('这不是 JSON', '天太灰了').editPrompt).toBe('天太灰了')
+    // 不传第二个参数时退回旧行为（既有测试依赖这个）
+    expect(parseDecision('这不是 JSON').editPrompt).toBe('这不是 JSON')
+  })
+
   it('deltas 全为空且没有 edit_prompt 时走 params，并标记 degraded', () => {
     // "走 params 但什么也没动"和"走 generate 但 prompt 是空的"都是空操作
     // （前端的 runGenerate 第一行就是 if (!editPrompt) return）。

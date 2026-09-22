@@ -53,9 +53,13 @@ export function normalizeDeltas(v: unknown): ParamDeltas {
  * 从模型的原始输出解出决策。**永远不抛错**——所有异常路径都收敛成
  * 一个可用的 RouteDecision。调用方不需要 try/catch。
  */
-export function parseDecision(raw: unknown): RouteDecision {
+export function parseDecision(raw: unknown, userText = ''): RouteDecision {
   const obj = coerceToObject(raw)
-  if (!obj) return fallbackDecision(typeof raw === 'string' ? raw : '')
+  // 解析不了时**用用户的原话**当 prompt，绝不能用模型吐出来的那坨东西。
+  // 实测过后果：模型返回被截断的 JSON，降级分支拿它当编辑指令送进图像模型，
+  // 结果把背景里的人换成了一个写实的陌生男人——用户看到的是莫名其妙的改动。
+  // 第二参数可选：不传时退回旧行为，Task 4 的既有测试因此保持不变。
+  if (!obj) return fallbackDecision(userText || (typeof raw === 'string' ? raw : ''))
 
   const paramDeltas = normalizeDeltas(obj.param_deltas ?? obj.paramDeltas)
   // 只看"有没有真正要动的参数"。

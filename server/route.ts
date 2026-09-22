@@ -24,7 +24,7 @@ export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteR
         ],
       },
     ]), 'route')
-    return { decision: parseDecision(content) }
+    return { decision: parseDecision(content, req.text) }
   } catch (e) {
     // spec §4.7：路由失败不能让用户看见报错，降级成"原文当 prompt 走生成"。
     // 重试已经由队列做过了，走到这儿就是真的不行了。
