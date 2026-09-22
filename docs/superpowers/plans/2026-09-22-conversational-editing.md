@@ -3545,7 +3545,12 @@ describe('bitmapsToClose', () => {
 
   it('protectOriginal 时原图不关 —— "回到原图"还要用它', () => {
     const old = [mk(1, true), mk(2)]
-    expect(bitmapsToClose(old, jumpTo(old, 1), { protectOriginal: true })).toHaveLength(0)
+    // 注意 fixture：after 里**不能**包含原图。否则 keep 集合已经保护了它，
+    // protectOriginal 就无事可做——旧 fixture 正是这样，带不带 opts 返回值相同，
+    // 断言恒红且区分不了任何东西（node 探针实测过）。
+    expect(bitmapsToClose(old, [old[1]], { protectOriginal: true })).toHaveLength(0)
+    // 对照：关掉保护就该关它。没有这一条，第一条也可能因为别的原因恒 0。
+    expect(bitmapsToClose(old, [old[1]]).map(tagOf)).toEqual(['b1'])
   })
 
   it('两个列表相同时没有要关的', () => {
@@ -3816,6 +3821,16 @@ import { ApiError, postEdit, postRoute, postSuggest } from './api/client'
 import { bitmapsToClose, jumpTo, pushSnapshot, type Snapshot } from './core/history'
 import type { RouteDecision, SuggestCard } from '../shared/protocol'
 
+/**
+ * 建议卡片最多等这么久。
+ *
+ * `/api/suggest` 最坏会占住后端串行队列约 4 分钟（上游挂掉时队列重试 4 次、
+ * 每次超时上限 60 秒），而拉卡片是上传后用户盯着看的第一个动作。跨任务裁定：
+ * **不在后端特例化**（那会削弱队列统一的重试契约），改由前端不阻塞——
+ * 超过这个时间就把用户放进对话，卡片晚到就晚到、不来就算了。
+ */
+const SUGGEST_WAIT_MS = 10_000
+
 export default function App() {
   const [image, setImage] = useState<DecodedImage | null>(null)
   const [params, setParams] = useState<Adjustments>(ZERO)
@@ -3832,6 +3847,8 @@ export default function App() {
   /** **原图**的位图。生成式编辑永远送它，不是当前画面 —— 见 spec §3.5。 */
   const originalRef = useRef<DecodedImage | null>(null)
   const idRef = useRef(0)
+  /** 每次选图 +1。晚到的卡片结果靠它对号，免得贴到下一张照片上。 */
+  const pickIdRef = useRef(0)
 
   const nextId = () => ++idRef.current
 
@@ -3910,12 +3927,36 @@ export default function App() {
     }
   }, [params, say, runGenerate])
 
+  /**
+   * 拉建议卡片。
+   *
+   * **失败和超时都不影响任何主功能**，所以它自己不抛、只记日志：抛出去会被
+   * `onPick` 的 catch 当成"这张图打不开"，而那根本不是事实。
+   */
+  const loadCards = useCallback(async (img: DecodedImage, pickId: number) => {
+    try {
+      const preview = await prepareForRouting(img.bitmap)
+      const s = await postSuggest({ imageDataUrl: preview.dataUrl })
+      // 晚到的那份属于上一张照片就丢掉——否则看第一张时发出的请求回来时
+      // 会贴到第二张照片上。用原图而不是画布：此刻 params 还是全零，
+      // 两者本就一样，直接用原图省掉一次"画布到底挂上了没"的竞态。
+      if (pickIdRef.current === pickId) setCards(s.cards)
+    } catch (e) {
+      console.error(e)
+    }
+  }, [])
+
   const onPick = useCallback(async (file: File) => {
     setBusy('正在打开照片…')
     try {
       const img = await decodeImageFile(file)
-      // 先释放上一张：ImageBitmap 占的是 GPU 内存，不关会一直攒着
-      originalRef.current?.bitmap.close()
+
+      // 先释放上一张：ImageBitmap 占的是 GPU 内存，不关会一直攒着。
+      // 要关的是**整份旧 history**——除了原图，还有每条生成式快照的 base
+      // （2048 长边，最多 6 条）。只关原图会漏掉它们，换几次图就能把标签页拖垮。
+      // 副作用留在状态更新外面，别塞进 updater（updater 可能被重放）。
+      for (const s of bitmapsToClose(history, [])) s.bitmap.close()
+
       originalRef.current = img
       originalFileRef.current = file
       setImage(img)
@@ -3930,19 +3971,22 @@ export default function App() {
         { id: welcomeId, label: '原图', base: img, params: ZERO, isOriginal: true },
       ])
 
-      // 拉建议卡片。这里用原图而不是画布：此刻 params 还是全零，
-      // 两者本就一样，直接用原图省掉一次"画布到底挂上了没"的竞态。
+      // 卡片是**可选件，绝不能让用户等它**：最多等 10 秒（见 SUGGEST_WAIT_MS），
+      // 超时就走人。竞速的另一半不会抛（loadCards 自己吞掉错），
+      // 所以超时之后它还在后台跑，回来了照样把卡片贴上。
       setBusy('正在看你的照片…')
-      const preview = await prepareForRouting(img.bitmap)
-      const s = await postSuggest({ imageDataUrl: preview.dataUrl })
-      setCards(s.cards)
+      const myPick = ++pickIdRef.current
+      await Promise.race([
+        loadCards(img, myPick),
+        new Promise(resolve => setTimeout(resolve, SUGGEST_WAIT_MS)),
+      ])
     } catch (e) {
       console.error(e)
       alert('这张图打不开，换一张试试')
     } finally {
       setBusy(null)
     }
-  }, [say])
+  }, [history, say, loadCards])
 
   const send = useCallback(async (text: string) => {
     const canvas = canvasElRef.current
@@ -4089,8 +4133,15 @@ export default function App() {
 /* 改：画布不再用固定的 78vh，改为撑满给它的空间 */
 .canvas { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
 
-/* 改：面板不再自己封顶 42vh，改成"最多占 40vh，不够就滚" */
-.panel { max-height: 40vh; flex: none; }
+/* 改：面板不再自己封顶 42vh，改成"最多占 40vh，不够就滚"。
+   **不是整条替换**：只在原有那行里把 42vh 改成 40vh 并补 `flex: none`，
+   background/padding/overflow-y 都留着——整条换成缩写版会把面板底色、
+   内边距和滚动条一起弄丢（写实现时发现的，已如实上报）。 */
+.panel {
+  border-top: 1px solid #2a2e35; background: var(--panel);
+  padding: 14px 20px; max-height: 40vh; overflow-y: auto;
+  flex: none;
+}
 ```
 
 追加：

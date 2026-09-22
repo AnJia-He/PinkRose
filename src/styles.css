@@ -19,7 +19,11 @@ body {
 /* 这里原来是 Task 6 临时自测页的 .app（28px、居中），已删——
    它的 align-items/justify-content/font-size 会和新布局打架。 */
 
-.app { min-height: 100vh; display: flex; flex-direction: column; }
+/* 改：整个 app 锁在一屏内，由 flex 分配高度。
+   原来是 min-height:100vh，子元素各报各的高度 ——
+   画布 78vh + 面板最多 42vh 加起来超过 100vh，
+   面板最后两个滑块被推到屏幕外（实测底边 1111px vs 视口 900px）。 */
+.app { height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
 
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
@@ -37,8 +41,12 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 
 .stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
 
-.workspace { max-width: 100%; max-height: 100%; display: flex; }
-.canvas { max-width: 100%; max-height: 78vh; object-fit: contain; border-radius: 8px; }
+/* 改：workspace 变成"左画布右对话"的一行 */
+.workspace { flex: 1; display: flex; min-height: 0; }
+.workspace .stage { flex: 1; min-width: 0; min-height: 0; }
+
+/* 改：画布不再用固定的 78vh，改为撑满给它的空间 */
+.canvas { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
 
 .uploader {
   border: 2px dashed #3a4048; border-radius: 14px; padding: 60px 80px;
@@ -49,9 +57,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 
 .hint { color: var(--muted); }
 
+/* 改：面板不再自己封顶 42vh，改成"最多占 40vh，不够就滚" */
 .panel {
   border-top: 1px solid #2a2e35; background: var(--panel);
-  padding: 14px 20px; max-height: 42vh; overflow-y: auto;
+  padding: 14px 20px; max-height: 40vh; overflow-y: auto;
+  flex: none;
 }
 .panel-head {
   display: flex; justify-content: space-between; align-items: center;
@@ -66,3 +76,35 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .slider-label { color: var(--muted); font-size: 13px; }
 .slider-value { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
 .slider input { width: 100%; }
+
+.chat {
+  width: 340px; flex: none; display: flex; flex-direction: column; min-height: 0;
+  border-left: 1px solid #2a2e35; background: var(--panel);
+}
+.chat-log {
+  flex: 1; overflow-y: auto; padding: 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.bubble { max-width: 88%; border-radius: 12px; padding: 8px 12px; font-size: 13px; }
+.bubble.user {
+  align-self: flex-end; background: var(--accent); color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.bubble.assistant { align-self: flex-start; background: #262b33; border-bottom-left-radius: 4px; }
+.bubble.pending { color: var(--muted); font-style: italic; }
+.bubble-jump {
+  margin-top: 6px; padding: 2px 8px; font-size: 12px;
+  background: transparent; border-color: #3a4048; color: var(--muted);
+}
+.bubble-jump:hover { color: var(--text); border-color: var(--accent); }
+
+.cards { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 14px 10px; }
+.card { font-size: 13px; padding: 6px 12px; border-radius: 999px; }
+.card:disabled { opacity: .5; cursor: default; }
+
+.chat-input { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid #2a2e35; }
+.chat-input input {
+  flex: 1; background: #14161a; color: var(--text); font: inherit;
+  border: 1px solid #2f343c; border-radius: 8px; padding: 8px 12px;
+}
+.chat-input input:focus { outline: none; border-color: var(--accent); }
