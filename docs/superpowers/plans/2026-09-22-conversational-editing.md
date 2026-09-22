@@ -2111,7 +2111,7 @@ export const SUGGEST_SYSTEM = `你看这张照片，判断拍照的人最可能�
 ```bash
 npx vitest run server/prompt.test.ts
 ```
-Expected: PASS（16 个）
+Expected: PASS（15 个）
 
 - [ ] **Step 5: 提交**
 
@@ -3658,7 +3658,7 @@ export default function App() {
 
 - [ ] **Step 13: 在 `src/styles.css` 末尾追加对话面板样式，并改三处既有规则**
 
-改这三处（布局从"单列居中"变成"左画布右对话"，顺带**修掉计划一遗留的面板溢出**）：
+改这五条规则（布局从"单列居中"变成"左画布右对话"，顺带**修掉计划一遗留的面板溢出**）：
 
 ```css
 /* 改：整个 app 锁在一屏内，由 flex 分配高度。

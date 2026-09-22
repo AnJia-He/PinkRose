@@ -1,25 +1,12 @@
-/** 送给模型的图长边上限（spec §4.4）。调色路径不受此限制。 */
-export const MAX_DIMENSION = 2048
-
-/** API 硬约束：宽高必须是 32 的倍数，且在 [512, 4096]（spec §4.3） */
-export const SIZE_MIN = 512
-export const SIZE_MAX = 4096
-const SIZE_STEP = 32
-
-export function align32(n: number): number {
-  const rounded = Math.round(n / SIZE_STEP) * SIZE_STEP
-  return Math.max(SIZE_MIN, Math.min(SIZE_MAX, rounded))
-}
-
-export type Size = { width: number; height: number }
-
-/** 等比缩放到长边不超过 max。只缩不放。 */
-export function fitWithin(w: number, h: number, max: number): Size {
-  const longest = Math.max(w, h)
-  if (longest <= max) return { width: w, height: h }
-  const k = max / longest
-  return { width: Math.round(w * k), height: Math.round(h * k) }
-}
+/**
+ * 尺寸数学（MAX_DIMENSION / SIZE_MIN / SIZE_MAX / align32 / fitWithin / Size）
+ * 已经搬到 `shared/size.ts`——后端也要用它，而 shared/ 是前后端共同的地盘。
+ * 这里原样转发，计划一的调用方和测试都不用改。
+ */
+export {
+  MAX_DIMENSION, SIZE_MIN, SIZE_MAX,
+  align32, fitWithin, type Size,
+} from '../../shared/size.ts'
 
 export type DecodedImage = {
   /** 调用方负责在不再使用时调用 bitmap.close()——它占用的是 GPU 内存 */
@@ -72,8 +59,10 @@ async function toSrgbBitmap(src: ImageBitmap): Promise<ImageBitmap> {
 }
 
 /**
- * 说明：`align32` 与 `fitWithin` 在本计划里暂时没有调用方——它们服务的是
- * 生成式编辑那条路（spec §4.4），属于计划二。放在这里是因为它们是
- * spec §4.3 / §4.4 那几条硬约束的可执行形式（32 的倍数、[512,4096]、长边 2048），
- * 用测试钉死比写在注释里可靠——那几条约束是真金白银试出来的。
+ * 说明：`align32` 与 `fitWithin` 在计划一里没有调用方，现在定义搬到了
+ * `shared/size.ts`——它们服务的是生成式编辑那条路（spec §4.4），调用方出现在
+ * 计划二的生成链路里，而那一路前后端都要用同一套约束，所以放在 shared/。
+ * 之所以一直用测试钉着它们，是因为它们是 spec §4.3 / §4.4 那几条硬约束的
+ * 可执行形式（32 的倍数、[512,4096]、长边 2048），用测试钉死比写在注释里可靠
+ * ——那几条约束是真金白银试出来的。
  */
