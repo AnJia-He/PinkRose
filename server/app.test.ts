@@ -49,4 +49,18 @@ describe('createApp', () => {
     const r = await fetch(`${base}/some/asset.js`)
     expect(r.headers.get('content-type') ?? '').not.toContain('application/json')
   })
+
+  it('POST /api/route 在没接客户端时返回 503 的结构化错误', async () => {
+    const base = await boot()
+    const r = await fetch(`${base}/api/route`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ imageDataUrl: 'data:image/jpeg;base64,AA', text: '亮一点' }),
+    })
+    expect(r.status).toBe(503)
+    // tsconfig.server.json 的 lib 不含 DOM：Response.json() 是 unknown，
+    // 断言形状跟本文件其它用例一致（Task 1 起的写法）。
+    const body = await r.json() as { error: { code: string } }
+    expect(body.error.code).toBe('INTERNAL')
+  })
 })
