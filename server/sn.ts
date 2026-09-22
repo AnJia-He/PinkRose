@@ -147,5 +147,8 @@ export class SenseNovaClient {
 function codeForStatus(status: number): AppErrorCode {
   if (status === 429) return 'UPSTREAM_LIMIT'
   if (status >= 500) return 'UPSTREAM_FAILED'
-  return 'UPSTREAM_FAILED'
+  // 其余 4xx：上游**拒了**这次请求（提示词/图片不合规、鉴权被拒……）。
+  // 这类错误重试永远不会成功，所以绝不能报成可重试的 UPSTREAM_FAILED——
+  // 那会给用户一句"AI 服务暂时没响应，再试一次"的假话（而且每一次都白等一个来回）。
+  return 'BAD_REQUEST'
 }

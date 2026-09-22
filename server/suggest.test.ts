@@ -115,4 +115,13 @@ describe('handleSuggest', () => {
     const { client } = replying('{}')
     await expect(handleSuggest({}, deps(client))).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
+
+  it('不是 data:image/ 开头的字符串也抛 BAD_REQUEST（http:// 这类同样拒）', async () => {
+    // 上面那条 `{}` 死在第一个 disjunct（typeof !== 'string'）上，
+    // 把 `!startsWith('data:image/')` 删掉它照样绿 —— 这条才钉住后半个守卫。
+    const { client, calls } = replying('{}')
+    await expect(handleSuggest({ imageDataUrl: 'http://evil/x.jpg' }, deps(client)))
+      .rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    expect(calls).toHaveLength(0)
+  })
 })

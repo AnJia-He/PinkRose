@@ -47,6 +47,32 @@ describe('handleEdit', () => {
     expect(calls[0].size).toBe('1280x896')
   })
 
+  it('送给上游的是请求里那张图 —— 被编辑的照片本身也要钉住', async () => {
+    const { client, calls } = replying('QQ==')
+    const other = 'data:image/png;base64,BBBB'
+    await handleEdit({ ...body, imageDataUrl: other }, deps(client))
+    expect(calls[0].images[0].image_url).toBe(other)
+  })
+
+  it('长边超过业务上限 2048 -> 400，且**一次 API 都不调**', async () => {
+    // 4096x2048 对 API 完全合法（32 的倍数、在 [512,4096]、2:1）——
+    // checkModelSize 放它过。挡住它的是我们自己的策略上限（spec §4.4），
+    // 不设这道门，一个不老实/有 bug 的客户端就能让账户按 4096² 的账单付费。
+    const { client, calls } = replying('QQ==')
+    await expect(handleEdit({ ...body, width: 4096, height: 2048 }, deps(client)))
+      .rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('imageDataUrl 不是 data:image/ 开头 -> 400，且一次 API 都不调', async () => {
+    // 没有这一条，守卫里 `!startsWith('data:image/')` 那半边可以直接删掉：
+    // 只测 undefined/非字符串的话，第一半就拦下了，测试照样绿。
+    const { client, calls } = replying('QQ==')
+    await expect(handleEdit({ ...body, imageDataUrl: 'http://evil/x.jpg' }, deps(client)))
+      .rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    expect(calls).toHaveLength(0)
+  })
+
   it('宽高不是 32 的倍数 -> 400，且**一次 API 都不调**', async () => {
     const { client, calls } = replying('QQ==')
     await expect(handleEdit({ ...body, width: 1000 }, deps(client)))

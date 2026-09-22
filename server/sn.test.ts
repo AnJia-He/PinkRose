@@ -76,6 +76,20 @@ describe('chatJson', () => {
     expect(b.retryable).toBe(false)
   })
 
+  it('非 429 的 4xx 归 BAD_REQUEST（上游拒了，重试永远不会成功），5xx 才归 UPSTREAM_FAILED', async () => {
+    // 原来所有非 429 的 4xx 都映成 UPSTREAM_FAILED → 502 +
+    // 「AI 服务暂时没响应，再试一次」——对一次被上游拒绝的请求，
+    // 这是一句永远不可能成功的指令。归 BAD_REQUEST（400），文案才说人话。
+    const mk = (status: number) => fakeFetch({ status, body: { error: { message: 'x' } } })
+    const bad = await new SenseNovaClient(cfg, mk(400).impl)
+      .chatJson([{ role: 'user', content: 'h' }]).catch(e => e)
+    const down = await new SenseNovaClient(cfg, mk(500).impl)
+      .chatJson([{ role: 'user', content: 'h' }]).catch(e => e)
+    expect(bad.code).toBe('BAD_REQUEST')
+    expect(down.code).toBe('UPSTREAM_FAILED')
+    expect(bad.retryable).toBe(false)
+  })
+
   it('网络异常归一化成可重试的 SnError', async () => {
     const impl = (async () => { throw new TypeError('fetch failed') }) as unknown as typeof fetch
     const e = await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'h' }]).catch(e => e)

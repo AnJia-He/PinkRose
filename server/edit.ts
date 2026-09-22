@@ -1,5 +1,5 @@
 import type { EditRequest, EditResponse } from '../shared/protocol.ts'
-import { checkModelSize } from '../shared/size.ts'
+import { MAX_DIMENSION, checkModelSize } from '../shared/size.ts'
 import { HttpError } from './http.ts'
 import { buildEditPrompt } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
@@ -50,6 +50,19 @@ function parseRequest(raw: unknown): EditRequest {
   if (reason) {
     throw new HttpError('BAD_REQUEST',
       `图片尺寸 ${width}x${height} 不符合模型要求：${reason}`, 400)
+  }
+
+  // 业务层上限：长边 ≤ MAX_DIMENSION（2048，spec §4.4——出货客户端由
+  // prepareForModel 钉着这个数）。checkModelSize 只管 API 的硬约束（4096），
+  // 那是上游的底线，不是我们的策略：不设这道门，一个不老实或有 bug 的客户端
+  // 就能让账户按 4096² 的账单付费。
+  //
+  // ⚠️ 故意**不放进 checkModelSize**：shared/size.test.ts 有一条测试钉住
+  // 「4096 是 API 的上限，不是我们的」（checkModelSize(4096, 2048) === null）。
+  const longSide = Math.max(width, height)
+  if (longSide > MAX_DIMENSION) {
+    throw new HttpError('BAD_REQUEST',
+      `图片长边 ${longSide} 超过本服务的上限 ${MAX_DIMENSION}，请先缩图`, 400)
   }
 
   return { imageDataUrl, editPrompt, width, height }
