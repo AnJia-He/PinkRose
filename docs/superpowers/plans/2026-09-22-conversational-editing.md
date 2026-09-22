@@ -1889,7 +1889,7 @@ export { ROUTES }
 ```bash
 npx vitest run server/validate.test.ts
 ```
-Expected: PASS（24 个）
+Expected: PASS（27 个）
 
 **如果某条断言与实现冲突：报告冲突，不要偷偷放宽测试。** 计划一的修复波里出现过一次"测试与实现打架"，执行者回来说了，最后是改实现（把系数从 0.35 改成 1.0）而不是改断言。
 
