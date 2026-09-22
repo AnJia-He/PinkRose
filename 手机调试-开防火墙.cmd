@@ -18,7 +18,6 @@ netsh advfirewall firewall add rule name="RuiXing dev 5173" dir=in action=allow 
 echo.
 echo Done.  On your phone (same wifi) open:   http://192.168.1.6:5173
 echo.
-echo To close it again later, run this file:
-echo   手机调试-关防火墙.cmd
+echo To close it again later, double-click this on your desktop:
 echo.
 pause
