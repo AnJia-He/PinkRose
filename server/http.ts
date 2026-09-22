@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { AppErrorCode } from '../../shared/protocol.ts'
+import type { AppErrorCode } from '../shared/protocol.ts'
 import { SnError } from './sn.ts'
 
 /** 路由处理里唯一该抛的错误类型。带上 HTTP 状态码和给用户看的文案。 */

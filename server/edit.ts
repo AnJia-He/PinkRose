@@ -1,5 +1,5 @@
-import type { EditRequest, EditResponse } from '../../shared/protocol.ts'
-import { MAX_DIMENSION, checkModelSize } from '../../shared/size.ts'
+import type { EditRequest, EditResponse } from '../shared/protocol.ts'
+import { MAX_DIMENSION, checkModelSize } from '../shared/size.ts'
 import { HttpError } from './http.ts'
 import { buildEditPrompt } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'

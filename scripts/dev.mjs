@@ -13,8 +13,8 @@ console.log('  这个窗口别关 —— 关掉它就是停止服务。')
 console.log('')
 
 const procs = [
-  { name: 'vite  ', cmd: 'npx', args: ['vite', 'HeadEnd'] },
-  { name: 'server', cmd: 'node', args: ['HeadEnd/BackEnd/index.ts'] },
+  { name: 'vite  ', cmd: 'npx', args: ['vite'] },
+  { name: 'server', cmd: 'node', args: ['server/index.ts'] },
 ].map(({ name, cmd, args }) => {
   const p = spawn(cmd, args, { shell, stdio: ['ignore', 'pipe', 'pipe'] })
   const tag = (line) => process.stdout.write(`[${name}] ${line}`)

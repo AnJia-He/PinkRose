@@ -1,6 +1,6 @@
 import type { Config } from './config.ts'
-import type { AppErrorCode } from '../../shared/protocol.ts'
-import type { Size } from '../../shared/size.ts'
+import type { AppErrorCode } from '../shared/protocol.ts'
+import type { Size } from '../shared/size.ts'
 
 // 同样避开构造函数参数属性（见 http.ts 里的说明）：
 // Node 24 默认剥离模式不支持，vitest 的 esbuild 却支持——那种差异

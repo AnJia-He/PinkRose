@@ -1,4 +1,4 @@
-import { ZERO, type Adjustments } from '../../shared/adjustments.ts'
+import { ZERO, type Adjustments } from '../shared/adjustments.ts'
 
 /**
  * 保留项条款。**这一句不是客套话。**
