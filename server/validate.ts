@@ -58,8 +58,13 @@ export function parseDecision(raw: unknown): RouteDecision {
   if (!obj) return fallbackDecision(typeof raw === 'string' ? raw : '')
 
   const paramDeltas = normalizeDeltas(obj.param_deltas ?? obj.paramDeltas)
-  const hasParams = Object.values(paramDeltas).some(v => v !== 0) ||
-                    Object.keys(paramDeltas).length > 0
+  // 只看"有没有真正要动的参数"。
+  // 原来这里还有个 `|| Object.keys(paramDeltas).length > 0`，是**死分支**：
+  // 有任何非零值必然就有键，后一个条件完全覆盖前一个。而它会改变行为——
+  // {route:'params', param_deltas:{exposure:0}, edit_prompt:'...'} 会因为
+  // hasParams 被误判成 true 而让 reconcile 不触发，于是一句**非空的**
+  // edit_prompt 被静默丢掉，degraded 还停在 false。
+  const hasParams = Object.values(paramDeltas).some(v => v !== 0)
 
   const editPrompt = typeof obj.edit_prompt === 'string' ? obj.edit_prompt.trim()
     : typeof obj.editPrompt === 'string' ? obj.editPrompt.trim()
@@ -97,6 +102,10 @@ export function parseDecision(raw: unknown): RouteDecision {
 function reconcile(route: Route, hasParams: boolean, hasEdit: boolean): Route {
   if (route === 'params' && !hasParams && hasEdit) return 'generate'
   if (route === 'generate' && !hasEdit && hasParams) return 'params'
+  // 'both' 但没有 edit_prompt 时降成 params：剩下的只有调色那一半。
+  // 留在 'both' 会让前端去跑一次空的生成（runGenerate 第一行就 return），
+  // 等于决策声称"要生成"却什么都没发生。degraded 已经为 true，不丢信号。
+  if (route === 'both' && !hasEdit && hasParams) return 'params'
   return route
 }
 

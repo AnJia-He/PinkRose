@@ -1664,6 +1664,32 @@ describe('parseDecision', () => {
     const d = parseDecision({ route: 'params', paramDeltas: { exposure: 15 }, reply: '好' })
     expect(d.paramDeltas).toEqual({ exposure: 15 })
   })
+
+  it('route 说 params 但带了非空 edit_prompt、参数又全零时，以内容为准走生成', () => {
+    // 这是 hasParams 判据里那个死分支会咬人的地方：若它被误判成 true，
+    // reconcile 的分支不触发，这句非空的 edit_prompt 就被静默丢掉了。
+    const d = parseDecision({
+      route: 'params',
+      param_deltas: { exposure: 0 },
+      edit_prompt: 'Remove the person behind the subject.',
+    })
+    expect(d.route).toBe('generate')
+    expect(d.editPrompt).toContain('Remove the person')
+  })
+
+  it('param_deltas 全是零值（不是空对象）时，degraded 也要是 true', () => {
+    // 和「空对象」那条是同一件事隔了一层：都等于"什么都没动"
+    const d = parseDecision({ route: 'params', param_deltas: { exposure: 0 } })
+    expect(d.route).toBe('params')
+    expect(d.degraded).toBe(true)
+  })
+
+  it('route 说 both 但没有 edit_prompt 时降成 params', () => {
+    const d = parseDecision({ route: 'both', param_deltas: { exposure: 20 } })
+    expect(d.route).toBe('params')
+    expect(d.paramDeltas).toEqual({ exposure: 20 })
+    expect(d.degraded).toBe(true)
+  })
 })
 
 describe('fallbackDecision', () => {
@@ -1751,8 +1777,13 @@ export function parseDecision(raw: unknown): RouteDecision {
   if (!obj) return fallbackDecision(typeof raw === 'string' ? raw : '')
 
   const paramDeltas = normalizeDeltas(obj.param_deltas ?? obj.paramDeltas)
-  const hasParams = Object.values(paramDeltas).some(v => v !== 0) ||
-                    Object.keys(paramDeltas).length > 0
+  // 只看"有没有真正要动的参数"。
+  // 原来这里还有个 `|| Object.keys(paramDeltas).length > 0`，是**死分支**：
+  // 有任何非零值必然就有键，后一个条件完全覆盖前一个。而它会改变行为——
+  // {route:'params', param_deltas:{exposure:0}, edit_prompt:'...'} 会因为
+  // hasParams 被误判成 true 而让 reconcile 不触发，于是一句**非空的**
+  // edit_prompt 被静默丢掉，degraded 还停在 false。
+  const hasParams = Object.values(paramDeltas).some(v => v !== 0)
 
   const editPrompt = typeof obj.edit_prompt === 'string' ? obj.edit_prompt.trim()
     : typeof obj.editPrompt === 'string' ? obj.editPrompt.trim()
@@ -1790,6 +1821,10 @@ export function parseDecision(raw: unknown): RouteDecision {
 function reconcile(route: Route, hasParams: boolean, hasEdit: boolean): Route {
   if (route === 'params' && !hasParams && hasEdit) return 'generate'
   if (route === 'generate' && !hasEdit && hasParams) return 'params'
+  // 'both' 但没有 edit_prompt 时降成 params：剩下的只有调色那一半。
+  // 留在 'both' 会让前端去跑一次空的生成（runGenerate 第一行就 return），
+  // 等于决策声称"要生成"却什么都没发生。degraded 已经为 true，不丢信号。
+  if (route === 'both' && !hasEdit && hasParams) return 'params'
   return route
 }
 

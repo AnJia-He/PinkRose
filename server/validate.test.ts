@@ -128,6 +128,32 @@ describe('parseDecision', () => {
     const d = parseDecision({ route: 'params', paramDeltas: { exposure: 15 }, reply: '好' })
     expect(d.paramDeltas).toEqual({ exposure: 15 })
   })
+
+  it('route 说 params 但带了非空 edit_prompt、参数又全零时，以内容为准走生成', () => {
+    // 这是 hasParams 判据里那个死分支会咬人的地方：若它被误判成 true，
+    // reconcile 的分支不触发，这句非空的 edit_prompt 就被静默丢掉了。
+    const d = parseDecision({
+      route: 'params',
+      param_deltas: { exposure: 0 },
+      edit_prompt: 'Remove the person behind the subject.',
+    })
+    expect(d.route).toBe('generate')
+    expect(d.editPrompt).toContain('Remove the person')
+  })
+
+  it('param_deltas 全是零值（不是空对象）时，degraded 也要是 true', () => {
+    // 和「空对象」那条是同一件事隔了一层：都等于"什么都没动"
+    const d = parseDecision({ route: 'params', param_deltas: { exposure: 0 } })
+    expect(d.route).toBe('params')
+    expect(d.degraded).toBe(true)
+  })
+
+  it('route 说 both 但没有 edit_prompt 时降成 params', () => {
+    const d = parseDecision({ route: 'both', param_deltas: { exposure: 20 } })
+    expect(d.route).toBe('params')
+    expect(d.paramDeltas).toEqual({ exposure: 20 })
+    expect(d.degraded).toBe(true)
+  })
 })
 
 describe('fallbackDecision', () => {
