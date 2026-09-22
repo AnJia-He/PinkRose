@@ -1781,6 +1781,20 @@ describe('parseDecision', () => {
     expect(d.paramDeltas).toEqual({ exposure: 20 })
     expect(d.degraded).toBe(true)
   })
+
+  it('route 说 generate 但既吐了 deltas 又给了 edit_prompt 时，以内容为准走 both', () => {
+    // 上一条（both 缺 edit_prompt → params）的**镜像**：声明 generate，内容却是两半都有。
+    // 不修的话前端 App.tsx 只在 route 是 params/both 时才应用 deltas，
+    // 用户说的调色那半句被静默丢掉，而 degraded 还是 false——连信号都没有。
+    const d = parseDecision({
+      route: 'generate',
+      param_deltas: { exposure: 30 },
+      edit_prompt: 'Remove the person behind the subject.',
+    })
+    expect(d.route).toBe('both')
+    expect(d.paramDeltas).toEqual({ exposure: 30 })
+    expect(d.degraded).toBe(true)   // 改过道 = 模型没守自己的声明
+  })
 })
 
 describe('fallbackDecision', () => {
@@ -1920,6 +1934,12 @@ function reconcile(route: Route, hasParams: boolean, hasEdit: boolean): Route {
   // 留在 'both' 会让前端去跑一次空的生成（runGenerate 第一行就 return），
   // 等于决策声称"要生成"却什么都没发生。degraded 已经为 true，不丢信号。
   if (route === 'both' && !hasEdit && hasParams) return 'params'
+  // 模型的声明与内容冲突时以内容为准。上面三条是前三种组合，
+  // 这条是它们的对称项，原来漏了：声明 generate 但又吐了 deltas 且有 edit_prompt，
+  // 那就是一次 both（调色 + 生成）。
+  // 漏掉它：前端只在 route 是 params/both 时应用 deltas，于是用户说的调色那半句
+  // 被静默丢掉，而 degraded 还是 false——连"出过问题"的信号都没有。
+  if (route === 'generate' && hasParams && hasEdit) return 'both'
   return route
 }
 
@@ -1979,12 +1999,19 @@ export function fallbackDecision(text: string): RouteDecision {
 export { ROUTES }
 ```
 
+> **评审裁定 ⑤ 的补充**：`reconcile()` 的第四条分支（`route==='generate' && hasParams && hasEdit → 'both'`）
+> 和它对应的那条测试，是计划评审时补上的——上面这段已经是补过之后的最终版，与仓库里的
+> `server/validate.ts` 逐字节一致。原来只写了三条，漏掉的正是「both 缺 edit_prompt → params」
+> 的对称项；不补的话，模型声明 `generate` 却又吐了 deltas 和 edit_prompt 时，前端只在
+> `route` 是 `params`/`both` 时才应用 deltas，用户说的调色那半句被静默丢掉，而 `degraded`
+> 还停在 `false`——连"出过问题"的信号都没有。
+
 - [ ] **Step 4: 跑测试确认通过**
 
 ```bash
 npx vitest run server/validate.test.ts
 ```
-Expected: PASS（27 个）
+Expected: PASS（29 个）
 
 **如果某条断言与实现冲突：报告冲突，不要偷偷放宽测试。** 计划一的修复波里出现过一次"测试与实现打架"，执行者回来说了，最后是改实现（把系数从 0.35 改成 1.0）而不是改断言。
 
@@ -4287,25 +4314,88 @@ MSG
 ```js
 // 真实 API 冒烟。**会花钱**——一次生成约 12,900 tokens，手动跑，不进 CI。
 // 用法：先 `node server/index.ts`，再 `node scripts/smoke.mjs`
+// 加 `--with-edit` 才打 /images/edits（那一步约 12,900 tokens，跑一次就够）。
+//
+// ─────────────────────────────────────────────────────────────────────
+// 断言语义（裁定 ⑥）：**脚本断言的是我们能控制的东西，报告的是模型的选择。**
+//
+// 为什么要有这条判据：实测打真实上游的冒烟共 6 次，其中 4 次至少出现一次
+// degraded=true，累计 7 次模型调用降级（/api/suggest 2 次、/api/route 5 次，
+// 含 1 次退化成 params + 无 deltas 的静默空转）。
+// **这看起来是常态，不是偶发。** 对模型的选择下硬断言，等于让脚本在上游一抽风时变红；
+// 那是噪声不是信号——一个常态变红的脚本，人就会开始忽略它，它也就死了。
+//
+// 所以本脚本分成三档：
+//   check()  —— 硬断言，**只用于我们能控制的东西**（HTTP 状态码、我们自己的协议）。
+//               失败进 failures，最终决定退出码。
+//   warn()   —— 软警告，不改退出码。
+//   report() —— 如实报告**模型的选择**，给出判读，但**不**决定退出码。
+//
+// 唯一的例外是第 3 项（见那里的注释）：它是"调色零成本"这个成本模型的地基，
+// 对**模型的选择**也保留硬断言——但它会区分"上游抽风"和"我们的代码不对"两种红。
+// ─────────────────────────────────────────────────────────────────────
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 const BASE = process.env.SMOKE_BASE ?? 'http://localhost:8787'
 const IMG = resolve('spike/evidence/real_1027.jpg')
+const WANT_EDIT = process.argv.includes('--with-edit')
 
 const t0 = () => performance.now()
 const secs = (t) => ((performance.now() - t) / 1000).toFixed(1)
 
-async function post(path, body) {
-  const r = await fetch(`${BASE}${path}`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+// ---- 三档记录 ----
+const failures = []       // 我们控制的东西坏了 -> 退出码 1
+const warnings = []       // 软警告，不改退出码
+const observations = []   // 模型的选择，只报告
+
+/** 硬断言：只用于**我们能控制**的东西。 */
+function check(name, ok, detail = '') {
+  if (ok) {
+    console.log(`     ✅ ${name}`)
+    return
+  }
+  failures.push(`${name}${detail ? ` — ${detail}` : ''}`)
+  console.log(`     ❌ ${name}${detail ? ` — ${detail}` : ''}`)
+}
+
+/** 软警告：记下来，但不改退出码。 */
+function warn(name) {
+  warnings.push(name)
+  console.log(`     ⚠️ ${name}`)
+}
+
+/**
+ * 如实报告**模型的选择**（裁定 ⑥）：给判读，但不决定退出码。
+ * 上游抽风不是我们的代码不对，不该让脚本变红。
+ */
+function report(name, ok, detail = '') {
+  if (ok) {
+    console.log(`     ✅ ${name}`)
+    return
+  }
+  observations.push(`${name}${detail ? ` — ${detail}` : ''}`)
+  console.log(`     ⚠️ ${name}${detail ? ` — ${detail}` : ''}`)
+}
+
+/** degraded=true 时统一加的一句判读：这是上游抽风，不是我们的代码不对。 */
+const UPSTREAM = '（本次 degraded=true：模型没答上来，**上游抽风**，不是我们的代码不对）'
+
+async function req(method, path, body) {
+  const init = { method, headers: { 'content-type': 'application/json' } }
+  if (body !== undefined) init.body = JSON.stringify(body)
+  const r = await fetch(`${BASE}${path}`, init)
   const text = await r.text()
   let json
   try { json = JSON.parse(text) } catch { json = { raw: text.slice(0, 300) } }
   return { status: r.status, json }
 }
+const post = (path, body) => req('POST', path, body)
+// 健康检查用 GET：server/app.ts 只注册了 GET /api/health（POST 会落到 404）。
+// 计划文档自己的实现（docs/.../2026-09-22-conversational-editing.md:792）和它自己的
+// 两处 curl 校验（同文件 997 / 4220）用的都是 GET，只有冒烟那一段写成了 post()，
+// 是 brief 的笔误。这里验的是「服务活着吗」，方法写错只会得到一个假警报。
+const get = (path) => req('GET', path)
 
 const dataUrl = `data:image/jpeg;base64,${(await readFile(IMG)).toString('base64')}`
 const ZERO = { exposure: 0, contrast: 0, highlights: 0, shadows: 0,
@@ -4315,50 +4405,103 @@ console.log(`底图 ${IMG}\n`)
 
 // ---- 1. 健康检查 ----
 let t = t0()
-const health = await post('/api/health', {})
+const health = await get('/api/health')
 console.log(`1. /api/health          ${health.status}  ${secs(t)}s  ${JSON.stringify(health.json)}`)
+check('健康检查 200 且 ok=true', health.status === 200 && health.json?.ok === true,
+  `实际 status=${health.status} body=${JSON.stringify(health.json)}`)
 
 // ---- 2. 建议卡片 ----
 t = t0()
 const sug = await post('/api/suggest', { imageDataUrl: dataUrl })
+const cards = sug.json.cards ?? []
 console.log(`2. /api/suggest         ${sug.status}  ${secs(t)}s  degraded=${sug.json.degraded}`)
-for (const c of sug.json.cards ?? []) {
+check('建议卡片端点 200', sug.status === 200, `实际 status=${sug.status}`)
+// 「有没有卡片」是模型的选择（degraded 的语义就是"模型没按约定形状答"），只报告
+report('拿到了至少 1 张卡片', cards.length > 0,
+  `实际 ${cards.length} 张${sug.json.degraded ? ' ' + UPSTREAM : ''}`)
+report('卡片没有降级（degraded=false）', sug.json.degraded === false,
+  'degraded=true 说明模型没按约定形状答，卡片是空壳')
+for (const c of cards) {
   const len = [...c.label].length
   console.log(`     [${c.route}] ${c.label}  (${len} 字)  deltas=${JSON.stringify(c.paramDeltas)}`)
-  if (len > 12) console.log(`     ⚠️ 超过 12 字`)
+  if (len > 12) warn(`卡片「${c.label}」${len} 字，超过 prompt 要求的 12 字`)
+  if (c.editPrompt) console.log(`       edit_prompt=${JSON.stringify(c.editPrompt.slice(0, 120))}`)
 }
 
 // ---- 3. 纯调色（零成本断言）----
+// ★ 全脚本唯一对**模型的选择**保留硬断言的地方：「调色零成本」是这个产品形态的地基。
+// 如果「天太灰了」走了生成，一句纯调色会被送进 12,900 tokens 的生成，成本模型就垮了。
+// 但它必须能区分**两种红**，因为这两种情况的处理完全不同：
+//   a) degraded=true  → 模型根本没答上来（上游抽风）。我们**不能**据此说自己的代码有问题
+//                       → 判为"无法判定"，只报告，不改退出码
+//   b) degraded=false 但 route≠params → 模型是**老实答的**，却答错了。
+//                       那就是我们的提示词 / 校验层有问题 → **硬红**
 t = t0()
 const r1 = await post('/api/route', { imageDataUrl: dataUrl, text: '天太灰了', params: ZERO })
 const d1 = r1.json.decision
 console.log(`\n3. "天太灰了"           ${r1.status}  ${secs(t)}s`)
-console.log(`     route=${d1?.route}  deltas=${JSON.stringify(d1?.paramDeltas)}`)
+console.log(`     route=${d1?.route}  degraded=${d1?.degraded}  deltas=${JSON.stringify(d1?.paramDeltas)}`)
 console.log(`     reply=${d1?.reply}`)
-console.log(`     ${d1?.route === 'params' ? '✅ 走参数路 = 零成本' : '❌ 本该走参数路，实际走 ' + d1?.route}`)
+check('纯调色路由 200', r1.status === 200, `实际 status=${r1.status}`)
+if (d1?.degraded === true) {
+  report('走参数路 = 零成本 —— 本次**无法判定**', false,
+    `模型这次没答上来${d1?.route === 'params' && !Object.values(d1?.paramDeltas ?? {}).some(v => v !== 0)
+      ? '（退化成 params + 无 deltas 的静默空转）' : ''}，` +
+    '这是**上游抽风**，不是"路由把调色送进了生成"。两种情况要分开看，重跑一次再判')
+} else {
+  check('走参数路 = 零成本', d1?.route === 'params',
+    `本该走参数路，实际走 ${d1?.route}；` +
+    'degraded=false 说明模型是**老实答的**——那这就是我们的提示词/校验层有问题，不是上游的事')
+  report('给的确实是调色增量（非空 deltas）',
+    Object.values(d1?.paramDeltas ?? {}).some(v => v !== 0),
+    `deltas=${JSON.stringify(d1?.paramDeltas)}`)
+}
 
 // ---- 4. 纯生成 ----
 t = t0()
 const r2 = await post('/api/route', { imageDataUrl: dataUrl, text: '把后面那个人去掉', params: ZERO })
 const d2 = r2.json.decision
 console.log(`\n4. "把后面那个人去掉"   ${r2.status}  ${secs(t)}s`)
-console.log(`     route=${d2?.route}  edit_prompt=${JSON.stringify(d2?.editPrompt?.slice(0, 120))}`)
+console.log(`     route=${d2?.route}  degraded=${d2?.degraded}  edit_prompt=${JSON.stringify(d2?.editPrompt?.slice(0, 120))}`)
+check('纯生成路由 200', r2.status === 200, `实际 status=${r2.status}`)
+// 期望值如实标注，但不下硬断言：模型选 generate 还是 params 不是我们能控制的
+report('走生成路（期望 generate）', d2?.route === 'generate',
+  `实际走 ${d2?.route}${d2?.degraded ? ' ' + UPSTREAM : '（模型老实答的，但没走生成）'}`)
+report('给了非空 edit_prompt（第 6 项的前提）', Boolean(d2?.editPrompt?.trim()),
+  d2?.degraded ? `本次是降级结果，prompt 是用户原话${UPSTREAM}` : '模型没给 edit_prompt')
 
 // ---- 5. 多意图 ----
 t = t0()
 const r3 = await post('/api/route', { imageDataUrl: dataUrl, text: '天太灰了，人再亮点，把后面那个人去掉', params: { ...ZERO, temperature: -30 } })
 const d3 = r3.json.decision
 console.log(`\n5. 三合一（且已调过色温-30）  ${r3.status}  ${secs(t)}s`)
-console.log(`     route=${d3?.route}（期望 both）  deltas=${JSON.stringify(d3?.paramDeltas)}`)
+console.log(`     route=${d3?.route}（期望 both）  degraded=${d3?.degraded}  deltas=${JSON.stringify(d3?.paramDeltas)}`)
+console.log(`     reply=${d3?.reply}`)
+console.log(`     edit_prompt=${JSON.stringify(d3?.editPrompt)}`)
+check('三合一路由 200', r3.status === 200, `实际 status=${r3.status}`)
+// 裁定 ⑤ 之后，服务端会把「声明 generate 但两半都给了」归一成 both（validate.ts 的 reconcile），
+// 所以这一项的期望值现在应当是稳的。仍然只报告不下硬断言——模型的选择不是我们能控制的。
+report('走 both（参数 + 生成都要）', d3?.route === 'both',
+  `实际走 ${d3?.route}${d3?.degraded ? ' ' + UPSTREAM
+    : d3?.route === 'params' ? '（退化成静默空转：既没生成也没参数变化）' : ''}`)
+report('both 的两半都给了（deltas 与 edit_prompt 皆非空）',
+  Object.values(d3?.paramDeltas ?? {}).some(v => v !== 0) && Boolean(d3?.editPrompt?.trim()),
+  `deltas=${JSON.stringify(d3?.paramDeltas)} editPrompt=${JSON.stringify(d3?.editPrompt?.slice(0, 80))}`)
 
 // ---- 6. 生成式编辑（**这一步花钱**）----
-if (process.argv.includes('--with-edit') && d2?.editPrompt) {
+if (WANT_EDIT && d2?.editPrompt) {
   t = t0()
   const ed = await post('/api/edit', {
     imageDataUrl: dataUrl, editPrompt: d2.editPrompt, width: 1216, height: 800,
   })
   console.log(`\n6. /api/edit            ${ed.status}  ${secs(t)}s  ` +
     (ed.json.imageDataUrl ? `输出 ${Math.round(ed.json.imageDataUrl.length / 1024)} KB` : JSON.stringify(ed.json)))
+  check('生成式编辑 200', ed.status === 200, `实际 status=${ed.status}`)
+  check('回来了图片数据', typeof ed.json.imageDataUrl === 'string' && ed.json.imageDataUrl.startsWith('data:image/'),
+    `实际 ${JSON.stringify(ed.json).slice(0, 200)}`)
+  check('回图尺寸与请求一致（1216x800）',
+    ed.json.width === 1216 && ed.json.height === 800,
+    `实际 ${ed.json.width}x${ed.json.height}`)
   // 把结果存下来供肉眼比对（test-photos/ 已在 .gitignore 排除）
   if (ed.json.imageDataUrl) {
     const { writeFile, mkdir } = await import('node:fs/promises')
@@ -4367,8 +4510,35 @@ if (process.argv.includes('--with-edit') && d2?.editPrompt) {
       Buffer.from(ed.json.imageDataUrl.split(',')[1], 'base64'))
     console.log('     已存到 test-photos/smoke_edit.png')
   }
+} else if (WANT_EDIT) {
+  // 显式说了要花钱跑生成，却因为第 4 项没给 prompt 而跑不了。这也要分开看：
+  // 成因几乎总是上游抽风（degraded 那次），不是我们的代码不对 -> 只报告
+  console.log('\n6. /api/edit            ⚠️ 无法运行')
+  report('--with-edit 能真的跑起来', false,
+    '第 4 项没给出 edit_prompt，这一项无从执行。' +
+    (d2?.degraded ? `成因是上游抽风${UPSTREAM}，不是我们的代码不对，重跑一次通常就有` : '不是降级，值得查一下'))
 } else {
   console.log('\n6. /api/edit            跳过（加 --with-edit 才跑，它会花钱）')
+}
+
+// ---- 汇总 ----
+console.log('\n' + '─'.repeat(64))
+console.log('判据（裁定 ⑥）：**断言的是我们能控制的东西，报告的是模型的选择。**')
+if (warnings.length) {
+  console.log(`\n⚠️  ${warnings.length} 条警告（不改退出码）：`)
+  for (const w of warnings) console.log(`     - ${w}`)
+}
+if (observations.length) {
+  console.log(`\n⚠️  ${observations.length} 条"模型的选择"不如预期（**不改退出码**，多为上游抽风）：`)
+  for (const o of observations) console.log(`     - ${o}`)
+}
+if (failures.length) {
+  console.log(`\n❌ ${failures.length} 条**我们的代码**有问题：`)
+  for (const f of failures) console.log(`     - ${f}`)
+  process.exitCode = 1
+} else {
+  console.log(`\n✅ 所有"我们能控制的东西"全部通过`
+    + `${observations.length ? `（另有 ${observations.length} 条模型侧的观察，见上，不计入退出码）` : ''}`)
 }
 ```
 

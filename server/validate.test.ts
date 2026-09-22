@@ -160,6 +160,20 @@ describe('parseDecision', () => {
     expect(d.paramDeltas).toEqual({ exposure: 20 })
     expect(d.degraded).toBe(true)
   })
+
+  it('route 说 generate 但既吐了 deltas 又给了 edit_prompt 时，以内容为准走 both', () => {
+    // 上一条（both 缺 edit_prompt → params）的**镜像**：声明 generate，内容却是两半都有。
+    // 不修的话前端 App.tsx 只在 route 是 params/both 时才应用 deltas，
+    // 用户说的调色那半句被静默丢掉，而 degraded 还是 false——连信号都没有。
+    const d = parseDecision({
+      route: 'generate',
+      param_deltas: { exposure: 30 },
+      edit_prompt: 'Remove the person behind the subject.',
+    })
+    expect(d.route).toBe('both')
+    expect(d.paramDeltas).toEqual({ exposure: 30 })
+    expect(d.degraded).toBe(true)   // 改过道 = 模型没守自己的声明
+  })
 })
 
 describe('fallbackDecision', () => {
