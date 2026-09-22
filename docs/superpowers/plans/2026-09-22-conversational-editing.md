@@ -1258,7 +1258,10 @@ function codeForStatus(status: number): AppErrorCode {
 ```bash
 npx vitest run server/sn.test.ts
 ```
-Expected: PASS（14 个）
+Expected: PASS（15 个）
+
+> **第 15 条是修复轮 1 追加的。** 首轮审查发现 `postJson` 里的 `await res.text()` 落在 try 之外——`fetch()` 在响应头到达时就 resolve，正文是之后才读的，所以正文读取失败（连接中途被重置、或 `AbortSignal.timeout` 在下载正文时触发）抛的是裸 `TypeError`，**不是 `SnError`**。而后续任务的队列只重试 `SnError && retryable`，一次瞬时的下载超时就成了永久性的用户可见失败，直接违反 spec §4.7「网络超时必须重试」。
+> 修法是最窄的：**只把 `res.text()` 那一句包起来**，`!res.ok` 与 `JSON.parse` 两处本来就正确分类的 `SnError` 原样留在外面。新增的测试用一个 errored stream 断言这种情况抛 `SnError` 且 `retryable === true`。
 
 - [ ] **Step 5: 提交**
 
@@ -3034,7 +3037,20 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     throw new ApiError('UPSTREAM_FAILED', '连不上服务器，检查一下网络？')
   }
 
-  const text = await res.text()
+  // fetch() 在**响应头到达时**就 resolve，正文是这时候才读的——它是独立的一次
+  // 网络往返。读正文失败（连接中途被重置、代理掐断）抛的是裸 TypeError，不是
+  // ApiError，于是调用方只能给出通用的"出了点问题"。包起来，让它和上面的连不上
+  // 走同一条路。
+  //
+  // 前端这边的后果比后端轻（ApiError 没有 retryable 概念，不存在"静默丢重试"），
+  // 但两端形状保持一致，将来谁把这段抄去别处都不会踩。
+  let text: string
+  try {
+    text = await res.text()
+  } catch {
+    throw new ApiError('UPSTREAM_FAILED', '连不上服务器，检查一下网络？')
+  }
+
   let parsed: any
   try {
     parsed = text ? JSON.parse(text) : {}
