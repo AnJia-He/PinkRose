@@ -4,6 +4,14 @@ import { spawn } from 'node:child_process'
 const isWin = process.platform === 'win32'
 const shell = isWin
 
+// 给不敲命令的人看的：窗口里直接说清「好了之后点哪儿」。
+// 由 Node 打印（UTF-8），不经过 cmd 的代码页，所以中文一定不会花。
+console.log('')
+console.log('  RuiXing 正在启动（大约 1~2 秒）')
+console.log('  好了之后，浏览器打开这个网址：  http://localhost:5173')
+console.log('  这个窗口别关 —— 关掉它就是停止服务。')
+console.log('')
+
 const procs = [
   { name: 'vite  ', cmd: 'npx', args: ['vite', 'HeadEnd'] },
   { name: 'server', cmd: 'node', args: ['BackEnd/index.ts'] },
