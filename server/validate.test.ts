@@ -162,7 +162,7 @@ describe('parseDecision', () => {
   })
 
   it('route 说 generate 但既吐了 deltas 又给了 edit_prompt 时，以内容为准走 both', () => {
-    // 上一条（both 缺 edit_prompt → params）的**镜像**：声明 generate，内容却是两半都有。
+    // 通用规则（`hasParams && hasEdit → both`）的一个格子：声明 generate，内容却是两半都有。
     // 不修的话前端 App.tsx 只在 route 是 params/both 时才应用 deltas，
     // 用户说的调色那半句被静默丢掉，而 degraded 还是 false——连信号都没有。
     const d = parseDecision({
@@ -173,6 +173,23 @@ describe('parseDecision', () => {
     expect(d.route).toBe('both')
     expect(d.paramDeltas).toEqual({ exposure: 30 })
     expect(d.degraded).toBe(true)   // 改过道 = 模型没守自己的声明
+  })
+
+  it('route 说 params 但两半内容都有时，以内容为准走 both', () => {
+    // 同一条通用规则的**另一格**：声明 params，内容却是两半都有。
+    // 漏掉它的后果：前端只在 route 是 generate/both 时才调 runGenerate，
+    // 于是用户说的"去掉那个人"被静默丢掉，而 degraded 还是 false。
+    //
+    // 这两条并排放着是有意的：它们各自钉住通用规则的一格，
+    // 把规则换回"只认 generate 那一格"的特例写法，只有这一条会红。
+    const d = parseDecision({
+      route: 'params',
+      param_deltas: { exposure: 30 },
+      edit_prompt: 'Remove the person behind the subject.',
+    })
+    expect(d.route).toBe('both')
+    expect(d.editPrompt).toContain('Remove the person')
+    expect(d.degraded).toBe(true)
   })
 })
 

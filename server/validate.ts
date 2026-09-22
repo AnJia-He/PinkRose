@@ -110,12 +110,15 @@ function reconcile(route: Route, hasParams: boolean, hasEdit: boolean): Route {
   // 留在 'both' 会让前端去跑一次空的生成（runGenerate 第一行就 return），
   // 等于决策声称"要生成"却什么都没发生。degraded 已经为 true，不丢信号。
   if (route === 'both' && !hasEdit && hasParams) return 'params'
-  // 模型的声明与内容冲突时以内容为准。上面三条是前三种组合，
-  // 这条是它们的对称项，原来漏了：声明 generate 但又吐了 deltas 且有 edit_prompt，
-  // 那就是一次 both（调色 + 生成）。
-  // 漏掉它：前端只在 route 是 params/both 时应用 deltas，于是用户说的调色那半句
-  // 被静默丢掉，而 degraded 还是 false——连"出过问题"的信号都没有。
-  if (route === 'generate' && hasParams && hasEdit) return 'both'
+  // 通用规则：**内容两半都有，那就是 both**，不管模型声明的是哪个。
+  //
+  // 这一条原来被写成了两条特例分支，于是分两次各漏一条：
+  // 先漏"声明 params 但两半都有"，补了"声明 generate 但两半都有"，还是漏。
+  // 漏的根源不是粗心，是**把通用规则拆成了特例列表**——补格子的修法本身有问题。
+  //
+  // 漏掉它的后果：前端只在 route 是 generate/both 时才调 runGenerate，
+  // 用户说的那半句会被静默丢掉，而 degraded 还是 false——连"出过问题"的信号都没有。
+  if (hasParams && hasEdit) return 'both'
   return route
 }
 

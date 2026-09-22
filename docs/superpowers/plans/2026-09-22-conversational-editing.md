@@ -1783,7 +1783,7 @@ describe('parseDecision', () => {
   })
 
   it('route 说 generate 但既吐了 deltas 又给了 edit_prompt 时，以内容为准走 both', () => {
-    // 上一条（both 缺 edit_prompt → params）的**镜像**：声明 generate，内容却是两半都有。
+    // 通用规则（`hasParams && hasEdit → both`）的一个格子：声明 generate，内容却是两半都有。
     // 不修的话前端 App.tsx 只在 route 是 params/both 时才应用 deltas，
     // 用户说的调色那半句被静默丢掉，而 degraded 还是 false——连信号都没有。
     const d = parseDecision({
@@ -1794,6 +1794,23 @@ describe('parseDecision', () => {
     expect(d.route).toBe('both')
     expect(d.paramDeltas).toEqual({ exposure: 30 })
     expect(d.degraded).toBe(true)   // 改过道 = 模型没守自己的声明
+  })
+
+  it('route 说 params 但两半内容都有时，以内容为准走 both', () => {
+    // 同一条通用规则的**另一格**：声明 params，内容却是两半都有。
+    // 漏掉它的后果：前端只在 route 是 generate/both 时才调 runGenerate，
+    // 于是用户说的"去掉那个人"被静默丢掉，而 degraded 还是 false。
+    //
+    // 这两条并排放着是有意的：它们各自钉住通用规则的一格，
+    // 把规则换回"只认 generate 那一格"的特例写法，只有这一条会红。
+    const d = parseDecision({
+      route: 'params',
+      param_deltas: { exposure: 30 },
+      edit_prompt: 'Remove the person behind the subject.',
+    })
+    expect(d.route).toBe('both')
+    expect(d.editPrompt).toContain('Remove the person')
+    expect(d.degraded).toBe(true)
   })
 })
 
@@ -1934,12 +1951,15 @@ function reconcile(route: Route, hasParams: boolean, hasEdit: boolean): Route {
   // 留在 'both' 会让前端去跑一次空的生成（runGenerate 第一行就 return），
   // 等于决策声称"要生成"却什么都没发生。degraded 已经为 true，不丢信号。
   if (route === 'both' && !hasEdit && hasParams) return 'params'
-  // 模型的声明与内容冲突时以内容为准。上面三条是前三种组合，
-  // 这条是它们的对称项，原来漏了：声明 generate 但又吐了 deltas 且有 edit_prompt，
-  // 那就是一次 both（调色 + 生成）。
-  // 漏掉它：前端只在 route 是 params/both 时应用 deltas，于是用户说的调色那半句
-  // 被静默丢掉，而 degraded 还是 false——连"出过问题"的信号都没有。
-  if (route === 'generate' && hasParams && hasEdit) return 'both'
+  // 通用规则：**内容两半都有，那就是 both**，不管模型声明的是哪个。
+  //
+  // 这一条原来被写成了两条特例分支，于是分两次各漏一条：
+  // 先漏"声明 params 但两半都有"，补了"声明 generate 但两半都有"，还是漏。
+  // 漏的根源不是粗心，是**把通用规则拆成了特例列表**——补格子的修法本身有问题。
+  //
+  // 漏掉它的后果：前端只在 route 是 generate/both 时才调 runGenerate，
+  // 用户说的那半句会被静默丢掉，而 degraded 还是 false——连"出过问题"的信号都没有。
+  if (hasParams && hasEdit) return 'both'
   return route
 }
 
@@ -1999,19 +2019,29 @@ export function fallbackDecision(text: string): RouteDecision {
 export { ROUTES }
 ```
 
-> **评审裁定 ⑤ 的补充**：`reconcile()` 的第四条分支（`route==='generate' && hasParams && hasEdit → 'both'`）
-> 和它对应的那条测试，是计划评审时补上的——上面这段已经是补过之后的最终版，与仓库里的
-> `server/validate.ts` 逐字节一致。原来只写了三条，漏掉的正是「both 缺 edit_prompt → params」
-> 的对称项；不补的话，模型声明 `generate` 却又吐了 deltas 和 edit_prompt 时，前端只在
-> `route` 是 `params`/`both` 时才应用 deltas，用户说的调色那半句被静默丢掉，而 `degraded`
-> 还停在 `false`——连"出过问题"的信号都没有。
+> **评审裁定 ⑤ / ⑦ 的补充**：上面 `reconcile()` 的最后一条是**通用规则**——
+> 「内容两半都有，那就是 `both`，不管模型声明的是哪个」。它与仓库里的 `server/validate.ts` 逐字节一致。
+>
+> 这条规则**修了四格，前三格都是补特例、补一次漏一格**：
+>
+> | 次序 | 格子 | 谁发现 |
+> |---|---|---|
+> | 1 | `params` + 无 deltas + 有 edit | Task 4（`hasParams` 的死分支） |
+> | 2 | `both` + 有 deltas + 无 edit | Task 4 复审 |
+> | 3 | `generate` + 有 deltas + 有 edit | Task 10（裁定 ⑤） |
+> | 4 | **`params` + 有 deltas + 有 edit** | **Task 10 复审** ← 第 3 格的镜像 |
+>
+> 第 4 次由裁定 ⑦ 把特例换成了通用规则。**修到第四次说明修法本身有问题**：
+> 把一条通用规则拆成一串特例分支，就注定要一格一格地漏。
+> 对应的两条测试（`route` 说 `generate` / 说 `params`，内容都是两半都有）并排放着，
+> 各自钉住通用规则的一格——把规则换回"只认 `generate` 那一格"的特例写法，只有后一条会红。
 
 - [ ] **Step 4: 跑测试确认通过**
 
 ```bash
 npx vitest run server/validate.test.ts
 ```
-Expected: PASS（29 个）
+Expected: PASS（30 个 —— 其中 2 条是 `reconcile` 通用规则的两格，见裁定 ⑤/⑦）
 
 **如果某条断言与实现冲突：报告冲突，不要偷偷放宽测试。** 计划一的修复波里出现过一次"测试与实现打架"，执行者回来说了，最后是改实现（把系数从 0.35 改成 1.0）而不是改断言。
 
@@ -4315,6 +4345,7 @@ MSG
 // 真实 API 冒烟。**会花钱**——一次生成约 12,900 tokens，手动跑，不进 CI。
 // 用法：先 `node server/index.ts`，再 `node scripts/smoke.mjs`
 // 加 `--with-edit` 才打 /images/edits（那一步约 12,900 tokens，跑一次就够）。
+// 生成的结果会落到 `test-photos/smoke_edit.png` 供肉眼比对（该目录已 gitignore）。
 //
 // ─────────────────────────────────────────────────────────────────────
 // 断言语义（裁定 ⑥）：**脚本断言的是我们能控制的东西，报告的是模型的选择。**
@@ -4334,11 +4365,21 @@ MSG
 // 唯一的例外是第 3 项（见那里的注释）：它是"调色零成本"这个成本模型的地基，
 // 对**模型的选择**也保留硬断言——但它会区分"上游抽风"和"我们的代码不对"两种红。
 // ─────────────────────────────────────────────────────────────────────
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 const BASE = process.env.SMOKE_BASE ?? 'http://localhost:8787'
+// 两种底图，各有各的理由：
+//   IMG      —— 真照片（1200×800），用来测路由/建议。它不关心尺寸，测的是模型读不读得懂人话。
+//   EDIT_IMG —— 1024×768 的示意图，**宽高都是 32 的倍数**，用来测 /api/edit。
+//              这一项关心尺寸：请求里声明的 size 必须与送进去的字节完全一致，
+//              否则模型会重构构图（实测地平线从 78% 漂到 65%）。
+//              原来这里送的是 1200×800 的原始字节却声明 1216×800 —— **声明与实物不符**，
+//              这个脚本因此是坏的。换成天然对齐的图，就再也不需要任何缩放处理（本脚本零 canvas）。
 const IMG = resolve('spike/evidence/real_1027.jpg')
+const EDIT_IMG = resolve('spike/evidence/input_scene.jpg')
+const EDIT_W = 1024
+const EDIT_H = 768
 const WANT_EDIT = process.argv.includes('--with-edit')
 
 const t0 = () => performance.now()
@@ -4397,11 +4438,33 @@ const post = (path, body) => req('POST', path, body)
 // 是 brief 的笔误。这里验的是「服务活着吗」，方法写错只会得到一个假警报。
 const get = (path) => req('GET', path)
 
-const dataUrl = `data:image/jpeg;base64,${(await readFile(IMG)).toString('base64')}`
+/**
+ * 读 JPEG 的真实宽高（只扫到 SOF 段为止）。
+ * 它存在的理由：本脚本踩过一次「声明的 size 与送进去的字节不符」，
+ * 而那正是本计划最关键的实测结论之一。让**实物尺寸**变成一条硬断言，
+ * 以后有人换了底图、忘了改声明，这里会当场红，而不是把一次跑歪的生成浪费掉。
+ */
+function jpegSize(buf) {
+  let i = 2
+  while (i + 9 < buf.length) {
+    if (buf[i] !== 0xFF) { i++; continue }
+    const m = buf[i + 1]
+    // SOF0..SOF15 就是帧头；跳过 DHT(c4) / JPG(c8) / DAC(cc)
+    if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) {
+      return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) }
+    }
+    i += 2 + buf.readUInt16BE(i + 2)
+  }
+  return null
+}
+
+const jpegBytes = await readFile(IMG)
+const dataUrl = `data:image/jpeg;base64,${jpegBytes.toString('base64')}`
 const ZERO = { exposure: 0, contrast: 0, highlights: 0, shadows: 0,
                saturation: 0, temperature: 0, clarity: 0, vignette: 0 }
 
-console.log(`底图 ${IMG}\n`)
+console.log(`底图 ${IMG}  （路由/建议用）`)
+console.log(`     生成项用 ${EDIT_IMG} —— ${EDIT_W}×${EDIT_H}，宽高都是 32 的倍数（size 必须与实物一致）\n`)
 
 // ---- 1. 健康检查 ----
 let t = t0()
@@ -4467,8 +4530,16 @@ check('纯生成路由 200', r2.status === 200, `实际 status=${r2.status}`)
 // 期望值如实标注，但不下硬断言：模型选 generate 还是 params 不是我们能控制的
 report('走生成路（期望 generate）', d2?.route === 'generate',
   `实际走 ${d2?.route}${d2?.degraded ? ' ' + UPSTREAM : '（模型老实答的，但没走生成）'}`)
-report('给了非空 edit_prompt（第 6 项的前提）', Boolean(d2?.editPrompt?.trim()),
-  d2?.degraded ? `本次是降级结果，prompt 是用户原话${UPSTREAM}` : '模型没给 edit_prompt')
+// 下面这句判读必须跟着**实际内容**走，不能只看 degraded。
+// degraded=true 并不必然有 prompt：模型可以声明 route=generate 却两半都不给
+// （parseDecision 不会走 fallbackDecision，于是 editPrompt 为空）。
+// 那种情况下说"prompt 是用户原话"是假的——**下一行打印的 edit_prompt="" 会当场打脸。**
+const hasPrompt = Boolean(d2?.editPrompt?.trim())
+report('给了非空 edit_prompt（第 6 项的前提）', hasPrompt,
+  hasPrompt ? ''
+    : d2?.degraded
+      ? `prompt 是空的 —— 模型声明了要生成，却两半都不给${UPSTREAM}`
+      : '模型没给 edit_prompt，而 degraded=false：是它老实答的，值得看一眼')
 
 // ---- 5. 多意图 ----
 t = t0()
@@ -4490,25 +4561,39 @@ report('both 的两半都给了（deltas 与 edit_prompt 皆非空）',
 
 // ---- 6. 生成式编辑（**这一步花钱**）----
 if (WANT_EDIT && d2?.editPrompt) {
-  t = t0()
-  const ed = await post('/api/edit', {
-    imageDataUrl: dataUrl, editPrompt: d2.editPrompt, width: 1216, height: 800,
-  })
-  console.log(`\n6. /api/edit            ${ed.status}  ${secs(t)}s  ` +
-    (ed.json.imageDataUrl ? `输出 ${Math.round(ed.json.imageDataUrl.length / 1024)} KB` : JSON.stringify(ed.json)))
-  check('生成式编辑 200', ed.status === 200, `实际 status=${ed.status}`)
-  check('回来了图片数据', typeof ed.json.imageDataUrl === 'string' && ed.json.imageDataUrl.startsWith('data:image/'),
-    `实际 ${JSON.stringify(ed.json).slice(0, 200)}`)
-  check('回图尺寸与请求一致（1216x800）',
-    ed.json.width === 1216 && ed.json.height === 800,
-    `实际 ${ed.json.width}x${ed.json.height}`)
-  // 把结果存下来供肉眼比对（test-photos/ 已在 .gitignore 排除）
-  if (ed.json.imageDataUrl) {
-    const { writeFile, mkdir } = await import('node:fs/promises')
-    await mkdir('test-photos', { recursive: true })
-    await writeFile('test-photos/smoke_edit.png',
-      Buffer.from(ed.json.imageDataUrl.split(',')[1], 'base64'))
-    console.log('     已存到 test-photos/smoke_edit.png')
+  const editBytes = await readFile(EDIT_IMG)
+  const real = jpegSize(editBytes)
+  console.log('\n6. /api/edit')
+  console.log(`     底图 ${EDIT_IMG}   实物 ${real?.w}×${real?.h}   声明 ${EDIT_W}×${EDIT_H}`)
+  console.log(`     prompt 沿用第 4 项（那是对 ${IMG} 的路由结果）。两项底图不同是**有意的**：`)
+  console.log('     路由不关心尺寸，只有 /api/edit 关心，所以只有它需要天然对齐的底图。')
+  // 先验尺寸再花这笔钱：声明与实物不符时模型会重构构图，跑出来的结果没有意义
+  const sizeOk = real !== null && real.w === EDIT_W && real.h === EDIT_H
+  check('声明的 size 与底图实物一致（不一致模型会重构构图）', sizeOk,
+    real ? `实物 ${real.w}×${real.h}，声明 ${EDIT_W}×${EDIT_H}` : `${EDIT_IMG} 不是能解析的 JPEG`)
+  if (sizeOk) {
+    t = t0()
+    const ed = await post('/api/edit', {
+      imageDataUrl: `data:image/jpeg;base64,${editBytes.toString('base64')}`,
+      editPrompt: d2.editPrompt, width: EDIT_W, height: EDIT_H,
+    })
+    console.log(`     响应 ${ed.status}  ${secs(t)}s  ` +
+      (ed.json.imageDataUrl ? `输出 ${Math.round(ed.json.imageDataUrl.length / 1024)} KB` : JSON.stringify(ed.json)))
+    check('生成式编辑 200', ed.status === 200, `实际 status=${ed.status}`)
+    check('回来了图片数据', typeof ed.json.imageDataUrl === 'string' && ed.json.imageDataUrl.startsWith('data:image/'),
+      `实际 ${JSON.stringify(ed.json).slice(0, 200)}`)
+    check(`回图尺寸与请求一致（${EDIT_W}×${EDIT_H}）`,
+      ed.json.width === EDIT_W && ed.json.height === EDIT_H,
+      `实际 ${ed.json.width}x${ed.json.height}`)
+    // 把结果存下来供肉眼比对（test-photos/ 已在 .gitignore 排除）
+    if (ed.json.imageDataUrl) {
+      await mkdir('test-photos', { recursive: true })
+      await writeFile('test-photos/smoke_edit.png',
+        Buffer.from(ed.json.imageDataUrl.split(',')[1], 'base64'))
+      console.log('     已存到 test-photos/smoke_edit.png')
+    }
+  } else {
+    console.log('     ⏭  尺寸对不上，跳过这次花钱的调用')
   }
 } else if (WANT_EDIT) {
   // 显式说了要花钱跑生成，却因为第 4 项没给 prompt 而跑不了。这也要分开看：
@@ -4552,13 +4637,21 @@ sleep 1
 node scripts/smoke.mjs
 ```
 Expected: 1~5 项全部成功。**第 3 项必须是 `route=params`** —— 那是"调色零成本"这个产品形态的地基，错了整个成本模型就垮了。
+（第 4/5 项的 `route` 是**模型的选择**，脚本只如实报告、不改退出码——理由见评审裁定 ⑥，判据写在 `scripts/smoke.mjs` 的头部注释里。）
 
 - [ ] **Step 3: 跑带生成的冒烟（花钱）**
 
 ```bash
 node scripts/smoke.mjs --with-edit
 ```
-Expected: 第 6 项成功，`test-photos/smoke_edit.png` 里背景的人没了、脸还在。
+Expected: 第 6 项成功——`/api/edit` 返回 200、回来的图尺寸与请求一致（1024×768）、
+`test-photos/smoke_edit.png` 落盘。
+
+**不要对画面内容下断言。** 底图是 `spike/evidence/input_scene.jpg`——一张 1024×768 的示意图
+（宽高都是 32 的倍数，所以"声明的 size"与"实物尺寸"天然一致），**不是人像**。
+所以「背景的人没了、脸还在」这种话在这里没有意义（这张图里根本没有脸）。
+第 6 项验的是**往返**：请求发得出去、图回得来、尺寸对得上。
+画面本身好不好，要靠 Step 4 那次用真照片的浏览器端到端看。
 
 - [ ] **Step 4: 浏览器端到端，掐表**
 
