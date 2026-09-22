@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { PRESETS } from './presets'
-import { PARAM_KEYS } from './adjustments'
+import { PARAM_KEYS } from '../../shared/adjustments.ts'
 
 describe('PRESETS', () => {
   it('至少 5 个预设', () => {

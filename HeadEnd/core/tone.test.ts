@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ZERO, toUnit } from './adjustments'
+import { ZERO, toUnit } from '../../shared/adjustments.ts'
 import { applyTone, srgbToLinear, linearToSrgb } from './tone'
 
 const mid: [number, number, number] = [0.5, 0.5, 0.5]

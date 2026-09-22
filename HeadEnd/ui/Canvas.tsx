@@ -1,7 +1,7 @@
 import { useEffect, useRef, type MutableRefObject } from 'react'
 import { TonePipeline } from '../render/pipeline'
 import type { DecodedImage } from '../image/decode'
-import type { Adjustments } from '../core/adjustments'
+import type { Adjustments } from '../../shared/adjustments.ts'
 
 type Props = {
   image: DecodedImage | null

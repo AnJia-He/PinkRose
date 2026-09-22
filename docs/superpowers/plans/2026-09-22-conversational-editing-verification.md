@@ -3,6 +3,10 @@
 > 对应计划：`docs/superpowers/plans/2026-09-22-conversational-editing.md`（Task 10）
 > 日期：2026-09-22　分支：`feat/conversational-editing`
 > 底图：`spike/evidence/real_1027.jpg`（1200×800，非 32 的倍数）
+>
+> ⚠️ **路径说明（2026-09-22 补）**：本文写于目录改名之前。文中 `src/` 就是现在的 `HeadEnd/`，
+> `server/` 就是 `BackEnd/`，`shared/` 没变。**行号引用（如 `src/App.tsx:142-144`）改名后仍然有效**
+> ——同一个文件、同一行，只是所在目录换了名字。另外 `src/core/adjustments.ts` 后来搬进了 `shared/adjustments.ts`。
 
 **跑法**
 

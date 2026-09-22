@@ -1,4 +1,4 @@
-import { PARAM_KEYS, type Adjustments, PARAM_MIN, PARAM_MAX } from '../core/adjustments'
+import { PARAM_KEYS, type Adjustments, PARAM_MIN, PARAM_MAX } from '../../shared/adjustments.ts'
 import { PRESETS } from '../core/presets'
 
 const LABELS: Record<keyof Adjustments, string> = {

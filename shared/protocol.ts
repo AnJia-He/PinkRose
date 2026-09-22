@@ -1,4 +1,4 @@
-import type { Adjustments } from '../HeadEnd/core/adjustments.ts'
+import type { Adjustments } from './adjustments.ts'
 
 export type { Adjustments }
 

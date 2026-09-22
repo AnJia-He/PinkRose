@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { postEdit, postRoute, postSuggest, ApiError } from './client'
-import { ZERO } from '../core/adjustments'
+import { ZERO } from '../../shared/adjustments.ts'
 
 afterEach(() => vi.unstubAllGlobals())
 

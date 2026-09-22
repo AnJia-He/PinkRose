@@ -1,4 +1,4 @@
-import type { Adjustments } from './adjustments'
+import type { Adjustments } from '../../shared/adjustments.ts'
 import type { DecodedImage } from '../image/decode'
 
 export type Snapshot = {

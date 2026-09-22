@@ -1,4 +1,4 @@
-import { ZERO, type Adjustments } from './adjustments'
+import { ZERO, type Adjustments } from '../../shared/adjustments.ts'
 
 export type Preset = {
   id: string

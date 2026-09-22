@@ -1,4 +1,4 @@
-import { toUnit, type Adjustments } from '../core/adjustments'
+import { toUnit, type Adjustments } from '../../shared/adjustments.ts'
 import type { DecodedImage } from '../image/decode'
 import { VERTEX_SRC, FRAGMENT_SRC } from './shader'
 

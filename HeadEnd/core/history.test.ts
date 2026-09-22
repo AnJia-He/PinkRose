@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { pushSnapshot, jumpTo, bitmapsToClose, MAX_SNAPSHOTS, type Snapshot } from './history'
 import type { DecodedImage } from '../image/decode'
-import { ZERO } from './adjustments'
+import { ZERO } from '../../shared/adjustments.ts'
 
 const fakeBitmap = (tag: string) => ({ tag }) as unknown as DecodedImage
 const mk = (id: number, isOriginal = false): Snapshot => ({

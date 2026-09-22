@@ -1,4 +1,4 @@
-import type { Adjustments } from './adjustments'
+import type { Adjustments } from '../../shared/adjustments.ts'
 
 export type Unit = Record<keyof Adjustments, number>
 export type RGB = [number, number, number]

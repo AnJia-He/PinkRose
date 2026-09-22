@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ZERO, PARAM_KEYS, clampAdjustments, applyDeltas, toUnit } from './adjustments'
+import { ZERO, PARAM_KEYS, clampAdjustments, applyDeltas, toUnit } from './adjustments.ts'
 
 describe('PARAM_KEYS', () => {
   it('固定八个参数，名字不能改', () => {
