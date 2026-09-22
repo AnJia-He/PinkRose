@@ -1920,7 +1920,9 @@ spec §4.5 的实测结论——**prompt 写法直接决定人脸保真度**（�
 - Create: `server/prompt.test.ts`
 
 **Interfaces:**
-- Consumes: `Adjustments` / `PARAM_KEYS`（`src/core/adjustments.ts`）、`RouteDecision`（Task 1）
+- Consumes: `ZERO` / `Adjustments`（`src/core/adjustments.ts`）
+  （原稿写的是 `PARAM_KEYS` / `RouteDecision`，与实现不符——代码只 import 前两个。
+  实现者按"代码逐字"执行、没有加无用 import，是对的。）
 - Produces:
   - `buildEditPrompt(edit: string): string` —— 补上「只改这一处」+ 保留项
   - `describeParams(a: Adjustments): string` —— 当前参数的中文描述，给 LLM 当上下文
@@ -1995,9 +1997,11 @@ describe('ROUTER_SYSTEM', () => {
   })
 
   it('写死了 route 只有三个值 —— 实测模型会吐 "ask"', () => {
-    expect(ROUTER_SYSTEM).toContain('params')
-    expect(ROUTER_SYSTEM).toContain('generate')
-    expect(ROUTER_SYSTEM).toContain('both')
+    // 这里**不能**只断言三个词各出现一次：上面 JSON 示例里的字面量
+    // （"route": "params" | "generate" | "both"）本身就能满足那三个断言，
+    // 于是把下面这句约束**整句删掉**，测试照样全绿——变异探针实测过。
+    // 而这句话是实测硬约束（模型真吐过 "ask"），删了必须有人知道。
+    expect(ROUTER_SYSTEM).toContain('route 只能是 params、generate、both 三者之一，没有第四种')
   })
 
   it('要求 param_deltas 排在 reply 和 edit_prompt 之前', () => {
