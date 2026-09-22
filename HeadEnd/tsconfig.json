@@ -15,5 +15,6 @@
     "noEmit": true,
     "types": ["vitest/globals"]
   },
-  "include": [".", "../shared"]
+  "include": [".", "../shared"],
+  "exclude": ["BackEnd"]
 }

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { AppErrorCode } from '../shared/protocol.ts'
+import type { AppErrorCode } from '../../shared/protocol.ts'
 import { SnError } from './sn.ts'
 
 /** 路由处理里唯一该抛的错误类型。带上 HTTP 状态码和给用户看的文案。 */
@@ -7,7 +7,7 @@ export class HttpError extends Error {
   // ⚠️ 不用构造函数参数属性（`constructor(public readonly code: ...)`）。
   // Node 24 默认的 TypeScript **剥离**模式不支持它，会抛
   // `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。而 vitest 走 esbuild 能正常转译——
-  // 于是测试全绿、`node BackEnd/index.ts` 直接崩。必须显式声明字段。
+  // 于是测试全绿、`node HeadEnd/BackEnd/index.ts` 直接崩。必须显式声明字段。
   readonly code: AppErrorCode
   readonly status: number
   constructor(code: AppErrorCode, message: string, status = 400) {

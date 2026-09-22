@@ -3,7 +3,7 @@ import { handleRoute } from './route.ts'
 import { SenseNovaClient } from './sn.ts'
 import { SerialQueue } from './queue.ts'
 import { ROUTER_SYSTEM } from './prompt.ts'
-import { ZERO } from '../shared/adjustments.ts'
+import { ZERO } from '../../shared/adjustments.ts'
 import type { Config } from './config.ts'
 
 const cfg: Config = {

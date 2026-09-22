@@ -14,7 +14,7 @@ console.log('')
 
 const procs = [
   { name: 'vite  ', cmd: 'npx', args: ['vite', 'HeadEnd'] },
-  { name: 'server', cmd: 'node', args: ['BackEnd/index.ts'] },
+  { name: 'server', cmd: 'node', args: ['HeadEnd/BackEnd/index.ts'] },
 ].map(({ name, cmd, args }) => {
   const p = spawn(cmd, args, { shell, stdio: ['ignore', 'pipe', 'pipe'] })
   const tag = (line) => process.stdout.write(`[${name}] ${line}`)

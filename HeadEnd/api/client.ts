@@ -1,7 +1,7 @@
 import type {
   EditRequest, EditResponse, RouteDecision, RouteRequest, RouteResponse,
   SuggestRequest, SuggestResponse, AppErrorCode,
-} from '../../shared/protocol'
+} from '../../shared/protocol.ts'
 
 export class ApiError extends Error {
   readonly code: AppErrorCode

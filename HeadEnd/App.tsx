@@ -9,7 +9,7 @@ import { exportImage } from './export/save'
 import { prepareForModel, prepareForRouting } from './image/prepare'
 import { ApiError, postEdit, postRoute, postSuggest } from './api/client'
 import { bitmapsToClose, jumpTo, pushSnapshot, type Snapshot } from './core/history'
-import type { RouteDecision, SuggestCard } from '../shared/protocol'
+import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
 
 /**
  * 建议卡片最多等这么久。

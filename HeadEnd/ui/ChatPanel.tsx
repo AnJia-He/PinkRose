@@ -1,4 +1,4 @@
-import type { SuggestCard } from '../../shared/protocol'
+import type { SuggestCard } from '../../shared/protocol.ts'
 
 export type ChatMessage = {
   id: number

@@ -1,5 +1,5 @@
-import { PARAM_KEYS, PARAM_MIN, PARAM_MAX } from '../shared/adjustments.ts'
-import type { ParamDeltas, Route, RouteDecision } from '../shared/protocol.ts'
+import { PARAM_KEYS, PARAM_MIN, PARAM_MAX } from '../../shared/adjustments.ts'
+import type { ParamDeltas, Route, RouteDecision } from '../../shared/protocol.ts'
 
 const ROUTES: readonly Route[] = ['params', 'generate', 'both']
 

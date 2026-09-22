@@ -1,5 +1,5 @@
-import { ZERO, clampAdjustments, type Adjustments } from '../shared/adjustments.ts'
-import type { RouteRequest, RouteResponse } from '../shared/protocol.ts'
+import { ZERO, clampAdjustments, type Adjustments } from '../../shared/adjustments.ts'
+import type { RouteRequest, RouteResponse } from '../../shared/protocol.ts'
 import { HttpError } from './http.ts'
 import { ROUTER_SYSTEM, buildRouterUser } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'

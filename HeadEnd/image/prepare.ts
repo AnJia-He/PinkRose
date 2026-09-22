@@ -1,4 +1,4 @@
-import { MAX_DIMENSION, align32, fitWithin } from '../../shared/size'
+import { MAX_DIMENSION, align32, fitWithin } from '../../shared/size.ts'
 
 export type PreparedImage = {
   /** data URL。送后端用（后端再转发给生成模型）。 */

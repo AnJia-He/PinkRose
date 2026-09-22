@@ -1,4 +1,4 @@
-import type { Route, SuggestCard, SuggestRequest, SuggestResponse } from '../shared/protocol.ts'
+import type { Route, SuggestCard, SuggestRequest, SuggestResponse } from '../../shared/protocol.ts'
 import { HttpError } from './http.ts'
 import { CARD_LABEL_MAX, SUGGEST_SYSTEM } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
