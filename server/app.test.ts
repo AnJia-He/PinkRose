@@ -1,7 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import type { Server } from 'node:http'
-import { createApp } from './app.ts'
+import { createApp, type AppDeps } from './app.ts'
 import type { Config } from './config.ts'
+import { SerialQueue } from './queue.ts'
+import { SenseNovaClient } from './sn.ts'
 
 const cfg: Config = {
   apiKey: 'sk-secret-must-not-leak',
@@ -14,8 +16,8 @@ const cfg: Config = {
 let server: Server | undefined
 afterEach(async () => { await new Promise<void>(r => server?.close(() => r())) })
 
-async function boot(): Promise<string> {
-  server = createApp({ config: cfg })
+async function boot(extra: Partial<AppDeps> = {}): Promise<string> {
+  server = createApp({ config: cfg, ...extra })
   await new Promise<void>(r => server!.listen(0, r))
   return `http://127.0.0.1:${(server.address() as { port: number }).port}`
 }
@@ -62,5 +64,21 @@ describe('createApp', () => {
     // 断言形状跟本文件其它用例一致（Task 1 起的写法）。
     const body = await r.json() as { error: { code: string } }
     expect(body.error.code).toBe('INTERNAL')
+  })
+
+  it('POST /api/route 的请求体超限时不把内存吃光', async () => {
+    // **必须注入 deps**：否则 503 守卫会先于 readJsonBody 触发，
+    // 这条测试永远拿不到 413（brief 原稿的缺陷，已由控制方裁定）。
+    // 这里不需要 client 真的能工作——只要守卫放行。
+    const base = await boot({
+      client: new SenseNovaClient(cfg, (async () => new Response('{}')) as unknown as typeof fetch),
+      queue: new SerialQueue({ sleep: async () => {} }),
+    })
+    const r = await fetch(`${base}/api/route`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ imageDataUrl: 'data:image/jpeg;base64,' + 'A'.repeat(13 * 1024 * 1024), text: 'x' }),
+    })
+    expect(r.status).toBe(413)
   })
 })

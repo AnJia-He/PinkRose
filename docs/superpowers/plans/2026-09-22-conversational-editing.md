@@ -2447,6 +2447,10 @@ export type AppDeps = {
 
 ```ts
     if (req.method === 'POST' && path === '/api/route') {
+      // 顺序是刻意的：守卫在 readJsonBody **之前**。
+      // 没接线是部署期的配置错误，要立刻失败——先缓冲 12 MB 再回 503，
+      // 而且畸形 body 的 400 会盖住"没接线"这个更重要的信号。
+      // 不要为了一条测试把这两句对调。
       if (!deps.client || !deps.queue) {
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
@@ -2456,7 +2460,31 @@ export type AppDeps = {
     }
 ```
 
-- [ ] **Step 6: 给 `server/app.test.ts` 补一条集成测试**
+**这个顺序是刻意钉死的**（控制方在落地时裁定）：503 守卫必须早于 `readJsonBody`。未接线是**部署期的配置错误信号**，应当立刻失败；对调之后，一个畸形 body 会盖住"没接线"这个更重要的信号，而且未接线时还要先缓冲 12 MB 才告诉运维"你没配置"。
+
+由此带来一个测试侧的前提：**用 `boot()` 打 `/api/route` 的用例，凡是要走到 `readJsonBody` 的，都必须先注入 deps**，否则一律先撞 503。Step 6 第二条就是这么处理的。
+
+- [ ] **Step 6: 给 `server/app.test.ts` 补两条集成测试**
+
+`boot()` 这个函数**已经存在于该文件**（Task 1 引入），改成接可选 deps。
+
+```ts
+async function boot(extra: Partial<AppDeps> = {}): Promise<string> {
+  server = createApp({ config: cfg, ...extra })
+  await new Promise<void>(r => server!.listen(0, r))
+  return `http://127.0.0.1:${(server.address() as { port: number }).port}`
+}
+```
+
+imports 相应改成：
+
+```ts
+import { createApp, type AppDeps } from './app.ts'
+import { SerialQueue } from './queue.ts'
+import { SenseNovaClient } from './sn.ts'
+```
+
+再在 `describe('createApp')` 的末尾加两条：
 
 ```ts
   it('POST /api/route 在没接客户端时返回 503 的结构化错误', async () => {
@@ -2467,11 +2495,20 @@ export type AppDeps = {
       body: JSON.stringify({ imageDataUrl: 'data:image/jpeg;base64,AA', text: '亮一点' }),
     })
     expect(r.status).toBe(503)
-    expect((await r.json()).error.code).toBe('INTERNAL')
+    // tsconfig.server.json 的 lib 不含 DOM：Response.json() 是 unknown，
+    // 断言形状跟本文件其它用例一致（Task 1 起的写法）。
+    const body = await r.json() as { error: { code: string } }
+    expect(body.error.code).toBe('INTERNAL')
   })
 
   it('POST /api/route 的请求体超限时不把内存吃光', async () => {
-    const base = await boot()
+    // **必须注入 deps**：否则 503 守卫会先于 readJsonBody 触发，
+    // 这条测试永远拿不到 413（brief 原稿的缺陷，已由控制方裁定）。
+    // 这里不需要 client 真的能工作——只要守卫放行。
+    const base = await boot({
+      client: new SenseNovaClient(cfg, (async () => new Response('{}')) as unknown as typeof fetch),
+      queue: new SerialQueue({ sleep: async () => {} }),
+    })
     const r = await fetch(`${base}/api/route`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -2480,6 +2517,10 @@ export type AppDeps = {
     expect(r.status).toBe(413)
   })
 ```
+
+第一条的 `await r.json() as {...}` 断言是**必需的**，不是风格偏好：`tsconfig.server.json` 的 lib 不含 DOM，`Response.json()` 返回 `unknown`，不加断言 `tsc` 直接报 TS2571（落地时实测到这个错）。不要为了"简洁"把断言去掉，也不要给 server 加 DOM lib。
+
+第二条的验收方式是**变异**：把 `server/http.ts` 的 `DEFAULT_BODY_LIMIT` 从 `12 * 1024 * 1024` 改成 `100 * 1024 * 1024`，这条必须变红（落地实测：`expected 200 to be 413`）。绿着就说明它没咬住 `readJsonBody` 的上限。
 
 - [ ] **Step 7: 跑全部服务端测试**
 

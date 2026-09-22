@@ -44,6 +44,10 @@ async function handle(deps: AppDeps, req: import('node:http').IncomingMessage,
       return
     }
     if (req.method === 'POST' && path === '/api/route') {
+      // 顺序是刻意的：守卫在 readJsonBody **之前**。
+      // 没接线是部署期的配置错误，要立刻失败——先缓冲 12 MB 再回 503，
+      // 而且畸形 body 的 400 会盖住"没接线"这个更重要的信号。
+      // 不要为了一条测试把这两句对调。
       if (!deps.client || !deps.queue) {
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
