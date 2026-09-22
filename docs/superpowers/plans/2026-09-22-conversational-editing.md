@@ -1651,9 +1651,13 @@ describe('parseDecision', () => {
     expect(d.route).toBe('generate')
   })
 
-  it('deltas 全为空时 route 不该是 params（那等于什么都没做）', () => {
+  it('deltas 全为空且没有 edit_prompt 时走 params，并标记 degraded', () => {
+    // "走 params 但什么也没动"和"走 generate 但 prompt 是空的"都是空操作
+    // （前端的 runGenerate 第一行就是 if (!editPrompt) return）。
+    // 那就不如走零成本、可逆的那条路，同时用 degraded 说清"这次模型给的没用"。
     const d = parseDecision({ route: 'params', param_deltas: {} })
-    expect(d.route).toBe('generate')   // 没参数可动，只能去生成
+    expect(d.route).toBe('params')
+    expect(d.degraded).toBe(true)
   })
 
   it('用 camelCase 的输出也认 —— 模型可能不听话', () => {
@@ -1714,7 +1718,7 @@ export function inferRoute(hasParams: boolean, hasEdit: boolean): Route {
 export function normalizeDeltas(v: unknown): ParamDeltas {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return {}
   const src = v as Record<string, unknown>
-  const raw: Partial<Record<string, number>> = {}
+  const raw: Record<string, number> = {}
   for (const k of PARAM_KEYS) {
     const x = src[k]
     if (typeof x !== 'number' || !Number.isFinite(x)) continue
