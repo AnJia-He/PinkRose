@@ -61,9 +61,11 @@ describe('ROUTER_SYSTEM', () => {
   })
 
   it('写死了 route 只有三个值 —— 实测模型会吐 "ask"', () => {
-    expect(ROUTER_SYSTEM).toContain('params')
-    expect(ROUTER_SYSTEM).toContain('generate')
-    expect(ROUTER_SYSTEM).toContain('both')
+    // 这里**不能**只断言三个词各出现一次：上面 JSON 示例里的字面量
+    // （"route": "params" | "generate" | "both"）本身就能满足那三个断言，
+    // 于是把下面这句约束**整句删掉**，测试照样全绿——变异探针实测过。
+    // 而这句话是实测硬约束（模型真吐过 "ask"），删了必须有人知道。
+    expect(ROUTER_SYSTEM).toContain('route 只能是 params、generate、both 三者之一，没有第四种')
   })
 
   it('要求 param_deltas 排在 reply 和 edit_prompt 之前', () => {
