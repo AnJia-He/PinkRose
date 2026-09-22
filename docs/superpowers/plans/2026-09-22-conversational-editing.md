@@ -1496,7 +1496,7 @@ export class SerialQueue {
 ```bash
 npx vitest run server/queue.test.ts
 ```
-Expected: PASS（10 个）
+Expected: PASS（9 个）
 
 - [ ] **Step 5: 提交**
 
