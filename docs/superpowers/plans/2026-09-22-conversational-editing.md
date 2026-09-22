@@ -1220,7 +1220,20 @@ export class SenseNovaClient {
       throw new SnError('UPSTREAM_FAILED', `连不上上游：${(e as Error).message}`, true)
     }
 
-    const text = await res.text()
+    // ⚠️ 正文读取必须**同等**对待，不能放在 try 之外。
+    // fetch 在**响应头**到达时就 resolve 了，正文是随后独立的一次网络往返：
+    // 连接下载到一半被重置、或 AbortSignal.timeout 掐在几 MB 的 edit 正文
+    // 传输途中（EDIT_TIMEOUT_MS 覆盖的是整个传输过程），都在这一句上炸。
+    // 裸异常逃出去，调用方按 `SnError && retryable` 重试的网关会把它当成
+    // 永久失败——一次抖动变成用户可见的硬错误。
+    // 范围**只包住这一句**：下面 res.ok 与 JSON 解析抛的 SnError 分类已经正确，
+    // 套进来只会把它们重新包装一遍。
+    let text: string
+    try {
+      text = await res.text()
+    } catch (e) {
+      throw new SnError('UPSTREAM_FAILED', `读取上游响应正文失败：${(e as Error).message}`, true)
+    }
     if (!res.ok) {
       throw new SnError(codeForStatus(res.status),
         `上游 HTTP ${res.status}：${text.slice(0, 300)}`, res.status === 429 || res.status >= 500)
