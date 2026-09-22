@@ -43,15 +43,15 @@ vi.mock('./image/decode', async (importOriginal) => {
 
 /** 三个网络出口。**保留真的 ApiError** —— App 里靠 `instanceof ApiError`
  *  决定给用户看哪句话，假掉它就把错误路径一起假掉了。 */
-vi.mock('./api/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./api/client')>()
+vi.mock('./net/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./net/client')>()
   return { ...actual, postRoute: vi.fn(), postSuggest: vi.fn(), postEdit: vi.fn() }
 })
 
 import App from './App'
 import * as decodeMod from './image/decode'
 import * as prepareMod from './image/prepare'
-import * as api from './api/client'
+import * as api from './net/client'
 
 // ── 每张"底"带一个记号，好认出送上去的到底是哪一张 ──────────────────
 let bitmapSeq = 0

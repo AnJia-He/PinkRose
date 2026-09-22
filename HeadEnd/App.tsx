@@ -7,7 +7,7 @@ import { decodeImageFile, type DecodedImage } from './image/decode'
 import { applyDeltas, ZERO, type Adjustments } from '../shared/adjustments.ts'
 import { exportImage } from './export/save'
 import { prepareForModel, prepareForRouting } from './image/prepare'
-import { ApiError, postEdit, postRoute, postSuggest } from './api/client'
+import { ApiError, postEdit, postRoute, postSuggest } from './net/client'
 import { bitmapsToClose, jumpTo, pushSnapshot, type Snapshot } from './core/history'
 import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
 
