@@ -1,5 +1,5 @@
 // 真实 API 冒烟。**会花钱**——一次生成约 12,900 tokens，手动跑，不进 CI。
-// 用法：先 `node server/index.ts`，再 `node scripts/smoke.mjs`
+// 用法：先 `node BackEnd/index.ts`，再 `node scripts/smoke.mjs`
 // 加 `--with-edit` 才打 /images/edits（那一步约 12,900 tokens，跑一次就够）。
 // 但 `--with-edit` **只是三个前提之一**（详见第 6 项）：还要有非空的 edit_prompt，
 // 以及模型没说拿不准（needsDisambiguation === false）。最后一条挡的是"模型把一句
@@ -92,7 +92,7 @@ async function req(method, path, body) {
   return { status: r.status, json }
 }
 const post = (path, body) => req('POST', path, body)
-// 健康检查用 GET：server/app.ts 只注册了 GET /api/health（POST 会落到 404）。
+// 健康检查用 GET：BackEnd/app.ts 只注册了 GET /api/health（POST 会落到 404）。
 // 计划文档自己的实现（docs/.../2026-09-22-conversational-editing.md:792）和它自己的
 // 两处 curl 校验（同文件 997 / 4220）用的都是 GET，只有冒烟那一段写成了 post()，
 // 是 brief 的笔误。这里验的是「服务活着吗」，方法写错只会得到一个假警报。

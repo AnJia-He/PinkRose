@@ -3,7 +3,7 @@ import {
   buildEditPrompt, describeParams, buildRouterUser,
   ROUTER_SYSTEM, SUGGEST_SYSTEM, PRESERVE_CLAUSE,
 } from './prompt.ts'
-import { ZERO } from '../src/core/adjustments.ts'
+import { ZERO } from '../HeadEnd/core/adjustments.ts'
 
 /**
  * 这些措辞必须用**字面量**断言，不能引用被测模块导出的常量。

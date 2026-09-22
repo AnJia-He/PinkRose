@@ -1,4 +1,4 @@
-import { ZERO, clampAdjustments, type Adjustments } from '../src/core/adjustments.ts'
+import { ZERO, clampAdjustments, type Adjustments } from '../HeadEnd/core/adjustments.ts'
 import type { RouteRequest, RouteResponse } from '../shared/protocol.ts'
 import { HttpError } from './http.ts'
 import { ROUTER_SYSTEM, buildRouterUser } from './prompt.ts'

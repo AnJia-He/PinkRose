@@ -1,4 +1,4 @@
-import { PARAM_KEYS, PARAM_MIN, PARAM_MAX } from '../src/core/adjustments.ts'
+import { PARAM_KEYS, PARAM_MIN, PARAM_MAX } from '../HeadEnd/core/adjustments.ts'
 import type { ParamDeltas, Route, RouteDecision } from '../shared/protocol.ts'
 
 const ROUTES: readonly Route[] = ['params', 'generate', 'both']

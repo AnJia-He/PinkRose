@@ -1,7 +1,7 @@
 /**
  * 八参数调色，单个 fragment shader 一次算完（spec §5.2）。
  *
- * 调色链的顺序必须与 src/core/tone.ts 的 applyTone 严格一致——两者共有
+ * 调色链的顺序必须与 HeadEnd/core/tone.ts 的 applyTone 严格一致——两者共有
  * 六个参数：色温 / 曝光 / 高光 / 阴影 / 对比度 / 饱和度。
  *
  * 清晰度和暗角**只有本文件有**：它们分别需要邻域像素和像素坐标，
