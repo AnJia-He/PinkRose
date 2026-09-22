@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AppErrorCode } from '../shared/protocol.ts'
+import { SnError } from './sn.ts'
 
 /** 路由处理里唯一该抛的错误类型。带上 HTTP 状态码和给用户看的文案。 */
 export class HttpError extends Error {
@@ -71,12 +72,41 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
   res.end(text)
 }
 
-/** 统一异常出口：HttpError 按原样回，其它一律 500 且**不回显内部信息**。 */
+/**
+ * `SnError` 只带 `code`，不带 HTTP 状态码；这张表是二者之间**唯一**的桥。
+ * 少了它，上游限流/超时都会以 500 INTERNAL 的形状到达前端，
+ * 前端按 `UPSTREAM_LIMIT` 分流的那条分支就成了死代码。
+ */
+const STATUS_BY_CODE: Record<AppErrorCode, number> = {
+  BAD_REQUEST: 400, UPSTREAM_LIMIT: 503, UPSTREAM_FAILED: 502, INTERNAL: 500,
+}
+
+/**
+ * 给用户看的文案，与上游原文**无关**。
+ *
+ * ⚠️ 绝不要用 `e.message` 当这里的文案：那是 `上游 HTTP 429：inference
+ * exceeds tpm/rpm limit` 这类英文运维口径，前端会原样弹给用户。
+ * 上游原文的去处只有一处——服务端日志。
+ */
+const USER_MESSAGE: Record<AppErrorCode, string> = {
+  BAD_REQUEST: '这次请求有点问题，换个说法试试',
+  UPSTREAM_LIMIT: '排队的人有点多，稍等一下再试',
+  UPSTREAM_FAILED: 'AI 服务暂时没响应，再试一次',
+  INTERNAL: '出了点问题，再试一次',
+}
+
+/** 统一异常出口：HttpError 按原样回；SnError 按 code 映射；其它一律 500 且**不回显内部信息**。 */
 export function sendError(res: ServerResponse, e: unknown): void {
   if (e instanceof HttpError) {
     sendJson(res, e.status, e)
     return
   }
+  if (e instanceof SnError) {
+    const status = STATUS_BY_CODE[e.code]
+    console.error('[upstream]', e.message)   // 上游原文只进服务端日志
+    sendJson(res, status, new HttpError(e.code, USER_MESSAGE[e.code], status))
+    return
+  }
   console.error('[internal]', e)   // 详细堆栈只进服务端日志
-  sendJson(res, 500, new HttpError('INTERNAL', '服务器内部错误', 500))
+  sendJson(res, 500, new HttpError('INTERNAL', USER_MESSAGE.INTERNAL, 500))
 }

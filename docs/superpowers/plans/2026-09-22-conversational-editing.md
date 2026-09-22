@@ -442,9 +442,12 @@ Expected: PASS（4 个）
 - [ ] **Step 10: 写 `server/http.test.ts` 的失败测试**
 
 ```ts
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createServer } from 'node:http'
-import { readJsonBody, sendJson, HttpError } from './http.ts'
+import { readJsonBody, sendJson, sendError, HttpError } from './http.ts'
+import { SnError } from './sn.ts'
+
+afterEach(() => vi.restoreAllMocks())
 
 /** 起一个一次性服务器把 req/res 造出来，比 mock 更接近真实。 */
 async function withServer(
@@ -502,6 +505,47 @@ describe('readJsonBody', () => {
     expect((err as HttpError).code).toBe('BAD_REQUEST')
   })
 })
+
+/**
+ * `SnError` 与 `HttpError` 共用同一套 `AppErrorCode` 域，但**状态码不同**：
+ * HttpError 自带 status，SnError 只有 code。差这一步映射，
+ * 一次上游限流就会以 500 INTERNAL 的形态到达用户，而前端按
+ * UPSTREAM_LIMIT 分流的那条分支永远走不到。
+ */
+describe('sendError', () => {
+  it('SnError(UPSTREAM_LIMIT) -> 503，且 body 的 code 是 UPSTREAM_LIMIT', async () => {
+    const r = await withServer((_q, s) =>
+      sendError(s, new SnError('UPSTREAM_LIMIT', '上游 HTTP 429：{"error":"rate limited"}', true)), '')
+    expect(r.status).toBe(503)
+    expect(JSON.parse(r.text)).toEqual({
+      error: { code: 'UPSTREAM_LIMIT', message: '排队的人有点多，稍等一下再试' },
+    })
+  })
+
+  it('SnError(UPSTREAM_FAILED) -> 502', async () => {
+    const r = await withServer((_q, s) =>
+      sendError(s, new SnError('UPSTREAM_FAILED', '连不上上游：fetch failed', true)), '')
+    expect(r.status).toBe(502)
+    expect(JSON.parse(r.text).error.code).toBe('UPSTREAM_FAILED')
+  })
+
+  it('上游原文只进服务端日志，**不进**响应体（那是用户会看到的文案）', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const r = await withServer((_q, s) =>
+      sendError(s, new SnError('UPSTREAM_LIMIT', 'SENTINEL-UPSTREAM-TEXT-7f3a', true)), '')
+    expect(r.text).not.toContain('SENTINEL-UPSTREAM-TEXT-7f3a')
+    expect(String(spy.mock.calls.flat().join(' '))).toContain('SENTINEL-UPSTREAM-TEXT-7f3a')
+  })
+
+  it('其它异常仍是 500，且同样只把细节写进日志', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const r = await withServer((_q, s) => sendError(s, new Error('SENTINEL-INTERNAL-9b1c')), '')
+    expect(r.status).toBe(500)
+    expect(JSON.parse(r.text).error.code).toBe('INTERNAL')
+    expect(r.text).not.toContain('SENTINEL-INTERNAL-9b1c')
+    expect(String(spy.mock.calls.flat().join(' '))).toContain('SENTINEL-INTERNAL-9b1c')
+  })
+})
 ```
 
 - [ ] **Step 11: 跑测试确认失败**
@@ -516,6 +560,7 @@ Expected: FAIL —— `Failed to resolve import "./http.ts"`
 ```ts
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AppErrorCode } from '../shared/protocol.ts'
+import { SnError } from './sn.ts'
 
 /** 路由处理里唯一该抛的错误类型。带上 HTTP 状态码和给用户看的文案。 */
 export class HttpError extends Error {
@@ -550,9 +595,12 @@ export function readJsonBody(req: IncomingMessage, limitBytes = DEFAULT_BODY_LIM
     req.on('data', (c: Buffer) => {
       size += c.length
       if (size > limitBytes) {
-        // 不能只 reject 就完事——请求还在流，得把连接掐了
+        // 超限后**只丢不攒**：内存上限就是 limitBytes + 一个 chunk。
+        // ⚠️ 这里不写 req.destroy()。实测（Node 24.15.0）：destroy 会同步掐掉
+        // 底层 socket（res.socket.destroyed === true），413 响应就再也送不出去了，
+        // 客户端只能看到连接被重置（UND_ERR_SOCKET）。请求还在流没关系——
+        // 调用方把 413 写完后，Node 的 resOnFinish 会自动 _dump() 掉剩余字节。
         reject(new HttpError('BAD_REQUEST', `请求体超过 ${Math.round(limitBytes / 1024 / 1024)} MB 上限`, 413))
-        req.destroy()
         return
       }
       chunks.push(c)
@@ -584,23 +632,56 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
   res.end(text)
 }
 
-/** 统一异常出口：HttpError 按原样回，其它一律 500 且**不回显内部信息**。 */
+/**
+ * `SnError` 只带 `code`，不带 HTTP 状态码；这张表是二者之间**唯一**的桥。
+ * 少了它，上游限流/超时都会以 500 INTERNAL 的形状到达前端，
+ * 前端按 `UPSTREAM_LIMIT` 分流的那条分支就成了死代码。
+ */
+const STATUS_BY_CODE: Record<AppErrorCode, number> = {
+  BAD_REQUEST: 400, UPSTREAM_LIMIT: 503, UPSTREAM_FAILED: 502, INTERNAL: 500,
+}
+
+/**
+ * 给用户看的文案，与上游原文**无关**。
+ *
+ * ⚠️ 绝不要用 `e.message` 当这里的文案：那是 `上游 HTTP 429：inference
+ * exceeds tpm/rpm limit` 这类英文运维口径，前端会原样弹给用户。
+ * 上游原文的去处只有一处——服务端日志。
+ */
+const USER_MESSAGE: Record<AppErrorCode, string> = {
+  BAD_REQUEST: '这次请求有点问题，换个说法试试',
+  UPSTREAM_LIMIT: '排队的人有点多，稍等一下再试',
+  UPSTREAM_FAILED: 'AI 服务暂时没响应，再试一次',
+  INTERNAL: '出了点问题，再试一次',
+}
+
+/** 统一异常出口：HttpError 按原样回；SnError 按 code 映射；其它一律 500 且**不回显内部信息**。 */
 export function sendError(res: ServerResponse, e: unknown): void {
   if (e instanceof HttpError) {
     sendJson(res, e.status, e)
     return
   }
+  if (e instanceof SnError) {
+    const status = STATUS_BY_CODE[e.code]
+    console.error('[upstream]', e.message)   // 上游原文只进服务端日志
+    sendJson(res, status, new HttpError(e.code, USER_MESSAGE[e.code], status))
+    return
+  }
   console.error('[internal]', e)   // 详细堆栈只进服务端日志
-  sendJson(res, 500, new HttpError('INTERNAL', '服务器内部错误', 500))
+  sendJson(res, 500, new HttpError('INTERNAL', USER_MESSAGE.INTERNAL, 500))
 }
 ```
+
+**为什么这张表必须在这里**（控制方裁定 A）：`SnError` 是上游错误的归一化形状（Task 2），`HttpError` 是路由错误的形状（本文件）。两者共用 `AppErrorCode` 域，但**只有 HttpError 自带 status**。`sendError` 是唯一出口，映射放这儿，三个 handler 一个都不用改；放在 handler 里则会漏（Task 8 落地时真的漏了：真服务上 429 变成 500 INTERNAL，前端那条 `UPSTREAM_LIMIT` 分支成了死代码）。
+
+**`e.message` 绝不能当用户文案**：它是 `上游 HTTP 429：inference exceeds tpm/rpm limit` 这种运维口径。用户看 `USER_MESSAGE`，原文只进 `console.error`。测试要同时钉住这两头（见 Step 10 的哨兵用例）。
 
 - [ ] **Step 13: 跑测试确认通过**
 
 ```bash
 npx vitest run server/http.test.ts
 ```
-Expected: PASS（5 个）
+Expected: PASS（9 个 —— 5 条原有 + 4 条 `sendError` 映射，映射这 4 条是本轮裁定 A 补的）
 
 - [ ] **Step 14: 写 `server/app.test.ts` 的失败测试**
 
@@ -2477,7 +2558,7 @@ import type { SenseNovaClient } from './sn.ts'
 export type AppDeps = {
   config: Config
   staticDir?: string
-  /** 不传时 /api/route 与 /api/suggest 都会返回 503 —— 让"没接线"可见，而不是静默失败。 */
+  /** 不传时 /api/route、/api/suggest、/api/edit 都会返回 503 —— 让"没接线"可见，而不是静默失败。 */
   client?: SenseNovaClient
   queue?: SerialQueue
 }
@@ -2869,7 +2950,10 @@ MSG
 **Files:**
 - Create: `server/edit.ts`
 - Create: `server/edit.test.ts`
+- Create: `shared/size.test.ts`（还 Task 1 的债 —— `checkModelSize` / `aspectOk` 当时没测）
 - Modify: `server/app.ts`（接上）
+- Modify: `server/index.ts`（把 `client` / `queue` 装进去）
+- Modify: `server/app.test.ts`（补 `/api/edit` 的集成测试，见 Step 6）
 
 **Interfaces:**
 - Consumes: `SenseNovaClient`（Task 2）、`SerialQueue`（Task 3）、`buildEditPrompt`（Task 5）、`checkModelSize`（Task 1 的 `shared/size.ts`）、`HttpError`（Task 1）
@@ -2919,6 +3003,12 @@ describe('handleEdit', () => {
     expect(calls[0].prompt).toContain('Remove the person behind the subject.')
     expect(calls[0].prompt).toContain('Preserve the person')
     expect(calls[0].prompt).toContain('Keep everything else exactly as it is')
+  })
+
+  it('把请求里的宽高原样传给上游', async () => {
+    const { client, calls } = replying('QQ==')
+    await handleEdit({ ...body, width: 1280, height: 896 }, deps(client))
+    expect(calls[0].size).toBe('1280x896')
   })
 
   it('宽高不是 32 的倍数 -> 400，且**一次 API 都不调**', async () => {
@@ -3041,7 +3131,7 @@ function parseRequest(raw: unknown): EditRequest {
 ```bash
 npx vitest run server/edit.test.ts
 ```
-Expected: PASS（9 个）
+Expected: PASS（10 个 —— 第 10 条"把请求里的宽高原样传给上游"是裁定 C 补的：写死 size 也能让前 9 条全绿，这条才钉住宽高真的透传了）
 
 - [ ] **Step 5: 在 `server/app.ts` 里接上**
 
@@ -3056,7 +3146,108 @@ Expected: PASS（9 个）
     }
 ```
 
-- [ ] **Step 6: 更新 `server/index.ts` 把客户端和队列装进去**
+- [ ] **Step 6: 给 `server/app.test.ts` 补 `/api/edit` 与 `/api/suggest` 的集成测试**
+
+**为什么这一步不能省**（控制方裁定 B）：`edit.test.ts` 测的是 handler 本身，绕开了 `app.ts` 的派发。删掉 `/api/edit` 那个 `if` 分支，全套测试照样全绿（Task 8 首轮实测的 E10）——也就是说"端点真的接上了"这件事当时**零覆盖**。`/api/suggest` 同理：Task 7 漏了 Task 6 Step 6 那样的步骤，那条分支从来没被 app 级测试碰过。
+
+在文件顶部（`boot()` 旁边）补一个桩上游和两个抓手：
+
+```ts
+/** 端点断言用的合法 /api/edit 请求体。 */
+const editBody = {
+  imageDataUrl: 'data:image/jpeg;base64,AA',
+  editPrompt: '删掉后面那个人',
+  width: 1024,
+  height: 768,
+}
+
+/**
+ * 桩上游：记下每次请求体，**不真出网**。`status !== 200` 时回一个带独特
+ * 哨兵串的错误体——用来验证"上游原文不会漏进给用户的响应"。
+ */
+function stubUpstream(status = 200) {
+  const calls: any[] = []
+  const impl = (async (_u: any, init: any) => {
+    calls.push(JSON.parse(init.body))
+    return status === 200
+      ? new Response('{"choices":[{"message":{"content":"{\\"cards\\":[]}"}}]}', { status: 200 })
+      : new Response('{"error":{"message":"SENTINEL-UPSTREAM-BODY-c4d1"}}', { status })
+  }) as unknown as typeof fetch
+  return {
+    calls,
+    deps: { client: new SenseNovaClient(cfg, impl), queue: new SerialQueue({ sleep: async () => {} }) },
+  }
+}
+
+async function post(base: string, path: string, body: unknown) {
+  const r = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return { status: r.status, body: await r.json() as { error?: { code: string; message: string } } }
+}
+```
+
+再在 `describe('createApp')` 末尾加五条：
+
+```ts
+  it('POST /api/suggest 在没接客户端时返回 503 的结构化错误', async () => {
+    const base = await boot()
+    const r = await post(base, '/api/suggest', { imageDataUrl: 'data:image/jpeg;base64,AA' })
+    expect(r.status).toBe(503)
+    expect(r.body.error!.code).toBe('INTERNAL')
+  })
+
+  it('POST /api/edit 在没接客户端时返回 503 的结构化错误', async () => {
+    const base = await boot()
+    const r = await post(base, '/api/edit', editBody)
+    expect(r.status).toBe(503)
+    expect(r.body.error!.code).toBe('INTERNAL')
+  })
+
+  it('POST /api/suggest 接上客户端后确实走进了 handler（400 是 handler 给的，且没出网）', async () => {
+    const { deps, calls } = stubUpstream()
+    const base = await boot(deps)
+    const r = await post(base, '/api/suggest', {})
+    expect(r.status).toBe(400)
+    expect(r.body.error!.message).toContain('imageDataUrl')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('POST /api/edit 接上客户端后确实走进了 handler（不合规尺寸在本地就拒掉，一次 API 都不调）', async () => {
+    const { deps, calls } = stubUpstream()
+    const base = await boot(deps)
+    const r = await post(base, '/api/edit', { ...editBody, width: 1000 })
+    expect(r.status).toBe(400)
+    expect(r.body.error!.message).toContain('图片尺寸 1000x768')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('POST /api/edit 上游 429 -> 503 UPSTREAM_LIMIT，上游原文只进日志', async () => {
+    const { deps, calls } = stubUpstream(429)
+    const base = await boot(deps)
+    const r = await fetch(`${base}/api/edit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(editBody),
+    })
+    expect(r.status).toBe(503)
+    const text = await r.text()
+    expect((JSON.parse(text) as { error: { code: string } }).error.code).toBe('UPSTREAM_LIMIT')
+    expect(text).not.toContain('SENTINEL-UPSTREAM-BODY-c4d1')
+    expect(calls.length).toBeGreaterThan(0)   // 是上游真的挂了，不是本地拒的
+  })
+```
+
+前两条钉"没接线 -> 503"（把分支删掉会退化成 404 `BAD_REQUEST`），中间两条钉"守卫放行的请求真的走到了 handler"（用畸形体/不合规尺寸换一个 400，同时断言桩上游**一次都没被调**），最后一条走通 `app.ts -> edit.ts -> sn.ts -> sendError` 整条链——它才是裁定 A 的端到端证据：没有 `sendError` 的映射，这里会得到 500 INTERNAL。
+
+```bash
+npx vitest run server/app.test.ts
+```
+Expected: PASS（11 个 —— 6 条原有 + 5 条新增）
+
+- [ ] **Step 7: 更新 `server/index.ts` 把客户端和队列装进去**
 
 ```ts
 import { SerialQueue } from './queue.ts'
@@ -3077,14 +3268,14 @@ const server = createApp({
 })
 ```
 
-- [ ] **Step 7: 跑测试 + 类型检查**
+- [ ] **Step 8: 跑测试 + 类型检查**
 
 ```bash
 npm test && npm run typecheck
 ```
 Expected: 全绿
 
-- [ ] **Step 8: 提交**
+- [ ] **Step 9: 提交**
 
 ```bash
 git add -A

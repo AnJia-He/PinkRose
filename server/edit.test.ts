@@ -41,6 +41,12 @@ describe('handleEdit', () => {
     expect(calls[0].prompt).toContain('Keep everything else exactly as it is')
   })
 
+  it('把请求里的宽高原样传给上游', async () => {
+    const { client, calls } = replying('QQ==')
+    await handleEdit({ ...body, width: 1280, height: 896 }, deps(client))
+    expect(calls[0].size).toBe('1280x896')
+  })
+
   it('宽高不是 32 的倍数 -> 400，且**一次 API 都不调**', async () => {
     const { client, calls } = replying('QQ==')
     await expect(handleEdit({ ...body, width: 1000 }, deps(client)))
