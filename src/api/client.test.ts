@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { postRoute, ApiError } from './client'
+import { postEdit, postRoute, postSuggest, ApiError } from './client'
 import { ZERO } from '../core/adjustments'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -49,5 +49,39 @@ describe('postRoute', () => {
   it('网络断了也给 ApiError —— 调用方只需要认识一种错误类型', async () => {
     vi.stubGlobal('fetch', async () => { throw new TypeError('Failed to fetch') })
     await expect(postRoute(REQ)).rejects.toBeInstanceOf(ApiError)
+  })
+})
+
+const sentBody = (c: { init: RequestInit }) => JSON.parse(String(c.init.body))
+
+describe('postSuggest', () => {
+  it('打到 /api/suggest，带 JSON content-type，请求体带 imageDataUrl', async () => {
+    const calls = stubFetch(200, { cards: [], degraded: false })
+    await postSuggest({ imageDataUrl: 'data:image/jpeg;base64,AA' })
+    expect(calls[0].url).toBe('/api/suggest')
+    expect((calls[0].init.headers as Record<string, string>)['content-type']).toContain('application/json')
+    // 服务端 parseRequest 只认这个字段名；改名服务端会 400。
+    expect(sentBody(calls[0]).imageDataUrl).toBe('data:image/jpeg;base64,AA')
+  })
+})
+
+describe('postEdit', () => {
+  it('打到 /api/edit，带 JSON content-type，请求体带 editPrompt 与数字 width/height', async () => {
+    const calls = stubFetch(200, { imageDataUrl: 'data:image/png;base64,QQ==', width: 1024, height: 768 })
+    const res = await postEdit({
+      imageDataUrl: 'data:image/jpeg;base64,AA',
+      editPrompt: 'Remove the person behind the subject.',
+      width: 1024,
+      height: 768,
+    })
+    expect(calls[0].url).toBe('/api/edit')   // 这条走的是付费路，路径写错会 404
+    expect((calls[0].init.headers as Record<string, string>)['content-type']).toContain('application/json')
+    const sent = sentBody(calls[0])
+    expect(sent.imageDataUrl).toBe('data:image/jpeg;base64,AA')
+    expect(sent.editPrompt).toBe('Remove the person behind the subject.')
+    // 服务端要求数字（typeof width !== 'number' 直接 400）——字符串化会静默丢字段
+    expect(typeof sent.width).toBe('number')
+    expect(typeof sent.height).toBe('number')
+    expect(res.width).toBe(1024)
   })
 })
