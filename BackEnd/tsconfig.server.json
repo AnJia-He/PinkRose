@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["BackEnd", "shared"]
+  "include": [".", "../shared"]
 }

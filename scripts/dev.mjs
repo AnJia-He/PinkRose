@@ -5,7 +5,7 @@ const isWin = process.platform === 'win32'
 const shell = isWin
 
 const procs = [
-  { name: 'vite  ', cmd: 'npx', args: ['vite'] },
+  { name: 'vite  ', cmd: 'npx', args: ['vite', 'HeadEnd'] },
   { name: 'server', cmd: 'node', args: ['BackEnd/index.ts'] },
 ].map(({ name, cmd, args }) => {
   const p = spawn(cmd, args, { shell, stdio: ['ignore', 'pipe', 'pipe'] })
