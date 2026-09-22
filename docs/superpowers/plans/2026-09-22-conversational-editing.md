@@ -4,7 +4,7 @@
 
 **Goal:** 让用户对照片说一句人话（"天太灰了，人再亮点，把后面那个人去掉"），前端把这句话变成「本地参数立刻变」+「云端生成式编辑」，并把参数和像素严格分开。
 
-**Architecture:** 三层 + 意图路由的落地。Node 极简后端持有 API Key 并做两件事——把照片+人话送给 VLM 换回结构化 JSON（路由），以及把原图+英文 prompt 转发给 `/images/edits`（生成）。前端拿到 JSON 后：`params` 走本地 WebGL 立刻生效，`generate` 走云端换掉 `base`。**参数永远不烘焙进 `base`**，只作用于最终渲染那一刻。
+**Architecture:** 三层 + 意图路由的落地。Node 极简后端持有 API Key 并做两件事——把照片+人话送给 VLM 换回结构化 JSON（路由），以及把前端备好的底图+英文 prompt 转发给 `/images/edits`（生成）。前端拿到 JSON 后：`params` 走本地 WebGL 立刻生效，`generate` 走云端换掉 `base`。**参数永远不烘焙进 `base`**，只作用于最终渲染那一刻。
 
 **Tech Stack:** Node 24 内置 `node:http`（**零新增运行时依赖**，Node 24 原生跑 TypeScript）；前端沿用 Vite + React 18 + TypeScript；测试沿用 Vitest（`environment: 'node'`）。唯一新增依赖：`@types/node`（devDependency，纯类型）。
 
@@ -61,7 +61,7 @@ spec 里跨任务生效的硬要求，**每个任务的隐含要求都包含本�
 - 参数范围恒为 `[-100, 100]`，八个键：`exposure` `contrast` `highlights` `shadows` `saturation` `temperature` `clarity` `vignette`。
 - **LLM 只输出增量（delta），绝不输出绝对值。** 累加与钳制由确定性代码做（`applyDeltas` 已存在于 `src/core/adjustments.ts`）。
 - **铁律：参数永远不烘焙进 `base`。** 参数只作用于最终渲染的那一刻。
-- **送去生成模型的图必须是原图**（不带当前调色参数），否则参数会被叠加两次。用户当前参数作为**文本上下文**告诉 LLM 让它补偿。
+- **送去生成模型的图是当前的 `base`**（spec §3.5 的 2026-09-22 更正。它天然不带当前调色参数——铁律保证 `base` 里永远没有参数——否则参数会被叠加两次；而"当前"这一点保证多次生成是累积的，送最初那张原图会让第二次生成静默撤销第一次花钱改出来的东西）。用户当前参数作为**文本上下文**告诉 LLM 让它补偿。
 
 **SenseNova API（全部踩过，违反任一条都会坏）**
 - `size` 只接受 `WIDTHxHEIGHT` 形式，**绝不能用 `auto`**（`auto` 会重画构图，地平线从 78% 漂到 65%）。宽高必须是 **32 的倍数**、范围 **[512, 4096]**、宽高比 **≤ 3:1**。
@@ -1128,6 +1128,20 @@ describe('chatJson', () => {
     expect(b.retryable).toBe(false)
   })
 
+  it('非 429 的 4xx 归 BAD_REQUEST（上游拒了，重试永远不会成功），5xx 才归 UPSTREAM_FAILED', async () => {
+    // 原来所有非 429 的 4xx 都映成 UPSTREAM_FAILED → 502 +
+    // 「AI 服务暂时没响应，再试一次」——对一次被上游拒绝的请求，
+    // 这是一句永远不可能成功的指令。归 BAD_REQUEST（400），文案才说人话。
+    const mk = (status: number) => fakeFetch({ status, body: { error: { message: 'x' } } })
+    const bad = await new SenseNovaClient(cfg, mk(400).impl)
+      .chatJson([{ role: 'user', content: 'h' }]).catch(e => e)
+    const down = await new SenseNovaClient(cfg, mk(500).impl)
+      .chatJson([{ role: 'user', content: 'h' }]).catch(e => e)
+    expect(bad.code).toBe('BAD_REQUEST')
+    expect(down.code).toBe('UPSTREAM_FAILED')
+    expect(bad.retryable).toBe(false)
+  })
+
   it('网络异常归一化成可重试的 SnError', async () => {
     const impl = (async () => { throw new TypeError('fetch failed') }) as unknown as typeof fetch
     const e = await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'h' }]).catch(e => e)
@@ -1135,13 +1149,6 @@ describe('chatJson', () => {
     expect(e.retryable).toBe(true)
   })
 
-  it('请求带上 Bearer 认证头', async () => {
-    const { impl, calls } = fakeFetch({ body: { choices: [{ message: { content: 'x' } }] } })
-    await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'hi' }])
-    expect((calls[0].init.headers as Record<string, string>).authorization).toBe('Bearer sk-test')
-  })
-
-  // ↓ 第 15 条，修复轮 1 追加（首轮审查发现的，见 Step 4 后面的说明）
   it('读正文时连接中断也抛可重试的 SnError，不是裸 TypeError', async () => {
     // fetch 在**响应头**到达时就 resolve 了，正文是随后独立的一次网络往返：
     // 连接下载到一半被重置、或 AbortSignal.timeout 掐在几 MB 的 edit 正文
@@ -1154,6 +1161,12 @@ describe('chatJson', () => {
     const e = await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'h' }]).catch(e => e)
     expect(e).toBeInstanceOf(SnError)
     expect(e.retryable).toBe(true)
+  })
+
+  it('请求带上 Bearer 认证头', async () => {
+    const { impl, calls } = fakeFetch({ body: { choices: [{ message: { content: 'x' } }] } })
+    await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'hi' }])
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe('Bearer sk-test')
   })
 })
 
@@ -1349,7 +1362,10 @@ export class SenseNovaClient {
 function codeForStatus(status: number): AppErrorCode {
   if (status === 429) return 'UPSTREAM_LIMIT'
   if (status >= 500) return 'UPSTREAM_FAILED'
-  return 'UPSTREAM_FAILED'
+  // 其余 4xx：上游**拒了**这次请求（提示词/图片不合规、鉴权被拒……）。
+  // 这类错误重试永远不会成功，所以绝不能报成可重试的 UPSTREAM_FAILED——
+  // 那会给用户一句"AI 服务暂时没响应，再试一次"的假话（而且每一次都白等一个来回）。
+  return 'BAD_REQUEST'
 }
 ```
 
@@ -2274,9 +2290,9 @@ export function buildEditPrompt(edit: string): string {
 /**
  * 把当前参数翻成一句中文，作为**文本上下文**给 LLM。
  *
- * 为什么需要：送去生成的图是**原图**（不带参数，见 spec §3.5 的双重叠加陷阱），
- * 所以模型看不到用户已经调过什么。不告诉它，用户已经调暖了它还去加暖，
- * 回来再被参数作用一次，颜色就炸了。
+ * 为什么需要：送去生成的图是**当前的 `base`**——它不带参数（铁律保证 `base`
+ * 里永远没有调色，见 spec §3.5），所以模型看不到用户已经调过什么。不告诉它，
+ * 用户已经调暖了它还去加暖，回来再被参数作用一次，颜色就炸了。
  */
 export function describeParams(a: Adjustments): string {
   const parts: string[] = []
@@ -2874,6 +2890,15 @@ describe('handleSuggest', () => {
     const { client } = replying('{}')
     await expect(handleSuggest({}, deps(client))).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
+
+  it('不是 data:image/ 开头的字符串也抛 BAD_REQUEST（http:// 这类同样拒）', async () => {
+    // 上面那条 `{}` 死在第一个 disjunct（typeof !== 'string'）上，
+    // 把 `!startsWith('data:image/')` 删掉它照样绿 —— 这条才钉住后半个守卫。
+    const { client, calls } = replying('{}')
+    await expect(handleSuggest({ imageDataUrl: 'http://evil/x.jpg' }, deps(client)))
+      .rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    expect(calls).toHaveLength(0)
+  })
 })
 ```
 
@@ -3083,6 +3108,32 @@ describe('handleEdit', () => {
     expect(calls[0].size).toBe('1280x896')
   })
 
+  it('送给上游的是请求里那张图 —— 被编辑的照片本身也要钉住', async () => {
+    const { client, calls } = replying('QQ==')
+    const other = 'data:image/png;base64,BBBB'
+    await handleEdit({ ...body, imageDataUrl: other }, deps(client))
+    expect(calls[0].images[0].image_url).toBe(other)
+  })
+
+  it('长边超过业务上限 2048 -> 400，且**一次 API 都不调**', async () => {
+    // 4096x2048 对 API 完全合法（32 的倍数、在 [512,4096]、2:1）——
+    // checkModelSize 放它过。挡住它的是我们自己的策略上限（spec §4.4），
+    // 不设这道门，一个不老实/有 bug 的客户端就能让账户按 4096² 的账单付费。
+    const { client, calls } = replying('QQ==')
+    await expect(handleEdit({ ...body, width: 4096, height: 2048 }, deps(client)))
+      .rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('imageDataUrl 不是 data:image/ 开头 -> 400，且一次 API 都不调', async () => {
+    // 没有这一条，守卫里 `!startsWith('data:image/')` 那半边可以直接删掉：
+    // 只测 undefined/非字符串的话，第一半就拦下了，测试照样绿。
+    const { client, calls } = replying('QQ==')
+    await expect(handleEdit({ ...body, imageDataUrl: 'http://evil/x.jpg' }, deps(client)))
+      .rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    expect(calls).toHaveLength(0)
+  })
+
   it('宽高不是 32 的倍数 -> 400，且**一次 API 都不调**', async () => {
     const { client, calls } = replying('QQ==')
     await expect(handleEdit({ ...body, width: 1000 }, deps(client)))
@@ -3141,7 +3192,7 @@ Expected: FAIL —— `Failed to resolve import "./edit.ts"`
 
 ```ts
 import type { EditRequest, EditResponse } from '../shared/protocol.ts'
-import { checkModelSize } from '../shared/size.ts'
+import { MAX_DIMENSION, checkModelSize } from '../shared/size.ts'
 import { HttpError } from './http.ts'
 import { buildEditPrompt } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
@@ -3192,6 +3243,19 @@ function parseRequest(raw: unknown): EditRequest {
   if (reason) {
     throw new HttpError('BAD_REQUEST',
       `图片尺寸 ${width}x${height} 不符合模型要求：${reason}`, 400)
+  }
+
+  // 业务层上限：长边 ≤ MAX_DIMENSION（2048，spec §4.4——出货客户端由
+  // prepareForModel 钉着这个数）。checkModelSize 只管 API 的硬约束（4096），
+  // 那是上游的底线，不是我们的策略：不设这道门，一个不老实或有 bug 的客户端
+  // 就能让账户按 4096² 的账单付费。
+  //
+  // ⚠️ 故意**不放进 checkModelSize**：shared/size.test.ts 有一条测试钉住
+  // 「4096 是 API 的上限，不是我们的」（checkModelSize(4096, 2048) === null）。
+  const longSide = Math.max(width, height)
+  if (longSide > MAX_DIMENSION) {
+    throw new HttpError('BAD_REQUEST',
+      `图片长边 ${longSide} 超过本服务的上限 ${MAX_DIMENSION}，请先缩图`, 400)
   }
 
   return { imageDataUrl, editPrompt, width, height }
@@ -3368,7 +3432,7 @@ MSG
 
 **这一个任务把前端一次做完**：三个可测模块 + 对话面板 + 完整接线。
 
-**为什么不再往下切：** 参数路和生成路共享"送哪张图"这个决定（路由送当前画面、生成送原图），也共享铁律"换 base 不动 params"。切开会让这条最关键的约束落在两个任务的缝里，谁也测不到。
+**为什么不再往下切：** 参数路和生成路共享"送哪张图"这个决定（路由送当前画面、生成送**当前的 base**——见 spec §3.5 的 2026-09-22 更正），也共享铁律"换 base 不动 params"。切开会让这条最关键的约束落在两个任务的缝里，谁也测不到。
 
 **Files:**
 - Create: `src/api/client.ts`
@@ -3396,7 +3460,7 @@ MSG
 
 ```ts
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { postRoute, ApiError } from './client'
+import { postEdit, postRoute, postSuggest, ApiError } from './client'
 import { ZERO } from '../core/adjustments'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -3446,6 +3510,40 @@ describe('postRoute', () => {
   it('网络断了也给 ApiError —— 调用方只需要认识一种错误类型', async () => {
     vi.stubGlobal('fetch', async () => { throw new TypeError('Failed to fetch') })
     await expect(postRoute(REQ)).rejects.toBeInstanceOf(ApiError)
+  })
+})
+
+const sentBody = (c: { init: RequestInit }) => JSON.parse(String(c.init.body))
+
+describe('postSuggest', () => {
+  it('打到 /api/suggest，带 JSON content-type，请求体带 imageDataUrl', async () => {
+    const calls = stubFetch(200, { cards: [], degraded: false })
+    await postSuggest({ imageDataUrl: 'data:image/jpeg;base64,AA' })
+    expect(calls[0].url).toBe('/api/suggest')
+    expect((calls[0].init.headers as Record<string, string>)['content-type']).toContain('application/json')
+    // 服务端 parseRequest 只认这个字段名；改名服务端会 400。
+    expect(sentBody(calls[0]).imageDataUrl).toBe('data:image/jpeg;base64,AA')
+  })
+})
+
+describe('postEdit', () => {
+  it('打到 /api/edit，带 JSON content-type，请求体带 editPrompt 与数字 width/height', async () => {
+    const calls = stubFetch(200, { imageDataUrl: 'data:image/png;base64,QQ==', width: 1024, height: 768 })
+    const res = await postEdit({
+      imageDataUrl: 'data:image/jpeg;base64,AA',
+      editPrompt: 'Remove the person behind the subject.',
+      width: 1024,
+      height: 768,
+    })
+    expect(calls[0].url).toBe('/api/edit')   // 这条走的是付费路，路径写错会 404
+    expect((calls[0].init.headers as Record<string, string>)['content-type']).toContain('application/json')
+    const sent = sentBody(calls[0])
+    expect(sent.imageDataUrl).toBe('data:image/jpeg;base64,AA')
+    expect(sent.editPrompt).toBe('Remove the person behind the subject.')
+    // 服务端要求数字（typeof width !== 'number' 直接 400）——字符串化会静默丢字段
+    expect(typeof sent.width).toBe('number')
+    expect(typeof sent.height).toBe('number')
+    expect(res.width).toBe(1024)
   })
 })
 ```
@@ -3916,8 +4014,6 @@ export default function App() {
 
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const originalFileRef = useRef<File | null>(null)
-  /** **原图**的位图。生成式编辑永远送它，不是当前画面 —— 见 spec §3.5。 */
-  const originalRef = useRef<DecodedImage | null>(null)
   const idRef = useRef(0)
   /** 每次选图 +1。晚到的卡片结果靠它对号，免得贴到下一张照片上。 */
   const pickIdRef = useRef(0)
@@ -3934,21 +4030,28 @@ export default function App() {
   /**
    * 生成式编辑：换掉 base，**params 一个都不动**。
    *
-   * 送模型的是 originalRef（原图），不是画布。画布上已经带了用户调好的
-   * 颜色，送过去会被模型烤进像素，回来再被 params 作用一次——颜色炸掉。
+   * 送模型的是**当前的 base**（`source`）——不是最初那张原图，也不是画布。
+   * 送画布不行：上面已经带了用户调好的颜色，送去会被模型烤进像素，回来再被
+   * params 作用一次——颜色炸掉。送原图也不行：第二次生成会把第一次花钱改出来
+   * 的东西整个丢掉（spec §3.5 的 2026-09-22 更正）。base 由铁律保证永远不带
+   * 参数，又是累积的，两个要求它同时满足。
+   *
+   * `source` 由调用方（applyDecision）显式传入，不在这里读某个 ref：
+   * 送哪张图是**调用点的决定**，而 ref 会跨 render 变陈。
+   *
    * 用户当前的参数值作为**文本上下文**已经由服务端交给 LLM 让它补偿
    * （spec §3.5：确定性比聪明重要）。
    */
   const runGenerate = useCallback(async (
     editPrompt: string, messageId: number, paramsAtStep: Adjustments,
+    source: DecodedImage,
   ) => {
-    const orig = originalRef.current
-    if (!orig || !editPrompt) return
+    if (!editPrompt) return
     setBusy('正在改…大约 10 秒')
     try {
       // 传 .bitmap —— prepareForModel 要的是能 drawImage 的东西，
       // 不是 DecodedImage 那个包装对象
-      const prepared = await prepareForModel(orig.bitmap)
+      const prepared = await prepareForModel(source.bitmap)
       const out = await postEdit({
         imageDataUrl: prepared.dataUrl,
         editPrompt,
@@ -3957,7 +4060,15 @@ export default function App() {
       })
       const blob = await (await fetch(out.imageDataUrl)).blob()
       const bitmap = await createImageBitmap(blob)
-      const nextBase: DecodedImage = { bitmap, width: out.width, height: out.height }
+      // 尺寸以**实际拿到的像素**为准，绝不按 out.width/height 拉伸：
+      // 后者是服务端回显的请求尺寸（声明），拿它去设 canvas 会把照片拉变形。
+      // 声明与实物不一致时留下告警，让这种事可观测，而不是静默。
+      if (bitmap.width !== out.width || bitmap.height !== out.height) {
+        console.warn(
+          `[edit] 回图尺寸与声明不符：声明 ${out.width}x${out.height}，` +
+          `实际 ${bitmap.width}x${bitmap.height}（以实际为准，不拉伸）`)
+      }
+      const nextBase: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
 
       setHistory(prev => {
         const next = pushSnapshot(prev, {
@@ -3999,15 +4110,22 @@ export default function App() {
     // 一边问一边改是最糟的组合：用户还没回答，钱已经花了（一次约 12,900 tokens），
     // 而且改的可能是错的那个人。参数那半照常应用（免费可逆），只拦生成。
     // （图上点一下的完整形态在计划三；这里先把"拿不准就别动手"做对。）
+    //
+    // 文案必须中性：模型会在**没有第二个人**的照片上说拿不准（记录里有它的原话
+    // "后面好像只有山，没看到另一个人"），歧义也未必关于人（哪片天？哪块牌子？）。
     if (d.needsDisambiguation) {
-      say('照片里人有点多，你说的是哪一个？')
+      say('我不太确定你指的是哪个，再说细一点？')
       return
     }
 
-    if (d.route === 'generate' || d.route === 'both') {
-      await runGenerate(d.editPrompt, mid, nextParams)
+    // 送**当前的 base**（= image），不是最初那张原图 —— spec §3.5。
+    // ⚠️ `image` 必须进依赖数组：漏了它，这个回调会永远捕获第一次 render 的
+    // image（null），生成再也不会被触发——而且是静默的：气泡照出、回复照有，
+    // 照片纹丝不动，测试和 typecheck 却全绿。
+    if ((d.route === 'generate' || d.route === 'both') && image) {
+      await runGenerate(d.editPrompt, mid, nextParams, image)
     }
-  }, [params, say, runGenerate])
+  }, [params, say, runGenerate, image])
 
   /**
    * 拉建议卡片。
@@ -4039,7 +4157,6 @@ export default function App() {
       // 副作用留在状态更新外面，别塞进 updater（updater 可能被重放）。
       for (const s of bitmapsToClose(history, [])) s.bitmap.close()
 
-      originalRef.current = img
       originalFileRef.current = file
       setImage(img)
       setParams(ZERO)
@@ -4072,13 +4189,14 @@ export default function App() {
 
   const send = useCallback(async (text: string) => {
     const canvas = canvasElRef.current
-    if (!canvas || !originalRef.current || busy) return
+    if (!canvas || !image || busy) return
     setMessages(m => [...m, { id: nextId(), role: 'user', text }])
     setCards([])
     setBusy('正在看照片…')
     try {
       // 路由看的是**用户此刻看到的画面**（含已生效的参数），这样模型给的
-      // 增量才是相对当前效果的。生成那一路正相反——它必须拿原图。
+      // 增量才是相对当前效果的。生成那一路送的是**当前 base**（同样不带
+      // 参数——铁律保证，见 spec §3.5），所以两边都不会把颜色烤进像素。
       const preview = await prepareForRouting(canvas)
       const decision = await postRoute({ imageDataUrl: preview.dataUrl, text, params })
       await applyDecision(decision)
@@ -4088,7 +4206,9 @@ export default function App() {
     } finally {
       setBusy(null)
     }
-  }, [busy, params, applyDecision, say])
+    // `image` 进了守卫，就必须进依赖数组——否则这个回调会永远看到第一次
+    // render 的 image（null），上传后一句话都送不出去。
+  }, [busy, params, applyDecision, say, image])
 
   const onCard = useCallback(async (card: SuggestCard) => {
     if (busy) return
@@ -4293,7 +4413,7 @@ Expected: `{"ok":true}`。再 `npm run dev`，开 `http://localhost:5173/`。
 这四条是数据模型的基石，**必须亲眼看到**，不能靠推理：
 
 1. **参数没被烘进 base**：先拖曝光到 +40，然后说「把后面那个人去掉」→ 新图**依然是亮的**。
-2. **生成用的是原图**：在上一步之后连做两次生成 → 第二次的结果**不会**比第一次更暖/更亮（那说明参数被烤进去了）。
+2. **生成用的是当前的 `base`（是累积的，不是最初那张原图）**：连做两次生成（第一次「把后面那个人去掉」、第二次「天空换成黄昏」）→ 第二次的底图上**第一次的改动还在**（被去掉的人不会回来），且它**不是**最初那张原图。旧行为（送原图）的反例：第二次的底图 = 最初那张，第一次的付费改动被静默撤销。
 3. **失败不丢参数**：生成过程中断网 → 出现「再试一次」，**滑块位置一个都没变**。
 4. **串行**：快速连发三条 → 后端终端里的 `[queue]` 行不交错，按顺序处理。
 
@@ -4315,8 +4435,9 @@ feat(ui): 对话面板与整体接线
 就算好的，而卡片是上传后最高频的动作。
 
 两条路送的图不同，这是刻意的：路由送**当前画面**（含已生效参数），
-增量才是相对当前效果的；生成送**原图**，否则参数会被烤进像素、
-回来再作用一次。
+增量才是相对当前效果的；生成送**当前的 base**——它不带参数（铁律），
+又是累积的，所以参数不会被烤进像素再作用一次，而第二次生成也不会
+把第一次的改动丢掉。
 
 顺带修掉计划一遗留的面板溢出：app 锁 100vh 由 flex 分配高度，
 原来 min-height:100vh 让画布 78vh + 面板 42vh 超出了屏幕。
@@ -4324,6 +4445,10 @@ feat(ui): 对话面板与整体接线
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 MSG
 ```
+
+> **2026-09-22 更正（C1，全分支审查）**：这条提交信息原来写的是「生成送**原图**」——**那是错的**（spec §3.5 已更正）。
+> 生成送的是**当前的 `base`**：它同样不带参数（铁律保证），但它是**累积的**；送最初那张原图会让第二次生成静默撤销第一次花钱改出来的东西。
+> 本计划里所有「生成送原图」的措辞（Global Constraints、Task 9 的说明与验证期望）都已按这个口径改过；出货代码见 `src/App.tsx` 的 `runGenerate`——源图由 `applyDecision` 显式传 `image`，不再有 `originalRef`。
 
 ---
 
@@ -4353,9 +4478,9 @@ MSG
 // ─────────────────────────────────────────────────────────────────────
 // 断言语义（裁定 ⑥）：**脚本断言的是我们能控制的东西，报告的是模型的选择。**
 //
-// 为什么要有这条判据：实测打真实上游的冒烟共 6 次，其中 4 次至少出现一次
-// degraded=true，累计 7 次模型调用降级（/api/suggest 2 次、/api/route 5 次，
-// 含 1 次退化成 params + 无 deltas 的静默空转）。
+// 为什么要有这条判据：实测打真实上游的冒烟共 7 次，其中 5 次至少出现一次
+// degraded=true，累计 8 次模型调用降级（/api/suggest 2 次、/api/route 6 次，
+// 含 1 次退化成 params + 无 deltas 的静默空转、1 次没守 route 枚举）。
 // **这看起来是常态，不是偶发。** 对模型的选择下硬断言，等于让脚本在上游一抽风时变红；
 // 那是噪声不是信号——一个常态变红的脚本，人就会开始忽略它，它也就死了。
 //
