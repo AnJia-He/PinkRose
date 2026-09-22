@@ -2370,6 +2370,7 @@ describe('handleRoute', () => {
     await handleRoute({ ...body, params: { exposure: 999 } }, deps(client))
     expect(calls[2].messages[1].content[1].text).toContain('亮度 +100')
   })
+})
 ```
 
 **这四条断言是被审查打回后加硬的（修复轮 1）**，每条都有变异做验收条件 —— 原版对下面四个变异"免疫"（实测 8 passed 全绿），加硬后各自见红：
