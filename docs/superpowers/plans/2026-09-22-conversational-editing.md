@@ -4345,6 +4345,9 @@ MSG
 // 真实 API 冒烟。**会花钱**——一次生成约 12,900 tokens，手动跑，不进 CI。
 // 用法：先 `node server/index.ts`，再 `node scripts/smoke.mjs`
 // 加 `--with-edit` 才打 /images/edits（那一步约 12,900 tokens，跑一次就够）。
+// 但 `--with-edit` **只是三个前提之一**（详见第 6 项）：还要有非空的 edit_prompt，
+// 以及模型没说拿不准（needsDisambiguation === false）。最后一条挡的是"模型把一句
+// 拒绝语当 prompt 交回来，钱花了而画面一个像素没动"——真发生过一次。
 // 生成的结果会落到 `test-photos/smoke_edit.png` 供肉眼比对（该目录已 gitignore）。
 //
 // ─────────────────────────────────────────────────────────────────────
@@ -4389,6 +4392,7 @@ const secs = (t) => ((performance.now() - t) / 1000).toFixed(1)
 const failures = []       // 我们控制的东西坏了 -> 退出码 1
 const warnings = []       // 软警告，不改退出码
 const observations = []   // 模型的选择，只报告
+let editCalls = 0         // 这次跑**实际**发起了几次付费的 /api/edit（裁定 ⑨ 的断言要用）
 
 /** 硬断言：只用于**我们能控制**的东西。 */
 function check(name, ok, detail = '') {
@@ -4560,7 +4564,21 @@ report('both 的两半都给了（deltas 与 edit_prompt 皆非空）',
   `deltas=${JSON.stringify(d3?.paramDeltas)} editPrompt=${JSON.stringify(d3?.editPrompt?.slice(0, 80))}`)
 
 // ---- 6. 生成式编辑（**这一步花钱**）----
-if (WANT_EDIT && d2?.editPrompt) {
+// 花钱的前提有三条，缺一条就不调用：
+//   ① 命令行显式给了 --with-edit
+//   ② 第 4 项给了**非空**的 edit_prompt
+//   ③ 模型**没有**说它拿不准 —— needsDisambiguation === false
+//
+// ③ 是裁定 ⑨ 补的。为什么值得单独拦：本项第一次真跑 --with-edit，模型把**一句拒绝语**
+// 放进了 edit_prompt（"No edit - …no other person is visible in this solo portrait"），
+// ② 满足，于是钱照花，而结果**一个像素都没变**（像素级实测：差 >32 的像素 0.000%）。
+// 前端 App.tsx 一直会拦这种情况；脚本以前不拦，于是那笔钱白花了。
+// 这个脚本是项目唯一的上游回归工具，将来会被反复跑，每跑一次都可能在模型拒绝时白烧一次，
+// 所以这条拦在脚本里。
+// 前提 ② 就是第 4 项报过的那条 hasPrompt（同一个值，不重复算）；这里只补 ③。
+const unsure = d2?.needsDisambiguation !== false
+
+if (WANT_EDIT && hasPrompt && !unsure) {
   const editBytes = await readFile(EDIT_IMG)
   const real = jpegSize(editBytes)
   console.log('\n6. /api/edit')
@@ -4573,6 +4591,7 @@ if (WANT_EDIT && d2?.editPrompt) {
     real ? `实物 ${real.w}×${real.h}，声明 ${EDIT_W}×${EDIT_H}` : `${EDIT_IMG} 不是能解析的 JPEG`)
   if (sizeOk) {
     t = t0()
+    editCalls += 1
     const ed = await post('/api/edit', {
       imageDataUrl: `data:image/jpeg;base64,${editBytes.toString('base64')}`,
       editPrompt: d2.editPrompt, width: EDIT_W, height: EDIT_H,
@@ -4595,6 +4614,19 @@ if (WANT_EDIT && d2?.editPrompt) {
   } else {
     console.log('     ⏭  尺寸对不上，跳过这次花钱的调用')
   }
+} else if (WANT_EDIT && unsure) {
+  // 裁定 ⑨：只报告、不调用。理由要打清楚是"模型拿不准"，不是"没给出 prompt"——
+  // 这两种情形以前共用一句含糊的话，读的人会以为是上游抽风抽掉了 prompt。
+  console.log('\n6. /api/edit            ⏭  跳过 —— **没有花这笔钱**')
+  console.log('     理由：模型自己说它拿不准（needsDisambiguation=true），不是它没给出 prompt。')
+  console.log(hasPrompt
+    ? `     它同时给了 prompt：${JSON.stringify(d2.editPrompt.slice(0, 120))}`
+    : '     而且它也没给出 prompt —— 两个前提都没满足。')
+  console.log('     上一个真跑就是这么烧掉 12,900 tokens 的：prompt 非空，但内容是句拒绝语，')
+  console.log('     生成出来的图与底图逐像素比对"差 >32"的占比是 0.000%。')
+  // 模型拿不准是**模型的选择**，按裁定 ⑥ 只报告、不让脚本变红。
+  report('--with-edit 这次没能真的跑起来', false,
+    '模型说拿不准（needsDisambiguation=true），脚本按裁定 ⑨ 主动跳过，不是我们的代码坏了。')
 } else if (WANT_EDIT) {
   // 显式说了要花钱跑生成，却因为第 4 项没给 prompt 而跑不了。这也要分开看：
   // 成因几乎总是上游抽风（degraded 那次），不是我们的代码不对 -> 只报告
@@ -4604,6 +4636,19 @@ if (WANT_EDIT && d2?.editPrompt) {
     (d2?.degraded ? `成因是上游抽风${UPSTREAM}，不是我们的代码不对，重跑一次通常就有` : '不是降级，值得查一下'))
 } else {
   console.log('\n6. /api/edit            跳过（加 --with-edit 才跑，它会花钱）')
+}
+
+// 裁定 ⑨ 的断言：**故意放在所有分支之外**。
+// 放进上面那个"跳过"分支里的话，将来有人把 needsDisambiguation 这个前提删掉时，
+// 断言会跟着分支一起消失 —— 那就成了"断言对它命名的事变不了红"的第八处同款缺陷。
+// 放在这里，前提一旦被删，脚本会真的去调用，这条就红。
+if (WANT_EDIT && unsure) {
+  check('模型说拿不准时，一次付费调用都不许发', editCalls === 0,
+    `第 4 项 needsDisambiguation=${d2?.needsDisambiguation}（拿不准），` +
+    `却仍然发起了 ${editCalls} 次 /api/edit`)
+}
+if (WANT_EDIT && editCalls > 0) {
+  check('付费调用没有重复（一次跑最多一次）', editCalls === 1, `实际 ${editCalls} 次`)
 }
 
 // ---- 汇总 ----
@@ -4646,6 +4691,18 @@ node scripts/smoke.mjs --with-edit
 ```
 Expected: 第 6 项成功——`/api/edit` 返回 200、回来的图尺寸与请求一致（1024×768）、
 `test-photos/smoke_edit.png` 落盘。
+
+**但这一步有三个前提，缺一条脚本就不调用（评审裁定 ⑨，2026-09-22）**：
+① 命令行给了 `--with-edit`；② 第 4 项给了**非空**的 `edit_prompt`；③ 模型**没说拿不准**
+（`needsDisambiguation === false`）。缺 ③ 时脚本**只报告、不调用**，并把"跳过"的理由打清楚
+（是"模型拿不准"，不是"没给出 prompt"）。
+
+第 ③ 条不是"工具不完美"：第一次真跑 `--with-edit` 时，模型把**一句拒绝语**放进了 `edit_prompt`
+（`"No edit - …no other person is visible in this solo portrait"`），② 满足，于是钱照花，
+而结果与底图逐像素比对，"差 >32"的像素占比是 **0.000%**——12,900 tokens 买回一张一模一样的图。
+前端 `applyDecision` 早就有这道门（见 Step 16 的裁定 ④），**脚本这一侧当时没有**。
+这个脚本是项目唯一的上游回归工具，将来会被反复跑，每跑一次都可能在模型拒绝时白烧一次生成，
+所以门补在脚本里。脚本里那条断言**故意写在所有分支之外**，否则删掉前提时它会跟着分支一起消失。
 
 **不要对画面内容下断言。** 底图是 `spike/evidence/input_scene.jpg`——一张 1024×768 的示意图
 （宽高都是 32 的倍数，所以"声明的 size"与"实物尺寸"天然一致），**不是人像**。

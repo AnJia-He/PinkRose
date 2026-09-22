@@ -12,6 +12,10 @@ node scripts/smoke.mjs        # 不花钱：health / suggest / route
 node scripts/smoke.mjs --with-edit   # 花钱：多打一次 /images/edits（约 12,900 tokens）
 ```
 
+`--with-edit` 只是**三个前提之一**：命令行给了它、第 4 项给了非空 `edit_prompt`、
+且模型**没说拿不准**（`needsDisambiguation === false`）。最后一条是裁定 ⑨ 补的——
+模型说拿不准时脚本**只报告、不调用**，那笔钱不花（§2.6）。
+
 前端在另一个终端：`npm run dev`（Vite 5173，`/api` 代理到 8787）。
 
 ---
@@ -30,6 +34,7 @@ node scripts/smoke.mjs --with-edit   # 花钱：多打一次 /images/edits（约
 | **上游稳定性** | ⚠️ **明显不稳**：7 次冒烟里 **5 次**至少出现一次 `degraded=true`，累计 **8 次**模型调用降级（`/api/suggest` 2、`/api/route` 6）—— 见 §5 |
 | 裁定 ⑤ → ⑦（`reconcile` 补洞 → 改通用规则） | ✅ 已实施，两变异对照见 §5.1 / §5.2 |
 | 裁定 ⑧（脚本尺寸不符 → 换对齐底图） | ✅ 已修，且新增一条硬断言钉住它（§2.5、§1.2） |
+| 裁定 ⑨（拿不准时不许花钱） | ✅ 已修（§2.6）：`needsDisambiguation === false` 进付费前提；打桩两跑证明删掉它必红（`EXIT=1`，stub 记到 1 次 `/api/edit`） |
 
 ---
 
@@ -90,6 +95,8 @@ brief 的脚本全程只有 `console.log`，**任何一步坏掉都仍然 `exit 
 | `health` | 只有 **POST** 返回 404，GET 正常 | **`EXIT=0`** —— 这就是 §1.1 那条 GET 偏离的**独立证据**：脚本若照 brief 用 POST，这一格必然 `EXIT=1` |
 | **`--with-edit` 整条路**（打桩） | 打桩的 `/api/edit` 照常回 200 | `EXIT=0`，第 6 项四步全绿：尺寸守卫 → 200 → 有图 → 尺寸一致 → 落盘 |
 | **尺寸守卫（裁定 ⑧）** | 把声明改回 `1216×800`（**就是这次修掉的那个 bug 的原样**） | **`EXIT=1`**，`❌ 声明的 size 与底图实物一致 — 实物 1024×768，声明 1216×800`，并**跳过那笔花钱的调用** |
+| **裁定 ⑨：拿不准时不许花钱**（`BREAK=unsure`：第 4 项给**非空 prompt**，但 `needsDisambiguation=true`） | stub 额外记录"`/api/edit` 被调用了几次" | `EXIT=0`，第 6 项打印「⏭ 跳过 —— **没有花这笔钱**」，理由写明是**模型拿不准**；**stub 命中数 = 0** |
+| **同上，把那行前提删掉** | `if (WANT_EDIT && hasPrompt && !unsure)` → `if (WANT_EDIT && hasPrompt)` | **`EXIT=1`**，`❌ 模型说拿不准时，一次付费调用都不许发 — 第 4 项 needsDisambiguation=true（拿不准），却仍然发起了 1 次 /api/edit`；**stub 命中数 = 1** |
 | 死服务 | 服务根本没起 | `EXIT=1`（裸 ECONNREFUSED 堆栈，够响但不好看） |
 
 **第 3 项那条是真判断，不是打印一行就算** —— 探针 `route3` 就是专门把它做坏后跑的；而 `route45` 反证了"模型侧的东西不再让脚本变红"。
@@ -322,10 +329,96 @@ EXIT=0
    不可能逐字节相等，所以看的是"差值落在压缩噪声那一档，还是内容真变了那一档"。
    **如果没有真被改动，就不可能出现成片差 > 100 的像素，而这里是 0%。**）
 
-   **这是本次验收新发现的一处缺陷，本任务没有自己动手改**：第 6 项只看 `editPrompt` 非空，
-   不看 `needsDisambiguation`。前端 `App.tsx` 是会拦的（§6.3 记过一次正面案例），
-   但脚本不拦，于是它会拿一句拒绝语去花掉 12,900 tokens。
-   建议：第 6 项加上 `needsDisambiguation === false` 的前提，否则只报告不调用。
+   **这是本次验收新发现的一处缺陷**：第 6 项只看 `editPrompt` 非空，不看 `needsDisambiguation`。
+   前端 `App.tsx` 是会拦的（§6.3 记过一次正面案例，裁定 ④ 也把它写进了完成标准），
+   **脚本这一侧当时没有**，于是它会拿一句拒绝语去花掉 12,900 tokens。
+   → 已按评审裁定 ⑨ 修掉，修法与证明见 **§2.6**。
+
+---
+
+### 2.6 裁定 ⑨：把门补上，并证明它真的会拦（**打桩，零成本**）
+
+为什么值得单独修：这**不是"工具不完美"**。是它证明那笔钱是白花的，而**这发生在脚本的第一次
+真实运行上**——说明不是偶发。这个脚本是项目唯一的上游回归工具，将来会被反复跑，
+每跑一次都可能在模型拒绝时白烧一次生成。
+
+修法（裁定 ⑨ 原文）：把 `needsDisambiguation === false` 加进付费调用的前提；不满足时
+**只报告、不调用**，并把"跳过"的理由打清楚（是"模型拿不准"而不是"没给出 prompt"）。
+
+**不重跑 `--with-edit`**（钱已经花够，而这轮改动阻止的正是花钱）。改用打桩证明：
+`.superpowers/smoke-stub.mjs` 新增 `BREAK=unsure`——`/api/route` 对第 4 项回**非空的 prompt**
+（内容就是 §2.5 那次真跑的原话）但 `needsDisambiguation: true`。同时 stub **每被 `/api/edit`
+打中一次就记一行**日志：**"到底有没有花这笔钱"必须能从脚本进程之外看见**，
+不能只看脚本自己打印的话（那正是被验对象自己作证）。
+
+**① 门在（原样的脚本）**
+
+```bash
+BREAK=unsure node .superpowers/smoke-stub.mjs &
+SMOKE_BASE=http://localhost:8899 node scripts/smoke.mjs --with-edit
+```
+
+```
+4. "把后面那个人去掉"   200  0.0s
+     route=generate  degraded=false  edit_prompt="No edit - no other person is visible in this solo portrait."
+     ✅ 纯生成路由 200
+     ✅ 走生成路（期望 generate）
+     ✅ 给了非空 edit_prompt（第 6 项的前提）      ← ② 满足，光看这一条就会去花钱
+
+6. /api/edit            ⏭  跳过 —— **没有花这笔钱**
+     理由：模型自己说它拿不准（needsDisambiguation=true），不是它没给出 prompt。
+     它同时给了 prompt："No edit - no other person is visible in this solo portrait."
+     上一个真跑就是这么烧掉 12,900 tokens 的：prompt 非空，但内容是句拒绝语，
+     生成出来的图与底图逐像素比对"差 >32"的占比是 0.000%。
+     ⚠️ --with-edit 这次没能真的跑起来 — 模型说拿不准（needsDisambiguation=true），脚本按裁定 ⑨ 主动跳过，不是我们的代码坏了。
+     ✅ 模型说拿不准时，一次付费调用都不许发
+
+⚠️  1 条"模型的选择"不如预期（**不改退出码**）：
+     - --with-edit 这次没能真的跑起来 — …
+
+✅ 所有"我们能控制的东西"全部通过（另有 1 条模型侧的观察，见上，不计入退出码）
+EXIT=0
+```
+
+**外部证据**：`grep -c '^HIT' .superpowers/edit_hits.log` = **0**。钱一次都没花。
+
+**② 变异：把那行前提删掉**
+
+只改一处（`diff` 确认只此一行）：`if (WANT_EDIT && hasPrompt && !unsure) {`
+→ `if (WANT_EDIT && hasPrompt) {`
+
+```
+6. /api/edit
+     底图 …\input_scene.jpg   实物 1024×768   声明 1024×768
+     ✅ 声明的 size 与底图实物一致（不一致模型会重构构图）
+     响应 200  0.0s  输出 0 KB
+     ✅ 生成式编辑 200
+     ✅ 回来了图片数据
+     ✅ 回图尺寸与请求一致（1024×768）
+     已存到 test-photos/smoke_edit.png
+     ❌ 模型说拿不准时，一次付费调用都不许发 — 第 4 项 needsDisambiguation=true（拿不准），却仍然发起了 1 次 /api/edit
+     ✅ 付费调用没有重复（一次跑最多一次）
+
+❌ 1 条**我们的代码**有问题：
+     - 模型说拿不准时，一次付费调用都不许发 — …
+EXIT=1
+```
+
+**外部证据**：`grep -c '^HIT'` = **1**。
+
+| | 门在 | 删掉前提 |
+|---|---|---|
+| 退出码 | `0` | **`1`** |
+| stub 收到的 `/api/edit` 命中数 | **`0`** | **`1`** |
+| 红的那条断言 | — | `模型说拿不准时，一次付费调用都不许发` |
+
+**这条断言为什么写在所有分支之外**：如果它写在"跳过"分支里，删掉前提时它会**跟着分支一起消失**——
+连红都红不了，正是本次验收反复遇到的那种"断言对它命名的事变不了红"的写法。放在分支之外，
+前提一被删，脚本就会真的去调用，这条必红。变异跑的第 6 项里，付费路径自己那三条断言全是绿的，
+**唯一抓到它的就是这条**。
+
+（收尾：stub 已杀，8899/8787/5173 均已释放；变异跑写出的 `test-photos/smoke_edit.png` 已用
+`--with-edit` 真跑那份覆盖回去，`test-photos/` 全程未入库。）
 
 ---
 
@@ -679,11 +772,12 @@ reply=照片里我只看到这位女士，没发现后面还有人——您是�
    给浏览器端到端）在当时是合理的，但**脚本本身当时是坏的**（声明尺寸与实物不符），这一点没被发现。
 6. **服务没起时脚本是裸堆栈**（§1.2 探针表最后一行），退出码正确但输出难看。没改，因为 brief 没要求。
 7. 第 2 次冒烟那次（只留了片段）**退出码为 1 但完整输出没有留档**——这是本次验收记录的一个缺口。
-8. **【新发现，未修】第 6 项会把一句"拒绝语"当编辑指令送进 `/api/edit`。** 只检查 `editPrompt` 非空，
-   不看 `needsDisambiguation`。§2.5 那次实测就是：模型给的是
+8. ~~**【新发现】第 6 项会把一句"拒绝语"当编辑指令送进 `/api/edit`。**~~ → **裁定 ⑨ 已修**（§2.6）。
+   原来只检查 `editPrompt` 非空，不看 `needsDisambiguation`。§2.5 那次实测就是：模型给的是
    `"No edit - …no other person is visible in this solo portrait"`，12,900 tokens 花掉了，
    **画面一个像素没变**（差 >32 的像素 **0.000%**）。前端 `App.tsx` 会拦（§6.3），脚本不拦。
-   建议加 `needsDisambiguation === false` 的前提，否则只报告不调用。
+   现在把 `needsDisambiguation === false` 加进了付费前提，不满足时只报告不调用；
+   并用打桩两跑证明"删掉这行前提必红"（`EXIT=1`，且 stub 记到 1 次 `/api/edit`）。
 
 ---
 
@@ -700,11 +794,12 @@ reply=照片里我只看到这位女士，没发现后面还有人——您是�
 | 生成中断网滑块一个没变 | ✅（§7） |
 | 验证记录写在本文件 | ✅ |
 | `test-photos/` 没被入库 | ✅ `git ls-files` 无匹配（已在 `.gitignore`） |
-| 冒烟脚本能真的红（不是走过场） | ✅ 打桩探针 **8 组**对照，见 §1.2 |
+| 冒烟脚本能真的红（不是走过场） | ✅ 打桩探针 **11 格**对照，见 §1.2 |
 | `--with-edit` 打真上游跑通一次 | ✅ `EXIT=0`、200、939 KB、1024×768（§2.5） |
 | 裁定 ⑤ / ⑦：`reconcile` 通用规则 + 两条测试 | ✅ 两变异对照：换回特例只红 1 条、整条删掉红 2 条（§5.1 / §5.2） |
 | 裁定 ⑥：断言语义改为"断言我们能控制的" | ✅ 判据写进脚本头部注释，见 §1.2 |
 | 裁定 ⑧：脚本尺寸与实物一致 | ✅ 换天然对齐底图 + **加了一条会红的硬断言**（§1.2 / §2.5） |
+| 裁定 ⑨：拿不准时不花钱（`needsDisambiguation` 进付费前提） | ✅ 打桩两跑对照：门在 `EXIT=0` 且 stub 命中 `0`；删掉前提 `EXIT=1` 且命中 `1`（§2.6） |
 
 ---
 
@@ -712,12 +807,16 @@ reply=照片里我只看到这位女士，没发现后面还有人——您是�
 
 放在 `.superpowers/`（已被 `.gitignore` 排除）：
 
-- `smoke-stub.mjs` —— 打桩服务，用来证明冒烟断言真的会红（§1.2），零成本
+- `smoke-stub.mjs` —— 打桩服务，用来证明冒烟断言真的会红（§1.2 / §2.6），零成本。
+  它还会把每次被 `/api/edit` 打中记进 `.superpowers/edit_hits.log`——
+  **"有没有花这笔钱"要从脚本进程之外看得见**（§2.6）
 - `e2e_probe.py` —— 浏览器 30 秒线 + 生成式编辑 + 滑块幸存（Playwright / Python）
 - `offline_probe.py` —— 断网时滑块不丢（§7）
 - `img_diff.py` —— 把两张图都画进 canvas 逐像素比，用来把「看着一样」变成数字（§2.5）
   （为什么不用现成工具：底图是 JPEG、回图是 PNG，不可能逐字节相等，所以要看的
   是**差值落在压缩噪声那一档，还是内容真变了那一档**——判据是"有没有成片差 > 100 的像素"。）
+- `sync_plan_smoke.mjs` —— 把计划文档里那份 `smoke.mjs` 整块换成磁盘上的真身，并逐字节复核
+- `smoke_mutant.mjs` —— 变异体（只改一行的副本），跑完即弃
 
 跑法（Windows / git bash，需要 `PYTHONIOENCODING=utf-8`，否则 GBK 控制台会崩）：
 
@@ -731,7 +830,7 @@ python .superpowers/offline_probe.py
 **冒烟断言的 6 组对照探针**（零成本，不碰真实 API；结果见 §1.2）：
 
 ```bash
-# BREAK 取 none / route3 / route3_degraded / route45 / health / health_get
+# BREAK 取 none / route3 / route3_degraded / route45 / unsure / health / health_get
 BREAK=route3 node .superpowers/smoke-stub.mjs &
 SMOKE_BASE=http://localhost:8899 node scripts/smoke.mjs; echo "EXIT=$?"
 # 跑完记得清掉 8899：留下的 stub 会让下一轮静默连到旧桩上（这个坑踩过一次）
@@ -739,3 +838,5 @@ SMOKE_BASE=http://localhost:8899 node scripts/smoke.mjs; echo "EXIT=$?"
 
 > 注意：stub 的 `/api/route` 里**分支顺序要紧**——第 5 项那句话里同时含「再亮点」和「去掉」，
 > `route45` 的判断必须排在最前面，否则它会匹配到别的分支，`route45` 那格就假绿了。
+> `unsure` 那格刻意**只作用于第 4 项**（纯生成），第 3 项仍回 `params`——
+> 否则那轮会因为第 3 项而无关地变红，变异对照就读不出信号了。
