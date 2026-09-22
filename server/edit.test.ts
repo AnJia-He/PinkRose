@@ -54,14 +54,25 @@ describe('handleEdit', () => {
     expect(calls[0].images[0].image_url).toBe(other)
   })
 
-  it('长边超过业务上限 2048 -> 400，且**一次 API 都不调**', async () => {
-    // 4096x2048 对 API 完全合法（32 的倍数、在 [512,4096]、2:1）——
-    // checkModelSize 放它过。挡住它的是我们自己的策略上限（spec §4.4），
-    // 不设这道门，一个不老实/有 bug 的客户端就能让账户按 4096² 的账单付费。
+  it('业务上限正好是 2048 —— 2048 放行、2080 拒，且被拒那次一次 API 都不调', async () => {
+    // 4096x2048 对 API 完全合法（32 的倍数、在 [512,4096]、2:1）——checkModelSize
+    // 放它过。挡住它的是**我们自己的**策略上限（spec §4.4），不设这道门，一个不老实
+    // 或有 bug 的客户端就能让账户按 4096² 的账单付费。
+    //
+    // 为什么钉边界、而不是「值大于某数就报错」：只断言 BAD_REQUEST 的话，把上限换成
+    // 任何落在 (1024, 4096) 里的字面量都照样全绿；只断言报错文案里含 2048 也不行——
+    // 改判定、不改文案（`longSide > 3000` 但消息仍插值 MAX_DIMENSION）同样全绿
+    // （我第一版就是这么打偏的）。只有「2048 必须过 + 2080 必须拒」把那个数钉死，
+    // 两个方向都能红。
     const { client, calls } = replying('QQ==')
-    await expect(handleEdit({ ...body, width: 4096, height: 2048 }, deps(client)))
-      .rejects.toMatchObject({ code: 'BAD_REQUEST' })
-    expect(calls).toHaveLength(0)
+    // 上限是「不超过」，不是「小于」——正好 2048 必须放行
+    const pass = await handleEdit({ ...body, width: 2048, height: 2048 }, deps(client))
+    expect(pass.width).toBe(2048)
+
+    const e = await handleEdit({ ...body, width: 2080, height: 2048 }, deps(client)).catch(e => e)
+    expect(e.code).toBe('BAD_REQUEST')
+    // 只有放行那次打到上游：被拒的那次在本地就断了（省的是时间，也是钱）
+    expect(calls).toHaveLength(1)
   })
 
   it('imageDataUrl 不是 data:image/ 开头 -> 400，且一次 API 都不调', async () => {
