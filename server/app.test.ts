@@ -1,9 +1,37 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import type { Server } from 'node:http'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createApp, type AppDeps } from './app.ts'
 import type { Config } from './config.ts'
 import { SerialQueue } from './queue.ts'
 import { SenseNovaClient } from './sn.ts'
+
+/**
+ * 让 `node:fs.createReadStream` 对**被点名的那个路径**返回一个立刻报错的流。
+ *
+ * 为什么必须打桩：中途中止的读错误（TOCTOU 删除 / EACCES / EIO）在 Windows
+ * 上没法可靠地现场制造，而这件事要验的恰恰是"它来了之后进程还活着"。
+ * `vi.hoisted` 是必须的——vi.mock 的工厂会被提到所有 import 之前。
+ */
+const fsFail = vi.hoisted(() => ({ path: '' }))
+
+vi.mock('node:fs', async importOriginal => {
+  const real = await importOriginal<typeof import('node:fs')>()
+  const { Readable } = await import('node:stream')
+  return {
+    ...real,
+    createReadStream: ((p: Parameters<typeof real.createReadStream>[0], opts?: unknown) => {
+      if (fsFail.path && String(p) === fsFail.path) {
+        const s = new Readable({ read() {} })
+        process.nextTick(() => s.emit('error', new Error('injected EIO')))
+        return s as unknown as ReturnType<typeof real.createReadStream>
+      }
+      return real.createReadStream(p, opts as Parameters<typeof real.createReadStream>[1])
+    }) as typeof real.createReadStream,
+  }
+})
 
 const cfg: Config = {
   apiKey: 'sk-secret-must-not-leak',
@@ -162,5 +190,27 @@ describe('createApp', () => {
     expect((JSON.parse(text) as { error: { code: string } }).error.code).toBe('UPSTREAM_LIMIT')
     expect(text).not.toContain('SENTINEL-UPSTREAM-BODY-c4d1')
     expect(calls.length).toBeGreaterThan(0)   // 是上游真的挂了，不是本地拒的
+  })
+
+  it('静态文件读流出错时只毁掉那一个响应，进程还活着', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ruixing-static-'))
+    try {
+      writeFileSync(join(dir, 'index.html'), '<h1>ok</h1>')
+      fsFail.path = join(dir, 'index.html')
+      const base = await boot({ staticDir: dir })
+
+      // 响应头已经发出去了（200），正文是随后流的——流一炸，
+      // 客户端应该看到"读正文失败"，而不是一个把服务进程带走的未捕获异常。
+      await expect(
+        fetch(`${base}/index.html`).then(r => r.text()),
+      ).rejects.toThrow()
+
+      // 真正的断言：进程还活着，别的请求照常服务。
+      const health = await fetch(`${base}/api/health`)
+      expect(health.status).toBe(200)
+    } finally {
+      fsFail.path = ''
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

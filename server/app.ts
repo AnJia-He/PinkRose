@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http'
 import { existsSync, createReadStream, statSync } from 'node:fs'
-import { extname, join, normalize, resolve } from 'node:path'
+import { extname, join, normalize, resolve, sep } from 'node:path'
 import type { Config } from './config.ts'
 import { handleEdit } from './edit.ts'
 import { HttpError, readJsonBody, sendError, sendJson } from './http.ts'
@@ -90,10 +90,12 @@ async function serveStatic(dir: string | undefined, path: string,
     res.end('开发模式下前端在 http://localhost:5173')
     return
   }
-  // 先 normalize 再拼到 dir 上，然后确认结果仍在 dir 内——挡住 ../.. 穿越
+  // 先 normalize 再拼到 dir 上，然后确认结果仍在 dir 内——挡住 ../.. 穿越。
+  // 比的是 root + sep，不是裸 root：否则兄弟目录（/a/dist-evil 对 /a/dist）
+  // 会被前缀匹配放过去。target === root 不算穿越，照旧走 SPA 兜底。
   const root = resolve(dir)
   const target = resolve(join(root, normalize(path)))
-  if (!target.startsWith(root)) {
+  if (target !== root && !target.startsWith(root + sep)) {
     res.writeHead(403); res.end('forbidden'); return
   }
   const file = existsSync(target) && statSync(target).isFile()
@@ -105,5 +107,12 @@ async function serveStatic(dir: string | undefined, path: string,
     return
   }
   res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' })
-  createReadStream(file).pipe(res)
+  // 读流出错（TOCTOU 删除 / EACCES / EIO）**只毁掉这一个响应**，不能让它
+  // 变成进程级的未捕获异常——静态文件读不出来是局部故障，不是致命错误。
+  //
+  // 只做这一处窄修，**不装全局 uncaughtException**：未知的致命错误让进程
+  // 响亮地死掉才是对的，吞掉它等于把以后所有的真 bug 都藏起来。
+  const stream = createReadStream(file)
+  stream.on('error', () => res.destroy())
+  stream.pipe(res)
 }
