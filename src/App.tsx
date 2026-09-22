@@ -34,8 +34,6 @@ export default function App() {
 
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const originalFileRef = useRef<File | null>(null)
-  /** **原图**的位图。生成式编辑永远送它，不是当前画面 —— 见 spec §3.5。 */
-  const originalRef = useRef<DecodedImage | null>(null)
   const idRef = useRef(0)
   /** 每次选图 +1。晚到的卡片结果靠它对号，免得贴到下一张照片上。 */
   const pickIdRef = useRef(0)
@@ -52,21 +50,28 @@ export default function App() {
   /**
    * 生成式编辑：换掉 base，**params 一个都不动**。
    *
-   * 送模型的是 originalRef（原图），不是画布。画布上已经带了用户调好的
-   * 颜色，送过去会被模型烤进像素，回来再被 params 作用一次——颜色炸掉。
+   * 送模型的是**当前的 base**（`source`）——不是最初那张原图，也不是画布。
+   * 送画布不行：上面已经带了用户调好的颜色，送去会被模型烤进像素，回来再被
+   * params 作用一次——颜色炸掉。送原图也不行：第二次生成会把第一次花钱改出来
+   * 的东西整个丢掉（spec §3.5 的 2026-09-22 更正）。base 由铁律保证永远不带
+   * 参数，又是累积的，两个要求它同时满足。
+   *
+   * `source` 由调用方（applyDecision）显式传入，不在这里读某个 ref：
+   * 送哪张图是**调用点的决定**，而 ref 会跨 render 变陈。
+   *
    * 用户当前的参数值作为**文本上下文**已经由服务端交给 LLM 让它补偿
    * （spec §3.5：确定性比聪明重要）。
    */
   const runGenerate = useCallback(async (
     editPrompt: string, messageId: number, paramsAtStep: Adjustments,
+    source: DecodedImage,
   ) => {
-    const orig = originalRef.current
-    if (!orig || !editPrompt) return
+    if (!editPrompt) return
     setBusy('正在改…大约 10 秒')
     try {
       // 传 .bitmap —— prepareForModel 要的是能 drawImage 的东西，
       // 不是 DecodedImage 那个包装对象
-      const prepared = await prepareForModel(orig.bitmap)
+      const prepared = await prepareForModel(source.bitmap)
       const out = await postEdit({
         imageDataUrl: prepared.dataUrl,
         editPrompt,
@@ -75,7 +80,15 @@ export default function App() {
       })
       const blob = await (await fetch(out.imageDataUrl)).blob()
       const bitmap = await createImageBitmap(blob)
-      const nextBase: DecodedImage = { bitmap, width: out.width, height: out.height }
+      // 尺寸以**实际拿到的像素**为准，绝不按 out.width/height 拉伸：
+      // 后者是服务端回显的请求尺寸（声明），拿它去设 canvas 会把照片拉变形。
+      // 声明与实物不一致时留下告警，让这种事可观测，而不是静默。
+      if (bitmap.width !== out.width || bitmap.height !== out.height) {
+        console.warn(
+          `[edit] 回图尺寸与声明不符：声明 ${out.width}x${out.height}，` +
+          `实际 ${bitmap.width}x${bitmap.height}（以实际为准，不拉伸）`)
+      }
+      const nextBase: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
 
       setHistory(prev => {
         const next = pushSnapshot(prev, {
@@ -117,15 +130,22 @@ export default function App() {
     // 一边问一边改是最糟的组合：用户还没回答，钱已经花了（一次约 12,900 tokens），
     // 而且改的可能是错的那个人。参数那半照常应用（免费可逆），只拦生成。
     // （图上点一下的完整形态在计划三；这里先把"拿不准就别动手"做对。）
+    //
+    // 文案必须中性：模型会在**没有第二个人**的照片上说拿不准（记录里有它的原话
+    // "后面好像只有山，没看到另一个人"），歧义也未必关于人（哪片天？哪块牌子？）。
     if (d.needsDisambiguation) {
-      say('照片里人有点多，你说的是哪一个？')
+      say('我不太确定你指的是哪个，再说细一点？')
       return
     }
 
-    if (d.route === 'generate' || d.route === 'both') {
-      await runGenerate(d.editPrompt, mid, nextParams)
+    // 送**当前的 base**（= image），不是最初那张原图 —— spec §3.5。
+    // ⚠️ `image` 必须进依赖数组：漏了它，这个回调会永远捕获第一次 render 的
+    // image（null），生成再也不会被触发——而且是静默的：气泡照出、回复照有，
+    // 照片纹丝不动，测试和 typecheck 却全绿。
+    if ((d.route === 'generate' || d.route === 'both') && image) {
+      await runGenerate(d.editPrompt, mid, nextParams, image)
     }
-  }, [params, say, runGenerate])
+  }, [params, say, runGenerate, image])
 
   /**
    * 拉建议卡片。
@@ -157,7 +177,6 @@ export default function App() {
       // 副作用留在状态更新外面，别塞进 updater（updater 可能被重放）。
       for (const s of bitmapsToClose(history, [])) s.bitmap.close()
 
-      originalRef.current = img
       originalFileRef.current = file
       setImage(img)
       setParams(ZERO)
@@ -190,13 +209,14 @@ export default function App() {
 
   const send = useCallback(async (text: string) => {
     const canvas = canvasElRef.current
-    if (!canvas || !originalRef.current || busy) return
+    if (!canvas || !image || busy) return
     setMessages(m => [...m, { id: nextId(), role: 'user', text }])
     setCards([])
     setBusy('正在看照片…')
     try {
       // 路由看的是**用户此刻看到的画面**（含已生效的参数），这样模型给的
-      // 增量才是相对当前效果的。生成那一路正相反——它必须拿原图。
+      // 增量才是相对当前效果的。生成那一路送的是**当前 base**（同样不带
+      // 参数——铁律保证，见 spec §3.5），所以两边都不会把颜色烤进像素。
       const preview = await prepareForRouting(canvas)
       const decision = await postRoute({ imageDataUrl: preview.dataUrl, text, params })
       await applyDecision(decision)
@@ -206,7 +226,9 @@ export default function App() {
     } finally {
       setBusy(null)
     }
-  }, [busy, params, applyDecision, say])
+    // `image` 进了守卫，就必须进依赖数组——否则这个回调会永远看到第一次
+    // render 的 image（null），上传后一句话都送不出去。
+  }, [busy, params, applyDecision, say, image])
 
   const onCard = useCallback(async (card: SuggestCard) => {
     if (busy) return

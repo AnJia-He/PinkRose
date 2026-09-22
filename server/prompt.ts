@@ -40,9 +40,9 @@ export function buildEditPrompt(edit: string): string {
 /**
  * 把当前参数翻成一句中文，作为**文本上下文**给 LLM。
  *
- * 为什么需要：送去生成的图是**原图**（不带参数，见 spec §3.5 的双重叠加陷阱），
- * 所以模型看不到用户已经调过什么。不告诉它，用户已经调暖了它还去加暖，
- * 回来再被参数作用一次，颜色就炸了。
+ * 为什么需要：送去生成的图是**当前的 `base`**——它不带参数（铁律保证 `base`
+ * 里永远没有调色，见 spec §3.5），所以模型看不到用户已经调过什么。不告诉它，
+ * 用户已经调暖了它还去加暖，回来再被参数作用一次，颜色就炸了。
  */
 export function describeParams(a: Adjustments): string {
   const parts: string[] = []
