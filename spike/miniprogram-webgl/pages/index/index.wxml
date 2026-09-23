@@ -1,0 +1,16 @@
+<view class="wrap">
+  <button type="primary" bindtap="probeContexts">① 测 WebGL 能力（不用照片）</button>
+  <button type="primary" bindtap="probePhoto" disabled="{{running}}">② 选一张大照片来试</button>
+
+  <scroll-view class="log" scroll-y>
+    <text class="line" user-select="true">{{report}}</text>
+  </scroll-view>
+</view>
+
+<!-- 三个画布各问一种问题：
+     gl1 普通 webgl 画布 → 拿 webgl
+     gl2 type="webgl2"    → 拿 webgl2（这个 type 本身存不存在，就是要问的）
+     gl3 普通 webgl 画布 → **先**试着拿 webgl2，看普通画布能不能给出 2 -->
+<canvas type="webgl" id="gl1" class="probe-canvas"></canvas>
+<canvas type="webgl2" id="gl2" class="probe-canvas"></canvas>
+<canvas type="webgl" id="gl3" class="probe-canvas"></canvas>

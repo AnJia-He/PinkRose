@@ -1,0 +1,14 @@
+.wrap { padding: 16rpx; }
+.log {
+  margin-top: 20rpx;
+  height: 900rpx;
+  background: #f5f5f5;
+  border-radius: 12rpx;
+  padding: 16rpx;
+}
+.line { font-size: 22rpx; line-height: 1.6; word-break: break-all; }
+
+/* 画布要大一点：第一版只有 60rpx，绘图缓冲区跟着很小，
+   采样点全落在缓冲区外面，读回来一律是 0 —— 于是"没读到"被误报成"画不出来"。
+   现在 300rpx，而且画出来的东西**肉眼可见**，是多一层校验。 */
+.probe-canvas { width: 300rpx; height: 300rpx; }
