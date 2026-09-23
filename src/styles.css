@@ -130,4 +130,12 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     border-left: none;
     border-top: 1px solid #2a2e35;
   }
+
+  /* 微调面板打开时，对话让位。
+     用户此刻要的是「拖滑块、盯着照片变」—— 对话在这时候一点用都没有。
+     不让位的话，手机上一屏里三样东西抢竖向空间（照片 / 对话 38vh /
+     面板 40vh），照片会被压到 **64×86**（实测），等于又回到"看不见"。
+     面板是 .workspace 的兄弟节点，所以 :has() 能直接表达这件事，
+     用不着让 React 去算一个 class。 */
+  .app:has(> .panel) .chat { display: none; }
 }
