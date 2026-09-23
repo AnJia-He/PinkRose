@@ -19,6 +19,18 @@ export default defineConfig({
       deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/server/**'],
     },
   },
+  preview: {
+    // 「在真手机上量一次」要跑**生产版本**，不能跑 dev。dev 把代码拆成几百个
+    // 模块一个个传给手机 —— 那是开发服务器的副作用，真实用户不会遇到。
+    // 拿 dev 的数字去对「30 秒发朋友圈」那条线，量的是个不存在的东西。
+    //
+    // 端口故意和 dev 用同一个 5173：手机防火墙那条规则只开了这个口（见桌面的
+    // 「RuiXing 手机调试-开」），而且两个不会同时跑。
+    host: true,
+    port: 5173,
+    strictPort: true,
+    proxy: { '/api': 'http://127.0.0.1:8787' },
+  },
   test: {
     globals: true,
     environment: 'node',
