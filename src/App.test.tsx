@@ -628,4 +628,26 @@ describe('按住看原图', () => {
     await reopenWith('second')
     expect(canvasProps.props.at(-1)?.originalPreview).toBe('thumb:second')
   })
+
+  it('预览抓不到也不能把应用带走 —— 照片照修、对话照有', async () => {
+    // 抓预览这件事真的会失败（拿不到 2D 上下文）。让它失败一次：
+    // **第一次调用就是 onPick 里那次** —— 补缩略图的 effect 要等这次提交之后才跑。
+    vi.mocked(thumbMod.makeThumbnail).mockImplementationOnce(() => {
+      throw new Error('拿不到 2D 上下文，做不了缩略图')
+    })
+    const alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+
+    await renderApp()
+    await uploadPhoto()
+
+    // 预览没了就是没了：Canvas 收到 null，按住不响应。这是唯一的代价。
+    expect(canvasProps.props.at(-1)?.originalPreview).toBeNull()
+    // 但别的一样都不能少 —— 欢迎语、以及历史里那一步（用户要靠它回到原图）。
+    // 少了这些，用户拿到的是一张没有对话入口的照片，整个应用不可用。
+    expect(lastReply()).toContain('准备好啦')
+    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(1)
+    // 更不能弹"这张图打不开"—— 照片明明打开了，那是句假话。
+    expect(alertSpy).not.toHaveBeenCalled()
+  })
 })

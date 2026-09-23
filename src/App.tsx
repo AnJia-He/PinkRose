@@ -240,9 +240,17 @@ export default function App() {
 
       originalFileRef.current = file
       setImage(img)
-      // 备用一张原图预览（spec §2.5 的"按住看原图"）。用刚解码出来的位图，
-      // 不是画布 —— 这时候画布上还什么都没有。
-      setOriginalPreview(makeThumbnail(img.bitmap, ORIGINAL_PREVIEW_MAX_SIDE))
+      try {
+        // 备用一张原图预览（spec §2.5 的"按住看原图"）。用刚解码出来的位图，
+        // 不是画布 —— 这时候画布上还什么都没有。
+        setOriginalPreview(makeThumbnail(img.bitmap, ORIGINAL_PREVIEW_MAX_SIDE))
+      } catch (e) {
+        // 预览和缩略图是同一类东西：**锦上添花**，抓不到只是没有「按住看原图」，
+        // 修图照常。绝不能让它抛出去 —— 外面那个 catch 会说"这张图打不开"，
+        // 而照片其实已经在画布上了；更要命的是下面那些欢迎语和历史一步都不会建，
+        // 用户拿到的是一张没有对话入口的照片，整个应用不可用。
+        console.error('原图预览生成失败（只是没有「按住看原图」，不影响修图）', e)
+      }
       setParams(ZERO)
       setMessages([])
       setCards([])
