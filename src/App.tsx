@@ -72,6 +72,21 @@ async function fitToDevice(
   }
 }
 
+/**
+ * 正在等用户在图上点一下（spec §6.3 的歧义兜底）。null = 没在等。
+ * 刻意做成**一个**对象而不是三个平行 state：这两轮审查连续抓到的两条钱类漏洞
+ * （onCard、onJump 各漏清一行）根因都是这个形状 —— 三个 state 散在七个写入点上，
+ * "清干净"全靠人记得清三行。折成一个对象之后，这类漏项从"要记得清"变成
+ * **结构上清不掉**：一处 `setPending(null)` 就是全清。
+ *
+ * - `text`：卡住时用户的原话 —— 确认之后要**连同标记一起**再送一次，不能让他重说。
+ * - `marker`：用户在图上点的那个点（0~1，相对照片左上角）。null = 还没点。
+ *   对象还在 = **整条点选流程还在**：从"请你点一下"开始，到确认或取消为止。
+ *   点过一次也还在（marker 非空），否则用户点歪了就没法换个地方再点 ——
+ *   见 onPickPoint。
+ */
+type PendingMark = { text: string; marker: NormPoint | null }
+
 export default function App() {
   const [image, setImage] = useState<DecodedImage | null>(null)
   const [params, setParams] = useState<Adjustments>(ZERO)
@@ -89,14 +104,14 @@ export default function App() {
   const [history, setHistory] = useState<Snapshot[]>([])
   /** 「按住看原图」用的预览图（data URL）。没照片时是 null。 */
   const [originalPreview, setOriginalPreview] = useState<string | null>(null)
-  /** 正在等用户在图上点一下（spec §6.3 的歧义兜底）。
-   *  它管的是**整条点选流程**：从"请你点一下"开始，到确认或取消为止 ——
-   *  点过一次也还是 true，否则用户点歪了就没法换个地方再点（见 onPickPoint）。 */
-  const [picking, setPicking] = useState(false)
-  /** 用户点的那个点（0~1，相对照片左上角）。null = 还没点。 */
-  const [marker, setMarker] = useState<NormPoint | null>(null)
-  /** 卡住时用户的原话 —— 确认之后要**连同标记一起**再送一次，不能让他重说。 */
-  const [pendingText, setPendingText] = useState<string | null>(null)
+  /** 图上点选那一整条流程的状态（见 PendingMark）。null = 没在等用户点。 */
+  const [pending, setPending] = useState<PendingMark | null>(null)
+
+  // 下面三样**从 `pending` 推出来**，不再各自是一个 state —— 推出来的东西不可能
+  // 互相不同步，这正是折成一个对象的意义。名字保留，读代码时不必重新认路。
+  const picking = pending !== null
+  const marker = pending?.marker ?? null
+  const pendingText = pending?.text ?? null
 
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const originalFileRef = useRef<File | null>(null)
@@ -212,10 +227,11 @@ export default function App() {
     // "后面好像只有山，没看到另一个人"），歧义也未必关于人（哪片天？哪块牌子？）。
     if (d.needsDisambiguation) {
       say('我不太确定你指的是哪个 —— 在图上点一下要改的地方？')
-      // 记住他原来那句话：点了之后要连着标记一起再送，不能让他重说一遍
-      setPendingText(pendingRef.current)
-      setPicking(true)
-      setMarker(null)
+      // 记住他原来那句话：点了之后要连着标记一起再送，不能让他重说一遍。
+      // 标记清空 —— 还没点。（pendingRef 为 null 只有"没人说过话就走到了这里"
+      // 才会发生，今天走不到；空串和原来的 null 一样是"没有原话"，
+      // canConfirmMark 照样不会亮。）
+      setPending({ text: pendingRef.current ?? '', marker: null })
       return
     }
 
@@ -280,9 +296,7 @@ export default function App() {
       setCards([])
       // 点选那套状态跟对话是同一趟的东西：换张照片就该一起归零，
       // 否则上一张照片的红圈和"原来那句话"会跟到新照片上。
-      setPicking(false)
-      setMarker(null)
-      setPendingText(null)
+      setPending(null)
 
       // 原图自己也算一步，挂在欢迎语那条消息上 —— 这样「回到这一步」
       // 能回到最开始，撤销第一次生成时特别有用。
@@ -319,9 +333,7 @@ export default function App() {
     // 用户又开口了 —— 上一条歧义问句就此翻篇：标记和"原来那句话"一起清掉。
     // 不清的话，他改完别的再回头点一下「就改这里」，会把**已经不作数的那件事**
     // 花掉一次生成的钱（12,900 tokens），而且用的是他当时点的那张图。
-    setPicking(false)
-    setMarker(null)
-    setPendingText(null)
+    setPending(null)
     setMessages(m => [...m, { id: nextId(), role: 'user', text }])
     setCards([])
     setBusy('正在看照片…')
@@ -347,14 +359,12 @@ export default function App() {
     // 卡片也走 applyDecision，所以这里同样要写 —— 否则卡片触发的歧义会拿到
     // **上一次 send 留下的陈旧原话**，用户点完图确认，送上去的是另一句话。
     pendingRef.current = card.editPrompt
-    // 点卡片也是"改主意了"：上一条歧义就此翻篇 —— 和 send 里那三行同一个道理。
+    // 点卡片也是"改主意了"：上一条歧义就此翻篇 —— 和 send 里那一行同一个道理。
     // 卡片**会迟到**（超时之后它还在后台跑、回来了照样贴上来），所以"确认条
     // 和卡片同时在屏上"真会发生；不清的话，用户在卡片已经花过一次钱之后
     // 再点那条「就改这里」，会把**已经被取代的那件事**又花一次（12,900 tokens），
     // 而且用的是旧标记 + 旧话。
-    setPicking(false)
-    setMarker(null)
-    setPendingText(null)
+    setPending(null)
     setMessages(m => [...m, { id: nextId(), role: 'user', text: card.label }])
     setCards([])
 
@@ -379,18 +389,16 @@ export default function App() {
 
   /** 用户在图上点了一下（画布已经把屏幕坐标换算成 0~1 了）。 */
   const onPickPoint = useCallback((x: number, y: number) => {
-    if (!picking) return
-    setMarker({ x, y })
-    // ⚠️ 这里**不关** picking。关了的话，用户点歪之后只剩"确认"（花错钱）和
+    // ⚠️ 这里**不关**点选流程。关了的话，用户点歪之后只剩"确认"（花错钱）和
     // "不用了"（整条流程作废、还得把话重说一遍）两条路，而他要的只是
     // "点错了不亏钱，还能换个地方再点"。marker 是覆盖写的，再点一下就挪过去。
-  }, [picking])
-
-  const cancelPick = useCallback(() => {
-    setPicking(false)
-    setMarker(null)
-    setPendingText(null)
+    // 用函数式更新：没在等的时候（null）原样返回 —— 既不必维护一个会变陈的守卫，
+    // 也不会把标记写到一个已经翻篇的流程上。
+    setPending(p => (p ? { ...p, marker: { x, y } } : p))
   }, [])
+
+  /** 上一条歧义不做数了（用户说「不用了」、跳走、或者换了句话）。一处全清。 */
+  const cancelPick = useCallback(() => setPending(null), [])
 
   /**
    * 用户在图上点过了，点「就改这里」——**到这一步才花钱**。
@@ -406,9 +414,7 @@ export default function App() {
     if (busy) return
     if (!marker || !pendingText || !image) return
     const text = pendingText
-    setPicking(false)
-    setMarker(null)
-    setPendingText(null)
+    setPending(null)
     // ★ 先说话、**拿这条消息的 id**，再拿它去调 runGenerate。
     //   缩略图（`thumbs[m.id]`）和「回到这一步」（`jumpableIds.includes(m.id)`）
     //   两处都是按消息 id 对号的：这里要是图省事写 `nextId()`，那个 id 没有任何
@@ -569,7 +575,9 @@ export default function App() {
             onJump={onJump}
             jumpableIds={history.map(s => s.id)}
             thumbs={Object.fromEntries(history.map(s => [s.id, s.thumb]))}
-            marking={picking || marker !== null}
+            // marker 非空必然 picking 为真（两者出自同一个对象），所以这里
+            // 不必再 or 一次 —— 从 `pending` 推出来的东西不可能互相打架。
+            marking={picking}
             canConfirmMark={!!marker && !!pendingText}
             onConfirmMark={confirmMark}
             onCancelMark={cancelPick}
