@@ -40,7 +40,7 @@ jsdom 跑 App 层）、Playwright（`npm run check:layout`，只验排版）
 | `src/core/history.ts` | 快照列表的纯函数 | 改：`Snapshot` 加 `thumb`；加 `attachThumb` |
 | `src/core/thumbnail.ts` | 位图/画布 → 缩略图 data URL | **新建** |
 | `src/image/mark.ts` | 把红圈画进图里（送模型用） | **新建** |
-| `src/ui/Canvas.tsx` | 画布本体：原图预览覆盖、点选、红圈 | 改 |
+| `src/ui/Canvas.tsx` | 画布本体：原图预览覆盖、点选、红圈。**另外还负责量出画布相对 wrapper 的盒子**（`useLayoutEffect` + `ResizeObserver`，约 40 行）—— 红圈的位置和直径都由它算出来，**不是纯 CSS**。执行时补的，见下面「执行记录」。 | 改 |
 | `src/ui/ChatPanel.tsx` | 对话：缩略图、「就改这里」 | 改 |
 | `src/App.tsx` | 编排三样 | 改 |
 | `src/styles.css` | 缩略图 / 覆盖层 / 红圈的样式 | 改 |
@@ -1129,3 +1129,26 @@ git commit -m "docs: 计划三的真机验收记录（含不符合预期的地�
 - `Snapshot.thumb` 全程叫 `thumb`，没有第二个名字。
 - `runGenerate` 的第四个参数在 Task 5 从 `DecodedImage` 改成 `Sizable` —— 只有一个调用点
   （`applyDecision`），Task 5 Step 5 里写了要一起改。
+
+---
+
+## 执行记录（2026-09-23 实做时改掉的地方）
+
+计划是写给人看的，实做中撞到几处**计划自己讲不通**的地方。逐条记在这里，
+免得下一个人对着计划正文和代码的差异发懵。
+
+| 计划原来写的 | 实做改成了 | 为什么 |
+|---|---|---|
+| Task 4 与 Task 5 分开 | **合并成一个交付** | Task 4 Step 3 写着"确认那一步放在 Task 5"，可 Task 4 的测试又要求点「就改这里」后 `postEdit` 被调 —— Task 4 没有东西能接那个按钮 |
+| `confirmMark` 用 `nextId()` 建快照 | 先 `say(...)`、用那条消息的 id | 缩略图和「回到这一步」**都按消息 id 对号**；`nextId()` 造的 id 没有任何消息带它，两样会**一起静默失效** |
+| `handlePick` 用 `e.currentTarget`（wrapper）的 rect 归一化 | 用**画布元素**的 rect | `.canvas-wrap` 撑满 stage，画布只是居中在里面、两侧有留白。按 wrapper 归一化出来的不是照片上的位置 |
+| 红圈按 wrapper 的百分比定位 | 用 `useLayoutEffect`+`ResizeObserver` 量出画布盒子，按**像素**定位 | 百分比定位和上面那条同时错、正好互相抵消 —— **圈看着正好在用户点的地方，送进模型的图里却偏了 44~288px**。「看着对、其实错、还照收钱」只有像素证据抓得住。这也是文件结构表里 `Canvas.tsx` 那行加了"量盒子"职责的原因 |
+| `.canvas-marker` 写死 44px | 直径从量出来的盒子算（长边 12%，与 `markerGeometry` 共用同一个 `markerRadius`） | 桌面上用户看到 44px、模型收到 90px —— **用户指的那一小块，模型按两倍大去改**。和坐标那条是同一类：看到的东西 ≠ 送出去的东西 |
+| `picking` / `marker` / `pendingText` 三个 state | 折成一个 `PendingMark` 对象 | 三个平行 state 有 6 个写入点，**漏清任何一行就是一个新的钱类 bug**（两轮审查连续抓到的两条正是这个形状）。折成对象后结构上清不掉 |
+| `check:layout` 只跑 390×844 | 加 1280×600 档 + 「画布完整在视口里」判据 + 构建自证 | 原档是**宽度**卡死的，高度那条链从未被激活；`.app` 是 `overflow:hidden`，画布被竖向裁掉时四条判据一条都不红 |
+| 一次性探针（Task 2/3/5 各一次） | 收进 `npm run check:layout` | 真 `makeThumbnail` 的绘制、DOM 红圈的几何，都落在"jsdom 看不见、四条检查也看不见"那一类里 |
+
+**另外一条过程规矩**：**不要用管道吞 `npm run build` 的退出码**（`npm run build | tail`）。
+`build` 是 `tsc --noEmit && vite build`，失败即短路；管道会把那个非零退出码吃掉，
+于是 `check:layout` 量的是**上一次**的 dist 而你看不出来。实做时真的这么中过一次招。
+
