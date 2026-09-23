@@ -16,10 +16,12 @@ type Props = {
   /** 点「回到这一步」。只在 jumpableIds 里的消息上出现。 */
   onJump: (id: number) => void
   jumpableIds: number[]
+  /** 每一步的缩略图，键是消息 id。空串 = 还没生成。 */
+  thumbs: Record<number, string>
 }
 
 export default function ChatPanel({
-  messages, cards, busy, onSend, onCard, onJump, jumpableIds,
+  messages, cards, busy, onSend, onCard, onJump, jumpableIds, thumbs,
 }: Props) {
   return (
     <aside className="chat">
@@ -27,6 +29,14 @@ export default function ChatPanel({
         {messages.map(m => (
           <div key={m.id} className={`bubble ${m.role}`}>
             <div className="bubble-text">{m.text}</div>
+            {m.role === 'assistant' && thumbs[m.id] && (
+              <img
+                className="bubble-thumb"
+                src={thumbs[m.id]}
+                alt="这一步的效果"
+                onClick={() => jumpableIds.includes(m.id) && onJump(m.id)}
+              />
+            )}
             {m.role === 'assistant' && jumpableIds.includes(m.id) && (
               <button className="bubble-jump" onClick={() => onJump(m.id)}>
                 回到这一步

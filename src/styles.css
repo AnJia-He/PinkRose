@@ -139,3 +139,16 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
      用不着让 React 去算一个 class。 */
   .app:has(> .panel) .chat { display: none; }
 }
+
+/* 对话里每一步的小图。点它 = 点「回到这一步」—— spec §2.4：
+   「不设撤销按钮，翻聊天记录就是撤销」。所以它是可点的，给个手型。 */
+.bubble-thumb {
+  display: block;
+  width: 120px;
+  max-width: 100%;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  border: 1px solid #3a4048;
+}
+.bubble-thumb:hover { border-color: var(--accent); }

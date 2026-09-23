@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Canvas from './ui/Canvas'
 import Uploader from './ui/Uploader'
 import AdjustmentPanel from './ui/AdjustmentPanel'
@@ -10,7 +10,8 @@ import { applyDeltas, ZERO, type Adjustments } from '../shared/adjustments.ts'
 import { buildExportBlob, buildFilename, canShareImage, downloadImage, shareImage } from './export/save'
 import { prepareForModel, prepareForRouting } from './image/prepare'
 import { ApiError, postEdit, postRoute, postSuggest } from './api/client'
-import { bitmapsToClose, jumpTo, pushSnapshot, type Snapshot } from './core/history'
+import { bitmapsToClose, attachThumb, jumpTo, pushSnapshot, type Snapshot } from './core/history'
+import { makeThumbnail } from './core/thumbnail'
 import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
 
 /**
@@ -362,6 +363,29 @@ export default function App() {
     }
   }, [canShare])
 
+  /**
+   * 给刚推入的那一步补缩略图。
+   *
+   * **为什么不在推快照的地方直接抓**：快照是和 `setParams` / `setImage`
+   * 同一个批次推入的，那一刻画布还没重画 —— 抓到的会是**上一步的颜色**，
+   * 用户看到的小图和点进去的画面就对不上了。
+   *
+   * 这个 effect 跑在 Canvas 的渲染 effect **之后**（React 的被动 effect
+   * 是子先父后），所以它看到的画布已经是这一步的样子了。
+   */
+  useEffect(() => {
+    const canvas = canvasElRef.current
+    if (!canvas || history.length === 0) return
+    const last = history[history.length - 1]
+    if (last.thumb) return           // 已经有了，别重复抓（也防止这个 effect 打转）
+    try {
+      setHistory(h => attachThumb(h, last.id, makeThumbnail(canvas)))
+    } catch (e) {
+      // 缩略图是锦上添花的东西，抓不到不该影响用户修图
+      console.error('缩略图生成失败（不影响修图）', e)
+    }
+  }, [history])
+
   return (
     <div className="app">
       <header className="topbar">
@@ -409,6 +433,7 @@ export default function App() {
             onCard={onCard}
             onJump={onJump}
             jumpableIds={history.map(s => s.id)}
+            thumbs={Object.fromEntries(history.map(s => [s.id, s.thumb]))}
           />
         </main>
       )}

@@ -14,22 +14,34 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteDecision } from '../shared/protocol.ts'
+import { ZERO } from '../shared/adjustments.ts'
 
 // ── 假扮：这些是浏览器能力，jsdom 里没有 ──────────────────────────────
 // 原则是"只换掉必要的那一个，其余保留真的"，免得把要测的东西一起假掉。
 
 /** 送到画布上的到底是哪一张 —— 「缩过的那张有没有真的被用上」只能这样看。
  *  用 hoisted：vi.mock 的工厂会被提到所有 import 之前执行。 */
-const canvasProps = vi.hoisted(() => ({ images: [] as { width: number; height: number }[] }))
+const canvasProps = vi.hoisted(() => ({
+  images: [] as { width: number; height: number }[],
+  props: [] as { originalPreview: string | null; picking: boolean; marker: unknown }[],
+}))
 
 /** 画布：真的那个要 WebGL2。这里给一个真 <canvas> 并挂上 ref ——
  *  `send` 的守卫要求 canvasRef.current 非空，假成 null 的话一句都发不出去。 */
 vi.mock('./ui/Canvas', async () => {
   const React = await import('react')
   return {
-    default: ({ canvasRef, image }: { canvasRef: unknown; image: unknown }) => {
-      canvasProps.images.push(image as { width: number; height: number })
-      return React.createElement('canvas', { ref: canvasRef })
+    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint }: any) => {
+      canvasProps.images.push(image)
+      canvasProps.props.push({ originalPreview, picking, marker })
+      return React.createElement('canvas', {
+        ref: (node: HTMLElement | null) => {
+          canvasRef.current = node
+          // 模拟"渲染过了"：把当前参数写在节点上，缩略图能读到
+          if (node) node.dataset.rendered = JSON.stringify(params)
+        },
+        onClick: () => onPickPoint && onPickPoint(0.5, 0.5),
+      })
     },
   }
 })
@@ -64,6 +76,10 @@ vi.mock('./image/prepare', () => ({
   prepareForModel: vi.fn(),
 }))
 
+/** 缩略图要 2D 画布，jsdom 没有。**返回画布上"此刻是什么颜色"** ——
+ *  这样才测得出「缩略图是在画面更新之后才抓的」那件事。 */
+vi.mock('./core/thumbnail', () => ({ makeThumbnail: vi.fn(), THUMB_MAX_SIDE: 160 }))
+
 /** 解码用户选的文件：要 createImageBitmap + 2D 画布。
  *  用 importOriginal 保留它的转发导出（size 那几个），因为别处会 import。 */
 vi.mock('./image/decode', async (importOriginal) => {
@@ -85,6 +101,7 @@ import * as api from './api/client'
 import * as limitsMod from './render/limits'
 import * as resizeMod from './image/resize'
 import * as saveMod from './export/save'
+import * as thumbMod from './core/thumbnail'
 
 // ── 每张"底"带一个记号，好认出送上去的到底是哪一张 ──────────────────
 let bitmapSeq = 0
@@ -115,7 +132,18 @@ beforeEach(() => {
   vi.clearAllMocks()
   bitmapSeq = 0
   canvasProps.images.length = 0
+  canvasProps.props.length = 0
   ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+  // ★ 假的缩略图 = **画布上此刻记着的那个参数**。
+  //   Canvas 的 mock 每次渲染都会把当前 params 写在 data-rendered 上，
+  //   所以这里拿到的就是"抓缩略图那一刻，画布显示的是哪一步"。
+  //   两种入参都要接得住：画布（这一步）和位图（Task 3 的「按住看原图」）。
+  vi.mocked(thumbMod.makeThumbnail).mockImplementation(
+    (src: unknown) =>
+      `thumb:${(src as { __tag?: string })?.__tag
+        ?? (src as HTMLElement)?.dataset?.rendered
+        ?? '还没画'}`)
 
   // 默认：设备很宽裕，什么都能画。要测"缩"的那几条自己把这个改小。
   vi.mocked(limitsMod.probeLimit).mockReturnValue({ maxSide: 8192, maxArea: null })
@@ -485,5 +513,62 @@ describe('导出：分享还是存下来，用户自己选', () => {
     await click('分享')
 
     expect(saveMod.downloadImage).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * 2026-09-23 加。用户说过「对话的交付物看不到图片」—— 当时根子是版面把画布
+ * 挤没了（见验收记录 §15），修好之后仍然值得把每一步的画面挂进对话里：
+ * 它是「撤销」的入口（spec §2.4：不设撤销按钮，翻聊天记录就是撤销）。
+ */
+describe('历史缩略图：每一步都看得见', () => {
+  /** 从对话里读某条助手消息挂的缩略图 */
+  function thumbOf(index: number): string | null {
+    const imgs = container.querySelectorAll<HTMLImageElement>('.bubble-thumb')
+    return imgs[index]?.getAttribute('src') ?? null
+  }
+
+  it('传完照片，欢迎语那条上挂一张缩略图', async () => {
+    await renderApp()
+    await uploadPhoto()
+    expect(thumbOf(0)).toBe('thumb:' + JSON.stringify(ZERO))
+  })
+
+  it('⚠️ 缩略图必须是**画面画完之后**抓的，不能是上一步的颜色', async () => {
+    // 这条是整件事最容易错的地方。快照是在 setParams 的同一个批次里推入的，
+    // 那一刻画布还没重画 —— 谁要是"推快照的时候顺手抓一张"，抓到的就是
+    // **上一步的颜色**，而用户看到的缩略图和他点进去的画面**对不上**。
+    //
+    // 原理：假的 makeThumbnail 返回画布节点上记着的 params。
+    // 抓早了 → 拿到上一步的 → 这条红。
+    //
+    // 用 'both' 而不是 'params'：纯参数路由**压根不推快照**（历史里
+    // 还是只有原图那一步，缩略图也就无从谈起）；纯生成路由 params 没变，
+    // 抓早抓晚拿到的一样，这条红不了。只有 'both' 同时满足
+    // 「推了快照」和「params 变了」这两件事。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'both', paramDeltas: { exposure: 40 }, editPrompt: '提亮一点', reply: '提亮了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+
+    await renderApp()
+    await uploadPhoto()
+    await say('亮一点')
+
+    expect(thumbOf(1)).toBe('thumb:' + JSON.stringify({ ...ZERO, exposure: 40 }))
+  })
+
+  it('没改图的那些助手消息不挂缩略图', async () => {
+    // 「我不太确定你指的是哪个」这种消息后面没有新的一步，不该挂图 ——
+    // 挂了会让用户以为那一步真的改了什么。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉那个人', needsDisambiguation: true }))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把那个去掉')
+
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(1)  // 只有原图那张
   })
 })
