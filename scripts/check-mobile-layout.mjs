@@ -24,17 +24,28 @@
  * 判据用"长边 / 短边"而不是面积：手机拍的是竖图、仓库里的样片是横图，
  * 两种比例都得过。按面积判会在换一张比例不同的样片时莫名其妙地红。
  *
- * ⚠️ 两个容易写错的地方，这条脚本自己踩过：
+ * ⚠️ 三个容易写错的地方，这条脚本自己踩过：
  *   1. **必须掐掉 `/api/suggest`。** 那一路是真调模型的（花钱），而这条检查
  *      每次都要跑。卡片是可选件，掐掉不影响版面。
  *   2. **不能只看"元素存不存在"**。对话被隐藏时，输入框仍然拿得到（尺寸 0），
  *      拿存在性当判据等于白判。所以先看宽度 > 0 再判它在不在屏内。
+ *   3. **量的是哪个构建，必须自己先证明**（2026-09-23 加，见 checkServedBuild）。
+ *      这条检查量的是**跑在 5173 上的那份构建**，不是源码 —— 它一直可以安安静静地
+ *      量一棵旧树、然后给你一个绿。这一轮就真撞上了一个 10:09 起的旧
+ *      `vite preview` 占着 5173（strictPort 让自己的那个起不来），当时靠人工对哈希才发现。
  *
- * 用法（需要 dev 服务器开着）：
- *   npm run dev
+ * 2026-09-23 还加了两件**自动化覆盖一直是零**的东西（见下面 §图上点选）：
+ *   4. 红圈的几何：屏幕坐标 → 归一化坐标 → 红圈圆心。这条线上买的是**一次生成的
+ *      钱**（约 12,900 tokens），此前唯一的证据是 gitignore 目录里的一次性探针。
+ *   5. 真的 `makeThumbnail`（对话里那张小图）。jsdom 那条测试整个把它假掉了，
+ *      真函数没人验过；这里量的是它的产出真有像素。
+ *
+ * 用法（服务器开着就行；dev 或 preview 都可以，脚本自己会核对是哪一版）：
+ *   npm run dev                    （或者 npm run build && npm run preview）
  *   npm run check:layout
  */
 import { chromium } from 'playwright'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -44,6 +55,71 @@ const URL = process.env.DEV_BASE ?? 'http://localhost:5173'
 /** 仓库里已有的样片，不必另存一张大图。比例是横的（1200×800），
  *  而真机是竖的 —— 两种都要能过，所以判据用的是长边/短边。 */
 const PHOTO = join(ROOT, 'test-photos', 'e2e_first_use.jpg')
+
+/** 本仓库刚构建出来的那一版。用来核对服务器发的到底是哪一版。 */
+const DIST_HTML = join(ROOT, 'dist', 'index.html')
+/** 静态构建引用的资源（`/assets/index-<内容哈希>.js|css`）。
+ *  dev 服务器发的是 `/src/main.tsx` 那种，压根没有这个。 */
+const ASSET_RE = /\/assets\/[A-Za-z0-9._-]+/g
+
+/**
+ * 量之前先证明：**服务器上跑的就是你刚构建的那一版**。
+ *
+ * 为什么非查不可：这条检查量的是**服务器上那份构建**，不是源码。所以它能被
+ * 一整类"假绿"骗过去 —— 那个端口上占着一个更早起的服务器、或者别的目录起的一个，
+ * 它照样量、照样给你 ✅。2026-09-23 真撞到过一次（一个 10:09 起的旧
+ * `vite preview` 占着 5173，strictPort 让新起的那个直接退出），当时靠人工
+ * 对哈希才没量错 —— **这种运气不该是流程的一部分**。
+ *
+ * 判据（两边的文件名都带内容哈希，所以哈希不同 = 版本不同）：
+ *   - 发的是 vite **dev** 服务器 → 它现读现发源码，天然就是你手上这棵树，放行；
+ *   - 发的是**静态构建** → `/index.html` 引用的资源必须和本仓库 `dist/index.html`
+ *     引的一致，不一致就**报错退出**，说清"那上面跑的不是你刚构建的这一版"。
+ *   - 两样都不是 → 也报错退出（**不许静默地量下去**）。
+ *
+ * ⚠️ 这条判据管的是"服务器发的是不是这份 dist"，**管不到"这份 dist 是不是 HEAD
+ * 构建的"** —— 忘了 `npm run build` 时它照样绿（那时量的是旧的 dist，但服务器
+ * 和 dist 自洽）。所以 `npm run build` 仍然是必须的，见文件开头那三行用法。
+ */
+async function checkServedBuild() {
+  let html
+  try {
+    html = await (await fetch(URL, { headers: { accept: 'text/html' } })).text()
+  } catch {
+    console.log(`❌ 连不上 ${URL} —— 服务器开着吗？（npm run dev 或 npm run preview）`)
+    process.exit(1)
+  }
+  if (html.includes('/@vite/client')) return 'dev 服务器（现读现发源码）'
+
+  const served = [...new Set(html.match(ASSET_RE) ?? [])]
+  if (served.length === 0) {
+    console.log(`❌ 看不出 ${URL} 上跑的是什么：它发的既不是 vite dev 服务器，`)
+    console.log('   也不是带哈希资源的静态构建。停在这里，不量了 ——')
+    console.log('   要么 npm run dev，要么 npm run build && npm run preview。')
+    process.exit(1)
+  }
+
+  let dist
+  try {
+    dist = readFileSync(DIST_HTML, 'utf8')
+  } catch {
+    console.log(`❌ ${URL} 发的是静态构建，但本地没有 ${DIST_HTML}：没有能拿来对的东西。`)
+    console.log('   先 npm run build（构建完再 npm run preview），别拿它的数字当真。')
+    process.exit(1)
+  }
+  const missing = served.filter(a => !dist.includes(a))
+  if (missing.length > 0) {
+    console.log(`❌ ${URL} 上跑的**不是你刚构建的那一版**：`)
+    console.log(`   它发的资源是 ${served.join(' / ')}`)
+    console.log(`   而 dist/index.html 引的是 ${[...new Set(dist.match(ASSET_RE) ?? [])].join(' / ')}`)
+    console.log(`   对不上的有 ${missing.join(' / ')}。`)
+    console.log(`   多半是 ${URL} 上占着一个更早起的服务器（也可能是另一个目录起的）。`)
+    console.log('   **不许拿它的数字当真**：先把它弄成同一版，' +
+      '或者换个端口 DEV_BASE=http://localhost:<口> 再跑。')
+    process.exit(1)
+  }
+  return `静态构建 ${served.join(' / ')}（与 dist/index.html 一致）`
+}
 
 /**
  * 量哪几屏。
@@ -125,6 +201,149 @@ function judge(label, m, view) {
   }
 }
 
+// ── 2026-09-23 加：图上点选 + 真的缩略图 ─────────────────────────────
+//
+// 这两样以前**自动化覆盖为零**：`src/App.test.tsx` 把 `./ui/Canvas` 整个假掉
+// （假画布把屏幕坐标除以写死的 1000，和真几何毫无关系），`mark.test.ts` 只测纯
+// 几何，`markImage` 的绘制和 DOM 红圈的位置没人量。于是「看着对、其实错、还照
+// 收钱」这种性质（R14 / 圈的大小）唯一的证据是 gitignore 目录里的一次性探针。
+// 这里把它变成可复跑的判据 —— **全程零真实模型调用**。
+
+/** 假造的路由决策：模型说"拿不准，让用户在图上点一下"。
+ *  **必须是假造的**：真调 /api/route 要花钱，而这条检查每次都跑。
+ *  形状照 `shared/protocol.ts` 的 `RouteResponse = { decision }`。 */
+const FAKE_DECISION = {
+  decision: {
+    route: 'generate',
+    paramDeltas: {},
+    reply: '好。',
+    editPrompt: '把后面那个人去掉',
+    needsDisambiguation: true,
+    degraded: false,
+  },
+}
+
+/** 点画布盒子的哪个相对位置（0~1）。
+ *  ⚠️ **故意不取正中**：画布是**居中**在 wrapper 里的，取正中时"按 wrapper 的
+ *  百分比定位"这个错法算出来的位置和正确位置恰好重合（差 = 宽度差 × (x−0.5)，
+ *  x=0.5 时为 0）—— 那条变异就验不出来了。取 0.2/0.35：桌面档画布 750 宽、
+ *  wrapper ~900 宽，按 wrapper 定位会偏出 45px，一眼就红。 */
+const PICK_AT = { fx: 0.2, fy: 0.35 }
+/** 红圈圆心的容差。取 2px：这条要抓的偏差是几十像素（R14 那类是 45~288px），
+ *  而子像素舍入稳定地差不到 1px。 */
+const MARKER_TOL = 2
+
+/** 画布在屏幕上的盒子（**不取整** —— 点选要按它换算坐标）。 */
+async function canvasRect(page) {
+  return page.evaluate(() => {
+    const b = document.querySelector('canvas').getBoundingClientRect()
+    return { left: b.left, top: b.top, width: b.width, height: b.height }
+  })
+}
+
+/** 量红圈和画布现在各自在屏幕上的哪里。 */
+async function measurePick(page) {
+  return page.evaluate(() => {
+    const c = document.querySelector('canvas')
+    const m = document.querySelector('.canvas-marker')
+    const cb = c?.getBoundingClientRect()
+    const mb = m?.getBoundingClientRect()
+    return {
+      canvas: cb && {
+        left: cb.left, top: cb.top, right: cb.right, bottom: cb.bottom,
+        width: cb.width, height: cb.height,
+      },
+      // 圆心：红圈的盒子中心。margin 取的是半径的相反数，所以盒子中心 = 那个点。
+      marker: mb && {
+        cx: mb.left + mb.width / 2, cy: mb.top + mb.height / 2,
+        w: mb.width, h: mb.height,
+      },
+    }
+  })
+}
+
+/**
+ * 判红圈的三件事。
+ *
+ * `expected` 传了就是"用户刚点的那个屏幕坐标"（量它的时候版面还没变）；
+ * 不传就按它在**照片里的归一化位置**（PICK_AT）重新算 —— 版面变了（开合微调
+ * 面板会把画布缩放）之后，圈必须还钉在照片上的同一个点，跑掉就是错的。
+ */
+function judgeMarker(label, m, expected) {
+  console.log(`── ${label}`)
+  if (!m.canvas || !m.marker) {
+    // 取不到就响亮地红：底下的数字全靠它，静默跳过等于这条判据不存在。
+    fails.push(`${label}：量不到红圈（画布 ${!!m.canvas} / 红圈 ${!!m.marker}）`)
+    return
+  }
+  const c = m.canvas
+  const k = m.marker
+  const want = expected ?? {
+    x: c.left + PICK_AT.fx * c.width,
+    y: c.top + PICK_AT.fy * c.height,
+  }
+  // 圈该多大：**和送进图里的那个圈共用同一个公式**（长边的 12%，下限 16px
+  // 直径 —— 见 src/image/mark.ts 的 markerRadius）。
+  // 容差 2px：半径那一步是整数，长边差半个像素时可能进/退一位；要抓的偏差是几十像素。
+  const wantD = 2 * Math.max(8, Math.round(0.06 * Math.max(c.width, c.height)))
+  console.log(`     红圈 圆心 ${k.cx.toFixed(1)},${k.cy.toFixed(1)}  直径 ${k.w.toFixed(1)}` +
+    `   （该在 ${want.x.toFixed(1)},${want.y.toFixed(1)}，该是 ${wantD}）`)
+  console.log(`     画布 ${Math.round(c.width)}x${Math.round(c.height)} @${Math.round(c.left)},${Math.round(c.top)}`)
+
+  // ① 圆心就在用户点的地方 —— 这一条买的是"送进模型的坐标和用户指的地方是同一个"。
+  const dx = k.cx - want.x
+  const dy = k.cy - want.y
+  if (Math.abs(dx) > MARKER_TOL || Math.abs(dy) > MARKER_TOL) {
+    fails.push(
+      `${label}：红圈圆心在 ${k.cx.toFixed(1)},${k.cy.toFixed(1)}，` +
+      `该在 ${want.x.toFixed(1)},${want.y.toFixed(1)}（偏了 ${dx.toFixed(1)},${dy.toFixed(1)}px）`)
+  }
+  // ② 整个圈落在**照片**上（不是落在 wrapper 的留白上）。
+  if (k.cx - k.w / 2 < c.left - TOL || k.cx + k.w / 2 > c.right + TOL ||
+      k.cy - k.h / 2 < c.top - TOL || k.cy + k.h / 2 > c.bottom + TOL) {
+    fails.push(
+      `${label}：红圈没落在照片上（圈心 ${k.cx.toFixed(1)},${k.cy.toFixed(1)}，` +
+      `照片 ${Math.round(c.left)},${Math.round(c.top)}~${Math.round(c.right)},${Math.round(c.bottom)}）`)
+  }
+  // ③ 圈的大小 = 照片长边的 12%：用户看到多大的圈，模型就该收到多大的圈。
+  //    原来 DOM 写死 44px —— 桌面档这里是 90，那条会红。
+  if (Math.abs(k.w - wantD) > 2) {
+    fails.push(
+      `${label}：红圈直径 ${k.w.toFixed(1)}px，按画布长边算该是 ${wantD}px —— ` +
+      `用户看到的是一个大小，送进图里的是另一个`)
+  }
+}
+
+/** 对话里那张小图：真的 `makeThumbnail` 的产出（data URL）得真有像素。 */
+async function judgeThumb(page, label) {
+  let got
+  try {
+    await page.waitForFunction(
+      () => (document.querySelector('.bubble-thumb')?.naturalWidth ?? 0) > 0,
+      null, { timeout: 5_000 })
+    got = await page.evaluate(() => {
+      const img = document.querySelector('.bubble-thumb')
+      return { nw: img.naturalWidth, nh: img.naturalHeight, isData: img.src.startsWith('data:image/') }
+    })
+  } catch {
+    got = null
+  }
+  console.log(`── ${label} · 对话里那张小图`)
+  if (!got) {
+    fails.push(`${label}：对话里没有一张能解开的小图（.bubble-thumb 的 naturalWidth 是 0）——` +
+      '「翻聊天记录就是撤销」的那个入口没了')
+    return
+  }
+  console.log(`     .bubble-thumb ${got.nw}x${got.nh}（真图、${got.isData ? 'data URL' : '不是 data URL'}）`)
+  if (got.nw <= 0 || got.nh <= 0) {
+    // 上面 waitForFunction 已经保证 > 0，这里是"判据本身别写错"的保险
+    fails.push(`${label}：小图上没有像素（${got.nw}x${got.nh}）`)
+  }
+}
+
+console.log(`── 量的是 ${URL}`)
+console.log(`   ${await checkServedBuild()}`)
+
 const browser = await chromium.launch()
 try {
   for (const view of VIEWS) {
@@ -135,6 +354,17 @@ try {
     try {
       // 这一路会真调模型（花钱），而且它跟版面无关。必须掐掉。
       await page.route('**/api/suggest', r => r.abort())
+      // 这一路**是真花钱的**（一次生成约 12,900 tokens）。点选这条路今天走不到它
+      // （我们只走到"点了一下、还没点确认"），但真要走到了就是出事了 ——
+      // 掐掉它，并且下面数着它有没有被请求过（数到了就是检查自己出了错）。
+      await page.route('**/api/edit', r => r.abort())
+      // 路由那条**用假造的响应 fulfill**：真调 /api/route 要花钱。
+      // 只替换响应，不碰真模型。
+      await page.route('**/api/route', r => r.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(FAKE_DECISION),
+      }))
+      const editCalls = []
+      page.on('request', r => { if (r.url().includes('/api/edit')) editCalls.push(r.url()) })
 
       // **假装这台设备支持分享。** 真实的无头 Chromium 不支持，于是顶栏只有
       // 两个按钮 —— 那是宽松的那一侧，量它等于没量。分享按钮出来之后是三个，
@@ -160,10 +390,39 @@ try {
       await page.waitForSelector('canvas', { timeout: 15_000 })
       await page.waitForTimeout(1200)
       judge(`${view.name} · 刚传完照片`, await measure(page), view)
+      // 真的 makeThumbnail 的产出：能解开、真有像素。（jsdom 那条路整个把它假掉了。）
+      await judgeThumb(page, `${view.name} · 刚传完照片`)
 
+      // ── 图上点选：红圈的几何 ─────────────────────────────────────────
+      // 走到的位置是"用户点了一下、还没点确认" —— 钱就卡在这一步之后，
+      // 所以这一段**一个付费调用都没有**（route 是假造的，suggest/edit 掐掉了）。
+      await page.fill('input[name="text"]', '把后面那个人去掉')
+      await page.press('input[name="text"]', 'Enter')
+      // 「不用了」出现 = 进入了点选模式（假造的路由决策说"拿不准"）
+      await page.getByRole('button', { name: '不用了' }).waitFor({ timeout: 10_000 })
+
+      // 点一个**已知屏幕坐标**：画布盒子的 20% / 35% 处（为什么不取正中见 PICK_AT）。
+      const at = await canvasRect(page)
+      const clickX = at.left + PICK_AT.fx * at.width
+      const clickY = at.top + PICK_AT.fy * at.height
+      await page.mouse.click(clickX, clickY)
+      await page.waitForSelector('.canvas-marker', { timeout: 5_000 })
+      judgeMarker(`${view.name} · 在图上点了一下`, await measurePick(page),
+        { x: clickX, y: clickY })
+
+      // 开微调面板之后版面会变（画布被缩放）—— 圈必须还钉在**照片上的同一个点**。
+      // 窄屏这一档更狠：面板一开，对话栏整个 `display: none`（所以点选只能在这
+      // 之前发起），而画布要跟着缩放，圈不能跟着飘。
       await page.getByRole('button', { name: '微调' }).click()
       await page.waitForTimeout(500)
+      judgeMarker(`${view.name} · 开着微调面板，圈还得钉在照片上`, await measurePick(page), null)
       judge(`${view.name} · 打开微调面板后`, await measure(page), view)
+
+      // 一路走下来，花钱的那条路一次都不该被碰过。
+      if (editCalls.length > 0) {
+        fails.push(`${view.name}：点选这条路上竟然发出了 ${editCalls.length} 次 /api/edit ——` +
+          '那是花钱的（一次约 12,900 tokens），而用户还没点「就改这里」')
+      }
     } finally {
       await page.close()
     }
@@ -177,9 +436,12 @@ if (fails.length) {
   for (const f of fails) console.log('❌', f)
   console.log('')
   console.log('窄屏规则在 src/styles.css 末尾那条 @media (max-width: 640px)；')
-  console.log('宽窄两档共用的画布容器规则是 .canvas-wrap / .canvas（文件中部）。')
+  console.log('宽窄两档共用的画布容器规则是 .canvas-wrap / .canvas（文件中部）；')
+  console.log('红圈的定位/大小在 src/ui/Canvas.tsx（markerSize）和 src/image/mark.ts')
+  console.log('（markerRadius，两边共用同一个公式）。')
   process.exitCode = 1
 } else {
   console.log(`✅ ${VIEWS.length} 档 × 2 种状态都过：照片 ≥ ${MIN_LONG}x${MIN_SHORT}、` +
-    `画布完整在视口内、输入框在屏内、不用左右滑`)
+    `画布完整在视口内、输入框在屏内、不用左右滑、`)
+  console.log('   外加：红圈圆心落在点的地方、直径按画布长边算、小图真的解得出像素（全程零付费调用）')
 }
