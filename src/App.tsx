@@ -7,7 +7,7 @@ import { decodeImageFile, type DecodedImage } from './image/decode'
 import { resizeBitmap } from './image/resize'
 import { fitToLimit, probeLimit } from './render/limits'
 import { applyDeltas, ZERO, type Adjustments } from '../shared/adjustments.ts'
-import { exportImage } from './export/save'
+import { buildExportBlob, buildFilename, canShareImage, downloadImage, shareImage } from './export/save'
 import { prepareForModel, prepareForRouting } from './image/prepare'
 import { ApiError, postEdit, postRoute, postSuggest } from './api/client'
 import { bitmapsToClose, jumpTo, pushSnapshot, type Snapshot } from './core/history'
@@ -71,7 +71,12 @@ export default function App() {
   const [showPanel, setShowPanel] = useState(false)
   /** 非 null 时既是"正在忙"的标志，也是要显示给用户的那句话 */
   const [busy, setBusy] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
+  /** 正在导出的是哪一个按钮（null = 没在忙）。两个按钮共用一个"忙"，
+   *  但只有被按的那个显示「准备中…」—— 两个一起变会像出了两件事。 */
+  const [delivering, setDelivering] = useState<'share' | 'save' | null>(null)
+  /** 本设备能不能把图交给系统分享面板。只在挂载时算一次：设备能力不会中途变。
+   *  用惰性初始化（传函数），免得每次 render 都去 new 一个探针 File。 */
+  const [canShare] = useState(canShareImage)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [cards, setCards] = useState<SuggestCard[]>([])
   const [history, setHistory] = useState<Snapshot[]>([])
@@ -320,21 +325,42 @@ export default function App() {
     setParams(target.params)
   }, [history])
 
-  // 导出：画布尺寸就是当前 base 的尺寸。调色不缩图（spec §4.4）
-  const onSave = useCallback(async () => {
+  // 导出：画布尺寸就是当前 base 的尺寸。调色不缩图（spec §4.4）。
+  //
+  // 用户在真机上跑完 30 秒那条线后的原话：「下载后用户第一时间是不知道在哪里的」
+  // —— 时间够了，但那一段让人心里没底。所以能分享的设备多给一个「分享」：
+  // 点一下弹系统面板、一步选微信，跳过"翻文件管理器找图"。
+  //
+  // **两个按钮各传各的**，不做"能分享就一律分享"：用户明确说过有时候就是
+  // 不想分享（「那有时候不想立即分享也得分享喽」）。分享失败才退回下载 ——
+  // 用户点的是"把图给我"，分享只是其中一种给法，失败不该让他两手空空。
+  const deliver = useCallback(async (wantShare: boolean) => {
     const canvas = canvasElRef.current
     const file = originalFileRef.current
     if (!canvas || !file) return
-    setSaving(true)
+    setDelivering(wantShare && canShare ? 'share' : 'save')
     try {
-      await exportImage(canvas, file, 'image/jpeg', 0.95)
+      const blob = await buildExportBlob(canvas, file, 'image/jpeg', 0.95)
+      const name = buildFilename(file.name, 'image/jpeg')
+      if (!wantShare || !canShare) {
+        downloadImage(blob, name)
+        return
+      }
+      try {
+        await shareImage(blob, name)
+      } catch (e) {
+        // 分享真的失败了（没权限、系统拒绝）。退回下载，至少让他拿得到图。
+        // 用户自己取消**不会**走到这儿 —— shareImage 把取消当成正常结束。
+        console.error(e)
+        downloadImage(blob, name)
+      }
     } catch (e) {
       console.error(e)
       alert('保存失败，再试一次')
     } finally {
-      setSaving(false)
+      setDelivering(null)
     }
-  }, [])
+  }, [canShare])
 
   return (
     <div className="app">
@@ -343,8 +369,20 @@ export default function App() {
         {image && (
           <div className="actions">
             <button onClick={() => setShowPanel(v => !v)}>微调</button>
-            <button className="primary" onClick={onSave} disabled={saving}>
-              {saving ? '保存中…' : '保存'}
+            {/* 不能分享的设备上这个按钮**干脆不出现**：桌面 Chrome 有
+                navigator.share 但不认图片，留一个点了弹不出东西的按钮更糟。
+                它不出现时，「保存」顶上当主按钮。 */}
+            {canShare && (
+              <button className="primary" onClick={() => deliver(true)} disabled={delivering !== null}>
+                {delivering === 'share' ? '准备中…' : '分享'}
+              </button>
+            )}
+            <button
+              className={canShare ? '' : 'primary'}
+              onClick={() => deliver(false)}
+              disabled={delivering !== null}
+            >
+              {delivering === 'save' ? '准备中…' : '保存'}
             </button>
           </div>
         )}

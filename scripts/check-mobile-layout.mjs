@@ -59,10 +59,13 @@ async function measure(page) {
       return { w: Math.round(b.width), h: Math.round(b.height), bottom: Math.round(b.bottom) }
     }
     const c = document.querySelector('canvas')
+    const bar = document.querySelector('.topbar')
     return {
       canvas: box(c),
       canvasPixels: c ? `${c.width}x${c.height}` : null,
       input: box(document.querySelector('form.chat-input')),
+      buttons: [...document.querySelectorAll('.actions button')].map(b => b.textContent),
+      topbarOverflow: bar ? bar.scrollWidth > bar.clientWidth : false,
       scrollW: document.documentElement.scrollWidth,
       clientW: document.documentElement.clientWidth,
     }
@@ -76,8 +79,13 @@ function judge(label, m) {
   const short = Math.min(c.w, c.h)
   console.log(`── ${label}`)
   console.log(`     画布（屏幕上） ${c.w}x${c.h}   （内部像素 ${m.canvasPixels}）`)
+  console.log(`     顶栏按钮 ${m.buttons.join(' / ')}`)
   if (long < MIN_LONG || short < MIN_SHORT) {
     fails.push(`${label}：照片在屏幕上只有 ${c.w}x${c.h} —— 用户看不见（至少要 ${MIN_LONG}x${MIN_SHORT}）`)
+  }
+  // 顶栏挤爆过一次（一个按钮就能挤），所以按**最坏情况**量：见下面注入的那段。
+  if (m.topbarOverflow) {
+    fails.push(`${label}：顶栏放不下这些按钮（${m.buttons.join(' / ')}）`)
   }
   // 输入框被隐藏时尺寸是 0，这时候不该判它 —— 否则是拿"存在"当"可见"
   if (m.input && m.input.w > 0 && m.input.bottom > VIEW.height + 1) {
@@ -95,6 +103,18 @@ try {
   })
   // 这一路会真调模型（花钱），而且它跟版面无关。必须掐掉。
   await page.route('**/api/suggest', r => r.abort())
+
+  // **假装这台设备支持分享。** 真实的无头 Chromium 不支持，于是顶栏只有
+  // 两个按钮 —— 那是宽松的那一侧，量它等于没量。分享按钮出来之后是三个，
+  // 那才是会挤爆的那一侧。
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'canShare', {
+      value: d => !!(d && d.files && d.files.length), configurable: true,
+    })
+    Object.defineProperty(navigator, 'share', {
+      value: async () => {}, configurable: true,
+    })
+  })
 
   try {
     await page.goto(URL, { waitUntil: 'load' })

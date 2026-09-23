@@ -44,6 +44,20 @@ vi.mock('./render/limits', async (importOriginal) => {
 /** 真的缩像素要 2D 画布，jsdom 没有。 */
 vi.mock('./image/resize', () => ({ resizeBitmap: vi.fn() }))
 
+/** 导出那一条：`buildExportBlob` 要 canvas.toBlob（jsdom 没实现），
+ *  `downloadImage` 要点一个 <a>，都会真动手。**`buildFilename` 保留真的** ——
+ *  它是纯函数，而且文件名是要断言的东西。 */
+vi.mock('./export/save', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./export/save')>()
+  return {
+    ...actual,
+    buildExportBlob: vi.fn(),
+    downloadImage: vi.fn(),
+    shareImage: vi.fn(),
+    canShareImage: vi.fn(),
+  }
+})
+
 /** 送图前的缩放/编码：要 2D 画布，jsdom 没有。 */
 vi.mock('./image/prepare', () => ({
   prepareForRouting: vi.fn(),
@@ -70,6 +84,7 @@ import * as prepareMod from './image/prepare'
 import * as api from './api/client'
 import * as limitsMod from './render/limits'
 import * as resizeMod from './image/resize'
+import * as saveMod from './export/save'
 
 // ── 每张"底"带一个记号，好认出送上去的到底是哪一张 ──────────────────
 let bitmapSeq = 0
@@ -104,6 +119,11 @@ beforeEach(() => {
 
   // 默认：设备很宽裕，什么都能画。要测"缩"的那几条自己把这个改小。
   vi.mocked(limitsMod.probeLimit).mockReturnValue({ maxSide: 8192, maxArea: null })
+  // 默认：**不能分享**（和桌面浏览器一样），顶栏只有「微调 / 保存」。
+  // 要测分享的那几条自己打开。
+  vi.mocked(saveMod.canShareImage).mockReturnValue(false)
+  vi.mocked(saveMod.buildExportBlob).mockResolvedValue(new Blob(['x'], { type: 'image/jpeg' }))
+  vi.mocked(saveMod.shareImage).mockResolvedValue(undefined)
   // 真的缩像素要 2D 画布；这里让假实现回一张**带新尺寸**的位图，
   // 好断言"到底缩到了多少"——App 认的是位图自报的尺寸，不是请求的尺寸。
   vi.mocked(resizeMod.resizeBitmap).mockImplementation(
@@ -371,5 +391,99 @@ describe('照片超出设备上限时：缩，但要说出来', () => {
 
     expect(resizeMod.resizeBitmap).not.toHaveBeenCalled()
     expect(canvasProps.images.at(-1)).toMatchObject(BIG)
+  })
+})
+
+/**
+ * 2026-09-23 加。用户在真机上跑完那条 30 秒的线，回来说：
+ * **「下载后用户第一时间是不知道在哪里的」** —— 时间够了，但那一段让人心里没底。
+ *
+ * 所以给一个分享入口。这里测的是**按钮的行为**；分享本身在 save.test.ts 里测。
+ */
+describe('导出：分享还是存下来，用户自己选', () => {
+  /** 顶栏现在的按钮，从左到右。 */
+  function topbarButtons(): string[] {
+    return [...container.querySelectorAll('.actions button')].map(b => b.textContent ?? '')
+  }
+
+  function topbar(label: string): HTMLButtonElement {
+    const btn = [...container.querySelectorAll('.actions button')]
+      .find(b => (b.textContent ?? '').includes(label)) as HTMLButtonElement | undefined
+    if (!btn) throw new Error(`顶栏没有「${label}」——现在只有 ${topbarButtons().join(' / ')}`)
+    return btn
+  }
+
+  async function click(label: string) {
+    await act(async () => {
+      topbar(label).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  it('能分享的设备上，多出一个「分享」', async () => {
+    vi.mocked(saveMod.canShareImage).mockReturnValue(true)
+    await renderApp()
+    await uploadPhoto()
+    expect(topbarButtons()).toEqual(['微调', '分享', '保存'])
+  })
+
+  it('不能分享的设备上没有「分享」—— 不留一个点了没用的按钮', async () => {
+    // 桌面 Chrome 就是这样：navigator.share 在，但不认图片。
+    vi.mocked(saveMod.canShareImage).mockReturnValue(false)
+    await renderApp()
+    await uploadPhoto()
+    expect(topbarButtons()).toEqual(['微调', '保存'])
+  })
+
+  it('点「分享」→ 弹系统面板，**不走下载**', async () => {
+    vi.mocked(saveMod.canShareImage).mockReturnValue(true)
+    await renderApp()
+    await uploadPhoto()
+    await click('分享')
+
+    expect(saveMod.shareImage).toHaveBeenCalledTimes(1)
+    expect(saveMod.downloadImage).not.toHaveBeenCalled()
+    // 文件名要带过去（微信那边可能用得上）
+    expect(vi.mocked(saveMod.shareImage).mock.calls[0][1]).toBe('p_ruixing.jpg')
+  })
+
+  it('⚠️ 点「保存」→ 老老实实下载，**不许偷偷改成分享**', async () => {
+    // 用户原话：「那有时候不想立即分享也得分享喽」。
+    // 一条"能分享就一律分享"的实现会让这条红 —— 而那正是他不要的。
+    vi.mocked(saveMod.canShareImage).mockReturnValue(true)
+    await renderApp()
+    await uploadPhoto()
+    await click('保存')
+
+    expect(saveMod.downloadImage).toHaveBeenCalledTimes(1)
+    expect(saveMod.shareImage).not.toHaveBeenCalled()
+  })
+
+  it('用户关掉分享面板 → 什么都不发生，不弹错也不白下载', async () => {
+    // shareImage 把"用户取消"当成正常结束（resolve）。这条钉的是 App
+    // 不要去把它当失败处理 —— 当失败处理的话，用户每次取消都会被弹一句错、
+    // 还会白下载一份，恰好是他刚表示不想要的东西。
+    vi.mocked(saveMod.canShareImage).mockReturnValue(true)
+    vi.mocked(saveMod.shareImage).mockResolvedValue(undefined)
+    const alertSpy = vi.fn()
+    vi.stubGlobal('alert', alertSpy)
+
+    await renderApp()
+    await uploadPhoto()
+    await click('分享')
+
+    expect(alertSpy).not.toHaveBeenCalled()
+    expect(saveMod.downloadImage).not.toHaveBeenCalled()
+  })
+
+  it('分享真的失败 → 退回下载，至少让用户拿到图', async () => {
+    vi.mocked(saveMod.canShareImage).mockReturnValue(true)
+    vi.mocked(saveMod.shareImage).mockRejectedValue(new Error('NotAllowedError'))
+
+    await renderApp()
+    await uploadPhoto()
+    await click('分享')
+
+    expect(saveMod.downloadImage).toHaveBeenCalledTimes(1)
   })
 })
