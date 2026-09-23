@@ -1,6 +1,7 @@
 import { toUnit, type Adjustments } from '../../shared/adjustments.ts'
 import type { DecodedImage } from '../image/decode'
 import { VERTEX_SRC, FRAGMENT_SRC } from './shader'
+import { fitToLimit, readLimit } from './limits'
 
 const UNIFORM_NAMES = [
   'uExposure', 'uContrast', 'uHighlights', 'uShadows',
@@ -8,32 +9,6 @@ const UNIFORM_NAMES = [
 ] as const
 
 type UniformName = typeof UNIFORM_NAMES[number]
-
-/**
- * 画布面积上限（总像素数），**只对 iOS 系生效**。
- *
- * iOS Safari 长期把 canvas 面积压在约 1670 万像素（16.7 MP），这条限制
- * GPU 不会通过 MAX_TEXTURE_SIZE / MAX_VIEWPORT_DIMS 报出来，超了也不报错，
- * 而是**静默失败**：WebGL 画不出东西，用户拿到一块白画布，而保存按钮还会
- * 把这些白像素当成品导出去。真实的 iPhone 原图 4032×3024 ≈ 12.2 MP 已经
- * 贴在这条线上，48 MP 远超。
- *
- * 其他平台不套这个常量：桌面 Chrome/Firefox 渲染 2000 万像素以上的图没有
- * 问题，一刀切只会把它们无谓拒掉。那边按设备自报的 MAX_TEXTURE_SIZE /
- * MAX_VIEWPORT_DIMS 判就够了。
- */
-const MAX_CANVAS_AREA = 16777216
-
-/**
- * 是不是 iOS 系浏览器。
- *
- * 除了 iPhone/iPad/iPod 的 UA，还要认 iPadOS 13+ 的「伪装成 Mac」：它的 UA
- * 与桌面 Safari 一模一样，只能靠「平台报 Mac 却支持多点触控」来区分。
- */
-function isIOS(): boolean {
-  if (/iPhone|iPad|iPod/.test(navigator.userAgent)) return true
-  return navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform)
-}
 
 export class TonePipeline {
   private gl: WebGL2RenderingContext
@@ -112,27 +87,26 @@ export class TonePipeline {
   /**
    * 尺寸能不能渲染，在**上传纹理之前**判掉。
    *
-   * 超限就抛错，不静默缩图——「调色不缩图」是产品铁律（spec §4.4），
-   * 悄悄缩小等于骗用户；抛错则让调用方明确告诉用户这张图处理不了。
+   * 这是**兜底**，正常情况下不该响：上传时 App 已经用 `fitToLimit` 把超大图缩到
+   * 画得动了（见 App.tsx 的 fitToDevice）。留着它是因为「上传时判对了」和
+   * 「画布这里画得动」必须是同一件事的两面 —— 万一有一头漏了，这里抛错至少
+   * 能让用户看到一句准确的提示，而不是拿到一块白画布（白画布会被保存按钮
+   * 当成品导出去，那才是最坏的结果）。
+   *
+   * 「超限」的判定直接复用 `fitToLimit` 的结果，而不是在这里另写一遍比较：
+   * 两处各写一遍，早晚会有一处改动而另一处没跟上，于是 App 以为缩好了、
+   * 这里照样抛错 —— 又回到「用户什么都拿不到」。
    */
   private checkLimits(w: number, h: number): void {
-    const gl = this.gl
-    const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number
-    const maxView = gl.getParameter(gl.MAX_VIEWPORT_DIMS) as Int32Array
-    // MAX_TEXTURE_SIZE / MAX_VIEWPORT_DIMS 是设备自报的真实上限，所有平台都按它判；
-    // 16.7 MP 面积上限是 iOS 特有的（原因见 MAX_CANVAS_AREA 的注释），只额外套在 iOS 上。
-    const ios = isIOS()
-    const over =
-      w > maxTex || h > maxTex ||
-      w > maxView[0] || h > maxView[1] ||
-      (ios && w * h > MAX_CANVAS_AREA)
-    if (over) {
-      const areaNote = ios ? `、面积 ${MAX_CANVAS_AREA}px` : ''
-      throw new Error(
-        `这张照片 ${w}×${h}（约 ${(w * h / 1e6).toFixed(1)} MP）超出本浏览器的画布上限` +
-        `（单边 ${maxTex}px${areaNote}），无法在不缩图的前提下处理`,
-      )
-    }
+    const limit = readLimit(this.gl)
+    const fit = fitToLimit(w, h, limit)
+    if (fit.width === w && fit.height === h) return
+
+    const areaNote = limit.maxArea !== null ? `、面积 ${limit.maxArea}px` : ''
+    throw new Error(
+      `这张照片 ${w}×${h}（约 ${(w * h / 1e6).toFixed(1)} MP）超出本浏览器的画布上限` +
+      `（单边 ${limit.maxSide}px${areaNote}），无法在不缩图的前提下处理`,
+    )
   }
 
   setImage(img: DecodedImage): void {

@@ -4,6 +4,8 @@ import Uploader from './ui/Uploader'
 import AdjustmentPanel from './ui/AdjustmentPanel'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import { decodeImageFile, type DecodedImage } from './image/decode'
+import { resizeBitmap } from './image/resize'
+import { fitToLimit, probeLimit } from './render/limits'
 import { applyDeltas, ZERO, type Adjustments } from '../shared/adjustments.ts'
 import { exportImage } from './export/save'
 import { prepareForModel, prepareForRouting } from './image/prepare'
@@ -20,6 +22,48 @@ import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
  * 超过这个时间就把用户放进对话，卡片晚到就晚到、不来就算了。
  */
 const SUGGEST_WAIT_MS = 10_000
+
+/**
+ * 照片超出本设备能画的上限时，先缩到画得动，再照常修。
+ *
+ * 2026-09-23 加。起因是真机实测：手机拍的 4928×6560（32.3 MP）撞上一台
+ * 只报单边 4096 的手机 —— 而手机拍出来的照片本来就常常这么大。原来的行为是
+ * 拒绝渲染并说清原因，**诚实但用户什么都拿不到**，真实用户到这一步就关页面了，
+ * 「30 秒发朋友圈」那条成功线根本不成立。
+ *
+ * 这不是把「调色不缩图」那条铁律作废，而是给它补上前提：那条铁律的本意是
+ * **不许偷偷缩**（悄悄缩 = 骗人），不是**永远不缩**。这里缩了会明说，
+ * 用户手机里的原图一个字节都没动。触发条件也窄——只在设备真的画不动时才走。
+ *
+ * 返回要说给用户的那句话（没缩就是 null，由调用方决定去哪说）。
+ */
+async function fitToDevice(
+  img: DecodedImage,
+): Promise<{ image: DecodedImage; note: string | null }> {
+  // 问不到上限 = 这浏览器根本没有 WebGL2。真正的原因由渲染那一步的提示去报，
+  // 那句比这里准（见 ui/Canvas.tsx 的 fail）。在这里凭空猜一个上限去缩是错的：
+  // 换浏览器就能解决的事，不该拿画质去换。
+  const limit = probeLimit()
+  if (!limit) return { image: img, note: null }
+
+  const fit = fitToLimit(img.width, img.height, limit)
+  // 画得动就一个像素都不动。缩一次是永久的画质损失，绝大多数照片不需要。
+  if (fit.width === img.width && fit.height === img.height) return { image: img, note: null }
+
+  const bitmap = await resizeBitmap(img.bitmap, fit.width, fit.height)
+  // 旧的那张不会再有谁用（新的那张才是接下去的一切），立刻还回去。
+  // 32 MP 一张约 129 MB 的 GPU 内存，漏在这儿比别处都贵。
+  img.bitmap.close()
+
+  // 尺寸以**新位图自报的**为准。和生成那一路同一个道理：声明可能与实物不符，
+  // 拿声明去设画布会把照片拉变形。
+  return {
+    image: { bitmap, width: bitmap.width, height: bitmap.height },
+    note: `这张照片 ${img.width}×${img.height} 太大了，浏览器画不动。` +
+      `我按 ${bitmap.width}×${bitmap.height} 来修 —— 调色照常，` +
+      `只是导出的图会比原图小一点。`,
+  }
+}
 
 export default function App() {
   const [image, setImage] = useState<DecodedImage | null>(null)
@@ -169,7 +213,11 @@ export default function App() {
   const onPick = useCallback(async (file: File) => {
     setBusy('正在打开照片…')
     try {
-      const img = await decodeImageFile(file)
+      const decoded = await decodeImageFile(file)
+      // 超出本设备画布上限就先缩到画得动（并带回一句要跟用户说的话）。
+      // 放在这儿、放在"进 history 之前"：缩完的那张才是这一趟的底，
+      // 之后所有事（渲染、送模型、快照）看到的都该是同一个尺寸。
+      const { image: img, note } = await fitToDevice(decoded)
 
       // 先释放上一张：ImageBitmap 占的是 GPU 内存，不关会一直攒着。
       // 要关的是**整份旧 history**——除了原图，还有每条生成式快照的 base
@@ -186,6 +234,8 @@ export default function App() {
       // 原图自己也算一步，挂在欢迎语那条消息上 —— 这样「回到这一步」
       // 能回到最开始，撤销第一次生成时特别有用。
       const welcomeId = say('准备好啦，说说想怎么改？')
+      // 缩过就得说。紧跟欢迎语，用户往下看第一眼就撞上，不会滑过去。
+      if (note) say(note)
       setHistory([
         { id: welcomeId, label: '原图', base: img, params: ZERO, isOriginal: true },
       ])

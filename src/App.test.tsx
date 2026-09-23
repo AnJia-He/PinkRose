@@ -18,15 +18,31 @@ import type { RouteDecision } from '../shared/protocol.ts'
 // ── 假扮：这些是浏览器能力，jsdom 里没有 ──────────────────────────────
 // 原则是"只换掉必要的那一个，其余保留真的"，免得把要测的东西一起假掉。
 
+/** 送到画布上的到底是哪一张 —— 「缩过的那张有没有真的被用上」只能这样看。
+ *  用 hoisted：vi.mock 的工厂会被提到所有 import 之前执行。 */
+const canvasProps = vi.hoisted(() => ({ images: [] as { width: number; height: number }[] }))
+
 /** 画布：真的那个要 WebGL2。这里给一个真 <canvas> 并挂上 ref ——
  *  `send` 的守卫要求 canvasRef.current 非空，假成 null 的话一句都发不出去。 */
 vi.mock('./ui/Canvas', async () => {
   const React = await import('react')
   return {
-    default: ({ canvasRef }: { canvasRef: unknown }) =>
-      React.createElement('canvas', { ref: canvasRef }),
+    default: ({ canvasRef, image }: { canvasRef: unknown; image: unknown }) => {
+      canvasProps.images.push(image as { width: number; height: number })
+      return React.createElement('canvas', { ref: canvasRef })
+    },
   }
 })
+
+/** 问设备上限：真的那个要 WebGL2 上下文。**fitToLimit 保留真的** ——
+ *  它才是要测的东西，假掉就只剩"我把自己的假设测了一遍"。 */
+vi.mock('./render/limits', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./render/limits')>()
+  return { ...actual, probeLimit: vi.fn() }
+})
+
+/** 真的缩像素要 2D 画布，jsdom 没有。 */
+vi.mock('./image/resize', () => ({ resizeBitmap: vi.fn() }))
 
 /** 送图前的缩放/编码：要 2D 画布，jsdom 没有。 */
 vi.mock('./image/prepare', () => ({
@@ -52,6 +68,8 @@ import App from './App'
 import * as decodeMod from './image/decode'
 import * as prepareMod from './image/prepare'
 import * as api from './api/client'
+import * as limitsMod from './render/limits'
+import * as resizeMod from './image/resize'
 
 // ── 每张"底"带一个记号，好认出送上去的到底是哪一张 ──────────────────
 let bitmapSeq = 0
@@ -81,7 +99,16 @@ function decision(over: Partial<RouteDecision> = {}): RouteDecision {
 beforeEach(() => {
   vi.clearAllMocks()
   bitmapSeq = 0
+  canvasProps.images.length = 0
   ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+  // 默认：设备很宽裕，什么都能画。要测"缩"的那几条自己把这个改小。
+  vi.mocked(limitsMod.probeLimit).mockReturnValue({ maxSide: 8192, maxArea: null })
+  // 真的缩像素要 2D 画布；这里让假实现回一张**带新尺寸**的位图，
+  // 好断言"到底缩到了多少"——App 认的是位图自报的尺寸，不是请求的尺寸。
+  vi.mocked(resizeMod.resizeBitmap).mockImplementation(
+    async (_src: ImageBitmap, width: number, height: number) =>
+      ({ width, height, close: vi.fn() }) as unknown as ImageBitmap)
 
   // 上传染回来的那张底（包一层：要用的是它的 .bitmap）
   vi.mocked(decodeMod.decodeImageFile).mockResolvedValue(fakeDecoded('upload'))
@@ -252,5 +279,97 @@ describe('对话式修图：钱花在对的地方', () => {
 
     const second = vi.mocked(api.postRoute).mock.calls[1][0] as { params: { exposure: number } }
     expect(second.params.exposure).toBe(20)
+  })
+})
+
+/**
+ * 2026-09-23 加：**手机拍的照片，手机自己画不动**。
+ *
+ * 用户那台手机上实测撞到的：照片 4928×6560（32.3 MP），而那台机器自报的单边
+ * 上限只有 4096。原来的行为是拒绝渲染并说明原因 —— 诚实，但用户**什么都拿不到**，
+ * 而手机拍出来的照片本来就常常这么大。真实用户走到这一步只会关掉页面。
+ *
+ * 改成：超出上限就先把照片缩到刚好画得动，再照常修，并在对话里**明说**。
+ * 说不说是这件事的关键 —— 悄悄缩是骗人，说了再缩是交付。
+ */
+describe('照片超出设备上限时：缩，但要说出来', () => {
+  /** 用户那台手机的真实数字。 */
+  const PHONE: limitsMod.RenderLimit = { maxSide: 4096, maxArea: null }
+  const BIG = { width: 4928, height: 6560 }
+
+  function uploadBigPhoto() {
+    vi.mocked(decodeMod.decodeImageFile).mockResolvedValue({
+      bitmap: fakeBitmap('big'), width: BIG.width, height: BIG.height,
+    })
+  }
+
+  it('缩到刚好画得动，而且真的拿这张缩过的去渲染', async () => {
+    vi.mocked(limitsMod.probeLimit).mockReturnValue(PHONE)
+    uploadBigPhoto()
+
+    await renderApp()
+    await uploadPhoto()
+
+    // 3076×4096 是 fitToLimit 算出来的（3076 而不是 3077：取整只往下取，
+    // 宁可少一像素也不能顶过上限，理由见 src/render/limits.ts）
+    expect(resizeMod.resizeBitmap).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(resizeMod.resizeBitmap).mock.calls[0].slice(1)).toEqual([3076, 4096])
+
+    // ★ 只缩不换等于白缩：送到画布上的必须是缩过的那张
+    expect(canvasProps.images.at(-1)).toMatchObject({ width: 3076, height: 4096 })
+  })
+
+  it('必须说出来，还要带上真实数字', async () => {
+    vi.mocked(limitsMod.probeLimit).mockReturnValue(PHONE)
+    uploadBigPhoto()
+
+    await renderApp()
+    await uploadPhoto()
+
+    const said = container.textContent ?? ''
+    expect(said).toContain('4928×6560')     // 原本多大
+    expect(said).toContain('3076×4096')     // 按多大处理
+    expect(said).toContain('比原图小')       // 代价也要说，不能只报喜
+  })
+
+  it('缩完要把原来那张位图关掉 —— 32 MP 的 GPU 内存不能就这么漏掉', async () => {
+    vi.mocked(limitsMod.probeLimit).mockReturnValue(PHONE)
+    uploadBigPhoto()
+
+    await renderApp()
+    await uploadPhoto()
+
+    // 原图（4928×6560 ≈ 129 MB）换成了缩过的那张，旧的那份就没人再用了。
+    // ImageBitmap 占的是 GPU 内存，不关会一直攒着 —— 这个项目已经栽过一次。
+    const original = vi.mocked(decodeMod.decodeImageFile).mock.results[0].value
+    expect((await original).bitmap.close).toHaveBeenCalled()
+  })
+
+  it('装得下的照片一个像素都不许动 —— 不能"反正缩一下更保险"', async () => {
+    vi.mocked(limitsMod.probeLimit).mockReturnValue(PHONE)
+    // 4032×3024 是普通手机原图，单边 4032 < 4096，本来就画得动
+    vi.mocked(decodeMod.decodeImageFile).mockResolvedValue({
+      bitmap: fakeBitmap('normal'), width: 4032, height: 3024,
+    })
+
+    await renderApp()
+    await uploadPhoto()
+
+    expect(resizeMod.resizeBitmap).not.toHaveBeenCalled()
+    expect(canvasProps.images.at(-1)).toMatchObject({ width: 4032, height: 3024 })
+    expect(container.textContent ?? '').not.toContain('比原图小')
+  })
+
+  it('连 WebGL2 都拿不到时不许乱缩 —— 该走原来那条"换浏览器"的提示', async () => {
+    // 问不到上限说明根本没有 WebGL2。这时候按"猜一个上限"去缩是错的：
+    // 真正的问题会在渲染那一步报出来，那句话比这里准（见 Canvas.tsx 的 fail）。
+    vi.mocked(limitsMod.probeLimit).mockReturnValue(null)
+    uploadBigPhoto()
+
+    await renderApp()
+    await uploadPhoto()
+
+    expect(resizeMod.resizeBitmap).not.toHaveBeenCalled()
+    expect(canvasProps.images.at(-1)).toMatchObject(BIG)
   })
 })
