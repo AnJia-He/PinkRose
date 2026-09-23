@@ -59,11 +59,13 @@ export default function ChatPanel({
       {marking && (
         <div className="cards">
           {/* 还没点之前不出现「就改这里」：那个按钮此刻点了什么也不会发生，
-              而"不留一个点了没用的按钮"是这个项目的老规矩。 */}
+              而"不留一个点了没用的按钮"是这个项目的老规矩。
+              ⚠️ 两个都跟卡片一样挂 busy：正忙的时候点下去什么也不会发生
+              （confirmMark 自己也有闸门），而"点了没反应"比"点不动"更让人懵。 */}
           {canConfirmMark && (
-            <button className="card" onClick={onConfirmMark}>就改这里</button>
+            <button className="card" onClick={onConfirmMark} disabled={!!busy}>就改这里</button>
           )}
-          <button className="card" onClick={onCancelMark}>不用了</button>
+          <button className="card" onClick={onCancelMark} disabled={!!busy}>不用了</button>
         </div>
       )}
 

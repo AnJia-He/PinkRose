@@ -13,7 +13,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RouteDecision } from '../shared/protocol.ts'
+import type { RouteDecision, SuggestResponse } from '../shared/protocol.ts'
 import { ZERO } from '../shared/adjustments.ts'
 
 // ── 假扮：这些是浏览器能力，jsdom 里没有 ──────────────────────────────
@@ -40,7 +40,12 @@ vi.mock('./ui/Canvas', async () => {
           // 模拟"渲染过了"：把当前参数写在节点上，缩略图能读到
           if (node) node.dataset.rendered = JSON.stringify(params)
         },
-        onClick: () => onPickPoint && onPickPoint(0.5, 0.5),
+        // ⚠️ 报回来的坐标必须**跟着事件走**，不能写死 (0.5, 0.5)：
+        //    写死的话"换个地方再点"那条测试永远不可能红 —— 第二次点被守卫
+        //    吞掉也照样"看起来成功"。这里照真画布的意思把屏幕坐标换成 0~1
+        //    （真画布除以画布的 rect，假画布除以假的宽度 1000）。
+        onClick: (e: { clientX: number; clientY: number }) =>
+          onPickPoint && onPickPoint(e.clientX / 1000, e.clientY / 1000),
       })
     },
   }
@@ -687,10 +692,11 @@ describe('图上点选消歧', () => {
     await say('把后面那个人去掉')
   }
 
-  /** 在图上点一下 —— 假的 Canvas 把这一下报成画面正中间那个点。 */
-  async function tapPhoto() {
+  /** 在图上点一下 —— 假的 Canvas 把屏幕坐标换成 0~1（默认画面正中 0.5, 0.5）。 */
+  async function tapPhoto(clientX = 500, clientY = 500) {
+    const canvas = container.querySelector('canvas') as HTMLCanvasElement
     await act(async () => {
-      (container.querySelector('canvas') as HTMLCanvasElement).click()
+      canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX, clientY }))
       await new Promise(r => setTimeout(r, 0))
     })
   }
@@ -741,13 +747,87 @@ describe('图上点选消歧', () => {
     expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
   })
 
-  it('点错了还能换个地方再点 —— 确认之前标记一直可以改', async () => {
+  it('点错了还能换个地方再点 —— 第二次真的被采纳，不是"看着像成功"', async () => {
     await askOnPhoto()
-    await tapPhoto()
-    // 点完不该把点选模式关死：用户想换个地方，直接再点一下就行
-    await act(async () => { (container.querySelector('canvas') as HTMLCanvasElement).click() })
+    await tapPhoto(500, 500)
     expect(canvasProps.props.at(-1)?.marker).toEqual({ x: 0.5, y: 0.5 })
+
+    // 换个地方再点：这一下必须**真的把标记挪过去**。
+    // ★ 只断言"还能再点一下"是不够的 —— 把 `setPicking(false)` 装回
+    //   onPickPoint（brief 的字面版本），第二次调用会在守卫那里 bail，
+    //   而"标记还在、还是没花钱、条还在"那几条断言**照样全成立**：
+    //   一条永远不会红的测试，等于没有。所以这里断的是**新坐标**。
+    await tapPhoto(200, 800)
+    expect(canvasProps.props.at(-1)?.marker).toEqual({ x: 0.2, y: 0.8 })
     expect(api.postEdit).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('就改这里')
+  })
+
+  it('⚠️ 卡片落进点选流程 —— 点了卡片，那条「就改这里」必须收掉', async () => {
+    // 卡片是**会迟到**的：上传时发出去的那一次，`SUGGEST_WAIT_MS`（10 秒）一到
+    // 就把用户先放出来，而它还在后台跑、回来了照样把卡片贴上。所以"卡片和
+    // 确认条同时在屏上"这件事真会发生 —— 而那条确认守的是**哪一件事**，
+    // 取决于用户有没有在这中间改过主意。
+    //
+    // 这一趟的三个时间点是关键，所以把定时器换成假的：
+    //   ① 上传（卡片请求挂着）
+    //   ② 10 秒到 → 超时那条路赢 → busy 清空，用户能说话了
+    //   ③ 用户说了句拿不准的话 → 点选模式开着 → 卡片这时才落地
+    let deliver!: (v: SuggestResponse) => void
+    // 卡片那一次请求**挂着不回**（真实世界里它是"超时之后才回来"的那一半）
+    vi.mocked(api.postSuggest).mockReturnValueOnce(new Promise(res => { deliver = res }))
+    await renderApp()
+    vi.useFakeTimers()
+    try {
+      const input = container.querySelector('input[type="file"]') as HTMLInputElement
+      const file = new File(['x'], 'p.jpg', { type: 'image/jpeg' })
+      Object.defineProperty(input, 'files', { value: [file], configurable: true })
+      await act(async () => {
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      // ② 10 秒过去。常量若被改大，这一步会红 —— 是响的，不是静默的。
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉那个人', needsDisambiguation: true }))
+
+    await say('把后面那个人去掉')
+    expect(canvasProps.props.at(-1)?.picking).toBe(true)
+    await tapPhoto()                          // 标记也有了
+    expect(container.textContent).toContain('就改这里')
+
+    // 但卡片是在**这之后**才落地的（① 那次请求还在半路）
+    await act(async () => {
+      deliver({
+        cards: [{
+          label: '把后面的人去掉', route: 'generate',
+          paramDeltas: {}, editPrompt: '去掉后面那个人',
+        }],
+        degraded: false,
+      })
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const card = [...container.querySelectorAll('button')].find(
+      b => (b.textContent ?? '') === '把后面的人去掉') as HTMLButtonElement
+    expect(card).toBeTruthy()
+
+    // 用户改主意：点了这张卡片
+    await act(async () => { card.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    expect(api.postEdit).toHaveBeenCalledTimes(1)      // 只花了卡片自己那一次
+    // ★ 陈旧的那条「就改这里」守的是**已经被卡片取代的那件事**：留着它，
+    //   再点一下就是白花一次生成（12,900 tokens），而且用的是旧标记 + 旧话。
+    //   卡片改主意和用户开口说话是一回事 —— 上一条歧义就此翻篇。
+    expect(container.textContent).not.toContain('就改这里')
+    expect(canvasProps.props.at(-1)?.marker).toBeNull()
+    expect(canvasProps.props.at(-1)?.picking).toBe(false)
   })
 
   it('取消掉就不点选了（不点也能继续说话）', async () => {

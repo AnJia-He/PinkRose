@@ -347,6 +347,14 @@ export default function App() {
     // 卡片也走 applyDecision，所以这里同样要写 —— 否则卡片触发的歧义会拿到
     // **上一次 send 留下的陈旧原话**，用户点完图确认，送上去的是另一句话。
     pendingRef.current = card.editPrompt
+    // 点卡片也是"改主意了"：上一条歧义就此翻篇 —— 和 send 里那三行同一个道理。
+    // 卡片**会迟到**（超时之后它还在后台跑、回来了照样贴上来），所以"确认条
+    // 和卡片同时在屏上"真会发生；不清的话，用户在卡片已经花过一次钱之后
+    // 再点那条「就改这里」，会把**已经被取代的那件事**又花一次（12,900 tokens），
+    // 而且用的是旧标记 + 旧话。
+    setPicking(false)
+    setMarker(null)
+    setPendingText(null)
     setMessages(m => [...m, { id: nextId(), role: 'user', text: card.label }])
     setCards([])
 
@@ -391,6 +399,11 @@ export default function App() {
    * 图上画圈模型能只改标记处，而且红圈本身会被正确擦掉）。
    */
   const confirmMark = useCallback(async () => {
+    // busy 闸门：这是**唯一**一条没有它的花钱路径（send / onCard 都有），
+    // 而那条确认条在一张卡片自己那次生成**正在跑**的时候还留在屏上过
+    // （见 onCard 里的清理）。没有它，两份 postEdit 会并发跑起来，
+    // 两轮 setHistory / bitmap.close() 的记账也跟着并发。
+    if (busy) return
     if (!marker || !pendingText || !image) return
     const text = pendingText
     setPicking(false)
@@ -409,7 +422,7 @@ export default function App() {
       console.error(e)
       say('这一步没成功，再试一次？')
     }
-  }, [marker, pendingText, image, params, runGenerate, say])
+  }, [busy, marker, pendingText, image, params, runGenerate, say])
 
   const onJump = useCallback((id: number) => {
     const target = history.find(s => s.id === id)
