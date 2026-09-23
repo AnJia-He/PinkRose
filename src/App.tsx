@@ -142,7 +142,7 @@ export default function App() {
       setHistory(prev => {
         const next = pushSnapshot(prev, {
           id: messageId, label: '生成式编辑',
-          base: nextBase, params: paramsAtStep, isOriginal: false,
+          base: nextBase, params: paramsAtStep, isOriginal: false, thumb: '',
         })
         // 被挤出去的位图要释放；原图永远不关（"回到原图"还要用它）。
         // close() 是幂等的，StrictMode 双调用 updater 也安全。
@@ -242,7 +242,7 @@ export default function App() {
       // 缩过就得说。紧跟欢迎语，用户往下看第一眼就撞上，不会滑过去。
       if (note) say(note)
       setHistory([
-        { id: welcomeId, label: '原图', base: img, params: ZERO, isOriginal: true },
+        { id: welcomeId, label: '原图', base: img, params: ZERO, isOriginal: true, thumb: '' },
       ])
 
       // 卡片是**可选件，绝不能让用户等它**：最多等 10 秒（见 SUGGEST_WAIT_MS），

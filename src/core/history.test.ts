@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { pushSnapshot, jumpTo, bitmapsToClose, MAX_SNAPSHOTS, type Snapshot } from './history'
+import { pushSnapshot, jumpTo, bitmapsToClose, attachThumb, MAX_SNAPSHOTS, type Snapshot } from './history'
 import type { DecodedImage } from '../image/decode'
 import { ZERO } from '../../shared/adjustments.ts'
 
 const fakeBitmap = (tag: string) => ({ tag }) as unknown as DecodedImage
 const mk = (id: number, isOriginal = false): Snapshot => ({
-  id, label: `第${id}步`, base: fakeBitmap(`b${id}`), params: ZERO, isOriginal,
+  id, label: `第${id}步`, base: fakeBitmap(`b${id}`), params: ZERO, isOriginal, thumb: '',
 })
 const tagOf = (b: DecodedImage) => (b as unknown as { tag: string }).tag
 
@@ -49,6 +49,35 @@ describe('jumpTo', () => {
     const list = [mk(1, true), mk(2), mk(3)]
     jumpTo(list, 1)
     expect(list).toHaveLength(3)
+  })
+})
+
+describe('attachThumb', () => {
+  const snap = (id: number, thumb = ''): Snapshot =>
+    ({ id, label: `${id}`, base: fakeBitmap(`${id}`), params: ZERO, isOriginal: id === 1, thumb })
+
+  it('把缩略图挂到指定那一步上', () => {
+    const list = [snap(1), snap(2), snap(3)]
+    const next = attachThumb(list, 2, 'data:image/jpeg;base64,AAA')
+    expect(next[1].thumb).toBe('data:image/jpeg;base64,AAA')
+    // 别的不能动 —— 挂错行等于给用户看错图
+    expect(next[0].thumb).toBe('')
+    expect(next[2].thumb).toBe('')
+  })
+
+  it('不改入参', () => {
+    // 这个项目里出现过一次「函数悄悄改了传进来的数组」。
+    // 纯函数是这个模块存在的意义，必须钉住。
+    const list = [snap(1)]
+    attachThumb(list, 1, 'x')
+    expect(list[0].thumb).toBe('')
+  })
+
+  it('找不到那个 id 时原样返回一份拷贝', () => {
+    const list = [snap(1)]
+    const next = attachThumb(list, 99, 'x')
+    expect(next).toEqual(list)
+    expect(next).not.toBe(list)
   })
 })
 

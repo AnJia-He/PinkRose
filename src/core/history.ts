@@ -10,6 +10,18 @@ export type Snapshot = {
   params: Adjustments
   /** 原图。这一条永远不会被挤出去。 */
   isOriginal: boolean
+  /**
+   * 这一步长什么样的缩略图（data URL）。**空串 = 还没生成**。
+   *
+   * 为什么是字符串不是位图：位图占 GPU 内存，一步一张、最多六步，
+   * 而缩略图的价值远不值那个代价。一张 data URL 约 5~10 KB，普通内存。
+   *
+   * 为什么会有"还没生成"这个中间态：快照是在 `setParams` / `setImage`
+   * **同一个批次**里推入的，而那一刻画布还没重画（React 的状态更新是异步的）。
+   * 直接抓会抓到**上一步的颜色**。所以先推空，等画面更新后由 App 补上
+   * （见 src/App.tsx 里那个 effect）。
+   */
+  thumb: string
 }
 
 /**
@@ -35,6 +47,18 @@ export function pushSnapshot(list: readonly Snapshot[], s: Snapshot): Snapshot[]
 export function jumpTo(list: readonly Snapshot[], id: number): Snapshot[] {
   const i = list.findIndex(s => s.id === id)
   return i < 0 ? [...list] : list.slice(0, i + 1)
+}
+
+/**
+ * 给某一步补上缩略图。纯函数，不改入参。
+ *
+ * 找不到那个 id 时返回一份拷贝 —— 不做任何事，但也不让调用方拿到同一个引用，
+ * 免得 React 以为状态变了。
+ */
+export function attachThumb(
+  list: readonly Snapshot[], id: number, thumb: string,
+): Snapshot[] {
+  return list.map(s => (s.id === id ? { ...s, thumb } : s))
 }
 
 /**
