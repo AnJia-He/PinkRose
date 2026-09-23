@@ -18,10 +18,17 @@ type Props = {
   jumpableIds: number[]
   /** 每一步的缩略图，键是消息 id。空串 = 还没生成。 */
   thumbs: Record<number, string>
+  /** 图上点选这条流程开着（正等着点、或者已经点过了）—— 两个按钮就出现。 */
+  marking: boolean
+  /** 已经点过图了，可以确认。**点「就改这里」才真正花钱**，所以它单独一个开关。 */
+  canConfirmMark: boolean
+  onConfirmMark: () => void
+  onCancelMark: () => void
 }
 
 export default function ChatPanel({
   messages, cards, busy, onSend, onCard, onJump, jumpableIds, thumbs,
+  marking, canConfirmMark, onConfirmMark, onCancelMark,
 }: Props) {
   return (
     <aside className="chat">
@@ -46,6 +53,19 @@ export default function ChatPanel({
         ))}
         {busy && <div className="bubble assistant pending">{busy}</div>}
       </div>
+
+      {/* spec §6.3 的歧义兜底：请用户在图上点一下，点完**确认了才花钱**
+          （一次生成约 12,900 tokens，点错了不该亏钱）。 */}
+      {marking && (
+        <div className="cards">
+          {/* 还没点之前不出现「就改这里」：那个按钮此刻点了什么也不会发生，
+              而"不留一个点了没用的按钮"是这个项目的老规矩。 */}
+          {canConfirmMark && (
+            <button className="card" onClick={onConfirmMark}>就改这里</button>
+          )}
+          <button className="card" onClick={onCancelMark}>不用了</button>
+        </div>
+      )}
 
       {cards.length > 0 && (
         <div className="cards">

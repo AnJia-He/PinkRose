@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react'
 import { TonePipeline } from '../render/pipeline'
 import type { DecodedImage } from '../image/decode'
+import type { NormPoint } from '../image/mark'
 import type { Adjustments } from '../../shared/adjustments.ts'
 
 type Props = {
@@ -10,7 +11,15 @@ type Props = {
   originalPreview: string | null
   /** App 需要拿到 canvas 元素来做导出 */
   canvasRef: MutableRefObject<HTMLCanvasElement | null>
+  /** 正在等用户点一下（spec §6.3）。true 时画布接受点击并把它换算成坐标。 */
+  picking?: boolean
+  /** 用户点的那个点，0~1（**相对照片左上角**）。null = 还没点。 */
+  marker?: NormPoint | null
+  onPickPoint?: (x: number, y: number) => void
 }
+
+/** 画布相对 wrapper 的盒子，单位像素。红圈按它定位（理由见下面那段注释）。 */
+type CanvasBox = { left: number; top: number; width: number; height: number }
 
 /**
  * 渲染链路的统一失败出口：控制台留痕 + 用户可见的 alert。
@@ -47,11 +56,16 @@ function fail(e: unknown) {
 }
 
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
-export default function Canvas({ image, params, originalPreview, canvasRef }: Props) {
+export default function Canvas({
+  image, params, originalPreview, canvasRef, picking, marker, onPickPoint,
+}: Props) {
   const innerRef = useRef<HTMLCanvasElement | null>(null)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
   const pipeRef = useRef<TonePipeline | null>(null)
   /** 用户此刻按住了画面（在看原图）。 */
   const [peeking, setPeeking] = useState(false)
+  /** 画布相对 wrapper 的盒子。红圈的定位基准 —— 见下面那个 effect 里的理由。 */
+  const [box, setBox] = useState<CanvasBox | null>(null)
 
   useEffect(() => {
     const canvas = innerRef.current
@@ -93,10 +107,84 @@ export default function Canvas({ image, params, originalPreview, canvasRef }: Pr
   }, [image, params])
 
   /**
+   * 量出**画布**相对 wrapper 的盒子。红圈的定位基准就是这个，不是 wrapper。
+   *
+   * 为什么非得量：`.canvas-wrap` 是撑满整个 stage 的（width/height 都是 100%），
+   * 画布只是**居中在它里面**。`.canvas` 的 `max-width/max-height: 100%` 在"高度
+   * 受限"时会在**左右留出空白** —— 于是"相对 wrapper 的百分比"和"照片上的位置"
+   * 根本不是一回事。1280×600 档实测：画布 750×500 @95,80，而 stage 内容盒从
+   * x=20 起 —— 左边那 75px 是空白，不是照片。
+   *
+   * ⚠️ **这个坑最坏的地方是它看不出来**：要是坐标按 wrapper 归一化、红圈也按
+   * wrapper 的百分比定位，两处会**同时错、正好互相抵消** —— 圈会画在用户点的那
+   * 个位置、看着完全正确，而送进模型的那张图里圈却偏了 8% 的宽度（实测：在照片
+   * 左边缘点一下，报回来的是 0.083 而不是 0）。看着对、其实错、还照收钱。
+   * 所以归一化和定位**两处都以画布为准**。
+   *
+   * 用测量而不是纯 CSS：百分比那条路要在画布里再套一层"收缩到画布大小"的盒子，
+   * 解析规则很容易踩坑；量出来的像素是确定的，而且探针能直接验。**但绝不能在
+   * render 里读 offsetLeft / getBoundingClientRect** —— 渲染期读布局是 React 的
+   * 经典坑，读到的值会被它自己触发的下一次渲染改掉。
+   */
+  useLayoutEffect(() => {
+    const canvas = innerRef.current
+    const wrap = wrapRef.current
+    if (!canvas || !wrap) return
+    const measure = () => {
+      const c = canvas.getBoundingClientRect()
+      const w = wrap.getBoundingClientRect()
+      setBox(prev => {
+        const next: CanvasBox = {
+          left: c.left - w.left, top: c.top - w.top,
+          width: c.width, height: c.height,
+        }
+        // 一个像素都没动就别换 state 对象：ResizeObserver 回调里 setState 是
+        // "回调 → 渲染 → 布局 → 回调"这条死循环的经典入口，能不动就不动。
+        return prev && prev.left === next.left && prev.top === next.top
+          && prev.width === next.width && prev.height === next.height
+          ? prev
+          : next
+      })
+    }
+    measure()
+    // 画布尺寸随时会变：换图、屏幕转过来、开合微调面板、手机键盘弹起。
+    // 只量一次的话红圈会在这些时候飘走 —— 所以还要盯住它。
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    ro?.observe(canvas)
+    ro?.observe(wrap)
+    window.addEventListener('resize', measure)
+    return () => {
+      ro?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [image])
+
+  /**
+   * 把屏幕上点的那一下换算成 0~1 的归一化坐标。
+   *
+   * ⚠️ 量的必须是**画布**：wrapper 比画布宽（见上面那个 effect）。
+   * 点在照片外面（stage 的留白上）不算数 —— 那不是在指照片里的东西。
+   */
+  const handlePick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!picking || !onPickPoint) return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    // 归一化到 0~1：这样画布怎么缩放都不影响标记的位置
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    if (x < 0 || x > 1 || y < 0 || y > 1) return
+    onPickPoint(x, y)
+  }
+
+  /**
    * 「按住图 = 看原图，松手回来」（spec §2.5）。
    *
-   * 手势挂在 wrap 上、不是挂在画布上：wrap 才是"照片那一块地方"——
-   * 它整个盖住画布，peek 也挂在它里面，画布只是它底下的一层贴图。
+   * 手势挂在 wrap 上、不是挂在画布上：手指落在画布外那圈留白上时，事件也要
+   * 收得到（画布盖不住那一圈），peek 就挂在它里面。
+   * ⚠️ 但**"照片那一块地方"是画布，不是 wrap** —— wrap 比画布大，两者在
+   * "高度受限"的屏上差着几十像素。要换算照片上的位置，量的一律是画布
+   * （见 handlePick 和上面那个 measurement effect）。
    *
    * **三种"松手"都要收拾干净**：抬手、手指滑出画面、系统把指针抢走
    * （来电、通知、滚动接管）——少接一个，用户按一下就被永久留在原图上，
@@ -107,12 +195,19 @@ export default function Canvas({ image, params, originalPreview, canvasRef }: Pr
    */
   return (
     <div
+      ref={wrapRef}
       className="canvas-wrap"
-      onPointerDown={() => originalPreview && setPeeking(true)}
+      onPointerDown={() => {
+        // 点选模式里不许 peek：那一下是"点一下告诉我是哪儿"，不是"按住看原图"。
+        // 不挡的话**每次点选都会先闪一下没调过色的原图**。
+        if (picking) return
+        if (originalPreview) setPeeking(true)
+      }}
       onPointerUp={() => setPeeking(false)}
       onPointerCancel={() => setPeeking(false)}
       onPointerLeave={() => setPeeking(false)}
       onContextMenu={e => e.preventDefault()}
+      onClick={handlePick}
     >
       <canvas ref={node => {
         innerRef.current = node
@@ -120,6 +215,18 @@ export default function Canvas({ image, params, originalPreview, canvasRef }: Pr
       }} className="canvas" />
       {peeking && originalPreview && (
         <img className="canvas-peek" src={originalPreview} alt="原图" draggable={false} />
+      )}
+      {marker && box && (
+        <span
+          className="canvas-marker"
+          // 用**像素**、以画布盒子为基准（不是 wrapper 的百分比 —— 理由见上面
+          // 那个 measurement effect：wrapper 比画布宽，按它定位在"高度受限"
+          // 的屏上会偏出好几成）。
+          style={{
+            left: box.left + marker.x * box.width,
+            top: box.top + marker.y * box.height,
+          }}
+        />
       )}
     </div>
   )

@@ -8,10 +8,11 @@ import { resizeBitmap } from './image/resize'
 import { fitToLimit, probeLimit } from './render/limits'
 import { applyDeltas, ZERO, type Adjustments } from '../shared/adjustments.ts'
 import { buildExportBlob, buildFilename, canShareImage, downloadImage, shareImage } from './export/save'
-import { prepareForModel, prepareForRouting } from './image/prepare'
+import { prepareForModel, prepareForRouting, type Sizable } from './image/prepare'
 import { ApiError, postEdit, postRoute, postSuggest } from './api/client'
 import { bitmapsToClose, attachThumb, jumpTo, pushSnapshot, type Snapshot } from './core/history'
 import { makeThumbnail } from './core/thumbnail'
+import { markImage, type NormPoint } from './image/mark'
 import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
 
 /**
@@ -88,12 +89,24 @@ export default function App() {
   const [history, setHistory] = useState<Snapshot[]>([])
   /** 「按住看原图」用的预览图（data URL）。没照片时是 null。 */
   const [originalPreview, setOriginalPreview] = useState<string | null>(null)
+  /** 正在等用户在图上点一下（spec §6.3 的歧义兜底）。
+   *  它管的是**整条点选流程**：从"请你点一下"开始，到确认或取消为止 ——
+   *  点过一次也还是 true，否则用户点歪了就没法换个地方再点（见 onPickPoint）。 */
+  const [picking, setPicking] = useState(false)
+  /** 用户点的那个点（0~1，相对照片左上角）。null = 还没点。 */
+  const [marker, setMarker] = useState<NormPoint | null>(null)
+  /** 卡住时用户的原话 —— 确认之后要**连同标记一起**再送一次，不能让他重说。 */
+  const [pendingText, setPendingText] = useState<string | null>(null)
 
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const originalFileRef = useRef<File | null>(null)
   const idRef = useRef(0)
   /** 每次选图 +1。晚到的卡片结果靠它对号，免得贴到下一张照片上。 */
   const pickIdRef = useRef(0)
+  /** 用户**这一趟说过的原话**（send / 卡片各写各的）。
+   *  模型说拿不准时要把它留到用户点完图 —— 届时"原来那句话"是**那一刻**的那句，
+   *  不是某个 state 里可能已经翻篇的那句。 */
+  const pendingRef = useRef<string | null>(null)
 
   const nextId = () => ++idRef.current
 
@@ -116,19 +129,23 @@ export default function App() {
    * `source` 由调用方（applyDecision）显式传入，不在这里读某个 ref：
    * 送哪张图是**调用点的决定**，而 ref 会跨 render 变陈。
    *
+   * 入参类型是 `Sizable`（能 drawImage 的东西）而不是 `DecodedImage`：
+   * 图上点选那条路送的是**画过圈的一张临时画布**（见 markImage），
+   * 要 `DecodedImage` 的话就得为它再造一张位图、用完还得记着关掉 —— 画布
+   * 交给 GC 就行，没有那笔 GPU 内存的账。
+   *
    * 用户当前的参数值作为**文本上下文**已经由服务端交给 LLM 让它补偿
    * （spec §3.5：确定性比聪明重要）。
    */
   const runGenerate = useCallback(async (
     editPrompt: string, messageId: number, paramsAtStep: Adjustments,
-    source: DecodedImage,
+    source: Sizable,
   ) => {
     if (!editPrompt) return
     setBusy('正在改…大约 10 秒')
     try {
-      // 传 .bitmap —— prepareForModel 要的是能 drawImage 的东西，
-      // 不是 DecodedImage 那个包装对象
-      const prepared = await prepareForModel(source.bitmap)
+      // source 直接就是能 drawImage 的东西（位图或画布），不用再拆一层
+      const prepared = await prepareForModel(source)
       const out = await postEdit({
         imageDataUrl: prepared.dataUrl,
         editPrompt,
@@ -186,21 +203,28 @@ export default function App() {
     // 模型自己说"我不确定你说的是哪一个"时**不能动手**——
     // 一边问一边改是最糟的组合：用户还没回答，钱已经花了（一次约 12,900 tokens），
     // 而且改的可能是错的那个人。参数那半照常应用（免费可逆），只拦生成。
-    // （图上点一下的完整形态在计划三；这里先把"拿不准就别动手"做对。）
+    //
+    // 拦下来之后不是让用户把话说第二遍，而是**请他在图上点一下**（spec §6.3）：
+    // 人多的时候"把后面那个人去掉"这种话再用词也说不清，位置说不清的地方
+    // 指一下就清楚了。点完还要再确认一次 —— 那才是真正花钱的一步。
     //
     // 文案必须中性：模型会在**没有第二个人**的照片上说拿不准（记录里有它的原话
     // "后面好像只有山，没看到另一个人"），歧义也未必关于人（哪片天？哪块牌子？）。
     if (d.needsDisambiguation) {
-      say('我不太确定你指的是哪个，再说细一点？')
+      say('我不太确定你指的是哪个 —— 在图上点一下要改的地方？')
+      // 记住他原来那句话：点了之后要连着标记一起再送，不能让他重说一遍
+      setPendingText(pendingRef.current)
+      setPicking(true)
+      setMarker(null)
       return
     }
 
-    // 送**当前的 base**（= image），不是最初那张原图 —— spec §3.5。
+    // 送**当前的 base**（= image.bitmap），不是最初那张原图 —— spec §3.5。
     // ⚠️ `image` 必须进依赖数组：漏了它，这个回调会永远捕获第一次 render 的
     // image（null），生成再也不会被触发——而且是静默的：气泡照出、回复照有，
     // 照片纹丝不动，测试和 typecheck 却全绿。
     if ((d.route === 'generate' || d.route === 'both') && image) {
-      await runGenerate(d.editPrompt, mid, nextParams, image)
+      await runGenerate(d.editPrompt, mid, nextParams, image.bitmap)
     }
   }, [params, say, runGenerate, image])
 
@@ -254,6 +278,11 @@ export default function App() {
       setParams(ZERO)
       setMessages([])
       setCards([])
+      // 点选那套状态跟对话是同一趟的东西：换张照片就该一起归零，
+      // 否则上一张照片的红圈和"原来那句话"会跟到新照片上。
+      setPicking(false)
+      setMarker(null)
+      setPendingText(null)
 
       // 原图自己也算一步，挂在欢迎语那条消息上 —— 这样「回到这一步」
       // 能回到最开始，撤销第一次生成时特别有用。
@@ -284,6 +313,15 @@ export default function App() {
   const send = useCallback(async (text: string) => {
     const canvas = canvasElRef.current
     if (!canvas || !image || busy) return
+    // 这一趟说过的原话。放在守卫之后：被 busy 挡回去的那次根本没送到模型，
+    // 不该变成"用户的原话"。
+    pendingRef.current = text
+    // 用户又开口了 —— 上一条歧义问句就此翻篇：标记和"原来那句话"一起清掉。
+    // 不清的话，他改完别的再回头点一下「就改这里」，会把**已经不作数的那件事**
+    // 花掉一次生成的钱（12,900 tokens），而且用的是他当时点的那张图。
+    setPicking(false)
+    setMarker(null)
+    setPendingText(null)
     setMessages(m => [...m, { id: nextId(), role: 'user', text }])
     setCards([])
     setBusy('正在看照片…')
@@ -306,6 +344,9 @@ export default function App() {
 
   const onCard = useCallback(async (card: SuggestCard) => {
     if (busy) return
+    // 卡片也走 applyDecision，所以这里同样要写 —— 否则卡片触发的歧义会拿到
+    // **上一次 send 留下的陈旧原话**，用户点完图确认，送上去的是另一句话。
+    pendingRef.current = card.editPrompt
     setMessages(m => [...m, { id: nextId(), role: 'user', text: card.label }])
     setCards([])
 
@@ -327,6 +368,48 @@ export default function App() {
       degraded: false,
     })
   }, [busy, applyDecision, say])
+
+  /** 用户在图上点了一下（画布已经把屏幕坐标换算成 0~1 了）。 */
+  const onPickPoint = useCallback((x: number, y: number) => {
+    if (!picking) return
+    setMarker({ x, y })
+    // ⚠️ 这里**不关** picking。关了的话，用户点歪之后只剩"确认"（花错钱）和
+    // "不用了"（整条流程作废、还得把话重说一遍）两条路，而他要的只是
+    // "点错了不亏钱，还能换个地方再点"。marker 是覆盖写的，再点一下就挪过去。
+  }, [picking])
+
+  const cancelPick = useCallback(() => {
+    setPicking(false)
+    setMarker(null)
+    setPendingText(null)
+  }, [])
+
+  /**
+   * 用户在图上点过了，点「就改这里」——**到这一步才花钱**。
+   *
+   * 圈是画进图里送上去的，不是用文字描述位置（spec §6.3 的实测结论：
+   * 图上画圈模型能只改标记处，而且红圈本身会被正确擦掉）。
+   */
+  const confirmMark = useCallback(async () => {
+    if (!marker || !pendingText || !image) return
+    const text = pendingText
+    setPicking(false)
+    setMarker(null)
+    setPendingText(null)
+    // ★ 先说话、**拿这条消息的 id**，再拿它去调 runGenerate。
+    //   缩略图（`thumbs[m.id]`）和「回到这一步」（`jumpableIds.includes(m.id)`）
+    //   两处都是按消息 id 对号的：这里要是图省事写 `nextId()`，那个 id 没有任何
+    //   一条消息带着它 —— 两样会**一起静默失效**：用户点完圈，画面上什么都没多，
+    //   也没法回到这一步。花钱买来的东西反而看不见，是这个项目最亏的一种错。
+    const mid = say('好，就改这里。')
+    try {
+      const marked = markImage(image.bitmap, marker)
+      await runGenerate(text, mid, params, marked)
+    } catch (e) {
+      console.error(e)
+      say('这一步没成功，再试一次？')
+    }
+  }, [marker, pendingText, image, params, runGenerate, say])
 
   const onJump = useCallback((id: number) => {
     const target = history.find(s => s.id === id)
@@ -446,6 +529,9 @@ export default function App() {
               params={params}
               canvasRef={canvasElRef}
               originalPreview={originalPreview}
+              picking={picking}
+              marker={marker}
+              onPickPoint={onPickPoint}
             />
           </div>
           <ChatPanel
@@ -457,6 +543,10 @@ export default function App() {
             onJump={onJump}
             jumpableIds={history.map(s => s.id)}
             thumbs={Object.fromEntries(history.map(s => [s.id, s.thumb]))}
+            marking={picking || marker !== null}
+            canConfirmMark={!!marker && !!pendingText}
+            onConfirmMark={confirmMark}
+            onCancelMark={cancelPick}
           />
         </main>
       )}

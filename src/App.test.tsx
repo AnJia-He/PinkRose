@@ -80,6 +80,11 @@ vi.mock('./image/prepare', () => ({
  *  这样才测得出「缩略图是在画面更新之后才抓的」那件事。 */
 vi.mock('./core/thumbnail', () => ({ makeThumbnail: vi.fn(), THUMB_MAX_SIDE: 160 }))
 
+/** 把圈画进图里那一步要 2D 画布，jsdom 同样给不出来。
+ *  **不假掉的话，整条「点了才花钱」的测试永远绿不了** —— 真的 markImage 会在
+ *  `getContext('2d')` 那儿抛，`confirmMark` 走进 catch，`postEdit` 一次都不会被调。 */
+vi.mock('./image/mark', () => ({ markImage: vi.fn(), MARKER_RADIUS_RATIO: 0.06 }))
+
 /** 解码用户选的文件：要 createImageBitmap + 2D 画布。
  *  用 importOriginal 保留它的转发导出（size 那几个），因为别处会 import。 */
 vi.mock('./image/decode', async (importOriginal) => {
@@ -102,6 +107,7 @@ import * as limitsMod from './render/limits'
 import * as resizeMod from './image/resize'
 import * as saveMod from './export/save'
 import * as thumbMod from './core/thumbnail'
+import * as markMod from './image/mark'
 
 // ── 每张"底"带一个记号，好认出送上去的到底是哪一张 ──────────────────
 let bitmapSeq = 0
@@ -173,6 +179,15 @@ beforeEach(() => {
   // 生成回来的图：走 fetch -> blob -> createImageBitmap 这条真链路
   vi.stubGlobal('createImageBitmap', vi.fn(async () => fakeBitmap(`decoded-${++bitmapSeq}`)))
   vi.stubGlobal('fetch', vi.fn(async () => ({ blob: async () => new Blob(['x']) })))
+
+  // ★ 假的 markImage = "**画过圈的那张**"。把源图自己的记号带上、再加一层，
+  //   这样断言分得清送出去的是原位图还是画了圈的：一旦谁改成不画圈直接送，
+  //   送上去的那张就变回 `MODEL:upload`，测试立刻红。
+  vi.mocked(markMod.markImage).mockImplementation(
+    src => (({
+      width: src.width, height: src.height,
+      __tag: `marked:${(src as { __tag?: string }).__tag}`,
+    }) as unknown as HTMLCanvasElement))
 
   vi.mocked(api.postSuggest).mockResolvedValue({ cards: [], degraded: false })
 
@@ -649,5 +664,100 @@ describe('按住看原图', () => {
     expect(container.querySelectorAll('.bubble-jump')).toHaveLength(1)
     // 更不能弹"这张图打不开"—— 照片明明打开了，那是句假话。
     expect(alertSpy).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * spec §6.3：照片里人多的时候（"把后面那个人去掉" —— 后面三个人，哪个？），
+ * 模型只能回 `needs_disambiguation`。前端请用户「在图上点一下要改的地方？」，
+ * 点完把那个圈**画进图里**、连同用户的原话一起再送一次模型。
+ *
+ * **钱在这一步**：一次生成约 12,900 tokens。所以和用户商量后定死的是
+ * **先画圈、确认了再改** —— 点错了不亏钱，还能换个地方再点。
+ * 下面三条依次钉住：说拿不准 → 一分钱不花；点一下 → 还是不花；
+ * **点了「就改这里」→ 这时候才花，而且送的是画过圈的那张、用的是他原来那句话**。
+ */
+describe('图上点选消歧', () => {
+  /** 走到"模型说拿不准、正等用户点一下"这一步。 */
+  async function askOnPhoto() {
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉那个人', needsDisambiguation: true }))
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+  }
+
+  /** 在图上点一下 —— 假的 Canvas 把这一下报成画面正中间那个点。 */
+  async function tapPhoto() {
+    await act(async () => {
+      (container.querySelector('canvas') as HTMLCanvasElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  it('模型说拿不准 → 进入点选模式，且**一个生成的钱都不花**', async () => {
+    await askOnPhoto()
+
+    expect(api.postEdit).not.toHaveBeenCalled()          // 不许先动手
+    expect(canvasProps.props.at(-1)?.picking).toBe(true) // 但请用户点一下
+    expect(lastReply()).toContain('不太确定')
+  })
+
+  it('点一下 → 画面上出现标记，**还是没花钱**', async () => {
+    await askOnPhoto()
+    await tapPhoto()
+
+    expect(canvasProps.props.at(-1)?.marker).toEqual({ x: 0.5, y: 0.5 })
+    expect(api.postEdit).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('就改这里')
+  })
+
+  it('⚠️ 只有点了「就改这里」才花钱 —— 这是和用户定死的规矩', async () => {
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+
+    await askOnPhoto()
+    await tapPhoto()
+    expect(api.postEdit).not.toHaveBeenCalled()          // 到这儿为止还没花钱
+
+    const confirm = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').includes('就改这里')) as HTMLButtonElement
+    expect(confirm).toBeTruthy()
+    await act(async () => { confirm.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    expect(api.postEdit).toHaveBeenCalledTimes(1)
+    // 送上去的是**画过圈的那张**，而且用的是用户原来那句话
+    const req = vi.mocked(api.postEdit).mock.calls[0][0] as { editPrompt: string; imageDataUrl: string }
+    expect(req.editPrompt).toContain('把后面那个人去掉')
+    // ★ 位置靠圈、不靠嘴说：送出去的必须是 markImage 画过的**那一张**。
+    //   谁把它改成"圈不画了、直接把原位图送上去"，这一条就红。
+    expect(req.imageDataUrl).toContain('MODEL:marked:upload')
+
+    // ★ 这一步还得挂在**一条真的消息**上。缩略图和「回到这一步」两处都是按
+    //   消息 id 对号的 —— 用 `nextId()` 这种"没有消息的 id"会让这两样**双双
+    //   静默失效**：用户点完圈，画面上什么都没多，也没法回到这一步。
+    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(2)
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+  })
+
+  it('点错了还能换个地方再点 —— 确认之前标记一直可以改', async () => {
+    await askOnPhoto()
+    await tapPhoto()
+    // 点完不该把点选模式关死：用户想换个地方，直接再点一下就行
+    await act(async () => { (container.querySelector('canvas') as HTMLCanvasElement).click() })
+    expect(canvasProps.props.at(-1)?.marker).toEqual({ x: 0.5, y: 0.5 })
+    expect(api.postEdit).not.toHaveBeenCalled()
+  })
+
+  it('取消掉就不点选了（不点也能继续说话）', async () => {
+    await askOnPhoto()
+
+    const cancel = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').includes('不用了')) as HTMLButtonElement
+    expect(cancel).toBeTruthy()
+    await act(async () => { cancel.click() })
+
+    expect(canvasProps.props.at(-1)?.picking).toBe(false)
   })
 })
