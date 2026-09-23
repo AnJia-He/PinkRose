@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MutableRefObject } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { TonePipeline } from '../render/pipeline'
 import type { DecodedImage } from '../image/decode'
 import type { Adjustments } from '../../shared/adjustments.ts'
@@ -6,6 +6,8 @@ import type { Adjustments } from '../../shared/adjustments.ts'
 type Props = {
   image: DecodedImage | null
   params: Adjustments
+  /** 「按住看原图」用的预览（data URL）。null = 没有，按钮就不响应。 */
+  originalPreview: string | null
   /** App 需要拿到 canvas 元素来做导出 */
   canvasRef: MutableRefObject<HTMLCanvasElement | null>
 }
@@ -45,9 +47,11 @@ function fail(e: unknown) {
 }
 
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
-export default function Canvas({ image, params, canvasRef }: Props) {
+export default function Canvas({ image, params, originalPreview, canvasRef }: Props) {
   const innerRef = useRef<HTMLCanvasElement | null>(null)
   const pipeRef = useRef<TonePipeline | null>(null)
+  /** 用户此刻按住了画面（在看原图）。 */
+  const [peeking, setPeeking] = useState(false)
 
   useEffect(() => {
     const canvas = innerRef.current
@@ -88,8 +92,35 @@ export default function Canvas({ image, params, canvasRef }: Props) {
     pipe.render(params)
   }, [image, params])
 
-  return <canvas ref={node => {
-    innerRef.current = node
-    canvasRef.current = node
-  }} className="canvas" />
+  /**
+   * 「按住图 = 看原图，松手回来」（spec §2.5）。
+   *
+   * 手势挂在 wrap 上、不是挂在画布上：wrap 才是"照片那一块地方"——
+   * 它整个盖住画布，peek 也挂在它里面，画布只是它底下的一层贴图。
+   *
+   * **三种"松手"都要收拾干净**：抬手、手指滑出画面、系统把指针抢走
+   * （来电、通知、滚动接管）——少接一个，用户按一下就被永久留在原图上，
+   * 而他没有任何办法按回来。
+   *
+   * onContextMenu 拦的是另一件事：桌面右键、以及 **Android Chrome 长按**，
+   * 默认都会弹"下载图片 / 复制"这类系统菜单，跟按住看原图直接打架。
+   */
+  return (
+    <div
+      className="canvas-wrap"
+      onPointerDown={() => originalPreview && setPeeking(true)}
+      onPointerUp={() => setPeeking(false)}
+      onPointerCancel={() => setPeeking(false)}
+      onPointerLeave={() => setPeeking(false)}
+      onContextMenu={e => e.preventDefault()}
+    >
+      <canvas ref={node => {
+        innerRef.current = node
+        canvasRef.current = node
+      }} className="canvas" />
+      {peeking && originalPreview && (
+        <img className="canvas-peek" src={originalPreview} alt="原图" draggable={false} />
+      )}
+    </div>
+  )
 }

@@ -572,3 +572,60 @@ describe('历史缩略图：每一步都看得见', () => {
     expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(1)  // 只有原图那张
   })
 })
+
+/**
+ * spec §2.5：「按住图 = 看原图，松手回来。跟 Instagram、美图一致，
+ * 不要发明新交互。」
+ *
+ * 手机上有一个必须先挡掉的东西：**长按会弹出系统的"保存图片/复制"菜单**，
+ * 跟我们要做的事直接打架。这条靠 CSS（见 styles.css 里那条注释），
+ * 测试测不到，但真机验收要专门试一次。
+ */
+describe('按住看原图', () => {
+  /**
+   * 换一张照片。
+   *
+   * 应用里**没有"换一张"的入口** —— Uploader 只在还没有图的时候渲染，
+   * 传完之后整页换成工作区。所以用户换一张的实际动作就是重开一次。
+   * （这也是这条测试为什么不能简单再 `uploadPhoto()` 一次的原因：
+   * 第二次根本找不到那个 file input。）
+   */
+  async function reopenWith(tag: string) {
+    await act(async () => root.unmount())
+    container.remove()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    vi.mocked(decodeMod.decodeImageFile).mockResolvedValue(fakeDecoded(tag))
+    root = createRoot(container)
+    await renderApp()
+    await uploadPhoto()
+  }
+
+  it('传完照片就备好了一张原图预览', async () => {
+    await renderApp()
+    await uploadPhoto()
+    // 用 1280 抓的，不是 160（那是对话里的小图）
+    expect(thumbMod.makeThumbnail).toHaveBeenCalledWith(
+      expect.anything(), 1280)
+    expect(canvasProps.props.at(-1)?.originalPreview).toContain('thumb:')
+  })
+
+  it('没传照片时没有原图预览', async () => {
+    await renderApp()
+    expect(canvasProps.props).toHaveLength(0)   // 画布还没渲染
+  })
+
+  it('换一张照片后，原图预览跟着换 —— 不能留着上一张', async () => {
+    await renderApp()
+    await uploadPhoto()
+    // 假的 makeThumbnail 会把位图自带的 __tag 回显出来，所以这里读得出"是哪一张"。
+    // 精确比 'thumb:upload'（不是 toContain）：从**画布**抓的话拿到的是画布上
+    // 记着的 params，这里就会红 —— 而"从画布抓"正是这张预览唯一的错法
+    // （那样用户按住看到的是一张带滤镜的"原图"，对比就没了意义）。
+    expect(canvasProps.props.at(-1)?.originalPreview).toBe('thumb:upload')
+
+    // 第二张换成另一张图。预览要是没更新，用户按住就会看到上一张照片。
+    await reopenWith('second')
+    expect(canvasProps.props.at(-1)?.originalPreview).toBe('thumb:second')
+  })
+})

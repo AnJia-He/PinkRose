@@ -24,6 +24,11 @@ import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
  */
 const SUGGEST_WAIT_MS = 10_000
 
+/** 「按住看原图」那张预览的边长上限。
+ *  不直接拿原图：3000 万像素重新上传一次纹理很贵，而"看原图"永远是在
+ *  屏幕大小上比的，1280 已经看不出和原图的差别。 */
+const ORIGINAL_PREVIEW_MAX_SIDE = 1280
+
 /**
  * 照片超出本设备能画的上限时，先缩到画得动，再照常修。
  *
@@ -81,6 +86,8 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [cards, setCards] = useState<SuggestCard[]>([])
   const [history, setHistory] = useState<Snapshot[]>([])
+  /** 「按住看原图」用的预览图（data URL）。没照片时是 null。 */
+  const [originalPreview, setOriginalPreview] = useState<string | null>(null)
 
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const originalFileRef = useRef<File | null>(null)
@@ -233,6 +240,9 @@ export default function App() {
 
       originalFileRef.current = file
       setImage(img)
+      // 备用一张原图预览（spec §2.5 的"按住看原图"）。用刚解码出来的位图，
+      // 不是画布 —— 这时候画布上还什么都没有。
+      setOriginalPreview(makeThumbnail(img.bitmap, ORIGINAL_PREVIEW_MAX_SIDE))
       setParams(ZERO)
       setMessages([])
       setCards([])
@@ -423,7 +433,12 @@ export default function App() {
           <div className="stage">
             {/* params 直接传下去：[-100,100] → [-1,1] 的换算只发生在
                 TonePipeline.render 里（唯一入口） */}
-            <Canvas image={image} params={params} canvasRef={canvasElRef} />
+            <Canvas
+              image={image}
+              params={params}
+              canvasRef={canvasElRef}
+              originalPreview={originalPreview}
+            />
           </div>
           <ChatPanel
             messages={messages}
