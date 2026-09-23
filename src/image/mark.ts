@@ -7,6 +7,20 @@ export const MARKER_RADIUS_RATIO = 0.06
 export type NormPoint = { x: number; y: number }
 
 /**
+ * 长边 → 圈的半径（像素）。**下限 8px**：小图上也得看得见。
+ *
+ * 这一个函数被**两份圈**共用：送进图里的那个（`markerGeometry` 用它），
+ * 和屏幕上那个 DOM 红圈（`ui/Canvas.tsx` 用它）。**必须共用**——
+ * 2026-09-23 两边各写一份的下场就是这样：DOM 写死 44px、图里按长边 12% 算，
+ * 手机上画布长边 350，两边凑巧都是 ~42px（看不出来），桌面上画布长边 750，
+ * 用户看到 44px 而模型收到 90px —— **用户指的那一小块，模型按两倍大去改**。
+ * 看到的东西和送出去的东西必须是同一个，所以公式只留这一份。
+ */
+export function markerRadius(longSide: number): number {
+  return Math.max(8, Math.round(Math.max(0, longSide) * MARKER_RADIUS_RATIO))
+}
+
+/**
  * 归一化的点 → 图片上的像素坐标和半径。
  *
  * 半径按**长边**算：按短边算的话，一张 1000×200 的横图上圈会小得看不见，
@@ -21,7 +35,7 @@ export function markerGeometry(
   return {
     cx: Math.round(clamp01(m.x) * w),
     cy: Math.round(clamp01(m.y) * h),
-    r: Math.max(8, Math.round(Math.max(w, h) * MARKER_RADIUS_RATIO)),
+    r: markerRadius(Math.max(w, h)),
   }
 }
 

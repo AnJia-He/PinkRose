@@ -830,6 +830,26 @@ describe('图上点选消歧', () => {
     expect(canvasProps.props.at(-1)?.picking).toBe(false)
   })
 
+  it('⚠️ 点选期间跳回某一步 —— 那条「就改这里」必须跟着作废', async () => {
+    // 「回到这一步」和缩略图是**全仓唯二没有 busy 闸门**的控件，而点选期间
+    // busy 恰好是空的（模型说完"拿不准"就收工了）—— 所以这条路径**一个竞态都
+    // 不需要**就够得到，用户点两下就能走到：点选期间跳走 → 确认条还在 →
+    // 点「就改这里」→ confirmMark 的四道守卫全过 → 把**旧标记**画在**换过的
+    // 底图**上、配旧那句话，扣一次生成的钱（约 12,900 tokens）。
+    // 跳走和下一条消息是一回事：上一条歧义翻篇。
+    await askOnPhoto()
+    await tapPhoto()
+    expect(container.textContent).toContain('就改这里')
+
+    const jump = container.querySelector('.bubble-jump') as HTMLButtonElement
+    expect(jump).toBeTruthy()
+    await act(async () => { jump.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    expect(container.textContent).not.toContain('就改这里')
+    expect(canvasProps.props.at(-1)?.marker).toBeNull()
+    expect(canvasProps.props.at(-1)?.picking).toBe(false)
+  })
+
   it('取消掉就不点选了（不点也能继续说话）', async () => {
     await askOnPhoto()
 

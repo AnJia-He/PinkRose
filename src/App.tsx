@@ -415,6 +415,11 @@ export default function App() {
     //   一条消息带着它 —— 两样会**一起静默失效**：用户点完圈，画面上什么都没多，
     //   也没法回到这一步。花钱买来的东西反而看不见，是这个项目最亏的一种错。
     const mid = say('好，就改这里。')
+    // 和 applyDecision / send / onCard 一样清掉建议卡片：卡片**会迟到**
+    // （上传时那次请求超时后仍在后台跑、回来了照样贴上来），所以"确认条与卡片
+    // 同时在屏上"真会发生。那批卡片是按**生成前那张照片**算出来的 —— 不清的话
+    // 它们会活过整个生成，生成一结束就又能点，点一下再花一次钱。
+    setCards([])
     try {
       const marked = markImage(image.bitmap, marker)
       await runGenerate(text, mid, params, marked)
@@ -427,6 +432,14 @@ export default function App() {
   const onJump = useCallback((id: number) => {
     const target = history.find(s => s.id === id)
     if (!target) return
+    // ★ 「回到这一步」也是"改主意了"：上一条歧义就此翻篇 —— 和 send / onCard
+    //   里那几行同一个道理，所以用同一个 cancelPick。
+    //   这条路径**不需要任何竞态**就够得到：「回到这一步」和缩略图是全仓唯二
+    //   没有 busy 闸门的控件，而点选期间 busy 恰好是空的（模型说完"拿不准"
+    //   就收工了）。不清的话：点选期间跳走 → 确认条和红圈都还在 → 点「就改这里」
+    //   → confirmMark 的四道守卫全过 → 把**旧标记**画在**换过的底图**上、
+    //   配旧那句话，然后扣一次生成的钱。
+    cancelPick()
     setHistory(prev => {
       const next = jumpTo(prev, id)
       for (const s of bitmapsToClose(prev, next, { protectOriginal: true })) {
@@ -438,7 +451,7 @@ export default function App() {
     // 参数也回到那一步。只还原 base 会让画面和滑块对不上，
     // 用户看到的和面板里显示的是两回事。
     setParams(target.params)
-  }, [history])
+  }, [history, cancelPick])
 
   // 导出：画布尺寸就是当前 base 的尺寸。调色不缩图（spec §4.4）。
   //

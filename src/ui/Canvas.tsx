@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } f
 import { TonePipeline } from '../render/pipeline'
 import type { DecodedImage } from '../image/decode'
 import type { NormPoint } from '../image/mark'
+import { markerRadius } from '../image/mark'
 import type { Adjustments } from '../../shared/adjustments.ts'
 
 type Props = {
@@ -193,6 +194,22 @@ export default function Canvas({
    * onContextMenu 拦的是另一件事：桌面右键、以及 **Android Chrome 长按**，
    * 默认都会弹"下载图片 / 复制"这类系统菜单，跟按住看原图直接打架。
    */
+  /**
+   * 屏幕上那个红圈的直径（像素）。
+   *
+   * **和送进图里的那个圈共用 mark.ts 的 `markerRadius`**（半径按长边算，8px 的
+   * 下限也在那儿）—— 用户的圈和模型的圈**按构造一致**。
+   *
+   * 为什么非得共用、不能各写一份：`.canvas-marker` 原来写死 44px，图里那个是按
+   * 长边的 12% 算的。手机上画布长边 ~350px，两边凑巧都 ~42px，**看不出来**；
+   * 桌面上画布长边 750px 时用户看到 44px、模型收到 90px —— 用户指的那一小块，
+   * 模型按两倍大去改。和 R14 同一类：看到的东西和送出去的东西不是一回事。
+   *
+   * 基准必须是**画布盒子**（`box`）本身：wrapper 比画布大，按它算出来的圈在
+   * "高度受限"的屏上又会偏大 —— 那是同一个坑的另一半。
+   */
+  const markerSize = box ? 2 * markerRadius(Math.max(box.width, box.height)) : 0
+
   return (
     <div
       ref={wrapRef}
@@ -222,9 +239,15 @@ export default function Canvas({
           // 用**像素**、以画布盒子为基准（不是 wrapper 的百分比 —— 理由见上面
           // 那个 measurement effect：wrapper 比画布宽，按它定位在"高度受限"
           // 的屏上会偏出好几成）。
+          // 直径也是量出来的，不再是 CSS 里写死的 44px（理由见 markerSize）。
+          // margin 取半径的相反数，让**圆心**落在那个点上而不是左上角。
           style={{
             left: box.left + marker.x * box.width,
             top: box.top + marker.y * box.height,
+            width: markerSize,
+            height: markerSize,
+            marginLeft: -markerSize / 2,
+            marginTop: -markerSize / 2,
           }}
         />
       )}
