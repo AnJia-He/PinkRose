@@ -108,3 +108,26 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   border: 1px solid #2f343c; border-radius: 8px; padding: 8px 12px;
 }
 .chat-input input:focus { outline: none; border-color: var(--accent); }
+
+/* ── 窄屏（手机）：照片在上，对话在下 ──────────────────────────────
+   上面那套「左画布右对话」是给宽屏写的，`.chat` 写死了 340px 且不参与伸缩
+   （`flex: none`）。390px 的手机减掉 340，再减掉 .stage 左右各 20px 内边距，
+   **画布只剩 10px 宽** —— 实测 10×13，用户的原话是「没有照片」。
+
+   这一条必须用真浏览器量，别的检查都看不见它：jsdom 没有排版引擎
+   （getBoundingClientRect 全返回 0），typecheck 和构建根本不看 CSS。
+   量它的脚本见 .superpowers/check_mobile_layout.py（临时，未入库）。
+
+   断点取 640：再宽一点（768 的竖屏平板）对话 340 + 画布 388 + 内边距 40
+   仍然放得下；再窄就一定会挤坏。 */
+@media (max-width: 640px) {
+  .workspace { flex-direction: column; }
+  .workspace .stage { flex: 1 1 auto; }
+  .chat {
+    width: auto;
+    flex: none;
+    height: 38vh;
+    border-left: none;
+    border-top: 1px solid #2a2e35;
+  }
+}
