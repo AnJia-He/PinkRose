@@ -5,6 +5,7 @@ import type { Config } from './config.ts'
 const cfg: Config = {
   apiKey: 'sk-test', baseUrl: 'https://x.cn/v1',
   imageModel: 'sensenova-u1.5-fast', vlmModel: 'sensenova-6.8-flash-lite', port: 0,
+  dbPath: ':memory:',
 }
 
 /** 造一个假 fetch，记录请求体，返回给定响应。 */

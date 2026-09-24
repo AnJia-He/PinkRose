@@ -9,6 +9,7 @@ import type { Config } from './config.ts'
 const cfg: Config = {
   apiKey: 'sk-test', baseUrl: 'https://x.cn/v1',
   imageModel: 'm', vlmModel: 'v', port: 0,
+  dbPath: ':memory:',
 }
 
 const IMG = 'data:image/jpeg;base64,AAAA'

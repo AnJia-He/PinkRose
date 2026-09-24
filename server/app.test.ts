@@ -39,6 +39,8 @@ const cfg: Config = {
   imageModel: 'm',
   vlmModel: 'v',
   port: 0,
+  // 这个测试不碰数据库。写 :memory: 是为了明说"不会在磁盘上开文件"
+  dbPath: ':memory:',
 }
 
 let server: Server | undefined

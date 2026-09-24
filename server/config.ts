@@ -1,9 +1,12 @@
+import { resolve } from 'node:path'
+
 export type Config = {
   apiKey: string
   baseUrl: string
   imageModel: string
   vlmModel: string
   port: number
+  dbPath: string
 }
 
 export const DEFAULT_IMAGE_MODEL = 'sensenova-u1.5-fast'
@@ -18,12 +21,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error('缺少环境变量 SN_API_KEY，请复制 .env.example 为 .env 并填入')
   }
   const portRaw = Number(env.PORT ?? DEFAULT_PORT)
+  // 默认落在仓库根的 data/ 下。**故意用 process.cwd() 而不是模块自己的位置**：真跑是
+  // `node server/index.ts`、脚本和测试也都从仓库根启动，几边看到的是同一个库；
+  // 换成 import.meta.url 的话，从别处启动就会另开一个空库 ——
+  // "用户数据在哪"一旦有两个答案，排查起来很贵。
   return {
     apiKey,
     baseUrl: (env.SN_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, ''),
     imageModel: env.SN_IMAGE_MODEL?.trim() || DEFAULT_IMAGE_MODEL,
     vlmModel: env.SN_VLM_MODEL?.trim() || DEFAULT_VLM_MODEL,
     port: Number.isInteger(portRaw) && portRaw > 0 ? portRaw : DEFAULT_PORT,
+    dbPath: env.DB_PATH?.trim() || resolve(process.cwd(), 'data', 'ruixing.db'),
   }
 }
 
