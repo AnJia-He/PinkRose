@@ -6,7 +6,8 @@ const cfg: Config = {
   apiKey: 'sk-test', baseUrl: 'https://x.cn/v1',
   imageModel: 'sensenova-u1.5-fast', vlmModel: 'sensenova-6.8-flash-lite', port: 0,
   dbPath: ':memory:',
-  // Config 上的必填字段（起服务要它），这个文件不碰账号
+  // 这两个是 Config 上的必填字段（起服务要它），这个文件既不碰账号也不碰图
+  photoDir: 'unused',
   sessionSecret: 'test-secret',
 }
 

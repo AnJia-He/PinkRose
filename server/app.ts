@@ -15,7 +15,9 @@ import {
   sessionCookie, sessionExpiry, signSession, SESSION_COOKIE,
 } from './session.ts'
 import type { SenseNovaClient } from './sn.ts'
+import type { Storage } from './storage.ts'
 import { handleSuggest } from './suggest.ts'
+import { handleCreateWork } from './works.ts'
 
 export type AppDeps = {
   config: Config
@@ -31,6 +33,14 @@ export type AppDeps = {
    * **编译错误**，而不是运行时一个 503。静默降级在这里的代价是"谁都能拿你的额度出图"。
    */
   auth: AccountDeps
+  /**
+   * 图片文件那一层（Task 1）。**同样必填。**
+   *
+   * 和 `auth` 一个道理：少接这一根线的后果是"每次存作品都 500"，
+   * 而不是编译错误 —— 那正是最贵的那种（要等用户点了保存才发现）。
+   * 传进来的实现换掉（比如以后换云存储），这一层以上一个字都不用动。
+   */
+  storage: Storage
 }
 
 const MIME: Record<string, string> = {
@@ -157,6 +167,18 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
       const r = handleChangePassword(body, user, deps.auth)
       res.setHeader('set-cookie', sessionCookie(r.token, r.expiresAt))
       sendJson(res, 200, { user: r.user })
+      return
+    }
+    if (req.method === 'POST' && path === '/api/works') {
+      // 顺序同 /api/password：先认人，再读体。没登录的人不该有资格让服务器缓冲 12 MB。
+      const user = requireUser(deps, req, res)
+      // ⚠️ 不能把 `deps` 整个传下去（brief 原稿那句就是那么写的）：`WorksDeps` 要的是
+      // **顶层**的 `db`，而 AppDeps 的库藏在 `auth` 里 —— 两个形状不是一回事，
+      // 编译器当场会拦下来。`now` 也照用 auth 那一个：两边各用一个钟，
+      // 测试里拨动的时间就只对一半代码生效。
+      sendJson(res, 200, await handleCreateWork(await readJsonBody(req), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
       return
     }
     if (req.method === 'POST' && path === '/api/route') {

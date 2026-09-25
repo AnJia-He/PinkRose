@@ -10,6 +10,7 @@ import { openDb, type Db } from './db.ts'
 import { SerialQueue } from './queue.ts'
 import { SESSION_COOKIE } from './session.ts'
 import { SenseNovaClient } from './sn.ts'
+import { createStorage, type Storage } from './storage.ts'
 
 /**
  * 让 `node:fs.createReadStream` 对**被点名的那个路径**返回一个立刻报错的流。
@@ -44,6 +45,8 @@ const cfg: Config = {
   port: 0,
   // 这个测试不碰数据库文件。写 :memory: 是为了明说"不会在磁盘上开文件"
   dbPath: ':memory:',
+  // Config 上的必填字段（起服务要它），这个文件不碰图 —— 真建目录的是 newStorage
+  photoDir: 'unused',
   // 签名钥匙：测试里随便一串就行，反正网络那头没有别人
   sessionSecret: 'test-session-secret',
 }
@@ -51,10 +54,13 @@ const cfg: Config = {
 let server: Server | undefined
 /** 这个文件开出来的内存库。谁开谁关，跟 db.test.ts 一样。 */
 const openedDbs: Db[] = []
+/** 这个文件开出来的图片目录。同上 —— 测试跑完不留东西在临时目录里。 */
+const openedDirs: string[] = []
 
 afterEach(async () => {
   await new Promise<void>(r => server?.close(() => r()))
   while (openedDbs.length) openedDbs.pop()!.close()
+  while (openedDirs.length) rmSync(openedDirs.pop()!, { recursive: true, force: true })
 })
 
 /**
@@ -69,9 +75,26 @@ function newAuth(now: () => number = () => Date.now()): AccountDeps {
   return { db, secret: cfg.sessionSecret, now }
 }
 
+/**
+ * 一套存储依赖：一个临时目录。
+ *
+ * `storage` 从这一版起也是 AppDeps 上的**必填**字段 —— 和 `auth` 同一个道理：
+ * 少接一根线要是编译错误，而不是"图默默存不下来"这种没人看得见的运行时降级。
+ * 每次起 app 都建一个新的：测试之间不共享目录，不然一个用例留下的文件
+ * 会让另一个用例的"盘上应该正好有这几个文件"看着是对的。
+ */
+function newStorage(): Storage {
+  const root = mkdtempSync(join(tmpdir(), 'ruixing-app-photos-'))
+  openedDirs.push(root)
+  return createStorage(root)
+}
+
 async function boot(extra: Partial<AppDeps> = {}): Promise<string> {
   // `extra.auth ?? newAuth()`：调用方自带 auth 时就不再另开一个没人用的库
-  server = createApp({ config: cfg, auth: extra.auth ?? newAuth(), ...extra })
+  server = createApp({
+    config: cfg, auth: extra.auth ?? newAuth(), storage: extra.storage ?? newStorage(),
+    ...extra,
+  })
   await new Promise<void>(r => server!.listen(0, r))
   return `http://127.0.0.1:${(server.address() as { port: number }).port}`
 }
@@ -411,6 +434,19 @@ describe('账号与鉴权', () => {
     const body = await res.json() as { error: { code: string } }
     // 前端按 code 分流（401 → 回登录页），所以这里也要是那个认得出的 code
     expect(body.error.code).toBe('UNAUTHORIZED')
+  })
+
+  it('没登录不能存作品 —— 401，不是 500、也不是默默存下来', async () => {
+    // ⚠️ brief 原稿写的是 `const { base } = await boot()` —— 而 `boot` 回的是
+    // **地址字符串**，不是一个带 `base` 的对象（解构出来是 undefined，
+    // 报的是 `Failed to parse URL from undefined/api/works`）。
+    // 要地址就直接接住它；**不为了迁就原稿去改 boot 的返回形状**（那会牵动全文件）。
+    const base = await boot()
+    const r = await fetch(`${base}/api/works`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ image: 'data:image/jpeg;base64,AA' }),
+    })
+    expect(r.status).toBe(401)
   })
 
   it('退出 → cookie 被清掉', async () => {

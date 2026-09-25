@@ -5,6 +5,7 @@ import { describeConfig, loadConfig } from './config.ts'
 import { openDb } from './db.ts'
 import { SerialQueue } from './queue.ts'
 import { SenseNovaClient } from './sn.ts'
+import { createStorage } from './storage.ts'
 
 const ENV_PATH = resolve(process.cwd(), '.env')
 if (existsSync(ENV_PATH)) {
@@ -18,6 +19,11 @@ const config = loadConfig()
 // 生产库是进程级单例：同一个文件开两个句柄一点好处都没有（写照样要排队），
 // 而"谁是当前用户"这种问题一旦有两个答案，排查起来很贵。
 const db = openDb(config.dbPath)
+
+// 图片文件那一层。和上面的库同理：**全仓库只有这一处**建它 ——
+// 谁自己再造一个（哪怕用同一个目录），"这张图是怎么存的"就有了第二种说法。
+// 根目录来自 config.photoDir（默认 data/photos，同样跟着 cwd 走）。
+const storage = createStorage(config.photoDir)
 
 // ⚠️ 全仓库**只有这一处**构造队列实例 —— 三个端点都只从 deps 拿这个注入的对象。
 // 谁自己 new 一个，全局串行就静默失效：RPM/TPM 限流保护与对话的因果顺序同时没了。
@@ -36,6 +42,7 @@ const server = createApp({
   // 签票的钥匙来自 .env（SESSION_SECRET）。config.ts 里少了它就拒绝启动 ——
   // 这里拿到的必然是配置好的那一把，没有"默认值"这条退路。
   auth: { db, secret: config.sessionSecret },
+  storage,
 })
 
 // ⚠️ 只听本机（127.0.0.1）。手机走 vite 的代理（代理跑在这台电脑上），

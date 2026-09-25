@@ -58,6 +58,31 @@ export function readJsonBody(req: IncomingMessage, limitBytes = DEFAULT_BODY_LIM
   })
 }
 
+/**
+ * 请求体必须是**普通对象**。
+ *
+ * `JSON.parse('42')` / `'null'` / `'[]'` 都是合法 JSON —— 直接读 `.username`
+ * 会得到 undefined 或者抛，于是"这次请求有问题"变成 500。
+ * 数组也挡掉：它是对象，但没有任何一层意思说账号是个数组。
+ *
+ * ⚠️ 这两个助手是从 `account.ts` **搬**过来的（那边现在也从这里 import）。
+ * 它们是"读请求体"的通用工具，`works.ts` 也要用 —— 留着两份 = 两份会漂。
+ */
+export function asObject(body: unknown): Record<string, unknown> {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new HttpError('BAD_REQUEST', '请求体不对')
+  }
+  return body as Record<string, unknown>
+}
+
+/**
+ * 非字符串一律当空串。
+ *
+ * 缺字段（`{}`）、或者字段是数字/对象，都该走"格式不对"这条正常路，
+ * 而不是让 `checkUsername` 里的 `.trim()` 抛出去 —— 那又是把 400 变成 500。
+ */
+export const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+
 /** 写 JSON 响应。传 HttpError 时自动转成 spec 定的错误体形状。 */
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const isErr = body instanceof HttpError
@@ -70,6 +95,18 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
     'content-length': Buffer.byteLength(text),
   })
   res.end(text)
+}
+
+/** 发一段二进制（图片）。和 sendJson 并列 —— 图片不能走 JSON */
+export function sendBytes(res: ServerResponse, status: number, bytes: Uint8Array, contentType: string): void {
+  res.writeHead(status, {
+    'content-type': contentType,
+    'content-length': bytes.byteLength,
+    // 图是不可变的（换了图 = 换了 URL 上的 ?v=，见 Task 11）。
+    // private：这是某个人的图，别让中间缓存留下它
+    'cache-control': 'private, max-age=31536000, immutable',
+  })
+  res.end(Buffer.from(bytes))
 }
 
 /**

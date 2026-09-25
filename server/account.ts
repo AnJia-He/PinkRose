@@ -4,7 +4,7 @@ import { checkUsername, checkEmail, checkPassword } from '../shared/account.ts'
 import {
   signSession, verifySession, sessionExpiry, parseCookies, SESSION_COOKIE,
 } from './session.ts'
-import { HttpError } from './http.ts'
+import { HttpError, asObject, str } from './http.ts'
 
 export type PublicUser = { id: number; username: string; email: string }
 export type AccountDeps = { db: Db; secret: string; now?: () => number }
@@ -51,28 +51,6 @@ export function findUserByCookie(
   // 拿请求里的哈希来验签等于自己造了一把钥匙，谁都能签出任意 userId 的票。
   return { id: row.id, username: row.username, email: row.email, passwordHash: row.password_hash }
 }
-
-/**
- * 请求体必须是**普通对象**。
- *
- * `JSON.parse('42')` / `'null'` / `'[]'` 都是合法 JSON —— 直接读 `.username`
- * 会得到 undefined 或者抛，于是"这次请求有问题"变成 500。
- * 数组也挡掉：它是对象，但没有任何一层意思说账号是个数组。
- */
-function asObject(body: unknown): Record<string, unknown> {
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    throw new HttpError('BAD_REQUEST', '请求体不对')
-  }
-  return body as Record<string, unknown>
-}
-
-/**
- * 非字符串一律当空串。
- *
- * 缺字段（`{}`）、或者字段是数字/对象，都该走"格式不对"这条正常路，
- * 而不是让 `checkUsername` 里的 `.trim()` 抛出去 —— 那又是把 400 变成 500。
- */
-const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 
 /** 发一张票。三处成功路径（注册/登录/改密码）共用，免得漏掉某个字段。 */
 function issue(user: PublicUser, passwordHash: string, deps: AccountDeps) {
