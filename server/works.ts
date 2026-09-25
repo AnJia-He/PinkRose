@@ -211,3 +211,98 @@ export function handleRenameWork(
     .run(alias, id, user.id)
   return toMeta({ ...row, alias })
 }
+
+/**
+ * 删一张。
+ *
+ * ★ **先删记录，再删文件。** 反过来的话（文件先没了、记录删失败），
+ * 会留下一条指向不存在文件的记录 —— 那条记录**永远打不开、也删不掉第二次**
+ * （因为它还在列表里，而再删一次还是同样的顺序）。反过来失败最多留个孤儿文件：
+ * 浪费一点盘，**用户那边完全正常**。
+ *
+ * 文件删失败不让请求失败：记录已经没了，对用户来说这件事**就是成功了**
+ * （§3.5 那条"目标已达成"）。但要记一笔日志，不然盘满的时候没人知道。
+ */
+export async function handleDeleteWork(id: number, user: PublicUser, deps: WorksDeps): Promise<{ ok: true }> {
+  const row = loadOwned(id, user, deps)
+  deps.db.raw.prepare('DELETE FROM works WHERE id = ? AND user_id = ?').run(id, user.id)
+  await deps.storage.remove(row.stored_name).catch((e) => console.error('作品文件没删掉，成了孤儿：', e))
+  if (row.thumb_name) {
+    await deps.storage.remove(row.thumb_name).catch((e) => console.error('缩略图没删掉：', e))
+  }
+  return { ok: true }
+}
+
+/**
+ * 批量删。
+ *
+ * §3.5：「不追求全有全无」「如实回报」「不能静默」——
+ * 所以**逐个删**（一个出问题不影响别的），并把"本来就不在"的那些**报出来**。
+ */
+export async function handleDeleteWorks(
+  body: unknown, user: PublicUser, deps: WorksDeps,
+): Promise<{ deleted: number[]; missing: number[] }> {
+  const raw = asObject(body).ids
+  const ids = (Array.isArray(raw) ? raw : [])
+    .map((x) => Number(x))
+    .filter((x) => Number.isInteger(x) && x > 0)
+  if (ids.length === 0) throw new HttpError('BAD_REQUEST', '没给要删哪些', 400)
+  // 上限：一次别删太多，免得一个请求跑几分钟（前端一次最多选中一屏）
+  if (ids.length > 500) throw new HttpError('BAD_REQUEST', '一次最多删 500 张', 400)
+
+  const deleted: number[] = []
+  const missing: number[] = []
+  for (const id of ids) {
+    try {
+      await handleDeleteWork(id, user, deps)
+      deleted.push(id)
+    } catch {
+      // 走到这儿几乎只有一种原因：这张**不在他的作品集里**（别处删过了）。
+      // 那是"目标已达成"，不是错误 —— 但要报出来，不能静默。
+      missing.push(id)
+    }
+  }
+  return { deleted, missing }
+}
+
+/**
+ * 替换一张（换图 + 换配方）。
+ *
+ * ★ 顺序是 §4.4 定死的：**写新文件 → 改记录 → 再删旧文件**。
+ * 先删旧的话，新文件还没写成功就把旧的删了 —— 那一下失败就是**图没了**。
+ */
+export async function handleReplaceWork(
+  id: number, body: unknown, user: PublicUser, deps: WorksDeps,
+): Promise<WorkMeta> {
+  const row = loadOwned(id, user, deps)
+  const o = asObject(body)
+  const image = decodeDataUrl(str(o.image))
+  if (image.bytes.byteLength === 0) throw new HttpError('BAD_REQUEST', '图是空的', 400)
+  if (image.bytes.byteLength > MAX_WORK_BYTES) {
+    throw new HttpError('BAD_REQUEST', '这张图太大了，存不下', 413)
+  }
+  const thumbRaw = str(o.thumb)
+  const thumb = thumbRaw ? decodeDataUrl(thumbRaw) : null
+
+  const newName = await deps.storage.save(image.bytes, image.ext)
+  const newThumb = thumb ? await deps.storage.save(thumb.bytes, thumb.ext) : null
+  const t = nowMs(deps)
+
+  try {
+    deps.db.raw.prepare(
+      `UPDATE works SET stored_name = ?, thumb_name = ?, bytes = ?, updated_at = ?, recipe = ?
+       WHERE id = ? AND user_id = ?`,
+    ).run(newName, newThumb, image.bytes.byteLength, t, JSON.stringify(readRecipe(o.recipe)), id, user.id)
+  } catch (e) {
+    // 记录没改成功 → 把**新写的**收回来，旧的一动没动：库里和盘上都还是原来那张
+    await deps.storage.remove(newName).catch(() => {})
+    if (newThumb) await deps.storage.remove(newThumb).catch(() => {})
+    throw e
+  }
+
+  // ★ 到这儿记录已经指向新文件了，才能删旧的
+  await deps.storage.remove(row.stored_name).catch((e) => console.error('旧文件没删掉，成了孤儿：', e))
+  if (row.thumb_name) await deps.storage.remove(row.thumb_name).catch(() => {})
+
+  return toMeta({ ...row, stored_name: newName, thumb_name: newThumb, bytes: image.bytes.byteLength, updated_at: t })
+}

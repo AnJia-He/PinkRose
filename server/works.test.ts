@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { openDb, type Db } from './db.ts'
 import { createStorage, type Storage } from './storage.ts'
 import {
-  handleCreateWork, handleGetWork, handleListWorks, handleRenameWork,
-  handleWorkFile, handleWorkThumb,
+  handleCreateWork, handleDeleteWork, handleDeleteWorks, handleGetWork,
+  handleListWorks, handleRenameWork, handleReplaceWork, handleWorkFile, handleWorkThumb,
 } from './works.ts'
 import type { PublicUser } from './account.ts'
 
@@ -265,5 +265,112 @@ describe('handleGetWork / handleRenameWork', () => {
     expect(() => handleRenameWork(id, { alias: 'x' }, other, deps)).toThrow(/没有这张作品/)
     // 而且**真的一动没动**
     expect(handleGetWork(id, USER, deps).alias).toBe(null)
+  })
+})
+
+/**
+ * 删 / 批量删 / 替换。
+ *
+ * 这一组最要紧的不是功能，是**顺序** —— 三条顺序写反了都会丢东西：
+ * 删一张要先删记录再删文件（反过来会留下一条永远删不掉的记录）、
+ * 替换要**先写新文件再删旧的**（反过来新文件写失败就等于把图删了）、
+ * 批量删要**逐个删**（全有全无的话 12 张里有 1 张出问题就一张都删不掉）。
+ *
+ * ⚠️ 「替换时新文件写失败」那条用的是**假 storage**：真把盘写满做不到，
+ * 而它要验的恰恰是"save 抛出来之后 handleReplaceWork 走的下一步" —— 那件事
+ * 只取决于 storage 会不会抛。它同时钉着上面第二条顺序：把"删旧文件"提到
+ * "写新文件"前面，旧文件在 save 抛之前就已经没了，`readdirSync(root).length`
+ * 那行当场红（remove 是真的，没被打桩）。
+ */
+describe('handleDeleteWork / handleDeleteWorks / handleReplaceWork', () => {
+  it('删一张 —— 记录和**文件**都没了（只删记录是经典的漏）', async () => {
+    const { id } = await handleCreateWork({ image: JPEG, thumb: JPEG }, USER, deps)
+    const row = db.raw.prepare('SELECT stored_name, thumb_name FROM works WHERE id = ?')
+      .get(id) as { stored_name: string; thumb_name: string }
+    expect(readdirSync(root).length).toBe(2)
+
+    await handleDeleteWork(id, USER, deps)
+
+    expect(db.raw.prepare('SELECT * FROM works WHERE id = ?').get(id)).toBeUndefined()
+    expect(readdirSync(root)).toEqual([])          // ★ 两个文件都得没
+    expect(row.stored_name).toBeTruthy()           // （读一下，免得上面那行被优化掉）
+  })
+
+  it('删两次：第二次当"它已经不在了"，不炸', async () => {
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    await handleDeleteWork(id, USER, deps)
+    await expect(handleDeleteWork(id, USER, deps)).rejects.toThrow(/没有这张作品/)  // loadOwned 404
+  })
+
+  it('删别人的 → 拒，而且他的一动没动', async () => {
+    const other: PublicUser = { id: 2, username: '小红', email: 'b@x.com' }
+    db.raw.prepare(`INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)`)
+      .run(other.username, other.email, 'h', 1)
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    // ⚠️ **指名道姓** —— 这条守的是**安全属性**（不许删别人的）
+    await expect(handleDeleteWork(id, other, deps)).rejects.toThrow(/没有这张作品/)
+    expect(readdirSync(root).length).toBe(1)
+    expect(handleGetWork(id, USER, deps).id).toBe(id)
+  })
+
+  it('★ 批量删：12 个里 2 个"已经不在了" —— 删掉那 10 个，并如实报出那 2 个', async () => {
+    const made: number[] = []
+    for (let i = 0; i < 12; i++) {
+      made.push((await handleCreateWork({ image: JPEG }, USER, deps)).id)
+    }
+    // 前两个已经被别处删掉了（另一台设备 / 另一个标签页）
+    await handleDeleteWork(made[0]!, USER, deps)
+    await handleDeleteWork(made[1]!, USER, deps)
+
+    const r = await handleDeleteWorks({ ids: made }, USER, deps)
+
+    expect(r.missing.sort()).toEqual([made[0], made[1]].sort())   // ★ 报出来，不静默
+    expect(r.deleted.length).toBe(10)
+    expect(readdirSync(root)).toEqual([])                          // 10 张的文件也都没了
+    expect(handleListWorks(USER, deps).works).toEqual([])
+  })
+
+  it('批量删里混进别人的 id → 那个不删、也不报错，只算 missing', async () => {
+    const other: PublicUser = { id: 2, username: '小红', email: 'b@x.com' }
+    db.raw.prepare(`INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)`)
+      .run(other.username, other.email, 'h', 1)
+    const mine = (await handleCreateWork({ image: JPEG }, USER, deps)).id
+    const theirs = (await handleCreateWork({ image: JPEG }, other, deps)).id
+
+    const r = await handleDeleteWorks({ ids: [mine, theirs] }, USER, deps)
+    expect(r.deleted).toEqual([mine])
+    expect(r.missing).toEqual([theirs])
+    expect(handleGetWork(theirs, other, deps).id).toBe(theirs)   // ★ 别人的图好好地在
+  })
+
+  it('★ 替换：id 不变、旧文件没了、新文件在、时间和大小都变了', async () => {
+    const { id } = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    const oldName = (db.raw.prepare('SELECT stored_name FROM works WHERE id = ?')
+      .get(id) as { stored_name: string }).stored_name
+    const big = `data:image/jpeg;base64,${bytesOf(999)}`
+
+    const meta = await handleReplaceWork(id, { image: big }, USER, { ...deps, now: () => 500 })
+
+    expect(meta.id).toBe(id)                       // ★ id 不变（外面存着的链接不能失效）
+    expect(meta.bytes).toBe(999)
+    expect(meta.updatedAt).toBe(500)
+    const newName = (db.raw.prepare('SELECT stored_name FROM works WHERE id = ?')
+      .get(id) as { stored_name: string }).stored_name
+    expect(newName).not.toBe(oldName)
+    expect(readdirSync(root)).toEqual([newName])   // ★ 旧的真的没了，也没多出别的
+  })
+
+  it('★ 替换时新文件写失败 → 旧的**一点没动**（这才是"先写后删"的意义）', async () => {
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    const before = db.raw.prepare('SELECT * FROM works WHERE id = ?').get(id)
+    const broken = {
+      ...deps,
+      storage: { ...deps.storage, save: async () => { throw new Error('盘满了') } } as unknown as Storage,
+    }
+    // 指名道姓：这条守的是"新文件写失败"这件事本身
+    await expect(handleReplaceWork(id, { image: JPEG }, USER, broken)).rejects.toThrow(/盘满了/)
+
+    expect(db.raw.prepare('SELECT * FROM works WHERE id = ?').get(id)).toEqual(before)  // 记录没动
+    expect(readdirSync(root).length).toBe(1)                                            // 文件还在
   })
 })

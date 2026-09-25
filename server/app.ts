@@ -18,8 +18,8 @@ import type { SenseNovaClient } from './sn.ts'
 import type { Storage } from './storage.ts'
 import { handleSuggest } from './suggest.ts'
 import {
-  handleCreateWork, handleGetWork, handleListWorks, handleRenameWork,
-  handleWorkFile, handleWorkThumb,
+  handleCreateWork, handleDeleteWork, handleDeleteWorks, handleGetWork,
+  handleListWorks, handleRenameWork, handleReplaceWork, handleWorkFile, handleWorkThumb,
 } from './works.ts'
 
 export type AppDeps = {
@@ -242,6 +242,35 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
       // 让服务器缓冲 12 MB —— 而且畸形请求体的 400 会盖住"没登录"这个更重要的结局。
       const user = requireUser(deps, req, res)
       sendJson(res, 200, handleRenameWork(Number(oneRoute[1]), await readJsonBody(req), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
+      return
+    }
+    // 删除（DELETE）和替换（PUT）走的是同一个 `/api/works/:id`，复用上面那个正则。
+    // DELETE **不读请求体** —— 没什么可读的，读它只会挂住等一个永远不会来的流。
+    // 依赖的形状同上面几条：库藏在 auth 里，整个 deps 传下去编译器当场会拦。
+    if (req.method === 'DELETE' && oneRoute) {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, await handleDeleteWork(Number(oneRoute[1]), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
+      return
+    }
+    if (req.method === 'PUT' && oneRoute) {
+      // 顺序同 PATCH：先认人，再读体。理由也一样 —— 畸形请求体的 400 会把
+      // "没登录"这个更重要的结局盖掉。
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, await handleReplaceWork(Number(oneRoute[1]), await readJsonBody(req), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
+      return
+    }
+    // ⚠️ 这条必须排在 `/api/works/:id` 那组**之前**的理解之外 —— 它是 `/api/works/delete`，
+    // 而 `/^\/api\/works\/(\d+)$/` 匹配不到 `delete`（\d+ 挡着），所以顺序其实无所谓。
+    // 写在这儿是为了读的人一眼看到它们是一组。
+    if (req.method === 'POST' && path === '/api/works/delete') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, await handleDeleteWorks(await readJsonBody(req), user, {
         db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
       }))
       return
