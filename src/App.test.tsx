@@ -1766,6 +1766,65 @@ describe('保存 = 存进作品集（Task 13）', () => {
     expect(saveMod.downloadImage).toHaveBeenCalled()   // ★ 而且是**这一下**才下载的
   })
 
+  it('★ 存失败之后又改了一版 —— 横幅说的是「刚才那张」，给的也是刚才那张', async () => {
+    // 这条横幅**不随画面变消失**（故意的，见 App.tsx 那段注释：清掉的话用户就
+    // 再也拿不到那张图了）。而画面是会变的：他回头又改了一版，屏幕上那张就不是
+    // 失败那一刻那张了。这时候如果那句还写「这一张」，它**指向屏幕上这张**，
+    // 而按钮给的是失败那一刻那张 —— 一句话和它对不上的行为，比没有这句话更糟。
+    //
+    // ⚠️ **这里用的"画面变了"是「又改了一版」，不是"传一张新照片"。** 应用里
+    //    **没有换图入口**（Uploader 只在还没有图的时候渲染，见 :724 那段注释），
+    //    换一张照片的唯一动作是重开一次 —— 而重开连 `saveFail` 一起清掉，
+    //    所以横幅边上**从来不会**出现另一张照片。把这条用例写成"传一张新照片"
+    //    是演不出来的（也是错的）：要么先卸载重挂（横幅当场没了，断言假的），
+    //    要么偷偷改 state。所以量的是**真的会发生**的那种画面变化。
+    //
+    // 失败那一刻做出来的图，和后面再做的图**故意不一样**：
+    // 一样的话"给的是哪张"就分不出来了（下面那条 toHaveBeenCalledWith 会永远绿）。
+    const failedBlob = new Blob(['失败那一刻那版'], { type: 'image/jpeg' })
+    const laterBlob = new Blob(['又改了一版'], { type: 'image/jpeg' })
+    vi.mocked(saveMod.buildExportBlob).mockImplementationOnce(async () => failedBlob)
+    vi.mocked(saveMod.buildExportBlob).mockImplementation(async () => laterBlob)
+
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      (url === '/api/works' && init?.method === 'POST')
+        ? jsonResponse({ error: { code: 'BAD_REQUEST', message: '这张图太大了，存不下' } }, 413)
+        : inner(url, init))
+
+    await renderApp()
+    await uploadPhoto()
+    await clickTop('保存')
+    expect(container.textContent).toContain('没能存进作品集')
+
+    // 用户没关横幅，回头又改了一版：生成一张新的底，屏幕上那张**换人了**。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉后面那个人' }))
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+    await say('把后面那个人去掉')
+    // 先证明"画面真的变了" —— 少了这一句，下面那些断言可能是在一个什么都没变的
+    // 界面上绿掉的（这条用例的前提就是它变了）。`toMatchObject` 是对着
+    // `canvasProps.images` 那个类型（只有 width/height）读 `__tag` 的老实写法：
+    // 假的位图自带记号，而直接 `.bitmap.__tag` 过不了类型检查。
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'decoded-1' } })
+
+    // 横幅还在，而且**指的还是刚才那张**
+    expect(container.querySelector('.save-fail')).toBeTruthy()
+    expect(container.textContent).toContain('刚才那张')
+    // 变异：把这两句改回「这一张」→ 上面这句红（下面这句是同一个意思的另一半：
+    // 屏幕上已经是新的一版了，横幅就不该说"这一张"）。别处没有「这一张」这几个字
+    // —— 作品页/详情页那两句不在这一屏上。
+    expect(container.textContent).not.toContain('这一张')
+
+    // ★ 而按钮给的必须是**失败那一刻那版**，不是屏幕上现在这版。
+    const dl = container.querySelector('.save-fail button.download') as HTMLButtonElement | null
+    expect(dl).toBeTruthy()
+    await act(async () => { dl?.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(saveMod.downloadImage).toHaveBeenCalledWith(failedBlob, 'p_ruixing.jpg')
+  })
+
   it('★ 图根本没能导出来的时候，屏幕上不许出现「图还在」（那是骗人）', async () => {
     // ★ 派发前补的。上面那条走的是"存不上，但图做出来了" —— 而 `blob` 为 null 是
     //   **另一种失败**：`buildExportBlob` 自己就炸了。那时说"图还在，先拿到手"，

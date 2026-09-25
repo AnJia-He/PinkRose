@@ -40,6 +40,11 @@
  *   5. 真的 `makeThumbnail`（对话里那张小图）。jsdom 那条测试整个把它假掉了，
  *      真函数没人验过；这里量的是它的产出真有像素。
  *
+ * 2026-09-25 加了第 6 件（Task 13，§6.6 ①）：**存失败之后那一屏**。那一刻用户改好的
+ * 图只在屏幕上，横幅上那个「下载到电脑」是他唯一的出口 —— 而它是 flex 排的，
+ * 窄屏上会不会被 `.app` 悄悄切掉，jsdom 量不出来（见下面 measureSaveFail）。
+ * 存不进去（413）是拦出来的：真服务器只在单张图超过 8 MB 时才 413，造不出来。
+ *
  * 用法（服务器开着就行；dev 或 preview 都可以，脚本自己会核对是哪一版）：
  *   npm run dev                    （或者 npm run build && npm run preview）
  *   npm run check:layout
@@ -525,6 +530,113 @@ function judgeDetail(label, m, view) {
   }
 }
 
+/**
+ * 量「存失败之后」那一屏（Task 13，§6.6 ①）。
+ *
+ * **为什么要专门量**：那条失败路径上，用户改好的图**只在屏幕上** —— 一关页面
+ * 就没了，而那一刻他要的是发朋友圈。横幅上那个「下载到电脑」是他唯一的出口，
+ * 所以"它在不在屏幕上"是**真判据**：横幅就贴在顶栏下面，不该需要滚动才看得见。
+ * （和 Task 11 那个"正在取…"的圈不一样：那个滚到底就是列表最后一个元素，
+ * "在不在视野里"几乎恒为真，所以那边只量了"渲染出来了没有"。）
+ *
+ * **为什么纸面推演不出来**：横幅是一行 flex（`.ask, .save-fail`，带 flex-wrap），
+ * 窄屏上换不换行、换行之后画布还剩多大，全是排版引擎的事 —— jsdom 一律返回 0。
+ * 这个仓库在"溢出"这块栽过两次（作品页 `.gallery` 的 overflow-y、详情页 `.detail`），
+ * 两次都是"真浏览器一量就红、纸面全绿"，所以这次不等它出事就先量。
+ *
+ * ⚠️ 这里**看不到**"被切掉"的话，量也白量：`.app` 是 `overflow: hidden`，
+ * 横幅横向溢出去是**被切掉**的（不出滚动条、文档也不横向溢出）。所以判据是
+ * **按钮自己的盒子在不在视口里**，不是"文档有没有横向滚动"。
+ */
+async function measureSaveFail(page) {
+  return page.evaluate(() => {
+    const box = el => {
+      if (!el) return null
+      const b = el.getBoundingClientRect()
+      return {
+        w: Math.round(b.width), h: Math.round(b.height),
+        top: Math.round(b.top), left: Math.round(b.left),
+        bottom: Math.round(b.bottom), right: Math.round(b.right),
+      }
+    }
+    const bar = document.querySelector('.save-fail')
+    /** 一个盒子上的字排成了几行 —— `Range.getClientRects()` 每个行盒给一个矩形。
+     *  为什么要量这个：`.save-fail` 是一行 flex，**去掉 `flex-wrap` 并不会横向溢出**
+     *  （实测：flex 项会缩，中文句子的 min-content 只有一个字宽）—— 真正发生的是
+     *  那两个按钮被**挤扁**：「下载到电脑」从 100x35 变成 65x77，字在按钮里折成三行。
+     *  不出滚动条、不溢出、盒子也还在视口里，量盒子尺寸那一套一条都看不见它。 */
+    const lines = el => {
+      const r = document.createRange()
+      r.selectNodeContents(el)
+      return [...r.getClientRects()].filter(x => x.width > 0 && x.height > 0).length
+    }
+    return {
+      bar: box(bar),
+      // 按**类名**找（结构），和测试那边同一个锚点：文案只留给文案断言
+      dl: box(bar?.querySelector('button.download') ?? null),
+      // 横幅里**每个**按钮：字排成几行、盒子多大
+      btns: [...(bar?.querySelectorAll('button') ?? [])].map(b => ({
+        text: (b.textContent ?? '').trim().slice(0, 12),
+        w: Math.round(b.getBoundingClientRect().width),
+        h: Math.round(b.getBoundingClientRect().height),
+        lines: lines(b),
+      })),
+      barText: (bar?.textContent ?? '').slice(0, 60),
+      scrolled: Math.round(window.scrollY),
+      scrollW: document.documentElement.scrollWidth,
+      clientW: document.documentElement.clientWidth,
+    }
+  })
+}
+
+const inViewport = (b, view) =>
+  b.left >= -TOL && b.top >= -TOL && b.right <= view.width + TOL && b.bottom <= view.height + TOL
+
+function judgeSaveFail(label, m, view) {
+  console.log(`── ${label}`)
+  console.log(`     横幅 ${m.bar ? `${m.bar.w}x${m.bar.h} @${m.bar.left},${m.bar.top}` : '不在 DOM 里'}` +
+    `   下载按钮 ${m.dl ? `${m.dl.w}x${m.dl.h} @${m.dl.left},${m.dl.top}` : '不在 DOM 里'}` +
+    `   文档滚动 ${m.scrolled}px，横向 ${m.scrollW}/${m.clientW}`)
+  console.log(`     横幅里的按钮 ${m.btns.map(b => `「${b.text}」${b.w}x${b.h}·${b.lines}行`).join('  ') || '（一个都没有）'}`)
+  // 印出来只是给人看的（这一条量的是版面，文案归 App.test.tsx 那几条断言管）
+  console.log(`     横幅上说：「${m.barText}」`)
+  if (!m.bar || m.bar.w <= 0 || m.bar.h <= 0) {
+    fails.push(`${label}：存不进去的那一刻，屏幕上**没有**那条横幅 —— 用户既不知道出了什么事，` +
+      '也拿不到那张只在屏幕上的图（§6.6 ①，§10 点名"最容易漏"的就是这个按钮）')
+    return
+  }
+  if (!inViewport(m.bar, view)) {
+    fails.push(`${label}：横幅没有完整落在视口里（${m.bar.w}x${m.bar.h} @${m.bar.left},${m.bar.top}，` +
+      `视口 ${view.width}x${view.height}）—— 它就在顶栏旁边，不该需要滚动才看得全`)
+  }
+  if (!m.dl || m.dl.w <= 0 || m.dl.h <= 0) {
+    fails.push(`${label}：横幅上没有那个「下载到电脑」按钮（.save-fail button.download）—— ` +
+      '那一屏上它是用户唯一能拿到图的出口，没有它这张图就真的没了')
+    return
+  }
+  if (!inViewport(m.dl, view)) {
+    fails.push(`${label}：那个「下载到电脑」按钮没有完整落在视口里` +
+      `（${m.dl.w}x${m.dl.h} @${m.dl.left},${m.dl.top}，视口 ${view.width}x${view.height}）—— ` +
+      '用户手指够不到的地方，等于没有这个按钮（横幅横向溢出时是**被 .app 悄悄切掉**的，' +
+      '不看这个盒子看不出来）')
+  }
+  if (m.scrollW > m.clientW) {
+    fails.push(`${label}：页面横向溢出，要左右滑（${m.scrollW} > ${m.clientW}）`)
+  }
+  // ★ 按钮上的字必须**各自顶在一行**上。这一条是**量出来的**，不是推出来的：
+  //   把 `.save-fail` 的 `flex-wrap: wrap` 去掉之后，横向**不会**溢出（中文句子的
+  //   min-content 只有一个字宽，flex 项缩得下去），文档也还是 390/390 —— 真正
+  //   发生的是那个按钮被挤扁（100x35 → 65x77，字折成三行），上面每一条判据都绿。
+  //   而按钮被挤扁正是"该换行的是横幅、不是按钮里的字"这件事被弄丢的样子。
+  for (const b of m.btns) {
+    if (b.lines > 1) {
+      fails.push(`${label}：横幅里「${b.text}」那个按钮被挤扁了 —— 它上面的字排成了 ${b.lines} 行` +
+        `（按钮只剩 ${b.w}x${b.h}）。该换行的是**横幅**（.save-fail 的 flex-wrap: wrap），` +
+        '不是按钮里的字：用户要一眼认出"按这个就能拿到图"，字折成三行就不像按钮了')
+    }
+  }
+}
+
 console.log(`── 量的是 ${URL}`)
 console.log(`   ${await checkServedBuild()}`)
 
@@ -547,6 +659,22 @@ try {
       await page.route('**/api/route', r => r.fulfill({
         status: 200, contentType: 'application/json', body: JSON.stringify(FAKE_DECISION),
       }))
+      // ★ 存失败那一段（Task 13，§6.6 ①）要的那条 413：**真服务器造不出来**。
+      //   它只在**单张图超过 8 MB** 时才 413（server/works.ts 的 MAX_WORK_BYTES），
+      //   而这条检查用的样片离那个数差得远 —— 这段要量的又恰恰是"存不进去之后
+      //   那一屏"，所以拦下来自己回一个（形状照抄服务端那条
+      //   HttpError('BAD_REQUEST', '这张图太大了，存不下', 413)）。
+      //   ⚠️ **只在 `saveFails` 打开的那一小段里拦**：下面「放作品」用的也是
+      //      POST /api/works（page.evaluate 里直接 fetch），拦穿过去的话作品页
+      //      那一段会没有数据 —— 而它会红在**别的**判据上，看不出是这个原因。
+      let saveFails = false
+      await page.route('**/api/works', (r) => {
+        if (!saveFails || r.request().method() !== 'POST') return r.continue()
+        return r.fulfill({
+          status: 413, contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'BAD_REQUEST', message: '这张图太大了，存不下' } }),
+        })
+      })
       const editCalls = []
       page.on('request', r => { if (r.url().includes('/api/edit')) editCalls.push(r.url()) })
 
@@ -643,6 +771,35 @@ try {
         fails.push(`${view.name}：点选这条路上竟然发出了 ${editCalls.length} 次 /api/edit ——` +
           '那是花钱的（一次约 12,900 tokens），而用户还没点「就改这里」')
       }
+
+      // ── 存失败（Task 13，§6.6 ①）────────────────────────────────────
+      //
+      // 为了量这一屏，刚才把那个 413 写进了 `saveFails`（见上面 route 那段注释）。
+      //
+      // **量的是哪一屏**：用户按了「保存」→ 存不进去 → 横幅出现。这一屏上
+      // 他手里那张改好的图**只在屏幕上**，横幅上那个「下载到电脑」是唯一的出口
+      // —— 所以"它完整在不在视口里"是**真判据**（见 measureSaveFail 那段）。
+      //
+      // **放在这里的原因**：① 照片、对话、画布都在（前面那一趟没动过它们）；
+      //   ② 面板要**先关掉** —— 窄屏上开着面板时对话栏是 `display: none`，
+      //   量的会是"面板开着的那一屏"，而那多半是最宽松的一档；
+      //   ③ **必须在作品页那一段之前** —— 那一段也要 POST /api/works（放作品），
+      //   两条路是同一个地址，靠 `saveFails` 这个开关分开。
+      await page.getByRole('button', { name: '微调' }).click()   // 收掉面板
+      await page.waitForTimeout(300)
+      saveFails = true
+      await page.getByRole('button', { name: '保存' }).click()
+      // ⚠️ 等横幅**出现**再量：量"点了、还没回来"的那一屏等于什么都没量
+      await page.waitForSelector('.save-fail', { timeout: 15_000 })
+      await page.waitForTimeout(300)          // 让排版落定（换行、滚动条）
+      judgeSaveFail(`${view.name} · 存失败之后`, await measureSaveFail(page), view)
+      // 画布那几条一起判：横幅把工作区压矮了，而"照片还看得见"正是这一段的前提
+      judge(`${view.name} · 存失败之后`, await measure(page), view)
+      // 量完就收掉：留着的话下面每一屏都跟着变矮，而那些判据量的是别的功能。
+      // （「知道了」也是用户真会按的一个按钮。）
+      await page.getByRole('button', { name: '知道了' }).click()
+      await page.waitForTimeout(200)
+      saveFails = false
 
       // ── 作品页（Task 11）────────────────────────────────────────────
       // 先在**真接口**上放几张：图是页面里现画的一张小 JPEG，不在脚本里塞一串
@@ -814,11 +971,15 @@ if (fails.length) {
   console.log('（markerRadius，两边共用同一个公式）；作品页的排版在 src/styles.css 末尾那一段')
   console.log('（.gallery 的 overflow-y: auto 就是"列表自己滚、左栏才不会被划走"那一句）；')
   console.log('详情页的排版在 src/styles.css 的 .detail 那一段（同一条 overflow-y: auto）。')
+  console.log('存失败横幅的排版在 src/styles.css 的 `.ask, .save-fail` 那一段（`flex-wrap` 就是')
+  console.log('窄屏上换不换行那一句）；那个按钮在 src/App.tsx 的 `.save-fail` 那一段里。')
   process.exitCode = 1
 } else {
   console.log(`✅ ${VIEWS.length} 档 × 2 种状态都过：照片 ≥ ${MIN_LONG}x${MIN_SHORT}、` +
     `画布完整在视口内、输入框在屏内、不用左右滑、`)
   console.log('   外加：红圈圆心落在点的地方、直径按画布长边算、小图真的解得出像素（全程零付费调用）')
+  console.log('   外加存失败（§6.6 ①）：横幅和那个「下载到电脑」都完整在视口里、不用滚动、' +
+    '画布还在、两个按钮的字各顶一行（不被 flex 挤扁）')
   console.log(`   外加作品页：${GALLERY_FAKE} 条时首屏只摆 ${GALLERY_FIRST} 张、圈在转、` +
     '滚到底真的接上后面的、整页不滚（左栏钉在原地）')
   console.log('   外加详情页：两栏配方都在屏内、详情页自己滚而整页不滚（左栏还钉在原地）')
