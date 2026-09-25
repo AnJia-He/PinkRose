@@ -23,6 +23,8 @@ export function LoginPage({ onDone }: Props) {
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  /** 密码那一格此刻是不是**看得见**（明文）。见下面那一格的注释。 */
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -103,11 +105,39 @@ export function LoginPage({ onDone }: Props) {
           </label>
         )}
 
-        <label className="login-field">
-          <span>密码</span>
-          <input value={password} onChange={e => setPassword(e.target.value)}
-                 type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
-        </label>
+        {/* ⚠️ 密码这一格外面**不是** `<label>`（名字和邮箱那两格是），是有理由的：
+            那个开关得和输入框**并排**，而 `<button>` 也是 labelable 元素 ——
+            把它包进 `<label>` 里，
+              · 输入框的可读名字会从「密码」变成「密码 显示」（label 的文本替代
+                会一路把按钮上的字也算进去），读屏的人听到的是个自相矛盾的名字；
+              · 而 label 的"点一下聚焦到它的控件"认的是**第一个** labelable 元素，
+                顺序稍不留神就会点到那个按钮上去。
+            所以这一格用 `htmlFor` 显式配对，结构上把开关和输入框放进同一行。
+            类名照旧是 `login-field`（只是挂在一个 div 上），
+            `.login-field input` 那几条样式和测试里的选择器都不受影响。 */}
+        <div className="login-field">
+          <label htmlFor="login-password">密码</label>
+          <div className="login-pw">
+            <input id="login-password" value={password} onChange={e => setPassword(e.target.value)}
+                   type={showPassword ? 'text' : 'password'}
+                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+            {/* ⚠️⚠️ `type="button"` 一个字都不能省。这个 `<button>` 在
+                `<form className="login-box" onSubmit={submit}>` **里面** ——
+                那是个**真的表单**，而表单里不写 `type` 的 `<button>` **默认就是
+                `submit`**：用户想看一眼自己打对没有，点一下「显示」，
+                已经填好的密码会**当场被提交上去**（真的会发一次登录请求）。
+                `src/App.test.tsx` 里「点那个开关不会把表单交上去」那条守着它 ——
+                把 `type="button"` 删掉，那条必须红。
+
+                `autoComplete` 一个字都没动（它按模式在 `current-password` /
+                `new-password` 之间分），换错了会惹浏览器那个密码管理器。 */}
+            <button type="button" className="login-eye"
+                    aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                    onClick={() => setShowPassword(v => !v)}>
+              {showPassword ? '隐藏' : '显示'}
+            </button>
+          </div>
+        </div>
 
         {error && <p className="login-error">{error}</p>}
 
@@ -124,7 +154,11 @@ export function LoginPage({ onDone }: Props) {
             新密码"，所以用户在登录页手滑打错的一个字符，会在他毫不知情的情况下
             变成新账号的密码（他以为只是"切过去看一眼，再切回来"）。名字那格同理：
             登录页问"我是谁"，注册页问"我想叫什么"。留着它们不是"省用户一遍手"，
-            是**替用户做主用了他没打算交出去的那几笔字**。 */}
+            是**替用户做主用了他没打算交出去的那几笔字**。
+
+            密码那个「看得见」的开关也一并**关回去**：上面刚把密码清空，
+            一个开着明文的空框没有任何意义，而留着它更容易被人瞄到 ——
+            用户切过去之后往往还会再打一遍密码，那时它默认就该是圆点。 */}
         <button type="button" className="login-switch"
                 onClick={() => {
                   setMode(mode === 'login' ? 'signup' : 'login')
@@ -132,6 +166,7 @@ export function LoginPage({ onDone }: Props) {
                   setUsername('')
                   setEmail('')
                   setPassword('')
+                  setShowPassword(false)
                 }}>
           {mode === 'login' ? '还没有账号？注册一个' : '已经有账号了？去登录'}
         </button>

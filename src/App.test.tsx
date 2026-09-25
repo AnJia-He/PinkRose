@@ -1026,6 +1026,30 @@ describe('登录这道门', () => {
 
   const calledWith = (path: string) => fetchMock.mock.calls.filter(c => c[0] === path)
 
+  // ── 密码那一格的「看得见」开关（2026-09-25 加） ─────────────────────
+  /** 密码那一格。
+   *  ⚠️ 按**结构**找（`.login-field input` 里最后那个），**不按 `[type=password]`
+   *  找** —— 这几条测试要断言的恰恰是它的 `type` 会变，拿 `type` 当锚点的话
+   *  开关一按它自己就先失联了（选择器再也找不到那个元素，红得莫名其妙）。
+   *  登录模式两个框（名字、密码）、注册模式三个（名字、邮箱、密码），
+   *  密码两种模式都在最后。 */
+  function passwordBox(): HTMLInputElement | null {
+    const boxes = container.querySelectorAll<HTMLInputElement>('.login-field input')
+    return boxes.length ? boxes[boxes.length - 1] : null
+  }
+
+  /** 点一下那个开关。按**类名**找，不按文案找。
+   *  `expect(...).toBeTruthy()` 先挡一道：开关不在时要红成"少了这个控件"，
+   *  而不是 `Cannot read properties of null` —— 那是"测试自己坏了"的语气。 */
+  async function toggleEye() {
+    const eye = container.querySelector('.login-eye') as HTMLButtonElement | null
+    expect(eye).toBeTruthy()
+    await act(async () => {
+      eye?.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
   it('没登录 → 只有登录页，修图那套一个都不挂载', async () => {
     meUser = null
     await renderApp()
@@ -1253,6 +1277,90 @@ describe('登录这道门', () => {
     const back = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
     expect(back).toHaveLength(3)
     expect(back.map(f => f.value)).toEqual(['', '', ''])
+  })
+
+  it('★ 点一下那个开关，密码就看得见了；再点一下，又变回圆点', async () => {
+    // 用户报的原话：「我输的密码是admin123，是已经有这个账户了吗？还是提示信息不对？
+    // **密码输入框加入一个可视化**」—— 打进去全是圆点，他没有任何办法确认自己打对没有。
+    meUser = null
+    await renderApp()
+
+    const pass = passwordBox()
+    expect(pass).toBeTruthy()
+
+    expect(pass?.getAttribute('type')).toBe('password')   // 起点：圆点
+
+    // 先在框里打一笔字 —— 下面"看得见"那半件事要断言的是**同一格、同一笔字**。
+    // 从一个空框开始的话，`value` 那两句是白捡的（空框永远等于空框）。
+    await act(async () => { if (pass) type(pass, 'admin123') })
+    expect(pass?.value).toBe('admin123')
+
+    await toggleEye()
+    // ★ 变异 A：把 `type={showPassword ? 'text' : 'password'}` 换回写死的
+    //   `type="password"` → **红在这一句**（`expected 'password' to be 'text'`）。
+    expect(pass?.getAttribute('type')).toBe('text')
+    // 而且是**同一格、字没丢**：谁要是"另外找个元素去显示明文"，用户刚打的密码就没了。
+    expect(pass?.value).toBe('admin123')
+    // 开关自己也得跟着说反话 —— 停在「显示」的话，读屏的人听到的还是"显示密码"
+    expect(container.querySelector('.login-eye')?.textContent).toBe('隐藏')
+
+    await toggleEye()
+    expect(pass?.getAttribute('type')).toBe('password')
+    expect(container.querySelector('.login-eye')?.textContent).toBe('显示')
+  })
+
+  it('★★ 点那个开关**不会**把表单交上去 —— 它在 `<form>` 里，漏个 type 就是提交按钮', async () => {
+    // 这一条是给那个按钮上的 `type="button"` 兜底的。它所在的
+    // `<form className="login-box" onSubmit={submit}>` 是**真的表单**，
+    // 而表单里一个不写 `type` 的 `<button>` **默认就是 `submit`**：
+    // 用户想看一眼密码打对没有，点一下「显示」—— 填好的密码**当场被交上去**。
+    // 这是这一件里最容易犯、也最贵的错，所以它得有一条自己的断言。
+    //
+    // ★ 两个框**先填成能过前端校验的样子**再点。留空的话，漏写 type 也只会走到
+    //   「起个名字吧」那一句，**一个请求都不会发** —— 那样"没发请求"这条断言
+    //   看着在守、其实守不住（不加前提的断言是白捡的，本仓库栽过这个形状）。
+    meUser = null
+    await renderApp()
+
+    const [name, pass] = container.querySelectorAll<HTMLInputElement>('.login-field input')
+    expect(name).toBeTruthy()
+    expect(pass).toBeTruthy()
+    await act(async () => {
+      if (name) type(name, '小明')
+      if (pass) type(pass, 'password123')
+    })
+    // 前提：字真的都进去了（名字不合法的话，下面那几条全是白捡的）
+    expect(name?.value).toBe('小明')
+    expect(pass?.value).toBe('password123')
+
+    await toggleEye()
+
+    // ★ 变异 B：把 `type="button"` 删掉 → **红在下面第一句**
+    //   （`expected [ [ '/api/login', … ] ] to have a length of 0`）。
+    expect(calledWith('/api/login')).toHaveLength(0)             // 一个请求都没发出去
+    expect(container.querySelector('.login-box')).toBeTruthy()   // 还停在登录页：模式没变
+    expect(container.querySelector('.login-submit')?.textContent).toContain('登录')
+    expect(container.querySelector('.login-error')).toBeNull()   // 也没有多出一句提示
+  })
+
+  it('★ 切模式之后，开关回到「隐藏」—— 密码都清空了，还开着明文没道理', async () => {
+    meUser = null
+    await renderApp()
+
+    await toggleEye()
+    expect(passwordBox()?.getAttribute('type')).toBe('text')   // 前提：它真的开着
+
+    const sw = container.querySelector('.login-switch') as HTMLButtonElement | null
+    expect(sw).toBeTruthy()
+    await act(async () => {
+      sw?.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // ★ 变异 C：把切换 handler 里那句 `setShowPassword(false)` 去掉 →
+    //   **红在这一句**（模式切了、密码也清空了，但那一格还开着明文）。
+    expect(passwordBox()?.getAttribute('type')).toBe('password')
+    expect(container.querySelector('.login-eye')?.textContent).toBe('显示')
   })
 })
 
