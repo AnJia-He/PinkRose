@@ -634,4 +634,64 @@ describe('删与替换：路由真的接上了', () => {
     const body = await r.json() as { error: { message: string } }
     expect(body.error.message).toContain('没有这张作品')
   })
+
+  it('★ DELETE 和 PUT 的成功路径真的走通了（不是只挂了个块）', async () => {
+    // 上面两条只证明"块在"和"认人接上了"：一个把 id 传错（`Number(undefined)`）、
+    // 或者干脆回个空 200 的实现，它们一条都不会红。这条把整条路走完：
+    // 存 → 删掉 → **再取就没了**；存 → 换 → **取回来的是新那批字节**。
+    const { base, cookie } = await appWithUser()
+    const image = (n: number): string =>
+      `data:image/jpeg;base64,${Buffer.from(new Uint8Array(n).fill(7)).toString('base64')}`
+    const make = async (n: number): Promise<number> => {
+      const created = await post(base, '/api/works', { image: image(n) }, cookie)
+      expect(created.status).toBe(200)
+      return (created.body as unknown as { id: number }).id
+    }
+
+    // ① DELETE /api/works/:id
+    const doomed = await make(64)
+    const del = await fetch(`${base}/api/works/${doomed}`, { method: 'DELETE', headers: { cookie } })
+    expect(del.status).toBe(200)
+    expect(await del.json()).toEqual({ ok: true })
+    // ★ 不只是"回了个 200"：那张作品真的没了
+    expect((await fetch(`${base}/api/works/${doomed}`, { headers: { cookie } })).status).toBe(404)
+
+    // ② PUT /api/works/:id
+    const kept = await make(64)
+    const put = await fetch(`${base}/api/works/${kept}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ image: image(128) }),
+    })
+    expect(put.status).toBe(200)
+    const meta = await put.json() as { id: number; bytes: number }
+    expect(meta.id).toBe(kept)        // ★ id 不变（外面存着的链接不能失效）
+    expect(meta.bytes).toBe(128)
+    // ★ 取回来的**真的是新那 128 个字节** —— 不是旧的留在那儿、只把数字改了
+    const file = await fetch(`${base}/api/works/${kept}/file`, { headers: { cookie } })
+    expect((await file.arrayBuffer()).byteLength).toBe(128)
+  })
+
+  it('★ 批量删的成功路径真的走通了（回的是 deleted / missing 两个桶）', async () => {
+    const { base, cookie } = await appWithUser()
+    const b64 = Buffer.from(new Uint8Array(64).fill(7)).toString('base64')
+    const make = async (): Promise<number> => {
+      const created = await post(base, '/api/works', { image: `data:image/jpeg;base64,${b64}` }, cookie)
+      expect(created.status).toBe(200)
+      return (created.body as unknown as { id: number }).id
+    }
+    const a = await make()
+    const b = await make()
+
+    const r = await fetch(`${base}/api/works/delete`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ ids: [a, b, 99999] }),
+    })
+
+    expect(r.status).toBe(200)
+    // ★ 两个桶都在：删掉的按请求顺序列出来，"本来就不在"的那个**也报出来**（§3.5：不能静默）
+    expect(await r.json()).toEqual({ deleted: [a, b], missing: [99999] })
+    expect(await (await fetch(`${base}/api/works`, { headers: { cookie } })).json()).toEqual({ works: [] })
+  })
 })

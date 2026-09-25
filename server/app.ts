@@ -265,9 +265,9 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
       }))
       return
     }
-    // ⚠️ 这条必须排在 `/api/works/:id` 那组**之前**的理解之外 —— 它是 `/api/works/delete`，
-    // 而 `/^\/api\/works\/(\d+)$/` 匹配不到 `delete`（\d+ 挡着），所以顺序其实无所谓。
-    // 写在这儿是为了读的人一眼看到它们是一组。
+    // 这条是 `/api/works/delete`，而 `/^\/api\/works\/(\d+)$/` 匹配不到 `delete`（\d+ 挡着），
+    // 所以它排在 `/api/works/:id` 那组前面还是后面**都无所谓**。写在这儿是为了读的人
+    // 一眼看到这三条是一组。
     if (req.method === 'POST' && path === '/api/works/delete') {
       const user = requireUser(deps, req, res)
       sendJson(res, 200, await handleDeleteWorks(await readJsonBody(req), user, {

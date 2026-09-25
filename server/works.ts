@@ -243,23 +243,33 @@ export async function handleDeleteWorks(
   body: unknown, user: PublicUser, deps: WorksDeps,
 ): Promise<{ deleted: number[]; missing: number[] }> {
   const raw = asObject(body).ids
-  const ids = (Array.isArray(raw) ? raw : [])
-    .map((x) => Number(x))
-    .filter((x) => Number.isInteger(x) && x > 0)
+  if (!Array.isArray(raw)) throw new HttpError('BAD_REQUEST', '没给要删哪些', 400)
+  // ★ 非法 id **整个请求拒掉**，不许悄悄 filter 掉：滤掉的话它两个桶里都不在 ——
+  // 请求里 12 个、回来说"删了 10 个"，少的那两个既没删掉也没报出来，正是 §3.5 要治的静默。
+  const ids = raw.map((x) => Number(x))
+  if (ids.some((x) => !Number.isInteger(x) || x <= 0)) {
+    throw new HttpError('BAD_REQUEST', '要删的 id 得都是正整数', 400)
+  }
   if (ids.length === 0) throw new HttpError('BAD_REQUEST', '没给要删哪些', 400)
+  // ★ 去重：同一个 id 来两次的话，第二次会当"它已经不在了"进 missing ——
+  // 同一个 id **同时**出现在两个桶里，按 `deleted.length` 报"删了 N 张"的前端会多算。
+  // 放在上限**之前**：上限管的是"要跑几次"，去重之后才算得准。
+  const unique = [...new Set(ids)]
   // 上限：一次别删太多，免得一个请求跑几分钟（前端一次最多选中一屏）
-  if (ids.length > 500) throw new HttpError('BAD_REQUEST', '一次最多删 500 张', 400)
+  if (unique.length > 500) throw new HttpError('BAD_REQUEST', '一次最多删 500 张', 400)
 
   const deleted: number[] = []
   const missing: number[] = []
-  for (const id of ids) {
+  for (const id of unique) {
     try {
       await handleDeleteWork(id, user, deps)
       deleted.push(id)
-    } catch {
-      // 走到这儿几乎只有一种原因：这张**不在他的作品集里**（别处删过了）。
-      // 那是"目标已达成"，不是错误 —— 但要报出来，不能静默。
-      missing.push(id)
+    } catch (e) {
+      // ★ 只有「这张不在他的作品集里」才算 missing（**目标已达成**）。
+      //   别的（库忙、写盘失败、库损坏）是**真的错了** —— 报成 missing 等于告诉前端"删掉了"，
+      //   用户下次刷新会看到它又回来。宁可整条请求失败，让他重新拉一次列表看到真相。
+      if (e instanceof HttpError && e.status === 404) missing.push(id)
+      else throw e
     }
   }
   return { deleted, missing }
@@ -282,10 +292,22 @@ export async function handleReplaceWork(
     throw new HttpError('BAD_REQUEST', '这张图太大了，存不下', 413)
   }
   const thumbRaw = str(o.thumb)
-  const thumb = thumbRaw ? decodeDataUrl(thumbRaw) : null
 
   const newName = await deps.storage.save(image.bytes, image.ext)
-  const newThumb = thumb ? await deps.storage.save(thumb.bytes, thumb.ext) : null
+  // ⚠️ **解码和落盘在同一个 try 里**，和 handleCreateWork 一字不差的理由（裁定 ②）：
+  // 缩略图坏的姿势有两种 —— 形状不对（解不出来）和存不下去（盘满 / 权限）——
+  // 两种都只是"这张作品没有缩略图"。落盘那一步放在 try 外面的话，它一抛，
+  // **刚写好的新图**就一个人留在盘上没人认领（记录连提都没提它）。
+  let newThumb: string | null = null
+  if (thumbRaw) {
+    try {
+      const thumb = decodeDataUrl(thumbRaw)
+      newThumb = await deps.storage.save(thumb.bytes, thumb.ext)
+    } catch (e) {
+      // 不能静默：不然盘满、或者前端一直在送坏缩略图，服务端没有第二个地方会说话
+      console.error('缩略图用不了（解不开或者存不下），这张作品没有缩略图：', e)
+    }
+  }
   const t = nowMs(deps)
 
   try {
@@ -302,7 +324,9 @@ export async function handleReplaceWork(
 
   // ★ 到这儿记录已经指向新文件了，才能删旧的
   await deps.storage.remove(row.stored_name).catch((e) => console.error('旧文件没删掉，成了孤儿：', e))
-  if (row.thumb_name) await deps.storage.remove(row.thumb_name).catch(() => {})
+  if (row.thumb_name) {
+    await deps.storage.remove(row.thumb_name).catch((e) => console.error('旧缩略图没删掉：', e))
+  }
 
   return toMeta({ ...row, stored_name: newName, thumb_name: newThumb, bytes: image.bytes.byteLength, updated_at: t })
 }

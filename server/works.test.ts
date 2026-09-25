@@ -440,4 +440,200 @@ describe('handleDeleteWork / handleDeleteWorks / handleReplaceWork', () => {
     expect(db.raw.prepare('SELECT * FROM works WHERE id = ?').get(id)).toEqual(before)  // 记录没动
     expect(readdirSync(root).length).toBe(1)                                            // 文件还在
   })
+
+  it('★ 替换时不给新缩略图 → 旧缩略图必须没、thumb_name 置空', async () => {
+    // ★ 图都换了，旧缩略图缩的是**上一版** —— 留着就是错的（前端按 hasThumb 退回原图）。
+    // 这条钉的是 UPDATE 里 `thumb_name = ?` 那个问号：把新值传进去，
+    // 不传（或者 COALESCE 保旧值）都会让这一条红。
+    const { id } = await handleCreateWork({ image: JPEG, thumb: JPEG }, USER, deps)
+    const old = db.raw.prepare('SELECT stored_name, thumb_name FROM works WHERE id = ?')
+      .get(id) as { stored_name: string; thumb_name: string }
+    expect(readdirSync(root).length).toBe(2)
+
+    const meta = await handleReplaceWork(
+      id, { image: `data:image/jpeg;base64,${bytesOf(999)}` }, USER, deps)
+
+    expect(meta.hasThumb).toBe(false)                       // ★ 置空，不是"留着上一版的缩略图"
+    const row = db.raw.prepare('SELECT stored_name, thumb_name FROM works WHERE id = ?')
+      .get(id) as { stored_name: string; thumb_name: string | null }
+    expect(row.thumb_name).toBe(null)
+    expect(row.stored_name).not.toBe(old.stored_name)
+    expect(readdirSync(root)).toEqual([row.stored_name])    // ★ 旧的图 + 旧的缩略图都没了
+    expect(old.thumb_name).toBeTruthy()                     // （读一下，证明上面那两个文件真是图 + 缩略图）
+  })
+
+  it('★ 替换时缩略图**存不下去**（第二次 save 抛）→ 照样换图成功，只是这张没有缩略图', async () => {
+    // 裁定 ② 在替换上的样子：缩略图是**附带**的，凭什么把它存不下去这件事
+    // 变成"用户认真选的那张新图也丢了"。写法照抄 handleCreateWork 那条 ——
+    // 解码和落盘在同一个 try 里，两种坏姿势走同一条路。
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    const oldName = (db.raw.prepare('SELECT stored_name FROM works WHERE id = ?')
+      .get(id) as { stored_name: string }).stored_name
+    let calls = 0
+    const flaky: Storage = {
+      ...storage,
+      save: (bytes, ext) => {
+        if (++calls === 2) return Promise.reject(new Error('ENOSPC: 盘满了'))
+        return storage.save(bytes, ext)
+      },
+    }
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const meta = await handleReplaceWork(
+        id, { image: `data:image/jpeg;base64,${bytesOf(999)}`, thumb: JPEG }, USER, { ...deps, storage: flaky })
+
+      expect(meta.hasThumb).toBe(false)
+      const row = db.raw.prepare('SELECT stored_name, thumb_name FROM works WHERE id = ?')
+        .get(id) as { stored_name: string; thumb_name: string | null }
+      expect(row.thumb_name).toBe(null)
+      expect(row.stored_name).not.toBe(oldName)
+      // ★ 新图**没变成孤儿**：盘上正好只剩记录指向的那一个（旧图、旧缩略图都删了）。
+      // 缩略图那次 save 抛出去没人接的话，新图的文件就一个人留在盘上，记录连提都没提它。
+      expect(readdirSync(root)).toEqual([row.stored_name])
+      expect(String(spy.mock.calls.flat().join(' '))).toContain('缩略图')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('★ 替换时缩略图**解不开**（非空但形状坏）→ 也只丢缩略图，不丢整张图', async () => {
+    // 和上一条是同一个承诺的另一个入口：形状不对时 decodeDataUrl 会抛。
+    // 解码要是留在 try 外面，这一条会变成 400，整张新图跟着一起丢（裁定 ②）
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const meta = await handleReplaceWork(
+        id, { image: `data:image/jpeg;base64,${bytesOf(999)}`, thumb: 'data:image/gif;base64,AAAA' },
+        USER, deps)
+
+      expect(meta.hasThumb).toBe(false)
+      const row = db.raw.prepare('SELECT stored_name FROM works WHERE id = ?')
+        .get(id) as { stored_name: string }
+      expect(readdirSync(root)).toEqual([row.stored_name])
+      expect(String(spy.mock.calls.flat().join(' '))).toContain('缩略图')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('★ 改记录那一步抛 → 新写的**两个**文件都收回来，旧的**一动没动**', async () => {
+    // ★ 这条钉的是 UPDATE 那个 catch 里的收尾：新图和新缩略图都是刚写上去的，
+    // 记录没改成功 = 没有任何东西知道它们是谁 —— 不收回来就是两个查不到的孤儿。
+    // 假 Db 只拦 `UPDATE` 那一句（`prepare` 拿到的就是这句 SQL），
+    // 别的照常走 —— loadOwned 查的那句 SELECT 还是真的。
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    const before = db.raw.prepare('SELECT * FROM works WHERE id = ?').get(id)
+    const oldName = (before as { stored_name: string }).stored_name
+    const broken = {
+      ...deps,
+      db: {
+        ...deps.db,
+        raw: {
+          prepare: (sql: string) => {
+            if (sql.startsWith('UPDATE')) throw new Error('database is locked')
+            return deps.db.raw.prepare(sql)
+          },
+        },
+      } as unknown as Db,
+    }
+
+    // ① 指名道姓：这条守的是"记录改不掉"这件事本身，不是随便抛了什么
+    await expect(handleReplaceWork(
+      id, { image: `data:image/jpeg;base64,${bytesOf(999)}`, thumb: JPEG }, USER, broken,
+    )).rejects.toThrow(/database is locked/)
+
+    expect(db.raw.prepare('SELECT * FROM works WHERE id = ?').get(id)).toEqual(before)  // 记录一点没动
+    expect(readdirSync(root)).toEqual([oldName])   // ★ 新图 + 新缩略图都收回去了，没多出第三个文件
+  })
+
+  it('旧缩略图删不掉 → 换图照样成功，但**响一声**（不静默）', async () => {
+    // 和 handleDeleteWork 那条同一个规矩：吞掉不等于可以不说。
+    // 旧缩略图删不掉在这里是**必然**会漏一个文件到盘上 —— 静默了，盘慢慢涨起来没人知道
+    const { id } = await handleCreateWork({ image: JPEG, thumb: JPEG }, USER, deps)
+    const oldThumb = (db.raw.prepare('SELECT thumb_name FROM works WHERE id = ?')
+      .get(id) as { thumb_name: string }).thumb_name
+    const flaky: Storage = {
+      ...storage,
+      remove: async (name) => {
+        if (name === oldThumb) throw new Error('EACCES: 删不掉')
+        return storage.remove(name)
+      },
+    }
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // 新图已经换好了，用户那边完全正常 —— 这一步失败不该让整条请求失败
+      const meta = await handleReplaceWork(
+        id, { image: `data:image/jpeg;base64,${bytesOf(999)}` }, USER, { ...deps, storage: flaky })
+
+      expect(meta.hasThumb).toBe(false)
+      expect(String(spy.mock.calls.flat().join(' '))).toContain('旧缩略图没删掉')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('★ 批量删里 DELETE 抛（库忙）→ 整条请求失败，不许当 missing 吞掉', async () => {
+    // ★ missing 的语义是「**目标已达成**」——前端照它把条目从界面上拿掉，
+    // 用户不会再去管它。库忙 / 库损坏报成 missing，是拿一句"删掉了"盖住
+    // "根本没删成"：下次刷新它又回来了，而用户早就不看这一条了。
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    const broken = {
+      ...deps,
+      db: {
+        ...deps.db,
+        raw: {
+          prepare: (sql: string) => {
+            if (sql.startsWith('DELETE')) throw new Error('database is locked')
+            return deps.db.raw.prepare(sql)
+          },
+        },
+      } as unknown as Db,
+    }
+
+    // ① 指名道姓：这条守的是"库真的错了"这件事本身，不是随便抛了什么
+    await expect(handleDeleteWorks({ ids: [id] }, USER, broken)).rejects.toThrow(/database is locked/)
+    // ② ★ 它不是 missing：记录和文件都还在，用户重来一次还能真的删掉
+    expect(handleListWorks(USER, deps).works.map((w) => w.id)).toEqual([id])
+    expect(readdirSync(root).length).toBe(1)
+  })
+
+  it('ids 里有不是正整数的 → 整个请求 400，不许悄悄丢掉（丢掉就是静默）', async () => {
+    // ★ 悄悄滤掉的话，那个 id **两个桶里都不在** —— 请求里 12 个、回来说是"删了 10 个"，
+    // 少的两个既没删掉也没报出来。这正是 §3.5 要治的那种静默。
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    // ⚠️ **指名道姓** —— 这条守的是"id 不合法"这件事本身
+    await expect(handleDeleteWorks({ ids: [id, 'x'] }, USER, deps)).rejects.toThrow(/正整数/)
+    await expect(handleDeleteWorks({ ids: [id, 0] }, USER, deps)).rejects.toThrow(/正整数/)
+    await expect(handleDeleteWorks({ ids: [id, 1.5] }, USER, deps)).rejects.toThrow(/正整数/)
+    // ★ **整个请求**都别动：合法的那个也不能删 —— 不然就成了"我说删两张、它说删了一张"
+    expect(handleListWorks(USER, deps).works.map((w) => w.id)).toEqual([id])
+  })
+
+  it('同一个 id 来两次 → 只算删了一次（不许同时进两个桶）', async () => {
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+
+    const r = await handleDeleteWorks({ ids: [id, id] }, USER, deps)
+
+    expect(r.deleted).toEqual([id])
+    // ★ 不去重的话第二次会当"它已经不在了"进 missing —— 同一个 id 同时出现在两个桶里，
+    // 按 deleted.length 报"删了 N 张"的前端会多算一个
+    expect(r.missing).toEqual([])
+    expect(handleListWorks(USER, deps).works).toEqual([])
+  })
+
+  it('ids 不是数组 / 空的 / 超过 500 → 400，而且一张都没删', async () => {
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    // ① 不是数组（连 ids 都没有，走同一条）
+    await expect(handleDeleteWorks({ ids: '不是数组' }, USER, deps)).rejects.toThrow(/没给要删哪些/)
+    await expect(handleDeleteWorks({}, USER, deps)).rejects.toThrow(/没给要删哪些/)
+    // ② 空的
+    await expect(handleDeleteWorks({ ids: [] }, USER, deps)).rejects.toThrow(/没给要删哪些/)
+    // ③ 上限（500 这个数是 brief 定死的，501 张）
+    const many = Array.from({ length: 501 }, (_, i) => i + 1)
+    await expect(handleDeleteWorks({ ids: many }, USER, deps)).rejects.toThrow(/一次最多删 500 张/)
+
+    // ★ 三条都必须在**动任何东西之前**拒掉：先删后校验的话，多出来的那一个已经是"删了才报错"
+    expect(handleListWorks(USER, deps).works.map((w) => w.id)).toEqual([id])
+    expect(readdirSync(root).length).toBe(1)
+  })
 })
