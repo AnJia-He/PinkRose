@@ -17,7 +17,7 @@ import {
 import type { SenseNovaClient } from './sn.ts'
 import type { Storage } from './storage.ts'
 import { handleSuggest } from './suggest.ts'
-import { handleCreateWork, handleWorkFile, handleWorkThumb } from './works.ts'
+import { handleCreateWork, handleListWorks, handleWorkFile, handleWorkThumb } from './works.ts'
 
 export type AppDeps = {
   config: Config
@@ -177,6 +177,19 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
       // 编译器当场会拦下来。`now` 也照用 auth 那一个：两边各用一个钟，
       // 测试里拨动的时间就只对一半代码生效。
       sendJson(res, 200, await handleCreateWork(await readJsonBody(req), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
+      return
+    }
+    if (req.method === 'GET' && path === '/api/works') {
+      const user = requireUser(deps, req, res)
+      // 依赖的形状和上面那条 POST 一字不差（理由也一样：库藏在 auth 里，整个 deps
+      // 传下去编译器当场会拦）。GET 所以**不读请求体** —— 没什么可读的。
+      //
+      // 这条回的是**全部作品的元数据**，一张图、一条配方都不带 —— 要一次给完、
+      // 又要小，才能让前端自己分组、搜索、再按屏幕上的位置去单取图（裁定 ③，
+      // 细节见 works.ts 的 handleListWorks）。
+      sendJson(res, 200, handleListWorks(user, {
         db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
       }))
       return

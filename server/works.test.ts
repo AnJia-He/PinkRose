@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb, type Db } from './db.ts'
 import { createStorage, type Storage } from './storage.ts'
-import { handleCreateWork, handleWorkFile, handleWorkThumb } from './works.ts'
+import { handleCreateWork, handleListWorks, handleWorkFile, handleWorkThumb } from './works.ts'
 import type { PublicUser } from './account.ts'
 
 const USER: PublicUser = { id: 1, username: '小明', email: 'a@x.com' }
@@ -190,5 +190,25 @@ describe('handleCreateWork', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it('列表：只有自己的、按最后改动倒序、不带图也不带路径', async () => {
+    const other: PublicUser = { id: 2, username: '小红', email: 'b@x.com' }
+    db.raw.prepare(`INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)`)
+      .run(other.username, other.email, 'h', 1)
+
+    const mine1 = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    const mine2 = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 300 })
+    await handleCreateWork({ image: JPEG }, other, { ...deps, now: () => 200 })
+
+    const r = handleListWorks(USER, deps)
+    expect(r.works.map((w) => w.id)).toEqual([mine2.id, mine1.id])   // 新的在前，别人的不在
+    // ★ 响应里**不许**出现硬盘上的文件名，也不许出现配方（那是详情页才给的）
+    for (const w of r.works) expect(Object.keys(w).sort()).toEqual(
+      ['alias', 'bytes', 'createdAt', 'hasThumb', 'id', 'updatedAt'])
+  })
+
+  it('一条都没有 → 空数组，不是 null、不是 404', () => {
+    expect(handleListWorks(USER, deps)).toEqual({ works: [] })
   })
 })

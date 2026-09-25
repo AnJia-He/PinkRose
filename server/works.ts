@@ -3,7 +3,7 @@ import type { Storage } from './storage.ts'
 import type { PublicUser } from './account.ts'
 import { HttpError, asObject, str } from './http.ts'
 import { ZERO, applyDeltas, type Adjustments } from '../shared/adjustments.ts'
-import type { Recipe } from '../shared/works.ts'
+import type { Recipe, WorkMeta } from '../shared/works.ts'
 
 export type WorksDeps = { db: Db; storage: Storage; now?: () => number }
 
@@ -147,4 +147,30 @@ export async function handleWorkThumb(id: number, user: PublicUser, deps: WorksD
     console.error('缩略图读不出来，退回原图：', e)
     return { bytes: await deps.storage.read(row.stored_name), contentType: mimeOf(row.stored_name) }
   }
+}
+
+/** 库里的行 → 给前端的形状。**只给该给的**：`stored_name` 是硬盘上的路径，永远不许出门 */
+export function toMeta(row: WorkRow): WorkMeta {
+  return {
+    id: row.id,
+    alias: row.alias,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    bytes: row.bytes,
+    hasThumb: row.thumb_name !== null,
+  }
+}
+
+/**
+ * 这个人的全部作品 —— **只有元数据，一张图都没有**。
+ *
+ * §3.5：先摆骨架（哪天、几张），再一张一张去取图。所以这个响应要小、要一次给完，
+ * 客户端才好自己分组、搜索、按 60 张一摆地懒加载（裁定 ③）。
+ */
+export function handleListWorks(user: PublicUser, deps: WorksDeps): { works: WorkMeta[] } {
+  const rows = deps.db.raw.prepare(
+    `SELECT id, user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias, recipe
+     FROM works WHERE user_id = ? ORDER BY updated_at DESC`,
+  ).all(user.id) as unknown as WorkRow[]
+  return { works: rows.map(toMeta) }
 }
