@@ -50,4 +50,7 @@ output/
 spike/**/project.private.config.json
 
 # 用户数据：数据库和照片。绝不提交
-data/
+# ⚠️ 开头的斜杠是**故意的**：写 `data/` 会匹配**任意层级**下叫 data 的目录，
+# 而设计 §8 会把素材放进 src/data/ —— 那一天那些文件会被这里**静默忽略**，
+# 而且 git status 一声不吭（这正是这个项目最怕的那种"没红就以为没事"）。
+/data/

@@ -39,7 +39,7 @@ describe('checkUsername', () => {
     expect(checkUsername('a😀').ok).toBe(false)
   })
 
-  it('汉字按 Unicode 的 Han 脚本收，不是码点范围 —— 真名不该被范围挡在外面', () => {
+  it('汉字按 Unicode 的 Unified_Ideograph（表意文字本体）收 —— 既不是码点范围，也不是更宽的 Han 脚本', () => {
     // 这几个都是「合法的汉字却被拒」：旧的范围（U+4E00–U+9FA5）只到 U+9FA5，
     // 再往上全是真名用字 —— 而汉字并不止于那一个码点。
     // 被它拒掉的人看到的是「只能用中文、字母、数字和下划线」——
@@ -52,7 +52,7 @@ describe('checkUsername', () => {
 
   it('长度按字符数算，扩展区汉字也算一个字 —— 否则真名会被长度卡掉', () => {
     // 11 个 𠮷：按字符数是 11（合规），按 UTF-16 码元是 22（会被上限 20 拒）。
-    // 收进 Han 脚本之后，charLen 才第一次真的产生可观察差异 ——
+    // 收进 Unified_Ideograph 之后，charLen 才第一次真的产生可观察差异 ——
     // 在这之前它其实一直没被任何一条测试咬到。
     expect(checkUsername('𠮷'.repeat(11)).ok).toBe(true)
   })
@@ -75,6 +75,33 @@ describe('checkUsername', () => {
     expect(checkUsername('⺀明').ok).toBe(false)   // U+2E80 CJK 部首补充
     expect(checkUsername('一明').ok).toBe(true)       // U+4E00 真汉字 —— 它必须照收
   })
+
+  it('〇 和 々 不收 —— 这是**待用户拍板**的产品决定，测试先把它钉住（见 DECISIONS 的 D0b）', () => {
+    // ⚠️ 这一条钉的不是"这样最对"，而是"现在就是这样"。
+    // 汉字的规则从"`一` 到 `龥` 这个范围"换成 Unified_Ideograph（表意文字本体）时，
+    // **顺带**把这两个字符从"能注册"翻成了"不能注册"，而当时**一条测试都没有**。
+    // 这个文件开头的规矩是「产品决定被改了就应该是测试红」—— 顺带的副作用不算数，
+    // 它得有人在守。
+    //
+    // 该不该收，是**产品决定，还没拍板**（DECISIONS.md 的 D0b，两边的理由都列着：
+    // `〇` 是中文正式写法里的零（`二〇二六`），审查判它"收下不花钱"；
+    // `々` 是重复号、不是中文人名用字，判它"拒掉无所谓"）。
+    // 拍板之后：收 → 改实现 + 把这里两句改成 true；不收 → 保持现状、把注释里
+    // "待拍板"这几个字去掉。**两种都别只改实现不改这里。**
+    expect(checkUsername('〇〇').ok).toBe(false)   // U+3007 中文的零，`二〇二六` 的那个字
+    expect(checkUsername('佐々木').ok).toBe(false) // U+3005 重复号（佐々木 是日文汉字姓）
+  })
+
+  it('光有中点不算名字 —— 两个中点凑够"至少 2 个字"也不行', () => {
+    // 实测过：`checkUsername('・・')` 曾经回 `{ok: true, value: '··'}` —— 屏幕上
+    // 就是一个纯标点的展示名。中点放行的唯一理由是少数民族全名要用它当分隔
+    // （见下一条），那个理由里没有"名字整个都是中点"这一种。
+    expect(checkUsername('・・').ok).toBe(false)         // U+00B7 中点 ×2
+    expect(checkUsername('・・').ok).toBe(false)   // U+30FB 片假名中点 ×2（折叠之后同上）
+    // 带真名字的中点照常放行 —— 防线不许把要保护的东西一起挡掉
+    expect(checkUsername('迪丽热巴·迪力木拉提').ok).toBe(true)
+  })
+
   it('保留名不让注册', () => {
     for (const n of ['admin', 'root', 'system', 'administrator', 'ADMIN']) {
       expect(checkUsername(n).ok).toBe(false)

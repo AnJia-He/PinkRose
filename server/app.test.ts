@@ -397,6 +397,22 @@ describe('账号与鉴权', () => {
     expect(me.status).toBe(401)
   })
 
+  it('没登录打「改密码」→ 401，而且是同一个 UNAUTHORIZED', async () => {
+    // 原来只有「我是谁」这一处问了"没登录会怎样"，而 /api/password 走的是同一道
+    // requireUser —— 它管的是**改密码**（改成了就能把别人踢下线、把账号接管走）。
+    // 没有这条用例，改成"这道守卫漏了 / 顺序被谁挪到 readJsonBody 后面"照样全绿。
+    const { base } = await appWithUser()
+    const res = await fetch(`${base}/api/password`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ oldPassword: 'password123', newPassword: 'anotherpass' }),
+    })
+    expect(res.status).toBe(401)
+    const body = await res.json() as { error: { code: string } }
+    // 前端按 code 分流（401 → 回登录页），所以这里也要是那个认得出的 code
+    expect(body.error.code).toBe('UNAUTHORIZED')
+  })
+
   it('退出 → cookie 被清掉', async () => {
     const { base, cookie } = await appWithUser()
     const res = await fetch(`${base}/api/logout`, { method: 'POST', headers: { cookie } })

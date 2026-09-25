@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { resolve } from 'node:path'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { loadConfig, describeConfig } from './config.ts'
 
 const FULL = {
@@ -39,8 +41,12 @@ describe('loadConfig', () => {
     // 谁都能自己造一张票进来，冒充任何人。而它补上去之后，**全仓测试照样全绿**
     // （没有别的用例在问这件事），只能靠这一条守着。
     expect(() => loadConfig({ ...FULL, SESSION_SECRET: '' })).toThrow(/SESSION_SECRET/)
-    // 全空的环境也要抛 —— 不能"什么都没配，反而放行"
-    expect(() => loadConfig({})).toThrow()
+    // 只给 API key、别的什么都不给的极端环境也要抛 —— 不能"什么都没配，反而放行"。
+    // ⚠️ 这里**必须把 SN_API_KEY 给上**：全空环境必然先栽在 SN_API_KEY 那一条，
+    // 于是它对"SESSION_SECRET 被给了个硬编码默认值"这个变异**永远不会红**
+    // （实测：把 sessionSecret 改成 `'dev-secret'` 的兜底，全空这版照绿）。
+    // 一条永远不可能红、却看起来在守着一件事的断言，比没有更糟。
+    expect(() => loadConfig({ SN_API_KEY: 'k' })).toThrow(/SESSION_SECRET/)
   })
 
   it('SESSION_SECRET 只有空白也算缺', () => {
@@ -59,10 +65,28 @@ describe('loadConfig', () => {
     expect(c.vlmModel).toBe('sensenova-6.8-flash-lite')
   })
 
-  it('没给 DB_PATH 时落在仓库根的 data/ruixing.db', () => {
-    // 断言的是"相对于 cwd"，不是某台机器上的绝对路径 —— 所以别的机器上也成立。
-    // 它挡的是"默认值被写死成某个具体路径"：那样开发机和服务器的库就不是同一个了。
-    expect(loadConfig(FULL).dbPath).toBe(resolve(process.cwd(), 'data', 'ruixing.db'))
+  it('没给 DB_PATH 时落在"当前工作目录"的 data/ruixing.db —— 钉的是"跟着 cwd 走"这件事', () => {
+    // ⚠️ 原来这条写的是 `expect(loadConfig(FULL).dbPath).toBe(resolve(process.cwd(), 'data', 'ruixing.db'))`
+    // —— 那就是实现里那一行的**复读**：实现改成按 `import.meta.url` 派生、或者写死一个
+    // 绝对路径，只要断言照着抄一遍，它照样绿。而复读是抓不住任何东西的（这个项目
+    // 已经被"测试没在测它名字说的东西"咬过好几次）。
+    //
+    // 真正要钉的是**"跟着 cwd 走"本身**：把 cwd 换到一个临时目录，默认路径就得跟着换。
+    // cwd ≠ 模块所在目录，这一步才是整条测试的力量来源 —— 按模块位置派生的实现，
+    // 在这里必然给出另一个答案（那正是注释里那句"从别处启动就会另开一个空库"）。
+    const dir = mkdtempSync(join(tmpdir(), 'ruixing-cfg-'))
+    const before = process.cwd()
+    try {
+      process.chdir(dir)
+      // 右半边也在新 cwd 里现算 —— 两边一起动，比的才是"它跟不跟 cwd"
+      expect(loadConfig(FULL).dbPath).toBe(resolve(process.cwd(), 'data', 'ruixing.db'))
+      // 换一个 cwd 再来一次：这一步把"恰好是那个值"排掉，只留下"跟着走"
+      process.chdir(before)
+      expect(loadConfig(FULL).dbPath).toBe(resolve(before, 'data', 'ruixing.db'))
+    } finally {
+      process.chdir(before)
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('给了 DB_PATH 就用它 —— 不许被默认值盖掉', () => {
