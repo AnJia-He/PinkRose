@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { resolve } from 'node:path'
 import { loadConfig, describeConfig } from './config.ts'
 
 const FULL = {
@@ -36,6 +37,16 @@ describe('loadConfig', () => {
     const c = loadConfig({ SN_API_KEY: 'sk-x', SN_BASE_URL: 'https://x.cn/v1' })
     expect(c.imageModel).toBe('sensenova-u1.5-fast')
     expect(c.vlmModel).toBe('sensenova-6.8-flash-lite')
+  })
+
+  it('没给 DB_PATH 时落在仓库根的 data/ruixing.db', () => {
+    // 断言的是"相对于 cwd"，不是某台机器上的绝对路径 —— 所以别的机器上也成立。
+    // 它挡的是"默认值被写死成某个具体路径"：那样开发机和服务器的库就不是同一个了。
+    expect(loadConfig(FULL).dbPath).toBe(resolve(process.cwd(), 'data', 'ruixing.db'))
+  })
+
+  it('给了 DB_PATH 就用它 —— 不许被默认值盖掉', () => {
+    expect(loadConfig({ ...FULL, DB_PATH: '/tmp/x.db' }).dbPath).toBe('/tmp/x.db')
   })
 })
 
