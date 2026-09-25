@@ -29,7 +29,7 @@ describe('createStorage', () => {
 
   it('名字里不许带路径 —— 不然能拿它逃出这个目录', async () => {
     const evil = '../'.repeat(4) + 'x.jpg'
-    await expect(s.read(evil)).rejects.toThrow()
+    await expect(s.read(evil)).rejects.toThrow(/不合法的文件名/)
     await expect(s.remove(evil)).rejects.toThrow()
     // 扩展名也是调用方给的 —— 同样不许它带路径
     await expect(s.save(new Uint8Array([1]), '/../evil')).rejects.toThrow()
