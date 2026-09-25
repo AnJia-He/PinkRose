@@ -134,7 +134,15 @@ const LOGGED_IN = { id: 1, username: '小明', email: 'a@b.com' }
 let meUser: { id: number; username: string; email: string } | null = LOGGED_IN
 /** `/api/me` 这一路单独坏掉（登录成了、但紧接着那一次问不出"我是谁"）。 */
 let meFails = false
+/** 把 `/api/me` 那一次**挂住不回**，用来演"跟随请求还在半路"那一段。 */
+let meGate: { promise: Promise<void>; open: () => void } | null = null
 let fetchMock: ReturnType<typeof vi.fn>
+
+function makeGate() {
+  let open!: () => void
+  const promise = new Promise<void>(res => { open = res })
+  return { promise, open }
+}
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body),
@@ -202,8 +210,11 @@ beforeEach(() => {
   //   登录过的人，不认就直接 401）。要测登录页本身的那几条把 `meUser` 置空。
   meUser = LOGGED_IN
   meFails = false
+  meGate = null
   fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/me') {
+      // `meGate` 演"跟随请求还在半路"：挂住不回，等测试放行
+      if (meGate) await meGate.promise
       // `meFails` 演的是"登录/注册成功之后那一次问不出来"（服务器重启、网络瞬断）
       if (meFails) return jsonResponse({ error: { code: 'UNAUTHORIZED', message: '先登录一下' } }, 401)
       return meUser
@@ -981,7 +992,36 @@ describe('登录这道门', () => {
     expect(submit.disabled).toBe(false)          // 不能卡在"忙"上
     expect(submit.textContent).toContain('登录')   // 而且要重新说清这一步是干什么的
     // 用户打过的字也得还在：让他从头再打一遍密码，是最气人的一种失败
+    // （顺带它还是"组件没被重新挂载"的探针 —— 重新挂载的话 state 会清空）
     expect((container.querySelectorAll<HTMLInputElement>('.login-field input')[0]).value)
       .toBe('小明')
+  })
+
+  it('★ 跟随请求还在半路时按钮必须还是「稍等…」—— 不许留一个"再点一次"的窗口', async () => {
+    // 反过来的那个坑：登录成功、`onDone()` 也调了，但 App 问「我是谁」那一次
+    // **还没回来**。这时候就把按钮放开的话，用户看到的是
+    // 「点完按钮又从『稍等…』变回『登录』，画面什么都没发生」—— 这正是最容易
+    // 诱发"再点一下"的形状（再点一下就是第二次注册/登录请求）。
+    // 窗口长度 = **一次 /api/me 往返**：本机几毫秒，但真机走移动网是几十到
+    // 几百毫秒、差网能到秒级 —— 所以它得被「稍等…」盖住，而不是"反正很快"。
+    meUser = null
+    await renderApp()
+
+    // 登录那一次照常成功；`onDone` 之后那一次 /api/me 挂住不回
+    const gate = makeGate()
+    meGate = gate
+    await fillAndSubmit('小明', 'password123')
+
+    const submit = container.querySelector('.login-submit') as HTMLButtonElement
+    expect(submit.disabled).toBe(true)            // ← 窗口必须在
+    expect(submit.textContent).toContain('稍等')
+
+    // 放行：App 这才认出人，进主界面
+    await act(async () => {
+      gate.open()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelector('input[type="file"]')).toBeTruthy()
+    expect(container.querySelector('.login-box')).toBeNull()
   })
 })

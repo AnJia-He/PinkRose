@@ -548,7 +548,12 @@ export default function App() {
   //
   // `onDone` 里**重新问一次 `/api/me`**，而不是让登录页回传一个名字去拼一个
   // `{ id: 0, ... }` —— 那个 id 不是任何一个真 id，是内存里的一个假人。
-  if (!user) return <LoginPage onDone={() => { me().then(setUser) }} />
+  //
+  // 返回那个 promise（而不是用花括号丢掉它）：登录页要 `await` 它，好让
+  // 「稍等…」盖住**整个**跟随请求 —— 否则 `/api/me` 还在半路时按钮就变回可点，
+  // 用户看到"点完什么都没发生"，那正是最容易诱发再点一下的形状。
+  // `me()` 的契约是永不抛（401 → null），所以这个 promise 不会 reject。
+  if (!user) return <LoginPage onDone={() => me().then(setUser)} />
 
   return (
     <div className="app">
