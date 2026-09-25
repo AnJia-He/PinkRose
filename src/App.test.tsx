@@ -610,15 +610,18 @@ describe('导出：分享还是存下来，用户自己选', () => {
     expect(vi.mocked(saveMod.shareImage).mock.calls[0][1]).toBe('p_ruixing.jpg')
   })
 
-  it('⚠️ 点「保存」→ 老老实实下载，**不许偷偷改成分享**', async () => {
-    // 用户原话：「那有时候不想立即分享也得分享喽」。
-    // 一条"能分享就一律分享"的实现会让这条红 —— 而那正是他不要的。
+  it('⚠️ 点「保存」→ 不偷偷下载，也不偷偷变成分享（§3.4）', async () => {
+    // ⚠️ **这条 2026-09-25（Task 13）改过一半。** 原文是「老老实实下载，
+    //   不许偷偷改成分享」—— §3.4 把前半句改了：保存现在只做"存进作品集"
+    //   这一件事，下载挪到作品集里、由用户自己决定要哪张。
+    //   后半句照旧守着 —— 用户原话：「那有时候不想立即分享也得分享喽」。
+    //   一条"能分享就一律分享"的实现会让它红，而那正是他不要的。
     vi.mocked(saveMod.canShareImage).mockReturnValue(true)
     await renderApp()
     await uploadPhoto()
     await click('保存')
 
-    expect(saveMod.downloadImage).toHaveBeenCalledTimes(1)
+    expect(saveMod.downloadImage).not.toHaveBeenCalled()
     expect(saveMod.shareImage).not.toHaveBeenCalled()
   })
 
@@ -1585,5 +1588,196 @@ describe('作品详情页：这张图怎么来的', () => {
     //   （他可能下载过、可能没下载、也可能下载完又删了）。宁可少安慰一句，不能骗人（§3.5）
     expect(confirm!.textContent).not.toContain('你电脑')
     expect(confirm!.textContent).not.toContain('下载的')
+  })
+})
+
+/**
+ * 2026-09-25 加（Task 13 —— 13 个任务里的最后一个）。**「保存」= 存进作品集**（§3.4）。
+ *
+ * 三件事在这一层钉住：
+ *   ① 点「保存」不再偷偷下载。下载挪到作品集里，由用户自己决定要哪张、存到哪
+ *      —— 顺带也不再往他的下载文件夹堆东西；
+ *   ② 同一张照片存第二次起问一句「上次那张要替换掉吗」，而且**问完之后按下去
+ *      发生的事也得是对的**：替换走 PUT（不是又 POST 一张）；
+ *   ③ §6.6 ①（§10 点名它「最容易漏」）：**存不进去的时候，改好的图只在屏幕上**
+ *      —— 一关页面就没了，而用户那一刻要的是"拿到图去发朋友圈"。作品集满了是
+ *      **我们这边的限制**，不该让他连图都拿不到。所以当场得有一个真能按的
+ *      「下载到电脑」。反过来，图**根本没导出来**的时候不许说"图还在"（那是骗人，
+ *      用户会去找一个屏幕上不存在的按钮）。
+ */
+describe('保存 = 存进作品集（Task 13）', () => {
+  /**
+   * 点界面上一个按钮。
+   *
+   * ⚠️ 按**文案**找（和本文件已有的 `goNav` / `topbar` 同一个形状，不另造一套）。
+   *   但**不写成 `as HTMLButtonElement` 那种"类型上的谎话"**：按钮不在时
+   *   报的是这一句「现在屏幕上只有 …」，而不是 `Cannot read properties of
+   *   undefined` —— 后者是"测试自己坏了"的语气，而实际发生的是"那个按钮没了"。
+   *   （本项目为这个形状付过三次，见 Task 12 的 F5 / R4。）
+   */
+  async function clickTop(label: string) {
+    const btns = [...container.querySelectorAll('button')]
+    const btn = btns.find(b => (b.textContent ?? '').trim() === label) ?? null
+    if (!btn) {
+      throw new Error(`屏幕上没有「${label}」这个按钮 —— 现在只有 ${
+        btns.map(b => (b.textContent ?? '').trim()).join(' / ')}`)
+    }
+    await act(async () => {
+      btn.click()
+      // ⚠️ **两轮，不是一轮。** 点「保存」之后 App 得先把画布上那个 Blob 读成
+      //    data URL 才发得出请求，而这一步（`blobToDataUrl`）走的是 jsdom 的
+      //    `FileReader` —— 它把回调排在 **`setImmediate`** 上，和一个
+      //    `setTimeout(0)` 谁先谁后**没有保证**（一个是 check 阶段、一个是 timers 阶段）。
+      //    只等一轮时实测：那条「存不进去」会偶发停在「准备中…」——
+      //    即断言跑的时候 FileReader 还没回调，不是功能坏了。
+      //    两轮必然跨过那个 check 阶段，而它之后的整条链（fetch → 解析 → setState）
+      //    全是微任务，会在同一轮里走完。
+      await new Promise(r => setTimeout(r, 0))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  /** 保存那一条请求的 body（没有就是 undefined）。 */
+  function savedBody(): any {
+    const call = fetchMock.mock.calls.find(c => c[0] === '/api/works' && c[1]?.method === 'POST')
+    return call ? JSON.parse(String(call[1]!.body)) : undefined
+  }
+
+  it('★ 点「保存」是存进作品集，**没有偷偷下载**（§3.4）', async () => {
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      (url === '/api/works' && init?.method === 'POST')
+        ? jsonResponse({ id: 9 })
+        : inner(url, init))
+
+    await renderApp()
+    await uploadPhoto()
+    await clickTop('保存')
+
+    expect(savedBody()).toBeTruthy()
+    // ★ 「保存不再自动下载」—— 变异：把 downloadImage 加回保存流程 → 必须红
+    expect(saveMod.downloadImage).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('存好了')
+  })
+
+  it('★ 配方带着「用户说过的话」，而且**没有**那个英文 prompt', async () => {
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      (url === '/api/works' && init?.method === 'POST') ? jsonResponse({ id: 9 }) : inner(url, init))
+
+    await renderApp()
+    await uploadPhoto()
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({ reply: '好。' }))
+    await say('亮一点')
+    await clickTop('保存')
+
+    const body = savedBody()
+    // ⚠️ **`toEqual` 不是 `toContain`，这一条是本轮改的。**
+    // 原来写的是 `expect(...edits).toContain('亮一点')` + 另起一句
+    // `expect(JSON.stringify(...edits)).not.toContain('MODEL:')`，注释说后者守的是
+    // "不许混进给图片模型的英文 prompt"。**而 `'MODEL:'` 这三个字母在生产代码里根本不存在** ——
+    // 它只出现在 `App.test.tsx` 那个假图 dataUrl 里（`:374` 那几处都在查**送上去的图**）。
+    // 所以那句守的其实是"edits 里没有图片的 data URL"，**和它注释写的那件事不是一回事**；
+    // 而计划给它配的**变异 C 正是因此永远红不了**。
+    // 换成 `toEqual` 之后，配方里多出**任何**东西都会红 —— 英文 prompt 也在内，
+    // 而且不再依赖"猜一个记号"。
+    expect(body.recipe.edits).toEqual(['亮一点'])
+    expect(Object.keys(body.recipe).sort()).toEqual(['edits', 'params'])   // 两栏，不是一坨
+  })
+
+  it('★ 同一张照片存第二次，问「替换还是再存一张」（§3.4）', async () => {
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      (url === '/api/works' && init?.method === 'POST') ? jsonResponse({ id: 9 }) : inner(url, init))
+
+    await renderApp()
+    await uploadPhoto()
+    await clickTop('保存')
+    await clickTop('保存')          // 第二次
+
+    expect(container.textContent).toContain('上次那张要替换掉吗')
+    expect(container.textContent).toContain('替换')
+    expect(container.textContent).toContain('再存一张')
+    // 而且**这一下还没发出去** —— 得等他回答
+    expect(fetchMock.mock.calls.filter(c => c[0] === '/api/works' && c[1]?.method === 'POST')).toHaveLength(1)
+  })
+
+  // ★★ 下面两条是**派发前补的**：上面那条只验了"问句出现、而且第一次还没发出去"，
+  //    而**按下去之后发生了什么是零覆盖的** —— 和 Task 12 那个「套用没进仓库」是同一个形状：
+  //    那个按钮存在的理由，恰恰是唯一没人守的那件事。
+  it('★ 点「替换」真的打到 PUT /api/works/9 上 —— 不然「替换」只是个说法', async () => {
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works' && init?.method === 'POST') return jsonResponse({ id: 9 })
+      if (url === '/api/works/9' && init?.method === 'PUT') return jsonResponse({ id: 9 })
+      return inner(url, init)
+    })
+
+    await renderApp()
+    await uploadPhoto()
+    await clickTop('保存')
+    await clickTop('保存')
+    await clickTop('替换')          // 回答那个问句
+
+    expect(fetchMock.mock.calls.filter(c => c[0] === '/api/works/9' && c[1]?.method === 'PUT')).toHaveLength(1)
+    // ★ 替换走的是 PUT，**不是又 POST 一张** —— 后者会让作品集里凭空多出一张
+    //   （变异：把 `replaceWork(replaceId, body)` 换成 `createWork(body)` → 两条一起红）
+    expect(fetchMock.mock.calls.filter(c => c[0] === '/api/works' && c[1]?.method === 'POST')).toHaveLength(1)
+  })
+
+  it('★ 点「再存一张」是**新存一张** —— 明确说了就允许（§3.4）', async () => {
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works' && init?.method === 'POST') return jsonResponse({ id: 9 })
+      if (url === '/api/works/9' && init?.method === 'PUT') return jsonResponse({ id: 9 })
+      return inner(url, init)
+    })
+
+    await renderApp()
+    await uploadPhoto()
+    await clickTop('保存')
+    await clickTop('保存')
+    await clickTop('再存一张')
+
+    expect(fetchMock.mock.calls.filter(c => c[0] === '/api/works' && c[1]?.method === 'POST')).toHaveLength(2)
+    expect(fetchMock.mock.calls.filter(c => c[0] === '/api/works/9' && c[1]?.method === 'PUT')).toHaveLength(0)
+  })
+
+  it('★★ 存不进去的时候，屏幕上必须出现一个**能拿到图**的按钮（§6.6 ①）', async () => {
+    // §10 说这条「最容易漏」。它的重要性不在"报错报得好"，而在
+    // **那一刻用户手里的图只在屏幕上** —— 关掉页面就没了，而他要的是发朋友圈。
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      (url === '/api/works' && init?.method === 'POST')
+        ? jsonResponse({ error: { code: 'BAD_REQUEST', message: '这张图太大了，存不下' } }, 413)
+        : inner(url, init))
+
+    await renderApp()
+    await uploadPhoto()
+    await clickTop('保存')
+
+    expect(container.textContent).toContain('没能存进作品集')
+    // ⚠️ 按**类名**找那个盒子（结构），文案单独一条钉住 —— 不做"按文案找元素"。
+    const dl = container.querySelector('.save-fail button.download') as HTMLButtonElement | null
+    expect(dl?.textContent ?? '').toContain('下载到电脑')   // 文案：按钮叫这个
+    expect(dl).toBeTruthy()                                 // 结构：它真的在
+    expect(dl?.disabled).toBe(false)          // ★ 按钮得真的能按
+    await act(async () => { dl?.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(saveMod.downloadImage).toHaveBeenCalled()   // ★ 而且是**这一下**才下载的
+  })
+
+  it('★ 图根本没能导出来的时候，屏幕上不许出现「图还在」（那是骗人）', async () => {
+    // ★ 派发前补的。上面那条走的是"存不上，但图做出来了" —— 而 `blob` 为 null 是
+    //   **另一种失败**：`buildExportBlob` 自己就炸了。那时说"图还在，先拿到手"，
+    //   用户会去找一个屏幕上根本没有的按钮。
+    vi.mocked(saveMod.buildExportBlob).mockRejectedValueOnce(new Error('画布太大'))
+    await renderApp()
+    await uploadPhoto()
+    await clickTop('保存')
+
+    expect(container.textContent).toContain('没能存进作品集')
+    // 变异：把那两句的三目压成永远走第一句 → 这一条红
+    expect(container.textContent).not.toContain('图还在')
+    expect(container.querySelector('.save-fail button.download')).toBeNull()
   })
 })

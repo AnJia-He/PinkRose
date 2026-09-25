@@ -9,11 +9,14 @@ import { WorkDetailPage } from './ui/WorkDetailPage'
 import { Nav } from './ui/Nav'
 import { pathOf, viewFromPath, type View } from './ui/view'
 import { me, type AccountUser } from './api/account'
+import { createWork, replaceWork } from './api/works'
 import { decodeImageFile, type DecodedImage } from './image/decode'
 import { resizeBitmap } from './image/resize'
 import { fitToLimit, probeLimit } from './render/limits'
 import { applyDeltas, ZERO, type Adjustments } from '../shared/adjustments.ts'
-import { buildExportBlob, buildFilename, canShareImage, downloadImage, shareImage } from './export/save'
+import {
+  blobToDataUrl, buildExportBlob, buildFilename, canShareImage, downloadImage, shareImage,
+} from './export/save'
 import { prepareForModel, prepareForRouting, type Sizable } from './image/prepare'
 import { ApiError, postEdit, postRoute, postSuggest } from './api/client'
 import { bitmapsToClose, attachThumb, jumpTo, pushSnapshot, type Snapshot } from './core/history'
@@ -142,6 +145,18 @@ export default function App() {
   const picking = pending !== null
   const marker = pending?.marker ?? null
   const pendingText = pending?.text ?? null
+
+  /** 这一趟修图（同一张上传的照片）里，上一次存进去的是哪个。
+   *  **换图时清零** —— 它记的是"这张照片"，换一张就该重新问（§3.4）。 */
+  const [savedId, setSavedId] = useState<number | null>(null)
+  /** 非 null = 正在问"上次那张要替换掉吗"，手里攥着刚做好的那张图。 */
+  const [asking, setAsking] = useState<{ blob: Blob; name: string } | null>(null)
+  /** 存失败时把图和名字留在这儿 —— **它是那个「下载到电脑」按钮的全部依据**（§6.6 ①）。
+   *  ⚠️ `blob` 为 null 是**另一种失败**：图根本没做出来（`buildExportBlob` 那步就炸了）。
+   *  那时候没有东西能给用户，说的话也不能是"图还在" —— 那是骗人（他会去找一个
+   *  屏幕上根本不存在的按钮）。 */
+  const [saveFail, setSaveFail] =
+    useState<{ blob: Blob | null; name: string; why: string } | null>(null)
 
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const originalFileRef = useRef<File | null>(null)
@@ -342,6 +357,9 @@ export default function App() {
       // 点选那套状态跟对话是同一趟的东西：换张照片就该一起归零，
       // 否则上一张照片的红圈和"原来那句话"会跟到新照片上。
       setPending(null)
+      // 「上次那张要替换掉吗」记的是**这张照片**那一趟 —— 换了一张，
+      // 那个"上次那张"就不存在了，再问就是拿别人的图问（§3.4）。
+      setSavedId(null)
 
       // 原图自己也算一步，挂在欢迎语那条消息上 —— 这样「回到这一步」
       // 能回到最开始，撤销第一次生成时特别有用。
@@ -507,27 +525,27 @@ export default function App() {
     setParams(target.params)
   }, [history, cancelPick])
 
-  // 导出：画布尺寸就是当前 base 的尺寸。调色不缩图（spec §4.4）。
+  // 分享：画布尺寸就是当前 base 的尺寸。调色不缩图（spec §4.4）。
   //
   // 用户在真机上跑完 30 秒那条线后的原话：「下载后用户第一时间是不知道在哪里的」
   // —— 时间够了，但那一段让人心里没底。所以能分享的设备多给一个「分享」：
   // 点一下弹系统面板、一步选微信，跳过"翻文件管理器找图"。
   //
-  // **两个按钮各传各的**，不做"能分享就一律分享"：用户明确说过有时候就是
-  // 不想分享（「那有时候不想立即分享也得分享喽」）。分享失败才退回下载 ——
-  // 用户点的是"把图给我"，分享只是其中一种给法，失败不该让他两手空空。
-  const deliver = useCallback(async (wantShare: boolean) => {
+  // ⚠️ **这条路现在只做分享**（2026-09-25 / Task 13）。它以前还兼着
+  // 「保存 = 老老实实下载」那一半，而 §3.4 把那一半搬走了：保存现在走 `onSave`
+  // 存进作品集，不再偷偷下载。原来那个 `wantShare` 参数和它的早退分支
+  // （`if (!wantShare || !canShare) downloadImage(...)`）**已经删掉** ——
+  // 留着会让下一个读代码的人以为保存还会下载。
+  // 下面 catch 里的"退回下载"**留着**：用户点的是"把图给我"，分享只是其中一种
+  // 给法，失败不该让他两手空空（用户明确说过有时候就是不想分享）。
+  const onShare = useCallback(async () => {
     const canvas = canvasElRef.current
     const file = originalFileRef.current
     if (!canvas || !file) return
-    setDelivering(wantShare && canShare ? 'share' : 'save')
+    setDelivering('share')
     try {
       const blob = await buildExportBlob(canvas, file, 'image/jpeg', 0.95)
       const name = buildFilename(file.name, 'image/jpeg')
-      if (!wantShare || !canShare) {
-        downloadImage(blob, name)
-        return
-      }
       try {
         await shareImage(blob, name)
       } catch (e) {
@@ -537,12 +555,112 @@ export default function App() {
         downloadImage(blob, name)
       }
     } catch (e) {
+      // 走到这儿只剩一种可能：`buildExportBlob` 自己失败了（图都没做出来），
+      // 那时候也没有能退回下载的东西。
       console.error(e)
-      alert('保存失败，再试一次')
+      alert('分享失败，再试一次')
     } finally {
       setDelivering(null)
     }
-  }, [canShare])
+  }, [])
+
+  // ── 「保存」= 存进作品集（Task 13，§3.4）──────────────────────────────
+  //
+  // ⚠️ 这条路**一个字节都不下载**。下载挪到作品集里，由用户自己决定要哪张、
+  //    存到哪 —— 设一个"默认开"的开关很别扭，因为**用户一开始根本不知道有
+  //    那么个开关**；顺带也不再偷偷往他的下载文件夹堆东西。
+  //
+  //    代价是：**存不进去的时候，改好的图就只在屏幕上，一关页面就没了**。
+  //    而那一刻他要的是"拿到图去发朋友圈"。所以下面那条失败路径上必须当场
+  //    给一个「下载到电脑」—— §6.6 ①，§10 点名它「最容易漏」。
+
+  /**
+   * 存一次。`replaceId` 非 null = 替换掉那一张，null = 新存一张。
+   *
+   * ⚠️ **故意不收 `name`。** 文件名只对"下载到电脑"和失败时那句话有意义，
+   *    存这一路用不上它 —— 服务端那份 `WorkInput` 只有 image / thumb / recipe，
+   *    名字是详情页「改名」那条路管的（`renameWork`）。计划里那一版签名带着
+   *    `name` 而从头到尾没读过它，`noUnusedParameters` 会当场红。
+   */
+  const saveOnce = useCallback(async (blob: Blob, replaceId: number | null) => {
+    const canvas = canvasElRef.current
+    // 缩略图是**顺手带的**：生成失败不该让整张图存不进去（裁定 ②）
+    let thumb: string | undefined
+    try {
+      if (canvas) thumb = makeThumbnail(canvas)
+    } catch (e) {
+      console.error('缩略图没做出来，这张作品将没有缩略图：', e)
+    }
+    // ★ 配方里的原话 = 用户在屏幕上说过的那些话（裁定 ④）。
+    //   `role: 'user'` 有**两个**来源，两个都该在这里：`send`（他敲进去的那句）
+    //   和 `onCard`（**点建议卡片** —— 他点了「亮一点」，那就是他说了「亮一点」，
+    //   把卡片标签记成用户消息是**对的**，不是 bug）。
+    //   **不记 `editPrompt`** —— 那是给图片模型的英文 prompt，是我们的实现细节。
+    const recipe = {
+      params,
+      edits: messages.filter(m => m.role === 'user').map(m => m.text),
+    }
+    const body = { image: await blobToDataUrl(blob), thumb, recipe }
+    if (replaceId !== null) {
+      await replaceWork(replaceId, body)
+    } else {
+      const { id } = await createWork(body)
+      setSavedId(id)
+    }
+    // 说一句"存好了" —— 走现有的 `say()`（它追加的是 `role: 'assistant'`），
+    // 不新加一套提示机制，也**绝不能**用 `setMessages` 手写一条 `role: 'user'`：
+    // 那会当场变成"用户说过的原话"，混进上面那份配方里。
+    say('存好了，在左边「作品」里。')
+    // ⚠️ 上面那句就是 `say` 必须进依赖表的原因 —— 漏了它，`saveOnce` 会闭包住
+    //    旧的那一份（本项目栽过好几次的那个形状）。
+  }, [params, messages, say])
+
+  const onSave = useCallback(async () => {
+    const canvas = canvasElRef.current
+    const file = originalFileRef.current
+    if (!canvas || !file) return
+    setDelivering('save')
+    setSaveFail(null)
+    const name = buildFilename(file.name, 'image/jpeg')
+    // ⚠️ 声明在 try 外面、留着 null：它同时是"图做出来了没有"的标记，
+    //    catch 里要靠它决定能不能给用户一个「下载到电脑」（§6.6 ①）。
+    let blob: Blob | null = null
+    try {
+      blob = await buildExportBlob(canvas, file, 'image/jpeg', 0.95)
+      if (savedId !== null) {
+        // 同一张照片改过好几遍了 —— 问一句。不问的话改了 5 遍就是 5 张
+        // 几乎一样的图，作品集立刻没法看（§3.4）。
+        setAsking({ blob, name })
+        return
+      }
+      await saveOnce(blob, null)
+    } catch (e) {
+      console.error(e)
+      // ★★ §6.6 ①：那一刻他的目的是"拿到图去发朋友圈"。存不进去是**我们这边的
+      //    限制**，不该让他连图都拿不到。所以把 blob 留下来，界面上出现一个
+      //    能下载的按钮。`blob` 还是 null 就是**另一种失败**（图都没做出来），
+      //    那种情况下没有东西可以给，说的话也不一样 —— 见下面那段。
+      setSaveFail({ blob, name, why: e instanceof Error ? e.message : '没存进去' })
+    } finally {
+      setDelivering(null)
+    }
+  }, [savedId, saveOnce])
+
+  /** 回答「上次那张要替换掉吗」：`replaceId` 非 null = 替换，null = 再存一张。
+   *  两条回答走**同一段代码**，只有那一个参数不同 —— 分开写两份的话，
+   *  「存失败怎么办」那一半迟早只在其中一份里改。 */
+  const answerAsk = useCallback((replaceId: number | null) => {
+    const cur = asking
+    if (!cur) return
+    setAsking(null)
+    setDelivering('save')
+    void saveOnce(cur.blob, replaceId)
+      .catch((e) => setSaveFail({
+        blob: cur.blob, name: cur.name,
+        why: e instanceof Error ? e.message : '没存进去',
+      }))
+      .finally(() => setDelivering(null))
+  }, [asking, saveOnce])
 
   /**
    * 给刚推入的那一步补缩略图。
@@ -633,13 +751,14 @@ export default function App() {
                     navigator.share 但不认图片，留一个点了弹不出东西的按钮更糟。
                     它不出现时，「保存」顶上当主按钮。 */}
                 {canShare && (
-                  <button className="primary" onClick={() => deliver(true)} disabled={delivering !== null}>
+                  <button className="primary" onClick={() => onShare()} disabled={delivering !== null}>
                     {delivering === 'share' ? '准备中…' : '分享'}
                   </button>
                 )}
+                {/* 「保存」= 存进作品集（§3.4）—— 它不再下载，所以走的是 `onSave`。 */}
                 <button
                   className={canShare ? '' : 'primary'}
-                  onClick={() => deliver(false)}
+                  onClick={onSave}
                   disabled={delivering !== null}
                 >
                   {delivering === 'save' ? '准备中…' : '保存'}
@@ -647,6 +766,47 @@ export default function App() {
               </div>
             )}
           </header>
+
+          {/* 「上次那张要替换掉吗？」（§3.4）—— 同一张照片存第二次才会出现。
+              ⚠️ **不放进 `.topbar`**：那一条是 `justify-content: space-between`
+              的一行，塞进去会把品牌名和那两个按钮挤成一团（`check:layout` 量的
+              正是顶栏会不会被挤爆）。贴在顶栏**下面**也就贴在用户刚按的那个
+              按钮的正下方 —— 问他话的地方就是他按的地方。 */}
+          {asking && (
+            <div className="ask">
+              <p>上次那张要替换掉吗？</p>
+              <button onClick={() => answerAsk(savedId)}>替换</button>
+              <button onClick={() => answerAsk(null)}>再存一张</button>
+            </div>
+          )}
+
+          {/* 存不进去（§6.6 ①）：**改好的图只在屏幕上**，所以当场给一个能拿到它
+              的按钮。§10 说这条最容易漏 —— 漏了的话用户一关页面，那张图就没了，
+              而他那一刻要的是发朋友圈；存不下是**我们这边的限制**。 */}
+          {saveFail && (
+            <div className="save-fail">
+              {/* §6.6 ②：明确告诉他，不含糊 —— 只说"存不进去"他会以为图也没了。
+                  ⚠️ **两种失败要分两句话说。** `blob` 为 null 意味着图**根本没做出来**
+                  （`buildExportBlob` 那步就炸了），这时候说"图还在"是**假的** ——
+                  用户会去找一个屏幕上根本不存在的按钮。有图才说"图还在，先拿到手"。
+                  变异：把下面这个三目压成永远走第一句 → 那条断言红。 */}
+              {saveFail.blob
+                ? <p>这一张没能存进作品集。图还在，先拿到手：</p>
+                : <p>这一张没能存进作品集，图也没能导出来。再点一次「保存」试试。</p>}
+              {/* 把"为什么"也说出来 —— 服务端给的那句话（「这张图太大了，存不下」）
+                  比「没存进去」有用得多。存了这个字段却从不显示，等于白存。 */}
+              <p className="save-fail-why">{saveFail.why}</p>
+              {saveFail.blob && (
+                <button
+                  className="download"
+                  onClick={() => downloadImage(saveFail.blob!, saveFail.name)}
+                >
+                  下载到电脑
+                </button>
+              )}
+              <button onClick={() => setSaveFail(null)}>知道了</button>
+            </div>
+          )}
 
           {!image && (
             <main className="stage">

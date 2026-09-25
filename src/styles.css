@@ -57,6 +57,34 @@ body {
 .brand { font-weight: 600; letter-spacing: .05em; }
 .actions { display: flex; gap: 8px; }
 
+/* ── 保存那两条路（Task 13，§3.4 / §6.6 ①）──────────────────────────
+   两块都住在顶栏**下面**、修图页最上面那一行。
+   ⚠️ 故意**不塞进 `.topbar`**：那一条是 `justify-content: space-between`
+   的一行，塞进去会把品牌名和按钮挤成一团，而 `check:layout` 量的正是
+   顶栏会不会被挤爆。它们按"一整条横幅"排：一句话 + 几个按钮，窄屏自己换行。 */
+.ask, .save-fail {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  flex: none;
+  padding: 10px 20px;
+  border-bottom: 1px solid #2a2e35;
+  background: var(--panel);
+}
+.ask p, .save-fail p { margin: 0; font-size: 13px; }
+
+/* 失败那条挂一道红边（本文件里"给字用的红"就是 #e06c75，见 .login-error）——
+   不是装饰：§6.6 ② 要的是「明确告诉他，不含糊」，而这一条得在用户刚按完
+   「保存」的那一眼里被看见。 */
+.save-fail { border-left: 3px solid #e06c75; }
+/* 那半句"为什么"（服务端给的原话）比主句淡一档 —— 主句回答"图还在不在"，
+   它回答"那到底是怎么了"。 */
+.save-fail-why { color: var(--muted); }
+/* 「下载到电脑」是这一条横幅里**真正要用户做的事**（§6.6 ①：他是来拿图的），
+   所以它是主按钮。⚠️ `.download` 这个类名同时是测试按**结构**找它的锚点
+   （`.save-fail button.download`）—— 文案只留给文案断言，别改回按文字找。 */
+.save-fail button.download {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+
 button {
   background: var(--panel); color: var(--text); border: 1px solid #2f343c;
   border-radius: 8px; padding: 6px 14px; cursor: pointer; font: inherit;

@@ -154,11 +154,23 @@ function fileToDataUrl(file: File): Promise<string> {
   })
 }
 
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((res, rej) => {
+/**
+ * Blob → data URL。
+ *
+ * 作品集那条路的图是 base64 走 JSON 的（裁定 ①），而画布那边给的是 Blob，
+ * 中间就靠这一步。`FileReader` 是浏览器自带的，不用新依赖。
+ *
+ * ⚠️ 这里**不是新写的一份**：`withExif` 一直在用它（写回 EXIF 要先拿到
+ * 原图的 data URL）。所以这个函数的失败语义两边都要成立 —— 上面那条路
+ * 有 catch（读不出来就降级成"没有 EXIF 的导出图"），作品集那条会把
+ * 这句话直接说给用户听，所以 onerror 给的是一句人话。
+ */
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
     const r = new FileReader()
-    r.onload = () => res(r.result as string)
-    r.onerror = () => rej(r.error)
+    r.onload = () => resolve(String(r.result))
+    // 读不出来基本只有一种原因：这个 Blob 已经失效了。给一句人话。
+    r.onerror = () => reject(new Error('这张图读不出来，再试一次'))
     r.readAsDataURL(blob)
   })
 }
