@@ -345,6 +345,88 @@ async function judgeThumb(page, label) {
   }
 }
 
+// ── 2026-09-25 加（Task 11）：作品页的懒加载 ────────────────────────────
+//
+// §10 那张表里点名"真浏览器检查"的就是这一格：「作品多了要懒加载 | 造 500 条 →
+// 首屏**不能一次全渲染**；往下滚才取后面的」。jsdom 验不了它 —— 没有排版引擎
+// （格子一律 0×0）、没有滚动，连 IntersectionObserver 都是测试自己桩出来的。
+//
+// 数据分两半，两半的理由完全不同：
+//   ① **先走真接口放几张**（图是页面里现画的一张小 JPEG）。它们必须真被摆出来、
+//      缩略图真能解开：这一步是**下面那半假响应的守门人** —— 接口的形状要是
+//      变了（比如 `{items}` 而不是 `{works}`），假响应会跟着一起错，量出来的
+//      绿就是假的。
+//   ② 那 500 条**只能造假**：作品的日期是服务器按"此刻"写的，一次造出来的 500
+//      条全落在同一天，而 §3.5 的规矩是**按天取整**——同一天本来就该全摆出来
+//      （不然标题写着「· 500 张」而下面只有 60 张，用户会以为丢了 440 张）。
+//      所以"首屏 60"这条判据只在**跨天**的数据上成立，而今天造不出跨天的数据。
+//
+// 造出来的东西**不清理**，和上面那个临时账号一个道理：库是 dev 的、`data/` 已
+// gitignore，这条检查本来干的就是"起一个干净环境量版面"。
+const GALLERY_SEED = 3      // 走真接口放几张
+const GALLERY_FAKE = 500    // 假响应里放几条（§10 说的"造 500 条"）
+const GALLERY_FIRST = 60    // §3.5 的"先摆 60 张"，和 GalleryPage.tsx 里的 PAGE 是同一件事
+const DAY_MS = 86_400_000
+
+/** 量作品页现在长什么样。 */
+async function measureGallery(page) {
+  return page.evaluate(() => {
+    const box = el => {
+      if (!el) return null
+      const b = el.getBoundingClientRect()
+      return { w: Math.round(b.width), h: Math.round(b.height), top: Math.round(b.top) }
+    }
+    const g = document.querySelector('.gallery')
+    const more = document.querySelector('.gallery-more')
+    return {
+      cells: document.querySelectorAll('.gallery-cell').length,
+      days: document.querySelectorAll('.gallery-day').length,
+      dayTitle: document.querySelector('.gallery-day-title')?.textContent ?? null,
+      more: more ? { visible: more.getBoundingClientRect().width > 0, text: more.textContent } : null,
+      end: !!document.querySelector('.gallery-end'),
+      nav: box(document.querySelector('.nav')),
+      listScroll: g ? Math.round(g.scrollTop) : null,
+      docScroll: Math.round(window.scrollY),
+      thumbsDecoded: [...document.querySelectorAll('.gallery-thumb')]
+        .filter(i => i.naturalWidth > 0).length,
+      scrollW: document.documentElement.scrollWidth,
+      clientW: document.documentElement.clientWidth,
+    }
+  })
+}
+
+/**
+ * 判作品页的**版面**（这一条检查的全部意义就在这儿，不管内容对不对）。
+ *
+ * 最要紧的一条是 `docScroll`：作品页是长列表，列表要是**不自己滚**、让整个
+ * 文档滚，左栏那 92px 就会跟着划走、底色到一屏就断（这是 Task 10 交回去的
+ * 那半个问题）。列表自己滚的话，文档永远不滚、左栏钉在原地。
+ */
+function judgeGallery(label, m) {
+  console.log(`── ${label}`)
+  console.log(`     作品 ${m.cells} 张 / ${m.days} 天，缩略图解出 ${m.thumbsDecoded} 张` +
+    `，日期标题 ${m.dayTitle ?? '（没有）'}`)
+  console.log(`     圈：${m.more ? `在（"${m.more.text}"，可见 ${m.more.visible}）` : '没有'}` +
+    `   到底了那句：${m.end ? '说了' : '没说'}`)
+  console.log(`     文档滚了 ${m.docScroll}px，列表自己滚了 ${m.listScroll}px，` +
+    `左栏 ${m.nav ? `${m.nav.w}x${m.nav.h} @top ${m.nav.top}` : '**不在 DOM 里**'}`)
+
+  if (m.cells === 0) {
+    fails.push(`${label}：一张作品都没摆出来`)
+  }
+  // ★ 列表必须自己滚：整页滚动的话左栏跟着走
+  if (m.docScroll > TOL) {
+    fails.push(`${label}：整个文档被滚了 ${m.docScroll}px —— 作品页的列表该**自己滚**` +
+      '（.gallery 的 overflow-y: auto）；这样滚下去左栏会被划走，它的底色到一屏就断了')
+  }
+  if (!m.nav || m.nav.top < -TOL || m.nav.w < 40 || m.nav.h < 24) {
+    fails.push(`${label}：左栏不在屏幕上了（${m.nav ? `${m.nav.w}x${m.nav.h} @top ${m.nav.top}` : '不在 DOM 里'}）`)
+  }
+  if (m.scrollW > m.clientW) {
+    fails.push(`${label}：页面横向溢出，要左右滑（${m.scrollW} > ${m.clientW}）`)
+  }
+}
+
 console.log(`── 量的是 ${URL}`)
 console.log(`   ${await checkServedBuild()}`)
 
@@ -463,6 +545,111 @@ try {
         fails.push(`${view.name}：点选这条路上竟然发出了 ${editCalls.length} 次 /api/edit ——` +
           '那是花钱的（一次约 12,900 tokens），而用户还没点「就改这里」')
       }
+
+      // ── 作品页（Task 11）────────────────────────────────────────────
+      // 先在**真接口**上放几张：图是页面里现画的一张小 JPEG，不在脚本里塞一串
+      // 几百个字符的 base64（那一串没人看得出是什么）。
+      const seeded = await page.evaluate(async (n) => {
+        const c = document.createElement('canvas')
+        c.width = c.height = 64
+        const g = c.getContext('2d')
+        g.fillStyle = '#4c8dff'; g.fillRect(0, 0, 64, 64)
+        g.fillStyle = '#14161a'; g.fillRect(16, 16, 32, 32)
+        const image = c.toDataURL('image/jpeg', 0.6)
+        const out = []
+        for (let i = 0; i < n; i++) {
+          const r = await fetch('/api/works', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ image, thumb: image }),
+          })
+          const body = await r.json().catch(() => null)
+          out.push(r.status === 200 && body ? body.id : `HTTP ${r.status}`)
+        }
+        return out
+      }, GALLERY_SEED)
+      if (seeded.some(x => typeof x !== 'number')) {
+        fails.push(`${view.name}：走真接口放作品没成功（${seeded.join('/')}）—— ` +
+          '后面那条懒加载的判据就没有能信的数据了')
+      }
+
+      await page.goto(`${URL}/works`, { waitUntil: 'load' })
+      await page.waitForSelector('.gallery-cell', { timeout: 15_000 })
+      // 缩略图是**一张张取**的（§3.5 的"图片柜"）：等它们都落地再判
+      await page.waitForFunction(
+        () => [...document.querySelectorAll('.gallery-thumb')].every(i => i.complete),
+        null, { timeout: 10_000 }).catch(() => { /* 解不开的会在下面那条里报出来 */ })
+      const real = await measureGallery(page)
+      judgeGallery(`${view.name} · 作品页（真接口放的 ${GALLERY_SEED} 张）`, real)
+      if (real.cells !== GALLERY_SEED) {
+        fails.push(`${view.name}：真接口放了 ${GALLERY_SEED} 张作品，页面上却摆出来 ${real.cells} 张`)
+      }
+      if (real.thumbsDecoded === 0) {
+        fails.push(`${view.name}：一张缩略图都没解开（.gallery-thumb 的 naturalWidth 全是 0）——` +
+          '列表上那些图根本没取到')
+      }
+      if (!real.end) {
+        fails.push(`${view.name}：作品全摆完了，却没有那句「没有更多了」`)
+      }
+
+      // 500 条：**只能造假**（理由见上面那段长注释）。id 故意用不存在的 ——
+      // 那些格子里的图会是 404，而这段量的是版面：格子不该因为图取不到就塌掉
+      // （.gallery-thumb 的 aspect-ratio 就是干这个的）。
+      const fake = Array.from({ length: GALLERY_FAKE }, (_, i) => {
+        // ⚠️ 隔两天排：有夏令时的时区里"差一天"可能落回同一个"天"，
+        //    那样 60 组里会有多于 60 张，这条判据就会莫名其妙地红
+        const t = Date.now() - i * 2 * DAY_MS
+        return { id: 100000 + i, alias: null, createdAt: t, updatedAt: t, bytes: 1234, hasThumb: true }
+      })
+      await page.route('**/api/works', r => (r.request().method() === 'GET'
+        ? r.fulfill({
+            status: 200, contentType: 'application/json',
+            body: JSON.stringify({ works: fake }),
+          })
+        : r.continue()))
+
+      await page.goto(`${URL}/works`, { waitUntil: 'load' })
+      await page.waitForSelector('.gallery-cell', { timeout: 15_000 })
+      const first = await measureGallery(page)
+      judgeGallery(`${view.name} · 作品页（${GALLERY_FAKE} 条，刚打开）`, first)
+      // ★ §10 那一条：首屏**不能一次全渲染**
+      if (first.cells > GALLERY_FIRST) {
+        fails.push(`${view.name}：${GALLERY_FAKE} 条作品一次全渲染了（首屏 ${first.cells} 格）——` +
+          `§10 点名要防的就是这个（屏幕会卡），一次只该先摆 ${GALLERY_FIRST} 张`)
+      }
+      // ★ §3.5：「那个圈**必须转**」—— 没有它，用户会以为到底了
+      if (!first.more || !first.more.visible) {
+        fails.push(`${view.name}：还有没摆完的，屏上却没有那个"正在取…"的圈 ——` +
+          '用户会以为到底了，而不是"还在加载"')
+      }
+      if (first.end) {
+        fails.push(`${view.name}：还剩 ${GALLERY_FAKE - first.cells} 条没摆，就已经说「没有更多了」`)
+      }
+
+      // ★ 真的用**滚轮**往下滚 —— 和用户做的是同一件事。
+      //
+      // ⚠️ 不能图省事写成 `g.scrollTop = g.scrollHeight`：那样量的只是"这个元素
+      //    能不能滚"，而左边那句 `docScroll` 永远会是 0（谁也没去滚文档）——
+      //    于是"左栏会不会被划走"这条判据**永远不会红**，等于没写。
+      //    滚轮落下来由浏览器决定是列表滚还是整页滚，两个问题一次量完。
+      const box = await page.locator('.gallery').boundingBox()
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      let grew = false
+      for (let i = 0; i < 5 && !grew; i++) {
+        await page.mouse.wheel(0, 20_000)
+        try {
+          await page.waitForFunction(
+            n => document.querySelectorAll('.gallery-cell').length > n,
+            first.cells, { timeout: 3_000 })
+          grew = true
+        } catch { /* 再滚一下；五次都没接上就由下面那条报出来 */ }
+      }
+      const after = await measureGallery(page)
+      judgeGallery(`${view.name} · 作品页（滚到底之后）`, after)
+      if (!grew) {
+        fails.push(`${view.name}：滚到底了却没接上后面的（还是 ${after.cells} 格）——` +
+          '那个圈在转，可东西永远取不回来')
+      }
     } finally {
       await page.close()
     }
@@ -478,10 +665,13 @@ if (fails.length) {
   console.log('窄屏规则在 src/styles.css 末尾那条 @media (max-width: 640px)；')
   console.log('宽窄两档共用的画布容器规则是 .canvas-wrap / .canvas（文件中部）；')
   console.log('红圈的定位/大小在 src/ui/Canvas.tsx（markerSize）和 src/image/mark.ts')
-  console.log('（markerRadius，两边共用同一个公式）。')
+  console.log('（markerRadius，两边共用同一个公式）；作品页的排版在 src/styles.css 末尾那一段')
+  console.log('（.gallery 的 overflow-y: auto 就是"列表自己滚、左栏才不会被划走"那一句）。')
   process.exitCode = 1
 } else {
   console.log(`✅ ${VIEWS.length} 档 × 2 种状态都过：照片 ≥ ${MIN_LONG}x${MIN_SHORT}、` +
     `画布完整在视口内、输入框在屏内、不用左右滑、`)
   console.log('   外加：红圈圆心落在点的地方、直径按画布长边算、小图真的解得出像素（全程零付费调用）')
+  console.log(`   外加作品页：${GALLERY_FAKE} 条时首屏只摆 ${GALLERY_FIRST} 张、圈在转、` +
+    '滚到底真的接上后面的、整页不滚（左栏钉在原地）')
 }

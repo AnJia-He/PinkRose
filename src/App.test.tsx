@@ -145,6 +145,32 @@ function makeGate() {
   return { promise, open }
 }
 
+// ── 假扮：IntersectionObserver（jsdom 里没有这个浏览器能力）─────────────
+// 作品页靠它知道"用户滚到底了"，而"滚动"在 jsdom 里根本演不出来 —— 所以这里
+// 给一个**能被测试按下去**的假的：记下谁在观察，测试想演"滚到底了"就按一下。
+/** 现在活着的观察者。`beforeEach` 要清空 —— 上一条用例的组件已经卸载了。 */
+const ioObservers: { cb: (entries: { isIntersecting: boolean }[]) => void }[] = []
+/** 演"用户滚到底了"：把那条通知递给每一个还活着的观察者。 */
+function scrollToEnd() {
+  for (const o of [...ioObservers]) o.cb([{ isIntersecting: true }])
+}
+class FakeIntersectionObserver {
+  cb: (entries: { isIntersecting: boolean }[]) => void
+  constructor(cb: (entries: { isIntersecting: boolean }[]) => void) {
+    this.cb = cb
+    ioObservers.push(this)
+  }
+  observe() {}
+  unobserve() {}
+  /** ⚠️ 必须**真的**注销：React 每次重设观察者都会先断开上一个，
+   *  不生效的话按一下"滚到底"会把那个已经作废的回调一起点火 —— limit 加两倍，
+   *  而"一次滚到底到底接了多少张"正是这条要测的东西。 */
+  disconnect() {
+    const i = ioObservers.indexOf(this)
+    if (i >= 0) ioObservers.splice(i, 1)
+  }
+}
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body),
     { status, headers: { 'content-type': 'application/json' } })
@@ -232,6 +258,12 @@ beforeEach(() => {
       meUser = { id: 1, username: body.username, email: body.email ?? 'a@b.com' }
       return jsonResponse({ user: meUser })
     }
+    // 作品列表（Task 11）：默认这个账号**还没有作品** —— 切导航那几条会走到作品页，
+    // 而"接口根本没接上"（下面那句兜底的 blob 形状）会让它显示一句读取失败。
+    // 要测有作品的样子，各用例自己用 withWorks 盖上一条真的。
+    if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') {
+      return jsonResponse({ works: [] })
+    }
     // 别的都是生成回来的那张图：fetch(url) -> blob -> createImageBitmap
     return { blob: async () => new Blob(['x']) }
   })
@@ -245,6 +277,11 @@ beforeEach(() => {
       width: src.width, height: src.height,
       __tag: `marked:${(src as { __tag?: string }).__tag}`,
     }) as unknown as HTMLCanvasElement))
+
+  // 作品页那条"滚到底再取 60 张"（Task 11）。清空上一批观察者 —— 它们的组件
+  // 已经卸载了，留着的话一条"滚到底"会同时点火到已经不存在的树上。
+  ioObservers.length = 0
+  vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
 
   vi.mocked(api.postSuggest).mockResolvedValue({ cards: [], degraded: false })
 
@@ -1166,8 +1203,9 @@ describe('左栏导航：切界面不丢工作', () => {
       window.dispatchEvent(new PopStateEvent('popstate'))
       await new Promise(r => setTimeout(r, 0))
     })
-    // 真的切了 —— 用 .placeholder 正面确认是**作品页那一支**，不是"两边都没了"
-    expect(container.querySelector('.placeholder')).toBeTruthy()
+    // 真的切了 —— 用 .gallery 正面确认是**作品页那一支**，不是"两边都没了"
+    // （Task 11 之前这儿是 .placeholder，作品页换成真组件之后它就是 .gallery）
+    expect(container.querySelector('.gallery')).toBeTruthy()
     expect(container.querySelector('.workspace')).toBeNull()
 
     // 再按一次前进（或者后退），回到修图页 —— 两个方向都得跟
@@ -1177,7 +1215,7 @@ describe('左栏导航：切界面不丢工作', () => {
       await new Promise(r => setTimeout(r, 0))
     })
     expect(container.querySelector('.workspace')).toBeTruthy()
-    expect(container.querySelector('.placeholder')).toBeNull()
+    expect(container.querySelector('.gallery')).toBeNull()
   })
 
   it('★ 已经在作品页再点一次「作品」—— 不该多推一条历史（后退要退一次，不是退两次）', async () => {
@@ -1201,8 +1239,107 @@ describe('左栏导航：切界面不丢工作', () => {
     // （地址在 beforeEach 里已经被摆回 '/' 了，所以这一步是"用户此刻打开的是这条"。）
     history.replaceState(null, '', '/works')
     await renderApp()
-    expect(container.querySelector('.placeholder')).toBeTruthy()   // 落在作品页
+    expect(container.querySelector('.gallery')).toBeTruthy()   // 落在作品页
     expect(container.querySelector('.workspace')).toBeNull()       // 不是修图页
     expect(container.querySelector('.nav-item.on')?.textContent).toBe('作品')
+  })
+})
+
+/**
+ * 2026-09-25 加（Task 11）。**第一眼能看见作品的那个界面**（spec §3.5 ③）：
+ * 按天分组 / 先摆 60 张 / 能搜。
+ *
+ * 这一层守的三件事都是用户看得见的：
+ *   ① 500 张不能一次全摆出来 —— §10 点名的"屏幕会卡"；
+ *   ② 没起名字时名字就是时间，所以搜「9月25」等于按日期搜（§3.5 的"一个机制两种用法"）；
+ *   ③ 一张都没有时说的是一句**有出路**的话，不是白屏（§3.7）。
+ */
+describe('作品页：先摆 60 张、按天分组、名字就是时间', () => {
+  /** 给 fetch 加上"取作品列表"这一条路。**只加不改** —— 别的请求仍然走原来的实现。 */
+  function withWorks(works: unknown[]) {
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') return jsonResponse({ works })
+      return inner(url, init)
+    })
+  }
+
+  const WORK = (id: number, updatedAt: number, alias: string | null = null) =>
+    ({ id, alias, createdAt: updatedAt, updatedAt, bytes: 100, hasThumb: true })
+
+  /**
+   * 500 张作品，**一天一张**（隔两天排 —— 有夏令时的时区里差一天可能落回同一个"天"）。
+   *
+   * ⚠️ 为什么不是"1 毫秒一张"那种写法（那样 500 张全在同一天）：§3.5 的规矩是
+   * **按天取整、不在一天中间截断**（「9月25日 · 200 张」而下面只摆了 60 张 =
+   * 用户会以为丢了 140 张），所以**同一天**的 500 张本来就该全摆出来 —— 用那种
+   * 数据量到的会是 500。§10 那句「500 条 → 首屏不能一次全渲染」只有在**跨天**
+   * 时才成立。
+   */
+  const manyWorks = () => Array.from(
+    { length: 500 }, (_, i) => WORK(i + 1, 1_700_000_000_000 - i * 2 * 86_400_000))
+
+  /**
+   * 往搜索框里打字。
+   *
+   * ⚠️ 直接写 `box.value = '…'` 再派一个 input 事件**不行**：React 18 给受控输入
+   * 挂了自己的 value tracker，而 `el.value = x` 走的正是 React 那个 setter ——
+   * tracker 跟着一起更新，于是 React 认为"值没变"、onChange 一次都不调。
+   * 实测（brief 的字面写法）：搜完之后两个格子全都还在，这条断言红在"2 ≠ 1"。
+   * 得用**原型上的 setter** 绕过去值才真的"变"了（登录页那条同理，
+   * 见「登录这道门」里的 type()）。
+   */
+  async function typeIn(box: HTMLInputElement, text: string) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(box, text)
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  it('★ 作品页：先摆 60 张，不是 500 张一起渲染', async () => {
+    // §10 点名的：造 500 条 → 首屏不能一次全渲染，不然屏幕会卡
+    withWorks(manyWorks())
+    await renderApp()
+    await goNav('作品')
+
+    expect(container.querySelectorAll('.gallery-cell').length).toBeLessThanOrEqual(60)
+    expect(container.textContent).not.toContain('没有更多了')   // 还有没摆的，所以圈还在转
+  })
+
+  it('★ 滚到底 → 再接 60 张（那个圈不能只是画出来的）', async () => {
+    // §3.5 原话：「**那个圈必须转。** 没有它，用户会以为**到底了**，而不是"还在加载"」。
+    // 所以这条要的不只是"圈在屏幕上"，而是**它真的接上了后面那些天** ——
+    // 圈转着、却再也接不上东西，比没有圈更糟：用户会一直等下去。
+    withWorks(manyWorks())
+    await renderApp()
+    await goNav('作品')
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(60)
+
+    await act(async () => {
+      scrollToEnd()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(120)
+  })
+
+  it('★ 搜「9月25」能找到那天做的图 —— 没起名时名字就是时间（§3.5）', async () => {
+    const day = new Date('2026-09-25T14:30:00').getTime()
+    withWorks([WORK(1, day), WORK(2, new Date('2026-08-01T10:00:00').getTime())])
+    await renderApp()
+    await goNav('作品')
+
+    const box = container.querySelector('.gallery-search') as HTMLInputElement
+    await typeIn(box, '9月25')
+    expect(container.querySelectorAll('.gallery-cell').length).toBe(1)
+  })
+
+  it('一张作品都没有时，说的是一句有出路的话，不是白屏', async () => {
+    withWorks([])
+    await renderApp()
+    await goNav('作品')
+    expect(container.querySelector('.gallery')).toBeTruthy()
+    expect(container.textContent).toContain('还没有作品')
   })
 })

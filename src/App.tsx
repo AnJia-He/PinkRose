@@ -4,6 +4,7 @@ import Uploader from './ui/Uploader'
 import AdjustmentPanel from './ui/AdjustmentPanel'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import { LoginPage } from './ui/LoginPage'
+import { GalleryPage } from './ui/GalleryPage'
 import { Nav } from './ui/Nav'
 import { pathOf, viewFromPath, type View } from './ui/view'
 import { me, type AccountUser } from './api/account'
@@ -696,10 +697,12 @@ export default function App() {
         </div>
       )}
 
-      {/* ⚠️ 这两个是**占位**：Task 11 / Task 12 才建真的作品页和详情页，这一步先用
-          一个元素让 typecheck 过（`view.kind` 的三个分支必须都有人接）。别把它做成
-          一个像样的界面 —— 换掉的时候得一眼看出这几行是临时工。 */}
-      {view.kind === 'gallery' && <div className="placeholder">作品</div>}
+      {/* 作品页（Task 11）：按天分组、先摆 60 张、名字就是时间所以搜日期也能搜到。
+          `onOpen` 只把 id 交出去 —— 拼网址那条规则仍然只有一份（ui/view.ts），
+          组件自己不认识"网址"这回事。 */}
+      {view.kind === 'gallery' && <GalleryPage onOpen={(id) => go({ kind: 'work', id })} />}
+      {/* ⚠️ 这个是**占位**：Task 12 才建真的详情页。别把它做成一个像样的界面 ——
+          换掉的时候得一眼看出这几行是临时工。 */}
       {view.kind === 'work' && <div className="placeholder">作品 #{view.id}</div>}
     </div>
   )

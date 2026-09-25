@@ -68,20 +68,24 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   return parsed as T
 }
 
-/** 写接口。今天三个 AI 接口和账号那几个都在用。 */
-export async function post<T>(path: string, body: unknown): Promise<T> {
+/** 四个动词只差一个 method 和一个 body —— 抽出来，"带不带 cookie"仍然只有一处说了算 */
+function send<T>(method: string, path: string, body?: unknown): Promise<T> {
   return request<T>(path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    method,
+    ...(body === undefined
+      ? {}
+      : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
   })
 }
 
-/** 读接口（今天只有 `/api/me` 用，但它不该是内联在账号模块里的一句 fetch ——
- *  那样 cookie 和错误翻译这两件事就又有了第二个说法）。 */
-export async function get<T>(path: string): Promise<T> {
-  return request<T>(path, { method: 'GET' })
-}
+/** 写接口。今天三个 AI 接口和账号那几个都在用。 */
+export const post = <T>(path: string, body: unknown): Promise<T> => send<T>('POST', path, body)
+/** 读接口（今天 `/api/me` 和作品列表用）。它不该是内联在账号模块里的一句 fetch ——
+ *  那样 cookie 和错误翻译这两件事就又有了第二个说法。 */
+export const get = <T>(path: string): Promise<T> => send<T>('GET', path)
+export const patch = <T>(path: string, body: unknown): Promise<T> => send<T>('PATCH', path, body)
+export const put = <T>(path: string, body: unknown): Promise<T> => send<T>('PUT', path, body)
+export const del = <T>(path: string): Promise<T> => send<T>('DELETE', path)
 
 export async function postRoute(o: RouteRequest): Promise<RouteDecision> {
   const r = await post<RouteResponse>('/api/route', o)

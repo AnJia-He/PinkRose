@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { postEdit, postRoute, postSuggest, ApiError } from './client'
+import { postEdit, postRoute, postSuggest, patch, put, del, ApiError } from './client'
 import { ZERO } from '../../shared/adjustments.ts'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -83,5 +83,38 @@ describe('postEdit', () => {
     expect(typeof sent.width).toBe('number')
     expect(typeof sent.height).toBe('number')
     expect(res.width).toBe(1024)
+  })
+})
+
+/**
+ * 作品集那一组要的三个动词（Task 11 抽出来的 `send`）。
+ *
+ * 它们今天**还没有人调**（改名 / 替换 / 删除要等 Task 12、13 的界面接上），
+ * 而方法名或路径写错的显形方式特别难查：不是报错，是那个界面上"点了没反应"。
+ * 所以这里钉的是打出去的到底是哪个动词。变异：把 `send('PUT', …)` 写成
+ * `send('POST', …)`…… 这条立刻红，而后端那条路由是精确匹配，真跑到就是 404。
+ */
+describe('patch / put / del', () => {
+  it('PATCH 和 PUT 带 JSON 体，走各自的方法', async () => {
+    const calls = stubFetch(200, {})
+    await patch('/api/works/7', { alias: '海边的日落' })
+    expect(calls[0].url).toBe('/api/works/7')
+    expect(calls[0].init.method).toBe('PATCH')
+    expect((calls[0].init.headers as Record<string, string>)['content-type']).toContain('application/json')
+    expect(sentBody(calls[0])).toEqual({ alias: '海边的日落' })
+
+    await put('/api/works/7', { image: 'data:image/jpeg;base64,AA' })
+    expect(calls[1].init.method).toBe('PUT')
+    expect(sentBody(calls[1]).image).toBe('data:image/jpeg;base64,AA')
+  })
+
+  it('DELETE 不带请求体 —— 没有体就不该有 content-type 那套头', async () => {
+    // 后端那条 DELETE 明确**不读请求体**（读了会挂住等一个永远不会来的流）。
+    // 变异：给它也塞一个 `{}`（"四个动词长得一样"最顺手的写法）→ 这条红。
+    const calls = stubFetch(200, { ok: true })
+    await del('/api/works/7')
+    expect(calls[0].init.method).toBe('DELETE')
+    expect(calls[0].init.body).toBeUndefined()
+    expect(calls[0].init.headers).toBeUndefined()
   })
 })

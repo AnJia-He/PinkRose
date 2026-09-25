@@ -263,3 +263,89 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .login-submit:disabled { opacity: .5; cursor: default; }
 .login-switch { border: 0; background: none; color: inherit; opacity: .7; font-size: 13px; cursor: pointer; }
 .app-loading { display: flex; align-items: center; justify-content: center; height: 100vh; opacity: .6; }
+
+/* ── 作品页（Task 11） ────────────────────────────────────────────
+   它和修图页是**两种版面**：修图页一屏锁死（那是 .app 的 overflow: hidden 管的），
+   作品页是一张长列表，所以它**自己滚**（下面那条 overflow-y: auto）——
+   这正是 .shell 那段注释留的口子（"作品页的长列表要自己滚"）。
+
+   不自己滚会怎样：`.shell` 只是"一屏高"、并没有裁切，列表撑出去的那部分是
+   **整个文档**在滚 —— 左栏那 92px 跟着一起往上走，它的底色到一屏就断了
+   （手机上更明显：左栏在顶上，划两下整个不见了）。让列表自己滚之后，
+   文档永远不滚，左栏就钉在原地。 */
+.gallery {
+  flex: 1; min-width: 0; min-height: 0;
+  overflow-y: auto;
+  padding: 0 20px 24px;
+}
+
+/* 标题和搜索框滚上去就找不回来了 —— 500 张要翻很久，想再搜一次不该先划回
+   最顶上。sticky 必须自己带底色（不然下面的图会从字缝里透出来），
+   而 .gallery 的上内边距只能是 0：留白那一圈会露出滚过去的内容。 */
+.gallery-head {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+  padding: 16px 0 12px;
+  background: var(--bg);
+  border-bottom: 1px solid #2a2e35;
+}
+.gallery-title { margin: 0; font-size: 20px; }
+/* 输入框照 .chat-input input 那套（底色 #14161a、边框 #2f343c），
+   主色只在聚焦时出现 —— 这一页的重点是那些图，不是搜索框。 */
+.gallery-search {
+  flex: 1; min-width: 200px;
+  background: #14161a; color: var(--text); font: inherit;
+  border: 1px solid #2f343c; border-radius: 8px; padding: 8px 12px;
+}
+.gallery-search:focus { outline: none; border-color: var(--accent); }
+
+.gallery-day { margin-top: 18px; }
+/* 日期比图小、比图淡：它是**分组线**，不是内容。 */
+.gallery-day-title { margin: 0 0 10px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+/* 一格先**给图留好方框**（aspect-ratio）：图是 loading="lazy" 一张张跳出来的，
+   不留框的话每张加载完都会把后面的格子推一下，60 张就是 60 次抖动。 */
+.gallery-cell {
+  display: block; width: 100%;
+  padding: 0; border: 0; border-radius: 8px; background: none;
+  text-align: left; cursor: pointer;
+}
+/* 键盘用户要一路 Tab 过 60 格，得看得见自己停在哪。 */
+.gallery-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gallery-thumb {
+  display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: cover;
+  border: 1px solid #2f343c; border-radius: 8px; background: #262b33;
+}
+.gallery-cell:hover .gallery-thumb { border-color: var(--accent); }
+/* 名字可能是用户起的长名字：撑歪格子会把整行挤变形，所以一行截断。 */
+.gallery-name {
+  display: block; margin-top: 6px; font-size: 12px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gallery-cell:hover .gallery-name { color: var(--text); }
+
+/* ⚠️ 那个圈**必须转**（§3.5）：没有它，用户会以为到底了，而不是"还在加载"。
+   纯 CSS 画一个（零依赖、也不用引一张图），转得慢一点 —— 它转得快会像卡住。 */
+.gallery-more {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 18px 0; color: var(--muted); font-size: 13px;
+}
+.gallery-more::before {
+  content: ''; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid #3a4048; border-top-color: var(--accent);
+  animation: gallery-spin .8s linear infinite;
+}
+@keyframes gallery-spin { to { transform: rotate(360deg); } }
+.gallery-end { margin: 0; padding: 18px 0 0; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* 三种"还没有图"的状态：**都没有图，说的却是三件不同的事**（还没拿到 /
+   一张都没有 / 筛掉了），所以各是各的句子，别合成一句。 */
+.gallery-loading, .gallery-none { margin: 24px 0 0; color: var(--muted); }
+.gallery-empty { margin-top: 48px; text-align: center; color: var(--muted); }
+.gallery-hint { margin: 6px 0 0; font-size: 13px; }
+.gallery-error { margin: 24px 0 0; color: #e06c75; }
