@@ -200,6 +200,11 @@ export function handleRenameWork(
   const raw = asObject(body).alias
   // `null` / 空串 / 全空白，都是"把名字清掉、改回用时间当名字"——
   // 那是个**有意义的状态**（§3.5），不是缺数据，所以存 null 而不是空串
+  //
+  // ⚠️ **没有 `alias` 这个键**（送的是 `{}`）也走同一条路 = **清名字**。这是个**选定的语义**，
+  // 不是漏判：这个 PATCH 只改一样东西，所以 `{}` 和 `{ alias: null }` 等价是说得通的
+  // ——"没给名字"就是"没有名字"。写在这儿，下一个读的人不用自己猜。
+  // 同理，`alias` 不是字符串时（数字、布尔）也会被 `str` 当成空串，一样是清名字。
   const alias = raw === null || raw === undefined ? null : (str(raw).trim().slice(0, MAX_ALIAS) || null)
   // ⚠️ **只改 alias，不碰 updated_at**（见上面那段说明）
   deps.db.raw.prepare('UPDATE works SET alias = ? WHERE id = ? AND user_id = ?')

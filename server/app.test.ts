@@ -563,3 +563,35 @@ describe('列表：路由真的接上了', () => {
     expect(await r.json()).toEqual({ works: [] })
   })
 })
+
+describe('详情与改名：路由真的接上了', () => {
+  it('GET 没登录 → 401；登录了、id 不存在 → 404（而且是"没有这张作品"，不是"没有这个接口"）', async () => {
+    // 和上面那条列表一样，守的**只是接线**：把 app.ts 里那两块删掉、或者方法或路径敲错，
+    // 别处一条都不会红。数据隔离那半归 works.test.ts（「改别人的名字 → 当它不存在」），
+    // 一个不带 `WHERE user_id` 的实现也能过这条 —— 没关系，两件事各归各的用例。
+    const { base, cookie } = await appWithUser()
+
+    expect((await fetch(`${base}/api/works/1`)).status).toBe(401)
+
+    const r = await fetch(`${base}/api/works/1`, { headers: { cookie } })
+    expect(r.status).toBe(404)
+    // ★ 光有 404 不够：路由**整块不见**的时候，兜底那句也是 404。两句文案不一样 ——
+    // 这里点的是 handler 说的"没有这张作品"，不是路由没挂时说的"没有这个接口"，
+    // 少了这一句，"路由其实没挂上"和"挂上了、这张作品不在"长得一模一样。
+    const body = await r.json() as { error: { message: string } }
+    expect(body.error.message).toContain('没有这张作品')
+  })
+
+  it('PATCH 没登录 → 401，而且请求体根本没被读', async () => {
+    // ⚠️ 故意送一个**畸形**请求体：认人排在读体前面，顺序反了它当场变成 400，
+    // "没登录"这个更重要的结局就被盖掉了（和 AI 接口那几条是同一条规矩）。
+    // 这也是这两条路由里**唯一**看得见"先认人再读体"的东西。
+    const { base } = await appWithUser()
+    const r = await fetch(`${base}/api/works/1`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: '这根本不是 JSON',
+    })
+    expect(r.status).toBe(401)
+  })
+})
