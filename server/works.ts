@@ -136,5 +136,13 @@ export async function handleWorkThumb(id: number, user: PublicUser, deps: WorksD
   // 前端按 hasThumb 选 URL，这儿只是兜底 —— 万一两处对不上（比如文件被手工删了），
   // 让用户看到一张大图，也比看到一块白屏强。
   const name = row.thumb_name ?? row.stored_name
-  return { bytes: await deps.storage.read(name), contentType: mimeOf(name) }
+  try {
+    return { bytes: await deps.storage.read(name), contentType: mimeOf(name) }
+  } catch (e) {
+    // 库里记着有缩略图、盘上却找不到这个文件（被手工删了 / 换过盘）—— 退回原图。
+    // **这只是兜底**：正常路径上 `hasThumb` 和"文件在不在"是一致的。
+    // ⚠️ 原图自己都不在的时候**不许再兜** —— 那就真的是没了，照实抛。
+    if (name === row.stored_name) throw e
+    return { bytes: await deps.storage.read(row.stored_name), contentType: mimeOf(row.stored_name) }
+  }
 }

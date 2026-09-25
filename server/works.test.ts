@@ -159,4 +159,24 @@ describe('handleCreateWork', () => {
     const got = await handleWorkThumb(id, USER, deps)
     expect(got.bytes.byteLength).toBe(64)   // 原图那 64 字节，不是 404
   })
+
+  it('★ 缩略图那个文件被手工删了 → 退回原图，不是 500', async () => {
+    // 库里记着有缩略图、盘上那个文件却没了（被手工删了 / 换过盘）—— 这正是"兜底"要接的场景：
+    // 用户该看到一张大图，而不是一个 500。光判 `thumb_name` 是不够的，兜底得兜到**读文件这一步**。
+    const b64 = bytesOf(64)
+    const { id } = await handleCreateWork(
+      { image: `data:image/jpeg;base64,${b64}`, thumb: JPEG }, USER, deps)
+    const row = db.raw.prepare('SELECT stored_name, thumb_name FROM works WHERE id = ?')
+      .get(id) as { stored_name: string; thumb_name: string }
+    rmSync(join(root, row.thumb_name))
+
+    const got = await handleWorkThumb(id, USER, deps)
+    expect(got.bytes.byteLength).toBe(64)   // 原图那 64 字节，不是缩略图那 10 字节
+    expect(got.contentType).toBe('image/jpeg')
+
+    // ⚠️ 原图自己也不在的时候**不许再兜** —— 那就真的没了，照实抛，别吞成一张空图。
+    // 指名道姓：要的是"文件真的读不到"这件事（ENOENT），不是随便抛了什么。
+    rmSync(join(root, row.stored_name))
+    await expect(handleWorkThumb(id, USER, deps)).rejects.toThrow(/ENOENT/)
+  })
 })

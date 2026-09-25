@@ -525,3 +525,23 @@ describe('★ 滑动续期：票撑不过 15 天就换一张（设计文档 §6.
     expect((await me(fresh)).status).toBe(200)
   })
 })
+
+describe('取图：两条路由真的把字节发出去', () => {
+  it('存一张 → GET /api/works/:id/file 回 200 + image/jpeg + 字节数对', async () => {
+    // 这条钉的是取图这条路的**最后一环**：路由接对了 handler、`sendBytes` 的头和正文都对。
+    // 上面那两条取图用例只走到 401 / 404 —— `sendBytes`（Task 4 加的）一行都没被它们碰到过，
+    // 而它是"图真的回到浏览器"的唯一出口。
+    const { base, cookie } = await appWithUser()
+    const b64 = Buffer.from(new Uint8Array(64).fill(7)).toString('base64')
+    const created = await post(base, '/api/works', { image: `data:image/jpeg;base64,${b64}` }, cookie)
+    expect(created.status).toBe(200)
+    const id = (created.body as unknown as { id: number }).id
+
+    const r = await fetch(`${base}/api/works/${id}/file`, { headers: { cookie } })
+    expect(r.status).toBe(200)
+    expect(r.headers.get('content-type')).toBe('image/jpeg')
+    // 断言的是**真的那 64 个字节**，不是一个"有响应体"的空壳：
+    // 少了它，一个"回 200 但正文是空 / 是 JSON"的实现照样绿
+    expect((await r.arrayBuffer()).byteLength).toBe(64)
+  })
+})
