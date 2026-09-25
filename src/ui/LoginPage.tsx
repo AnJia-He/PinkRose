@@ -14,6 +14,44 @@ import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../
  */
 type Props = { onDone: () => Promise<void> }
 
+/** 密码格右边那颗小眼睛的两个形状。**是内联 SVG，不是图标库** ——
+ *  `dependencies` 永远只有 piexifjs / react / react-dom，为一只眼睛拉个库不值得。
+ *
+ * ⚠️ 哪张图代表哪个状态，是**有约定但没有共识**的（搜一下就有三个真实的讨论：
+ * 「我的眼睛按钮反了：该显示的时候变成了隐藏」、「Material Design 里密码切换图标
+ * 是反的」、「两个状态下长得一样（bug）」）。所以这里选的那条标准是：
+ *
+ *   **图说的和 `title` / `aria-label` 说的是同一件事 —— 点下去会发生什么。**
+ *
+ * 藏着的时候（默认）画一只睁开的眼睛 = "点一下就能看见"；露着的时候画划掉的眼睛 =
+ * "点一下收回去"。这同时是 Chrome 自带那颗显示按钮的口径，用户最可能见过它。
+ * 反过来画也不是错（两条口径都真实存在）—— 但**图和字必须同口径**，
+ * 而且**不能只靠图标**：这一格此刻是不是明文，最硬的指示器是密码框自己
+ * （圆点 = 藏着，明文 = 露着），眼睛长什么样从来不是唯一的信号。 */
+function EyeIcon() {
+  return (
+    <svg className="login-eye-icon" viewBox="0 0 24 24" width="18" height="18" fill="none"
+         stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
+         aria-hidden="true" focusable="false">
+      <path d="M2 12s3.7-6.5 10-6.5S22 12 22 12s-3.7 6.5-10 6.5S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  )
+}
+
+/** 划掉的那只眼睛（= 点下去把密码收回去）。见上面那段"哪张图代表哪个状态"。 */
+function EyeOffIcon() {
+  return (
+    <svg className="login-eye-icon" viewBox="0 0 24 24" width="18" height="18" fill="none"
+         stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
+         aria-hidden="true" focusable="false">
+      <path d="M2 12s3.7-6.5 10-6.5S22 12 22 12s-3.7 6.5-10 6.5S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="3" />
+      <path d="M4 20 20 4" />
+    </svg>
+  )
+}
+
 /**
  * 登录 / 注册。**这是打开产品看到的第一屏**，所以它自己被产品规则约束着：
  * 一行一句人话、错了说清为什么、正在忙的时候按钮不能重复点。
@@ -154,17 +192,33 @@ export function LoginPage({ onDone }: Props) {
             {/* ⚠️⚠️ `type="button"` 一个字都不能省。这个 `<button>` 在
                 `<form className="login-box" onSubmit={submit}>` **里面** ——
                 那是个**真的表单**，而表单里不写 `type` 的 `<button>` **默认就是
-                `submit`**：用户想看一眼自己打对没有，点一下「显示」，
+                `submit`**：用户想看一眼自己打对没有，点一下那颗眼睛，
                 已经填好的密码会**当场被提交上去**（真的会发一次登录请求）。
                 `src/App.test.tsx` 里「点那个开关不会把表单交上去」那条守着它 ——
                 把 `type="button"` 删掉，那条必须红。
 
                 `autoComplete` 一个字都没动（它按模式在 `current-password` /
-                `new-password` 之间分），换错了会惹浏览器那个密码管理器。 */}
+                `new-password` 之间分），换错了会惹浏览器那个密码管理器。
+
+                ★ 2026-09-25 第二轮（用户要的）：**按钮上的字换成了一只小眼睛，
+                而且坐进输入框内部右侧**（原来是框外右边一颗「显示 / 隐藏」的文字
+                按钮）。位置上它是 `.login-pw` 里的绝对定位子元素 —— 所以
+                `.login-pw` 必须是 `position: relative`，输入框还得多留一格
+                `padding-right`（见 styles.css 那两条：两样是一对，只改一样
+                密码长到右边时文字就会跑到眼睛底下）。
+
+                ★ `aria-label` **和** `title` 一起给，而且是**同一个意思**：
+                · `title` 是鼠标停上去看得见的；
+                · `aria-label` 是读屏的人听到的（图上没有任何字，两个都省掉的话
+                  它就是一个没有名字的按钮）。
+                两句话都说的是**点下去会发生什么**，而且跟着状态变 —— 那条
+                测试（「那颗眼睛的"名字"必须跟着状态走」）就是给这件事兜底的：
+                图标本身是猜的，文字才是说得清的。 */}
             <button type="button" className="login-eye"
                     aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                    title={showPassword ? '隐藏密码' : '显示密码'}
                     onClick={() => setShowPassword(v => !v)}>
-              {showPassword ? '隐藏' : '显示'}
+              {showPassword ? <EyeOffIcon /> : <EyeIcon />}
             </button>
           </div>
         </div>

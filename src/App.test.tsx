@@ -1145,7 +1145,7 @@ describe('登录这道门', () => {
     const inner = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
       url === '/api/login'
-        ? jsonResponse({ error: { code: 'BAD_REQUEST', message: '没有这个账号' } }, 400)
+        ? jsonResponse({ error: { code: 'BAD_REQUEST', message: '没有这个账号，去注册一个吧' } }, 400)
         : inner(url, init))
 
     await fillAndSubmit('Admin', 'admin123')
@@ -1163,7 +1163,11 @@ describe('登录这道门', () => {
       .toEqual({ username: 'admin', password: 'admin123' })
     // ③ 屏幕上出现的是**服务端那句话** —— 登录页对"名字在不在"一无所知，
     //   它只能把问题交出去，然后把答案原样摆出来。
-    expect(container.querySelector('.login-error')?.textContent).toBe('没有这个账号')
+    //   ⚠️ 这句话现在**自己带着出路**（「…去注册一个吧」，2026-09-25 用户拍板加），
+    //   而下面那颗「还没有账号？注册一个」按钮**还在** —— 两处在意思上是重复的，
+    //   那是用户要的重复，第四句守着"别顺手把按钮删了"。
+    expect(container.querySelector('.login-error')?.textContent).toBe('没有这个账号，去注册一个吧')
+    expect(container.querySelector('.login-switch')?.textContent).toContain('还没有账号')
     // 失败就是失败：还停在登录页，没有"半进去"这回事。
     expect(container.querySelector('.login-box')).toBeTruthy()
   })
@@ -1404,12 +1408,46 @@ describe('登录这道门', () => {
     expect(pass?.getAttribute('type')).toBe('text')
     // 而且是**同一格、字没丢**：谁要是"另外找个元素去显示明文"，用户刚打的密码就没了。
     expect(pass?.value).toBe('admin123')
-    // 开关自己也得跟着说反话 —— 停在「显示」的话，读屏的人听到的还是"显示密码"
-    expect(container.querySelector('.login-eye')?.textContent).toBe('隐藏')
+    // 那颗眼睛的"名字"也得跟着说反话 —— 停在「显示密码」的话，读屏的人听到的还是"显示"。
+    // （2026-09-25 第二轮：按钮上那两个字**换成了图标**，所以这里断言的从
+    //  `textContent` 改成了 `aria-label` —— 图是猜的，文字才是说得清的。）
+    expect(container.querySelector('.login-eye')?.getAttribute('aria-label')).toBe('隐藏密码')
 
     await toggleEye()
     expect(pass?.getAttribute('type')).toBe('password')
-    expect(container.querySelector('.login-eye')?.textContent).toBe('显示')
+    expect(container.querySelector('.login-eye')?.getAttribute('aria-label')).toBe('显示密码')
+  })
+
+  it('★ 那颗眼睛的"名字"必须跟着状态走 —— 图标是猜的，文字才说得清', async () => {
+    // 为什么这一条是硬要求：**哪张眼睛代表哪个状态，市场上没有共识** ——
+    // 三个真实讨论的标题就是「我的眼睛按钮反了：该显示的时候变成了隐藏」、
+    // 「Material Design 里密码切换图标是反的」、「两个状态下长得一样（bug）」。
+    // 所以图标本身是**猜的**，说得清的是文字。而用户能拿到的文字只有两处：
+    // `title`（鼠标停上去看得见）和 `aria-label`（读屏听到的）——
+    // 两个都必须说**点下去会发生什么**，而且必须跟着状态走。
+    //
+    // ★ 变异①：把 aria-label / title 写死成一句话（不跟状态变）→ 这条红
+    //   （露着的时候听到的还是"显示密码"，读屏的人会以为点下去是显示）。
+    // ★ 变异②：把 title 删掉 → 红在 `expected null to be '显示密码'`
+    //   （鼠标停上去什么也没有，用户只能靠猜图标）。
+    meUser = null
+    await renderApp()
+
+    const eye = () => container.querySelector('.login-eye')
+    expect(eye()).toBeTruthy()                       // 少了这个控件要红成"少了控件"
+    // 图标本体是**内联** SVG（零新依赖那条线上，这也顺带证明"眼睛真的画出来了"）。
+    expect(eye()?.querySelector('svg')).toBeTruthy()
+    // 默认藏在状态：说的是"点下去会让你看见"
+    expect(eye()?.getAttribute('aria-label')).toBe('显示密码')
+    expect(eye()?.getAttribute('title')).toBe('显示密码')
+
+    await toggleEye()
+    expect(passwordBox()?.getAttribute('type')).toBe('text')   // 前提：真的切到明文了
+    expect(eye()?.getAttribute('aria-label')).toBe('隐藏密码')
+    expect(eye()?.getAttribute('title')).toBe('隐藏密码')
+    // 两个说法必须**一致**：一个说"显示"一个说"隐藏"的话，看的人和听的人
+    // 得到的是两回事 —— 而那正是那个图标本身没法解决的歧义。
+    expect(eye()?.getAttribute('title')).toBe(eye()?.getAttribute('aria-label'))
   })
 
   it('★★ 点那个开关**不会**把表单交上去 —— 它在 `<form>` 里，漏个 type 就是提交按钮', async () => {
@@ -1463,7 +1501,7 @@ describe('登录这道门', () => {
     // ★ 变异 C：把切换 handler 里那句 `setShowPassword(false)` 去掉 →
     //   **红在这一句**（模式切了、密码也清空了，但那一格还开着明文）。
     expect(passwordBox()?.getAttribute('type')).toBe('password')
-    expect(container.querySelector('.login-eye')?.textContent).toBe('显示')
+    expect(container.querySelector('.login-eye')?.getAttribute('aria-label')).toBe('显示密码')
   })
 })
 

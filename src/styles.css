@@ -286,21 +286,41 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .login-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .login-field input { padding: 10px 12px; border-radius: 8px; border: 1px solid #2f343c; background: #14161a; color: inherit; font-size: 15px; }
 .login-field input:focus { outline: none; border-color: var(--accent); }
-/* 密码那一格：输入框占满、那个「显示 / 隐藏」开关贴右边（2026-09-25 加）。
+/* 密码那一格：输入框占满，那颗小眼睛**坐在输入框里面**靠右
+   （2026-09-25 第二轮：原来是一颗框外右边的文字按钮，用户要的是框里一个眼睛图标）。
    为什么要在 `.login-field` **里面**再开一层：它是 `flex-direction: column`
-   （上面那两行），按钮直接塞进去会掉到输入框**下面**一行 —— 看着像两个不相干
-   的东西，而它明明是那一格的一部分。 */
-.login-pw { display: flex; gap: 8px; align-items: stretch; }
+   （上面那两行），那颗眼睛直接塞进去会掉到输入框**下面**一行 ——
+   看着像两个不相干的东西，而它明明是那一格的一部分。
+   `position: relative` 是给那颗眼睛当坐标系用的：它靠绝对定位坐进输入框，
+   **不在文档流里** —— 所以这一行的高度、还有它的左右两端，仍然由输入框说了算，
+   和上面的名字框始终一条边对齐（这条探针量过，别凭感觉）。 */
+.login-pw { position: relative; display: flex; }
 /* `min-width: 0` 是必须的，不是保险：flex 项默认 `min-width: auto`，而
    `<input>` 的 min-content 宽度由它默认的 `size`（20 个字符）撑着 ——
    少了这一句，窄屏上输入框**不肯缩**，这一行会把登录框撑破。
-   `flex: 1` 的 basis 是 0%，所以是"从零长到占满"，不是按内容分配。 */
-.login-pw input { flex: 1; min-width: 0; }
-/* 开关照 `.login-field input` 那套（底色 #14161a、边框 #2f343c），
-   只是窄一点：它是那一格里的辅助件，不该比输入框还抢眼。 */
-.login-eye { flex: none; padding: 0 12px; border-radius: 8px; border: 1px solid #2f343c; background: #14161a; color: inherit; opacity: .75; font-size: 13px; cursor: pointer; }
+   `flex: 1` 的 basis 是 0%，所以是"从零长到占满"，不是按内容分配。
+
+   ⚠️ `padding-right: 40px` 和下面那颗眼睛的 `right: 4px` + 32px 宽**是一对**：
+   默认的右内边距是 12px（上面 `.login-field input` 那条），眼睛贴在右边 ——
+   内边距不给够的话，密码长到右边时**最后几个字符会跑到眼睛底下**，
+   而那正是用户最想看的那几个字。（探针量的是"文字能画到的最右端"和
+   "眼睛的左缘"，不是"我看着差不多"。） */
+.login-pw input { flex: 1; min-width: 0; padding-right: 40px; }
+/* 那颗眼睛：绝对定位到输入框内部右侧、竖向正中间。
+   **故意不带底色和边框**（`.login-field input` 那套是给框用的）——
+   它在框里面，再框一层就成了"框里还有一个框"；Chrome 自带的那颗、
+   Ant Design 的那颗，长得一样的地方就是这里：没有底色、没有边框，只是一只眼睛。
+   颜色走 `inherit` + `opacity`：它是辅助件，不该比它服务的那格密码还抢眼。 */
+.login-eye { position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+  padding: 0; border: 0; border-radius: 6px; background: none; color: inherit;
+  opacity: .55; cursor: pointer; }
 .login-eye:hover { opacity: 1; }
-.login-eye:focus { outline: none; border-color: var(--accent); }
+/* 键盘用户得有**看得见**的焦点。原来那条 `outline: none` 是配着"把边框染成
+   --accent"用的，而边框现在已经没了 —— 留着它就是**把焦点藏起来**。
+   用 `:focus-visible` 而不是 `:focus`：鼠标点一下不该在框里留一圈蓝。
+   写法照同文件里的 `.gallery-cell:focus-visible`。 */
+.login-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .login-error { margin: 0; font-size: 13px; color: #e06c75; }
 .login-submit { padding: 11px; border-radius: 8px; border: 0; background: var(--accent); color: #fff; font-size: 15px; cursor: pointer; }
 .login-submit:disabled { opacity: .5; cursor: default; }
