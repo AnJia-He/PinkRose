@@ -67,6 +67,14 @@ describe('checkUsername', () => {
     expect(checkUsername('尼格买提‧热合曼')).toEqual({ ok: true, value: canonical })   // \u2027 连字点
   })
 
+  it('部首不算汉字 —— 看着一样的"部首名字"不能冒充真名', () => {
+    // ⼀(U+2F00 康熙部首) 和 一(U+4E00 汉字) 渲染出来一模一样。
+    // `Script=Han` 把两大块部首（U+2E80–U+2EF3、U+2F00–U+2FD5）都算了进来 ——
+    // 于是两个看着完全相同的名字能成为两个账号，正是这个文件说要防的那种事。
+    expect(checkUsername('⼀明').ok).toBe(false)   // U+2F00 康熙部首「一」
+    expect(checkUsername('⺀明').ok).toBe(false)   // U+2E80 CJK 部首补充
+    expect(checkUsername('一明').ok).toBe(true)       // U+4E00 真汉字 —— 它必须照收
+  })
   it('保留名不让注册', () => {
     for (const n of ['admin', 'root', 'system', 'administrator', 'ADMIN']) {
       expect(checkUsername(n).ok).toBe(false)
@@ -74,7 +82,10 @@ describe('checkUsername', () => {
   })
 
   it('失败时 message 是给人看的中文', () => {
-    const r = checkUsername('!')
+    // 输入用 'a-b' 而不是 '!'：'!' 只有 1 个字符，**栽在长度那条检查上**，
+    // 根本走不到字符类那条分支 —— 那条 message 于是永远没被测过。
+    // 'a-b' 是 3 个字符，越过长度、正好栽在字符类上（正是它名字说的那个分支）。
+    const r = checkUsername('a-b')
     expect(r.ok).toBe(false)
     // 只断言「非空」是抓不住东西的：任何字符串都能过，包括 'invalid' 和一段英文堆栈。
     // 这个项目被这类「没在测它名字说的东西」的测试咬过两次，所以这里真的验「是中文」。
@@ -123,6 +134,18 @@ describe('checkPassword', () => {
     // 名字在库里存的**必然**是小写，所以传进来一个没归一化的名字也必须挡住 ——
     // 只折一边的话，错在这一侧的调用方会让这条规则**悄悄失效**（不报错、不红，最难查）。
     expect(checkPassword('Other-Name', 'Other-Name').ok).toBe(false)
+  })
+
+  it('username 传 null 时不能抛 —— JSON 里没填就是 null', () => {
+    // `null !== undefined` 为真，所以 `username !== undefined` 那种守卫挡不住它，
+    // 会一路走到 `null.toLowerCase()` 抛出去 —— 把「校验失败」变成 500。
+    // 同一个形状 Task 2 已经修过一次（verifyPassword 对非字符串的 stored）。
+    expect(checkPassword('long-enough', null as unknown as string).ok).toBe(true)
+  })
+
+  it('密码里的中点也要折 —— 看着和名字一模一样的密码不算过关', () => {
+    // 名字里的中点折过了，密码这边不折，就能用一个视觉上完全相同的密码绕过去
+    expect(checkPassword('尼格买提・热合曼', '尼格买提·热合曼').ok).toBe(false)
   })
 
   it('超长不行（防被人拿它当 DoS）', () => {

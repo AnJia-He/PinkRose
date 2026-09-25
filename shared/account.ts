@@ -56,16 +56,22 @@ export function checkUsername(raw: string): Check {
   // **两个字的名字太常见**（小明、阿宝、李雷），按 3 个卡他们会直接注册不了。
   if (n < USERNAME_MIN) return { ok: false, message: `名字至少 ${USERNAME_MIN} 个字` }
   if (n > USERNAME_MAX) return { ok: false, message: `名字最多 ${USERNAME_MAX} 个字` }
-  // 中文按 **Unicode 的 Han 脚本**判，不是码点范围。
-  // 曾经写的是 `一-龥`（U+4E00–U+9FA5）—— 那会拒掉**合法汉字**：`龥` 之上还有
-  // 整个 CJK 基本区（到 U+9FFF）、扩展 A~H、以及兼容汉字，全是真名用字
-  // （`龦` U+9FA6、`䶮` U+4DAE、`𠮷` U+20BB7、`﨎` U+FA0E…），
-  // 被拒的人看到的是"只能用中文"，等于被告知自己的名字不是中文。
-  // 这跟上面「下限 2 不是 3」是**同一个形状的错误**：拿一套习惯范围去卡另一群人的真名。
+  // 中文按 **Unicode 的 Unified_Ideograph** 判 —— 也就是"表意文字本体"，
+  // 不是码点范围，也不是更宽的 `Script=Han`。
+  // 范围写法（曾经是 U+4E00–U+9FA5）会拒掉**合法汉字**：`龥` 之上还有整个
+  // CJK 基本区（到 U+9FFF）、扩展 A~H、以及兼容汉字，全是真名用字
+  // （U+9FA6、U+4DAE、U+20BB7、U+FA0E…）—— 被拒的人看到"只能用中文"，
+  // 等于被告知自己的名字不是中文。这跟上面「下限 2 不是 3」是**同一个形状的错误**。
+  // 而 `Script=Han` 又**太宽**：它把**康熙部首**（U+2F00–U+2FD5）和 **CJK 部首补充**
+  // （U+2E80–U+2EF3）也算进来，那些是基本区汉字的**同形字** —— 部首 U+2F00 和
+  // 汉字 U+4E00 渲染出来一模一样，两个看着完全相同的名字就能变成两个账号。
+  // 那正是下面这句要防的事，也是 foldMiddleDot 要防的事。
+  // `Unified_Ideograph` 恰好把这两块排在外面；顺带还排掉了 U+F900 那一批兼容表意文字
+  // （它们是基本区汉字的**规范等价重复码点** —— 同一种洞，不是另一种）。
   // **空格和符号不收** —— 空格开头结尾会让人看不出区别，符号则是纯给冒充留余地（"官方客服★"）。
   // 中点 `·` 是唯一放行的"符号"：它是少数民族名字的一部分，不是装饰（见 foldMiddleDot）。
   // `u` 标志是必须的 —— `\p{...}` 没有 `u` 直接是语法错误。
-  if (!/^[\p{Script=Han}a-z0-9_\u00B7]+$/u.test(v)) {
+  if (!/^[\p{Unified_Ideograph}a-z0-9_\u00B7]+$/u.test(v)) {
     return { ok: false, message: '只能用中文、字母、数字、下划线和 ·' }
   }
   if (RESERVED_USERNAMES.includes(v)) {
@@ -92,13 +98,25 @@ export function checkPassword(raw: string, username?: string): Check {
   if (raw.length > PASSWORD_MAX) return { ok: false, message: `密码最多 ${PASSWORD_MAX} 位` }
   // **不强制大写/数字/符号。** 强制会逼出 Password1! 这种更好猜的密码 ——
   // 现在公认的做法是够长就行。中文、空格、符号都允许，它们只会让密码更强。
-  // "不能和名字一样"这条**两边都折成小写**：名字在库里存的本来必然是小写
-  // （`checkUsername` 的 value 已归一，Task 5 传的就是 `u.value`），
-  // 而密码是用户原样敲的。对正确调用方这是个空操作 —— 它是一张**给粗心调用方的网**：
-  // 传进来一个没归一化的名字时，只折一边会让这条规则**悄悄失效**，
+  // "不能和名字一样"这条**两边都**做两件事：折小写、折中点。
+  // 折小写：名字在库里存的本来必然是小写（`checkUsername` 的 value 已归一，
+  //   Task 5 传的就是 `u.value`），而密码是用户原样敲的。
+  // 折中点：名字里的 `·` 已经折过了，密码这边不折的话，
+  //   一个**看起来和名字一模一样**的密码（只是中点用了 U+30FB）就能绕过这条规则。
+  // 对正确调用方这两件事都是空操作 —— 它是一张**给粗心调用方的网**：
+  // 传进来没归一化的名字时，只折一边会让这条规则**悄悄失效**，
   // 而且失效得毫无动静（不报错、不红），比大声挂掉难查得多。
-  if (username !== undefined && raw.toLowerCase() === username.toLowerCase()) {
-    return { ok: false, message: '密码不能和名字一样' }
+  // 守卫用 `typeof username === 'string'`，不是 `username !== undefined`：
+  // **`null` 也是"没填"**，而 `null !== undefined` 为真 —— 那样会一路走到
+  // `null.toLowerCase()` 抛出去，把「校验失败」变成 500。
+  // 这个形状在 Task 2 已经修过一次（verifyPassword 对非字符串的 stored），别再来第三次。
+  if (typeof username === 'string') {
+    const name = foldMiddleDot(username).toLowerCase()
+    if (foldMiddleDot(raw).toLowerCase() === name) {
+      return { ok: false, message: '密码不能和名字一样' }
+    }
   }
+  // ⚠️ 折叠**只用在比较上**：返回值仍然是 `raw` 原文。
+  // 密码是要拿去哈希的，顺手"归一化"一下会让用户下次照原样输就登不上。
   return { ok: true, value: raw }
 }
