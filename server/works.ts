@@ -139,10 +139,12 @@ export async function handleWorkThumb(id: number, user: PublicUser, deps: WorksD
   try {
     return { bytes: await deps.storage.read(name), contentType: mimeOf(name) }
   } catch (e) {
-    // 库里记着有缩略图、盘上却找不到这个文件（被手工删了 / 换过盘）—— 退回原图。
-    // **这只是兜底**：正常路径上 `hasThumb` 和"文件在不在"是一致的。
-    // ⚠️ 原图自己都不在的时候**不许再兜** —— 那就真的是没了，照实抛。
+    // 原图自己都不在 —— 那就真的是没了，照实抛
     if (name === row.stored_name) throw e
+    // ⚠️ **兜底不等于静默**：这里吞掉的可能是权限、是名字守卫、是将来 storage 层的 bug ——
+    // 不记一声的话，缩略图整个坏掉我们都不会知道。
+    // （和 handleCreateWork 里那条 catch 同一条规矩：不能静默。）
+    console.error('缩略图读不出来，退回原图：', e)
     return { bytes: await deps.storage.read(row.stored_name), contentType: mimeOf(row.stored_name) }
   }
 }

@@ -160,23 +160,35 @@ describe('handleCreateWork', () => {
     expect(got.bytes.byteLength).toBe(64)   // 原图那 64 字节，不是 404
   })
 
-  it('★ 缩略图那个文件被手工删了 → 退回原图，不是 500', async () => {
+  it('★ 缩略图那个文件被手工删了 → 退回原图，不是 500，而且留一声响', async () => {
     // 库里记着有缩略图、盘上那个文件却没了（被手工删了 / 换过盘）—— 这正是"兜底"要接的场景：
     // 用户该看到一张大图，而不是一个 500。光判 `thumb_name` 是不够的，兜底得兜到**读文件这一步**。
-    const b64 = bytesOf(64)
-    const { id } = await handleCreateWork(
-      { image: `data:image/jpeg;base64,${b64}`, thumb: JPEG }, USER, deps)
-    const row = db.raw.prepare('SELECT stored_name, thumb_name FROM works WHERE id = ?')
-      .get(id) as { stored_name: string; thumb_name: string }
-    rmSync(join(root, row.thumb_name))
+    //
+    // 而且**兜底不等于静默**：那条 catch 吞掉的可能是权限、是名字守卫、是将来 storage 层的 bug，
+    // 不记一声的话"缩略图整个坏掉"我们永远不会知道 —— 和 handleCreateWork 里那条 catch
+    // 同一条规矩（那边写的就是"不能静默"）。顺手把 console.error 打桩掉，
+    // 不然这条用例每次跑都会把 ENOENT 打到 stderr 上（本文件上面已有两条是这么做的）。
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const b64 = bytesOf(64)
+      const { id } = await handleCreateWork(
+        { image: `data:image/jpeg;base64,${b64}`, thumb: JPEG }, USER, deps)
+      const row = db.raw.prepare('SELECT stored_name, thumb_name FROM works WHERE id = ?')
+        .get(id) as { stored_name: string; thumb_name: string }
+      rmSync(join(root, row.thumb_name))
 
-    const got = await handleWorkThumb(id, USER, deps)
-    expect(got.bytes.byteLength).toBe(64)   // 原图那 64 字节，不是缩略图那 10 字节
-    expect(got.contentType).toBe('image/jpeg')
+      const got = await handleWorkThumb(id, USER, deps)
+      expect(got.bytes.byteLength).toBe(64)   // 原图那 64 字节，不是缩略图那 10 字节
+      expect(got.contentType).toBe('image/jpeg')
+      // 响了那一声才叫兜底；不响就是静默降级。把那句 console.error 删掉，下面这条当场红。
+      expect(String(spy.mock.calls.flat().join(' '))).toContain('缩略图')
 
-    // ⚠️ 原图自己也不在的时候**不许再兜** —— 那就真的没了，照实抛，别吞成一张空图。
-    // 指名道姓：要的是"文件真的读不到"这件事（ENOENT），不是随便抛了什么。
-    rmSync(join(root, row.stored_name))
-    await expect(handleWorkThumb(id, USER, deps)).rejects.toThrow(/ENOENT/)
+      // ⚠️ 原图自己也不在的时候**不许再兜** —— 那就真的没了，照实抛，别吞成一张空图。
+      // 指名道姓：要的是"文件真的读不到"这件事（ENOENT），不是随便抛了什么。
+      rmSync(join(root, row.stored_name))
+      await expect(handleWorkThumb(id, USER, deps)).rejects.toThrow(/ENOENT/)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
