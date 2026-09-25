@@ -37,4 +37,12 @@ describe('password', () => {
       expect(verifyPassword('x', bad)).toBe(false)
     }
   })
+
+  it('stored 不是字符串也不抛 —— 运行时那道边界不归签名管', () => {
+    // 签名写着 string，但 Node 的 TS 剥离模式运行时不验任何东西，
+    // 而 verifyPassword 真正被调用的地方就是"把 password_hash 从数据库读出来"
+    // 这个无类型的边界。这里不过关的话，一条被改坏的记录会让整个登录接口抛。
+    expect(verifyPassword('x', null as unknown as string)).toBe(false)
+    expect(verifyPassword('x', undefined as unknown as string)).toBe(false)
+  })
 })

@@ -48,6 +48,13 @@ export function hashPassword(plain: string): string {
  * 理论上能被用来一位一位地猜出哈希。
  */
 export function verifyPassword(plain: string, stored: string): boolean {
+  // 签名上的 `stored: string` 只在编译期成立 —— Node 的 TS 剥离模式运行时不设防，
+  // 而它真正被调用的地方（把 password_hash 从数据库读出来）正好是个无类型的边界。
+  // null / undefined 进来时，下一行的 split 会直接抛，那就把"一个人有问题"
+  // 放大成"所有人都登不了"，正是上面那段注释要避免的事。
+  // 所以这道判断是契约的一部分，不是多余的防御。
+  if (typeof stored !== 'string') return false
+
   const parts = stored.split('$')
   if (parts.length !== 6 || parts[0] !== 'scrypt') return false
   const n = Number(parts[1]); const r = Number(parts[2]); const p = Number(parts[3])
