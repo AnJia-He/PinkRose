@@ -13,23 +13,26 @@ const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
 /** 一张最小但**合法**的 base64 图。用它，别用 'AAAA' —— 那样测的是"能解码"不是"存对了" */
 const bytesOf = (n: number): string => Buffer.from(new Uint8Array(n).fill(7)).toString('base64')
 
+// ⚠️ 夹具写在**文件这一层**：这个文件从 Task 6 起有两个 describe（存一张 / 列全部），
+// 两边要的是同一套东西（一个内存库 + 一个临时目录）。各写一份 hook 只会多出一份
+// 要跟着同步的副本 —— 而"两边夹具不一样"这种偏差，测试里最难看出来。
+let root: string
+let db: Db
+let storage: Storage
+let deps: { db: Db; storage: Storage; now: () => number }
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'ruixing-works-'))
+  db = openDb(':memory:')
+  db.raw.prepare(
+    `INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)`)
+    .run(USER.username, USER.email, 'h', 1)
+  storage = createStorage(root)
+  deps = { db, storage, now: () => 1_700_000_000_000 }
+})
+afterEach(() => { db.close(); rmSync(root, { recursive: true, force: true }) })
+
 describe('handleCreateWork', () => {
-  let root: string
-  let db: Db
-  let storage: Storage
-  let deps: { db: Db; storage: Storage; now: () => number }
-
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'ruixing-works-'))
-    db = openDb(':memory:')
-    db.raw.prepare(
-      `INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)`)
-      .run(USER.username, USER.email, 'h', 1)
-    storage = createStorage(root)
-    deps = { db, storage, now: () => 1_700_000_000_000 }
-  })
-  afterEach(() => { db.close(); rmSync(root, { recursive: true, force: true }) })
-
   it('存一张 —— 数据库一行、硬盘一个文件、字节数对得上', async () => {
     const b64 = bytesOf(200)
     const { id } = await handleCreateWork(
@@ -191,18 +194,23 @@ describe('handleCreateWork', () => {
       spy.mockRestore()
     }
   })
+})
 
+describe('handleListWorks', () => {
   it('列表：只有自己的、按最后改动倒序、不带图也不带路径', async () => {
     const other: PublicUser = { id: 2, username: '小红', email: 'b@x.com' }
     db.raw.prepare(`INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)`)
       .run(other.username, other.email, 'h', 1)
 
-    const mine1 = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
-    const mine2 = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 300 })
+    // ⚠️ 故意让**时间**和**入库先后**拧着来：先存的那条（id 更小）时间反而更晚。
+    // 两件事同向的话，"按最后改动倒序"和"按 id 倒序"给出的是同一个答案 ——
+    // 那就钉不住 §3.5 要的那件事（**按最后改动的时间**，新的在上面）。
+    const later = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 300 })
+    const earlier = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
     await handleCreateWork({ image: JPEG }, other, { ...deps, now: () => 200 })
 
     const r = handleListWorks(USER, deps)
-    expect(r.works.map((w) => w.id)).toEqual([mine2.id, mine1.id])   // 新的在前，别人的不在
+    expect(r.works.map((w) => w.id)).toEqual([later.id, earlier.id])   // 时间晚的在前，别人的不在
     // ★ 响应里**不许**出现硬盘上的文件名，也不许出现配方（那是详情页才给的）
     for (const w of r.works) expect(Object.keys(w).sort()).toEqual(
       ['alias', 'bytes', 'createdAt', 'hasThumb', 'id', 'updatedAt'])
