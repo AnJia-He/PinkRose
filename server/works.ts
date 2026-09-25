@@ -3,7 +3,7 @@ import type { Storage } from './storage.ts'
 import type { PublicUser } from './account.ts'
 import { HttpError, asObject, str } from './http.ts'
 import { ZERO, applyDeltas, type Adjustments } from '../shared/adjustments.ts'
-import type { Recipe, WorkMeta } from '../shared/works.ts'
+import type { Recipe, WorkDetail, WorkMeta } from '../shared/works.ts'
 
 export type WorksDeps = { db: Db; storage: Storage; now?: () => number }
 
@@ -173,4 +173,36 @@ export function handleListWorks(user: PublicUser, deps: WorksDeps): { works: Wor
      FROM works WHERE user_id = ? ORDER BY updated_at DESC`,
   ).all(user.id) as unknown as WorkRow[]
   return { works: rows.map(toMeta) }
+}
+
+/** 单张的详情 —— 比列表多一样：**配方**（§3.5.1 的"这张图怎么来的"） */
+export function handleGetWork(id: number, user: PublicUser, deps: WorksDeps): WorkDetail {
+  const row = loadOwned(id, user, deps)
+  return { ...toMeta(row), recipe: JSON.parse(row.recipe) as Recipe }
+}
+
+/** 别名最长多少。60 个字够放下一句描述，又不至于把列表撑变形 */
+const MAX_ALIAS = 60
+
+/**
+ * 改名。
+ *
+ * ⚠️ 下面那句注释里的"上面那段说明"，说的就是这一段 —— 这条很容易写错，写清楚在这儿：
+ *
+ * - §4.1 对 `updated_at` 的说明只有一句：「**替换过就更新**」—— 没提改名
+ * - 更要紧的是：**没起名字的时候，`updated_at` 就是显示名**（§3.5）。
+ *   改一个名顺手把日期也改了，等于**用户改完名字，那张图的名字和分组位置一起变了**
+ */
+export function handleRenameWork(
+  id: number, body: unknown, user: PublicUser, deps: WorksDeps,
+): WorkMeta {
+  const row = loadOwned(id, user, deps)
+  const raw = asObject(body).alias
+  // `null` / 空串 / 全空白，都是"把名字清掉、改回用时间当名字"——
+  // 那是个**有意义的状态**（§3.5），不是缺数据，所以存 null 而不是空串
+  const alias = raw === null || raw === undefined ? null : (str(raw).trim().slice(0, MAX_ALIAS) || null)
+  // ⚠️ **只改 alias，不碰 updated_at**（见上面那段说明）
+  deps.db.raw.prepare('UPDATE works SET alias = ? WHERE id = ? AND user_id = ?')
+    .run(alias, id, user.id)
+  return toMeta({ ...row, alias })
 }

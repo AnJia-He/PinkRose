@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb, type Db } from './db.ts'
 import { createStorage, type Storage } from './storage.ts'
-import { handleCreateWork, handleListWorks, handleWorkFile, handleWorkThumb } from './works.ts'
+import {
+  handleCreateWork, handleGetWork, handleListWorks, handleRenameWork,
+  handleWorkFile, handleWorkThumb,
+} from './works.ts'
 import type { PublicUser } from './account.ts'
 
 const USER: PublicUser = { id: 1, username: '小明', email: 'a@x.com' }
@@ -218,5 +221,49 @@ describe('handleListWorks', () => {
 
   it('一条都没有 → 空数组，不是 null、不是 404', () => {
     expect(handleListWorks(USER, deps)).toEqual({ works: [] })
+  })
+})
+
+describe('handleGetWork / handleRenameWork', () => {
+  it('★ 详情里的配方是**两栏**：调色一栏、AI 原话一栏，永远是两个字段', async () => {
+    // spec §10 点名了这条变异：把它们合成一个数组的话，用户会以为
+    // "这一整套都能复用"—— 而「把后面那个人去掉」换一张照片就是另一回事（§3.5.1）。
+    const { id } = await handleCreateWork({
+      image: JPEG,
+      recipe: { params: { exposure: 20, contrast: 5 }, edits: ['把后面那个人去掉', '天空换成傍晚的'] },
+    }, USER, deps)
+
+    const d = handleGetWork(id, USER, deps)
+    expect(Object.keys(d.recipe).sort()).toEqual(['edits', 'params'])          // ★ 恰好两个字段
+    expect(Array.isArray(d.recipe)).toBe(false)                                // ★ 不是合成的一个数组
+    expect(d.recipe.params.exposure).toBe(20)
+    expect(d.recipe.edits).toEqual(['把后面那个人去掉', '天空换成傍晚的'])
+  })
+
+  it('改名生效，但 **updated_at 一点都不动**', async () => {
+    const { id } = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    handleRenameWork(id, { alias: '海边那张' }, USER, { ...deps, now: () => 999 })
+
+    const row = db.raw.prepare('SELECT alias, updated_at FROM works WHERE id = ?').get(id)
+    expect(row).toEqual({ alias: '海边那张', updated_at: 100 })   // ★ 还是 100，不是 999
+  })
+
+  it('别名给 null 或空串 = 改回"用时间当名字"', async () => {
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    handleRenameWork(id, { alias: 'x' }, USER, deps)
+    expect(handleRenameWork(id, { alias: null }, USER, deps).alias).toBe(null)
+    expect(handleRenameWork(id, { alias: '   ' }, USER, deps).alias).toBe(null)
+  })
+
+  it('改别人的名字 → 当它不存在', async () => {
+    const other: PublicUser = { id: 2, username: '小红', email: 'b@x.com' }
+    db.raw.prepare(`INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)`)
+      .run(other.username, other.email, 'h', 1)
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    // ⚠️ **指名道姓** —— 这条守的是**安全属性**（不许改别人的作品），
+    // 不带参数的 `toThrow()` 会让"别的什么抛了"也算过关。
+    expect(() => handleRenameWork(id, { alias: 'x' }, other, deps)).toThrow(/没有这张作品/)
+    // 而且**真的一动没动**
+    expect(handleGetWork(id, USER, deps).alias).toBe(null)
   })
 })

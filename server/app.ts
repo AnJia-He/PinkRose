@@ -17,7 +17,10 @@ import {
 import type { SenseNovaClient } from './sn.ts'
 import type { Storage } from './storage.ts'
 import { handleSuggest } from './suggest.ts'
-import { handleCreateWork, handleListWorks, handleWorkFile, handleWorkThumb } from './works.ts'
+import {
+  handleCreateWork, handleGetWork, handleListWorks, handleRenameWork,
+  handleWorkFile, handleWorkThumb,
+} from './works.ts'
 
 export type AppDeps = {
   config: Config
@@ -216,6 +219,31 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
         db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
       })
       sendBytes(res, 200, bytes, contentType)
+      return
+    }
+    // 单张的详情（GET）和改名（PATCH）—— 两条共用这一个正则。锚定整串的理由同上一条：
+    // 不锚定的话 `/api/works/1/file/../../etc` 也能匹配上。
+    //
+    // ⚠️ **写成独立的一行、别内联进下面的 `if`** —— 后面删和替换那两条走的是同一个
+    // `/api/works/:id`，还要接着用这一个变量。放在 file / thumb 之后只是读起来
+    // 按"先看图的接口、再看改的"排；三条正则都锚定整串，谁先谁后都只匹配自己那一串。
+    const oneRoute = /^\/api\/works\/(\d+)$/.exec(path)
+    if (req.method === 'GET' && oneRoute) {
+      const user = requireUser(deps, req, res)
+      // 依赖的形状同上面几条：库藏在 auth 里，整个 deps 传下去编译器当场会拦。
+      // GET 所以**不读请求体** —— 没什么可读的。
+      sendJson(res, 200, handleGetWork(Number(oneRoute[1]), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
+      return
+    }
+    if (req.method === 'PATCH' && oneRoute) {
+      // 顺序同 /api/password 和 /api/works：先认人，再读体。没登录的人不该有资格
+      // 让服务器缓冲 12 MB —— 而且畸形请求体的 400 会盖住"没登录"这个更重要的结局。
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, handleRenameWork(Number(oneRoute[1]), await readJsonBody(req), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
       return
     }
     if (req.method === 'POST' && path === '/api/route') {
