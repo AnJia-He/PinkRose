@@ -43,6 +43,10 @@
  * 用法（服务器开着就行；dev 或 preview 都可以，脚本自己会核对是哪一版）：
  *   npm run dev                    （或者 npm run build && npm run preview）
  *   npm run check:layout
+ *
+ * ⚠️ 2026-09-25 起：修图界面在**登录墙**后面（Task 7 的前端登录页），打开页面先看到的
+ * 是登录页、`input[type="file"]` 压根不在 DOM 里。所以脚本现在**先现注册一个临时账号**
+ * 再往下量 —— 为什么这么选，见下面「先登录，再量」那一段注释。
  */
 import { chromium } from 'playwright'
 import { readFileSync } from 'node:fs'
@@ -385,6 +389,42 @@ try {
         process.exitCode = 1
         process.exit()
       }
+
+      // ── 2026-09-25 加：先登录，再量 ────────────────────────────────────
+      // **为什么要先登录**：Task 7 加了前端登录页之后，修图界面在**登录墙**后面 ——
+      // 打开页面看到的是登录页，`input[type="file"]` 根本不在 DOM 里。这条检查原来
+      // 不认这回事，于是它红在 `page.setInputFiles: Timeout`（2026-09-25 发现）。
+      // 探针验过那是**检查缺一步**、不是版面坏了：补上登录之后两档两态的判据数字一条没变。
+      //
+      // **用哪个账号**（2026-09-25 的裁定）：每次现注册一个随机名字的临时账号。
+      //   · 不在脚本里写死任何凭据 —— 写死等于要在仓库里留一份"测试账号"，还得有人手工建它；
+      //   · 名字带随机后缀，不会和别的账号撞（撞了会 400，检查就会莫名其妙地红）；
+      //   · 库是 dev 的、`data/` 已 gitignore。这条检查本来就是"起一个干净环境量版面"，
+      //     自己造一个用户完全在它的职责范围内。
+      // **走 fetch 而不是去点登录页的表单**：这条检查量的是版面，不该因为登录页换了
+      // 一个 class 名就整体变红 —— 那是登录页自己的检查该管的事。
+      await page.waitForSelector('.login-box, input[type="file"]', { timeout: 15_000 })
+      if (await page.locator('.login-box').count()) {
+        const who = `布局检查${Date.now().toString(36)}`
+        const status = await page.evaluate(async (who) => {
+          const r = await fetch('/api/signup', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ username: who, email: `${who}@example.com`, password: 'layout-check-only' }),
+          })
+          return r.status
+        }, who)
+        if (status !== 200) {
+          console.log(`❌ 登录墙后面进不去：现注册临时账号「${who}」返回了 HTTP ${status}`)
+          process.exitCode = 1
+          process.exit()
+        }
+        console.log(`   登录墙：现注册了临时账号「${who}」（dev 库，已 gitignore）`)
+        await page.reload({ waitUntil: 'load' })
+      }
+      // 那个 input 是**隐藏**的（`.uploader` 把它藏起来、由 label 当按钮用），
+      // 所以这里要 `state: 'attached'` —— 默认的"要可见"会一直等到超时。
+      await page.waitForSelector('input[type="file"]', { state: 'attached', timeout: 15_000 })
 
       await page.setInputFiles('input[type="file"]', PHOTO)
       await page.waitForSelector('canvas', { timeout: 15_000 })
