@@ -1377,8 +1377,8 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     // 出路那句话 —— 这一页不新造按钮，"刷新一下"是用户本来就有的。
     // （原来这里写着"重试逻辑是 Task 12 的事"：Task 12 交出去的是详情页，
     //   **没有**给作品页加重试 —— 作品页的出路到今天还是"刷新一下"。
-    //   那句话是假的，2026-09-25 改掉；GalleryPage.tsx 里还有同一句话没动，
-    //   那是 Task 11 的文件，报告里记了一笔。）
+    //   那句话是假的，2026-09-25 改掉；`GalleryPage.tsx` 里同一句假话
+    //   2026-09-25 的第二轮也跟着改了 —— 现在两处说的是同一件事。）
     expect(container.querySelector('.gallery-hint')?.textContent ?? '').toContain('刷新')
   })
 
@@ -1404,13 +1404,16 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
  * 2026-09-25 加（Task 12）。**点开一张图之后那一页**（spec §3.5.1）：
  * 配方永远分成两栏 —— 调色是配方（能带走），AI 编辑是这张图的经历（带不走）。
  *
- * 这一层守的是四件用户看得见的事：
+ * 这一层守的是五件用户看得见的事：
  *   ① 两栏永远是两栏，而且 AI 那栏**一个「套用」按钮都没有** —— 给了就是骗人
  *      （「把后面那个人去掉」换一张照片就是另一回事）；
  *   ② 名字只有一份：详情页和作品页对同一张图必须叫**同一个名字** ——
  *      §3.5 的「名字就是日期，所以搜日期也能搜到」正是建立在这一条上；
  *   ③ 没有图的时候「套用调色」是**禁用**的，而且说了为什么、怎么办（§3.7）；
- *   ④ 删除确认不许替用户编一句"你电脑上那份还在" —— 服务器不可能知道。
+ *      **有**图的时候它得真的把那套调色带到修图页的**画布上**去（2026-09-25 补，
+ *      那才是这一页存在的理由）；
+ *   ④ 删除确认不许替用户编一句"你电脑上那份还在" —— 服务器不可能知道；
+ *   ⑤ 打不开这一张时也要说"那怎么办"（§3.7），说法和作品页同源。
  */
 describe('作品详情页：这张图怎么来的', () => {
   /** 打开第 1 张作品的详情页。 */
@@ -1486,10 +1489,73 @@ describe('作品详情页：这张图怎么来的', () => {
 
   it('★ 没有图的时候「套用调色」是禁用的，而且说了为什么（裁定 ⑤）', async () => {
     await openWork()   // 注意：这里**没有** uploadPhoto()，所以修图页还是空的
-    const apply = [...container.querySelectorAll('button')]
-      .find(b => (b.textContent ?? '').includes('套用到')) as HTMLButtonElement
-    expect(apply.disabled).toBe(true)
+    // ⚠️ 按**类名**找，不按文案找：`.recipe-apply` 是结构，文案是文案。
+    //   原来是 `[...buttons].find(b => b.textContent.includes('套用到'))!` ——
+    //   元素不在时 `.find` 回 undefined，红出来的是
+    //   `Cannot read properties of undefined (reading 'disabled')`，那是
+    //   "**测试自己**坏了"的语气；可实际发生的事是"那个按钮没了"。
+    //   带上 `?.` 之后，这条会红成 `expected undefined to be true` —— 谁在守什么一眼看得见
+    //   （同一套写法见「搜不到时」那条的 `none?.textContent ?? ''`）。
+    const apply = container.querySelector('.recipe-apply') as HTMLButtonElement | null
+    expect(apply?.disabled).toBe(true)
+    // 文案单独一条钉住：改措辞仍然会被看见，但红得干净 ——
+    // "少了个类名（结构变了）"和"改了句话（措辞变了）"从此分得开。
+    expect(apply?.textContent ?? '').toContain('套用到')
     expect(container.textContent).toContain('先回修图页传一张照片')
+  })
+
+  it('★ 套用真的生效：配方跟着人回到修图页，画布上就是那一套', async () => {
+    // ★ 这一条补的是一个**真实缺口**：brief 的四条只测了"没图时禁用"，
+    //   而这一页存在的**理由**就是"把那套调色带走"（§3.5.1）—— 那件事本身零覆盖
+    //   （Task 12 收尾时唯一的证据是一把用完就删的真浏览器探针）。
+    //   链路：传图（`canApply` 为真）→ 作品页 → 详情页 → 点「套用」→ **落在修图页**
+    //   且**画布收到的 params 就是配方里那套**（不是 ZERO、也不是上一步的旧值）。
+    await renderApp()
+    await uploadPhoto()          // 先让修图页有图 —— 没有这一步按钮就该是灰的
+    await openWork()             // 它自己会再 renderApp 一次（同一棵树，状态不动）+ 切到作品页
+
+    const apply = container.querySelector('.recipe-apply') as HTMLButtonElement | null
+    expect(apply?.disabled).toBe(false)     // 有图了就能套（和上一条互为反面）
+    await act(async () => {
+      apply!.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // 人确实回到了修图页：配方那一页整个不在了，修图界面回来了
+    expect(container.querySelector('.recipe-box')).toBeNull()
+    expect(container.querySelector('.workspace')).toBeTruthy()
+    expect(location.pathname).toBe('/')
+    // ★ 下半句才是重点：画布上真的是配方里那套。
+    //   变异：App.tsx 的 `setParams(p)` → `setParams(ZERO)` → 只有这一条红
+    //   （上面三句照样绿 —— 导航那半件事不受影响）。
+    expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 20, contrast: 5 })
+  })
+
+  it('★ 打不开这一张时也要说"那怎么办"（§3.7）—— 和作品页一个说法', async () => {
+    // §3.7 是全局约束：凡告诉用户"不行"，都要同时告诉他"那怎么办"。
+    // 加载失败那一屏原来**只有一句"不行"** —— 用户读到的是死胡同
+    // （返回按钮在那儿不等于说了出路）。这里**不新造按钮、不新造重试逻辑**：
+    // 和作品页同一条出路、同一句话（"刷新一下"是用户本来就有的）。
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works') return jsonResponse({ works: [WORK(1, 1_700_000_000_000)] })
+      if (url === '/api/works/1' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse({ error: { code: 'NOT_FOUND', message: 'SENTINEL-没有这张作品' } }, 404)
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+    await act(async () => {
+      (container.querySelector('.gallery-cell') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(container.querySelector('.detail-error')?.textContent ?? '')
+      .toContain('SENTINEL-没有这张作品')
+    // 变异：把这句提示删掉 → 这一条红（`expected '' to contain '刷新'`）。
+    // `?? ''`：元素不在了要红成"少了一句话"，不是 vitest 那句"参数组合非法"。
+    expect(container.querySelector('.detail-hint')?.textContent ?? '').toContain('刷新')
   })
 
   it('删除确认只说「删了就找不回来了」', async () => {

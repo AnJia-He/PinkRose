@@ -81,7 +81,16 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
     }
   }
 
-  if (failed && !work) return <section className="detail"><p className="detail-error">{failed}</p></section>
+  if (failed && !work) return (
+    <section className="detail">
+      <p className="detail-error">{failed}</p>
+      {/* §3.7：告诉用户"不行"的地方，都要同时告诉他"那怎么办"。
+          这一屏原来**只有一句"不行"**（"没有这张作品"）—— 返回按钮在那儿不等于说了出路。
+          **不新造按钮、不新造重试逻辑**：和作品页同一条出路、同一句话，
+          `刷新一下页面，再试一次。` 两页一字不差（`.detail-hint` 和 `.gallery-hint` 同一套观感）。 */}
+      <p className="detail-hint">刷新一下页面，再试一次。</p>
+    </section>
+  )
   if (!work) return <section className="detail"><p className="detail-loading">正在打开…</p></section>
 
   const name = workName(work, now)

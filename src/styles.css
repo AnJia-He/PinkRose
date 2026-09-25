@@ -409,6 +409,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .detail-delete, .detail-confirm button { padding: 6px 12px; }
 .detail-loading { margin: 24px 0 0; color: var(--muted); }
 .detail-error { margin: 24px 0 0; color: #e06c75; }
+/* §3.7 的"那怎么办"那句话 —— 和 `.gallery-hint` 同一套观感：同一句话在两个页面上
+   （作品页「取列表失败」、详情页「打不开这一张」），不该长得像两件事。
+   自己带颜色，别指望从 `.detail-error` 继承。 */
+.detail-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
 
 /* ⚠️ **两栏永远是两栏**（§3.5.1）：调色是配方（能带走），AI 编辑是这张图的经历
    （带不走）。窄屏只是**排成一列**，不是合成一个盒子 —— 盒子的个数不许变。 */
