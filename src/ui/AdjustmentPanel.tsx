@@ -1,16 +1,5 @@
-import { PARAM_KEYS, type Adjustments, PARAM_MIN, PARAM_MAX } from '../../shared/adjustments.ts'
+import { PARAM_KEYS, PARAM_LABELS, type Adjustments, PARAM_MIN, PARAM_MAX } from '../../shared/adjustments.ts'
 import { PRESETS } from '../core/presets'
-
-const LABELS: Record<keyof Adjustments, string> = {
-  exposure: '曝光',
-  contrast: '对比度',
-  highlights: '高光',
-  shadows: '阴影',
-  saturation: '饱和度',
-  temperature: '色温',
-  clarity: '清晰度',
-  vignette: '暗角',
-}
 
 type Props = {
   value: Adjustments
@@ -39,7 +28,7 @@ export default function AdjustmentPanel({ value, onChange, onReset }: Props) {
 
       {PARAM_KEYS.map(k => (
         <label key={k} className="slider">
-          <span className="slider-label">{LABELS[k]}</span>
+          <span className="slider-label">{PARAM_LABELS[k]}</span>
           <input
             type="range"
             min={PARAM_MIN}

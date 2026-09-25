@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ZERO, PARAM_KEYS, clampAdjustments, applyDeltas, toUnit } from './adjustments.ts'
+import { ZERO, PARAM_KEYS, PARAM_LABELS, clampAdjustments, applyDeltas, toUnit } from './adjustments.ts'
 
 describe('PARAM_KEYS', () => {
   it('固定八个参数，名字不能改', () => {
@@ -102,5 +102,26 @@ describe('toUnit', () => {
       exposure: -0.1, contrast: -0.2, highlights: -0.3, shadows: -0.4,
       saturation: -0.5, temperature: -0.6, clarity: -0.7, vignette: -0.8,
     })
+  })
+})
+
+describe('PARAM_LABELS', () => {
+  it('八个参数一个不少、一个不多', () => {
+    expect(Object.keys(PARAM_LABELS).sort()).toEqual([...PARAM_KEYS].sort())
+  })
+
+  it('exposure 显示成「亮度」，不是「曝光」', () => {
+    // §3.5.2 的两条理由：用户找的是「亮度」；而 Lightroom 里"曝光"是 EV(-5~+5)，
+    // 我们这套是 -100~+100 —— 挂在"曝光"这个名字下会让用过 Lightroom 的人误判数量级
+    expect(PARAM_LABELS.exposure).toBe('亮度')
+  })
+
+  it('每个名字都是中文，而且**不是字段名本身**', () => {
+    // 变异：把某一条改成 `'exposure'` 这种 → 必须红。
+    // 界面上出现裸字段名，用户看到的就是一行英文变量名。
+    for (const [key, label] of Object.entries(PARAM_LABELS)) {
+      expect(label).not.toBe(key)
+      expect(/[一-鿿]/.test(label)).toBe(true)
+    }
   })
 })

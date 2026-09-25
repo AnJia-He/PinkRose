@@ -15,6 +15,31 @@ export const PARAM_KEYS = [
 ] as const satisfies readonly (keyof Adjustments)[]
 
 /**
+ * 八个参数在**界面上**叫什么。
+ *
+ * ⚠️ **这是唯一的一份。** 微调面板和作品详情页都从这里取 ——
+ * 两处各写一份的话一定会漂，而漂了之后没人会发现（两边各自都"看起来对"）。
+ * `src/ui/AdjustmentPanel.test.ts` 会读面板的源码，断言它没有自己写死一份。
+ *
+ * `exposure` 显示成「亮度」而不是「曝光」，两条理由（§3.5.2）：
+ * - 我们的用户（醒图 / 美图那一类）**找的是「亮度」**，找不着，教学就断在这儿
+ * - **Lightroom 里"曝光"是 EV（-5.00 ~ +5.00）**，而我们是 -100 ~ +100 ——
+ *   挂在"曝光"这个名字下会让用过 Lightroom 的人**误判数量级**
+ *
+ * ⚠️ **只改显示名，字段名 `exposure` 一个字不动** —— 改字段名会牵动 shader。
+ */
+export const PARAM_LABELS: Record<keyof Adjustments, string> = {
+  exposure: '亮度',
+  contrast: '对比度',
+  highlights: '高光',
+  shadows: '阴影',
+  saturation: '饱和度',
+  temperature: '色温',
+  clarity: '清晰度',
+  vignette: '暗角',
+}
+
+/**
  * 全零参数。
  *
  * Object.freeze 是必须的：它是模块级单例，被 React state 按引用持有、
