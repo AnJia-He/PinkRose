@@ -67,6 +67,8 @@ describe('openDb', () => {
    * 改老的、删老的必红。故意不做"整体相等"—— 那会让每次追加都红一次，
    * 而下一个人最省事的做法就是把测试打印出来的那几行整段贴回去；
    * 一个训练人闭眼重生成清单的守卫，等于没有守卫。
+   *
+   * ⚠️ 这条后来改了 —— 见下面那条长度断言（追加时要红一次，那是对的）。
    */
   const PINNED_MIGRATIONS = [
     // 1 —— users
@@ -104,7 +106,7 @@ describe('openDb', () => {
     const file = join(tmpdir(), `ruixing-migrate-${process.pid}-${Date.now()}.db`)
     try {
       openDb(file).close()
-      // 第二次开：迁移全跑过了，schema_version 已经是 MIGRATIONS.length（当前 2），
+      // 第二次开：迁移全跑过了，schema_version 已经是 MIGRATIONS.length，
       // 循环必须从那儿起 —— 从 0 起就会重跑建表，炸在 "table users already exists" 上。
       expect(() => { openDb(file).close() }).not.toThrow()
     } finally {
