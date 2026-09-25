@@ -88,6 +88,9 @@ export async function handleCreateWork(
 
   const t = nowMs(deps)
   try {
+    // 新行的 created_at / updated_at 都取同一个 t。这里把 updated_at 当版本号是安全的：
+    // id 是刚生出来的，不存在"浏览器缓存里还留着上一版"这回事。真正承重的那一处是
+    // handleReplaceWork —— 那里为什么必须 bump，说在它上面。
     const r = deps.db.raw.prepare(
       `INSERT INTO works (user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias, recipe)
        VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
@@ -206,7 +209,12 @@ export function handleRenameWork(
   // ——"没给名字"就是"没有名字"。写在这儿，下一个读的人不用自己猜。
   // 同理，`alias` 不是字符串时（数字、布尔）也会被 `str` 当成空串，一样是清名字。
   const alias = raw === null || raw === undefined ? null : (str(raw).trim().slice(0, MAX_ALIAS) || null)
-  // ⚠️ **只改 alias，不碰 updated_at**（见上面那段说明）
+  // ⚠️ **只改 alias，不碰 updated_at**（见上面那段说明）。这里的"不 bump"是**对的**，
+  // 下一个读的人别顺手"修"它 —— 两个理由一起成立：
+  //   · `updated_at` 是图片 URL 的版本号（见 handleReplaceWork 上面那段）—— 而改名
+  //     **不改字节**，文件还是那一个，URL 里的钥匙本来就不该动；
+  //   · 没起名字时 `updated_at` 还是**显示名**，bump 一下等于用户改完名字，
+  //     名字和列表里的分组日期一起变了。
   deps.db.raw.prepare('UPDATE works SET alias = ? WHERE id = ? AND user_id = ?')
     .run(alias, id, user.id)
   return toMeta({ ...row, alias })
@@ -310,6 +318,18 @@ export async function handleReplaceWork(
   }
   const t = nowMs(deps)
 
+  // ★★ `updated_at` 在这里**不只是"上次改的时间"，它是图片 URL 的版本号**。
+  //
+  // 前端三条图片 URL 全都把它拼进去当缓存钥匙：列表缩略图（`fileUrl`）、
+  // 详情页大图（`.detail-image`）、「下载到我的电脑」（`fullUrl`）——
+  // 而 `/api/works/:id/file` 和 `/thumb` 回的是 **`immutable`** 长缓存。
+  //
+  // ⚠️ 所以**任何改动这张作品的字节的写入，都必须 bump 这个值**。忘了 bump 不会报错、
+  // 不会 4xx、日志里一个字都没有：用户只是**静默地**一直看到缓存里那张旧图
+  // （反馈只有一句「怎么没变」）。验收记录 §3 的 P1/P2 量过 bump 之后三处都刷新
+  // （大图 `?v=` 变了、平均亮度 118.73 → 77.54；列表那张同样）；反过来那条路没人量过，
+  // 因为它**没有报错可以看**。将来加新的写接口（换图、换缩略图、批量改图…）时，
+  // 这一句是唯一会提醒你的东西。
   try {
     deps.db.raw.prepare(
       `UPDATE works SET stored_name = ?, thumb_name = ?, bytes = ?, updated_at = ?, recipe = ?

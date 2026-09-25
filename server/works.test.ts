@@ -427,6 +427,24 @@ describe('handleDeleteWork / handleDeleteWorks / handleReplaceWork', () => {
     expect(readdirSync(root)).toEqual([newName])   // ★ 旧的真的没了，也没多出别的
   })
 
+  it('★★ 替换真的把 updated_at **写进库**了 —— 那是图片 URL 的版本号', async () => {
+    // 上一条断言的是**返回值** `meta.updatedAt`，而那个值来自 handleReplaceWork 最后一行
+    // `toMeta({ ...row, updated_at: t })` —— **内存里拼的，不是从库读回来的**。
+    // 所以把 UPDATE 里的 `updated_at = ?` 整个删掉（或者传到别的位置），上一条**照样绿**：
+    // 库里还停在 100，而列表缩略图 / 详情大图 / 下载三条 URL 里的 `?v=` 永远不变 ——
+    // `/api/works/:id/file` 和 `/thumb` 回的是 `immutable`，浏览器就**静默地**一直给旧图
+    // （没有报错、没有 4xx、日志里一个字都没有，用户只会说一句「怎么没变」）。
+    // 这一条读**库里的行**：它才是 `toMeta` → `?v=<updatedAt>` 真正吃进去的那一份。
+    // 变异：删掉 UPDATE 里的 `updated_at = ?` → 这一条红，上一条不动。
+    const { id } = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    await handleReplaceWork(
+      id, { image: `data:image/jpeg;base64,${bytesOf(999)}` }, USER, { ...deps, now: () => 500 })
+
+    const row = db.raw.prepare('SELECT updated_at FROM works WHERE id = ?')
+      .get(id) as { updated_at: number }
+    expect(row.updated_at).toBe(500)        // ★ 落库了，不只是返回值好看
+  })
+
   it('★ 替换时新文件写失败 → 旧的**一点没动**（这才是"先写后删"的意义）', async () => {
     const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
     const before = db.raw.prepare('SELECT * FROM works WHERE id = ?').get(id)
