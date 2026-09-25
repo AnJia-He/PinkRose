@@ -71,6 +71,8 @@ describe('openDb', () => {
   const PINNED_MIGRATIONS = [
     // 1 —— users
     '8a9a1a445d01f8ff0e9e242fc398e653048af972c4102686d3688c9758bff38a',
+    // 2 —— works
+    'd3e6d1ea45be136378599f2752dd8ad81e6f263687801de6e19fd9ecdc634bbb',
   ]
 
   it('★ 已发布的迁移一个字都不许改 —— 指纹对不上 = "老库和新库从此是两个形状"', () => {
@@ -118,8 +120,10 @@ describe('openDb', () => {
     //
     // 三个样本各问一件事：BEGIN 被认出并报第几条、PRAGMA foreign_keys 也在名单里、
     // **触发器体里的 BEGIN/END 不许被误伤**（那是 CREATE TRIGGER 的一部分，不是独立语句）。
+    // 条数跟着数组长度走，不写死字面量 —— 段三到段五还要各追加一条迁移，
+    // 写死的话每次追加都得回来改这里（那是让测试追着代码跑，不是代码被测试守着）
     expect(() => openDb(':memory:', [...MIGRATIONS, 'BEGIN; CREATE TABLE x (id INTEGER); COMMIT;']))
-      .toThrow(/第 2 条[\s\S]*BEGIN[\s\S]*不许自带/)
+      .toThrow(new RegExp(`第 ${MIGRATIONS.length + 1} 条[\\s\\S]*BEGIN[\\s\\S]*不许自带`))
 
     expect(() => openDb(':memory:', ['PRAGMA foreign_keys=OFF; CREATE TABLE y (id INTEGER);']))
       .toThrow(/第 1 条[\s\S]*PRAGMA foreign_keys/)
@@ -179,18 +183,18 @@ describe('openDb', () => {
       INSERT INTO child (id, pid) VALUES (1, 999);
     `
     try {
-      openDb(file).close()                                  // 先正常升到 version=1
+      openDb(file).close()                                  // 先正常升到当前版本（MIGRATIONS.length）
       expect(() => openDb(file, [...MIGRATIONS, DEFERRED_FK])).toThrow()
 
-      // 现场：那两张表一个都不能留下，版本也得停在 1，而且这个库还得能重新打开 ——
-      // "下次还能重试"就是靠这三件一起成立的。
+      // 现场：那两张表一个都不能留下，版本也得停在当前版本（MIGRATIONS.length），
+      // 而且这个库还得能重新打开 —— "下次还能重试"就是靠这三件一起成立的。
       const probe = openDb(file, [])
       try {
         for (const t of ['parent', 'child']) {
           expect(probe.raw.prepare(
             `SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(t)).toBeUndefined()
         }
-        expect(probe.raw.prepare('SELECT MAX(version) AS v FROM schema_version').get()).toEqual({ v: 1 })
+        expect(probe.raw.prepare('SELECT MAX(version) AS v FROM schema_version').get()).toEqual({ v: MIGRATIONS.length })
       } finally { probe.close() }
 
       // 再来一次：失败不许有累积效应（每失败一次留一点东西的写法，这里会开始不一样）
@@ -205,16 +209,58 @@ describe('openDb', () => {
   it('已经升过级的库，新追加的迁移失败时版本号不动', () => {
     const file = join(tmpdir(), `ruixing-upgrade-${process.pid}-${Date.now()}.db`)
     try {
-      openDb(file).close()                                  // 先正常升到 version=1
+      openDb(file).close()                                  // 先正常升到当前版本（MIGRATIONS.length）
       expect(() => openDb(file, [...MIGRATIONS, BAD])).toThrow()
 
       const probe = openDb(file, [])
       try {
-        expect(probe.raw.prepare('SELECT MAX(version) AS v FROM schema_version').get()).toEqual({ v: 1 })
+        expect(probe.raw.prepare('SELECT MAX(version) AS v FROM schema_version').get()).toEqual({ v: MIGRATIONS.length })
         expect(probe.raw.prepare('SELECT COUNT(*) AS n FROM schema_version').get()).toEqual({ n: 1 })
         expect(probe.raw.prepare(
           `SELECT name FROM sqlite_master WHERE type='table' AND name='half_applied'`).get()).toBeUndefined()
       } finally { probe.close() }
     } finally { removeTempDb(file) }
+  })
+
+  it('★ 从只有 users 的老库升上来，能拿到 works 表 —— 用户的库就是这么长大的', () => {
+    const file = join(tmpdir(), `ruixing-upgrade-works-${process.pid}-${Date.now()}.db`)
+    try {
+      // 造一个"还在第一版"的库：只跑第一条迁移
+      openDb(file, [MIGRATIONS[0]!]).close()
+      // 再用完整的迁移数组开 —— 老用户的库就是这样升上来的
+      const db = openDb(file)
+      try {
+        const tables = db.raw.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all()
+          .map((r) => (r as { name: string }).name)
+        expect(tables).toContain('works')
+        const v = db.raw.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number }
+        expect(v.v).toBe(MIGRATIONS.length)
+      } finally { db.close() }
+    } finally { removeTempDb(file) }
+  })
+
+  it('works.user_id 指着一个不存在的用户 → 数据库拒绝', () => {
+    const db = openDb(':memory:')
+    const ins = db.raw.prepare(
+      `INSERT INTO works (user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias, recipe)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    expect(() => ins.run(999, 'a.jpg', null, 1, 1, 1, null, '{}')).toThrow(/FOREIGN KEY constraint failed/)
+    db.close()
+  })
+
+  it('★ 还有作品没删，就删不掉这个用户 —— 逼代码去删文件', () => {
+    // ⚠️ 这里**刻意不加** `ON DELETE CASCADE`。
+    // 级联只删数据库里的记录，硬盘上那几百 MB 图片文件它删不到 ——
+    // 于是删了用户、文件永远留在盘上，而且**没有任何东西会报错**。
+    // 不加级联的话，还有作品时数据库直接拒绝删用户：段三做「注销」的人
+    // **必须**先显式删作品（连带删文件）。把"不会错"做成结构，不做成纪律。
+    const db = openDb(':memory:')
+    db.raw.prepare(
+      `INSERT INTO users (username, email, password_hash, created_at) VALUES ('a','a@x.com','h',1)`).run()
+    db.raw.prepare(
+      `INSERT INTO works (user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias, recipe)
+       VALUES (1, 'a.jpg', null, 1, 1, 1, null, '{}')`).run()
+    expect(() => db.raw.prepare('DELETE FROM users WHERE id = 1').run()).toThrow(/FOREIGN KEY constraint failed/)
+    db.close()
   })
 })

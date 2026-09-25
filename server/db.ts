@@ -48,6 +48,21 @@ export const MIGRATIONS: readonly string[] = [
     created_at    INTEGER NOT NULL
   );
   `,
+  // 2 —— works（作品集，第二段）
+  `
+  CREATE TABLE works (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    stored_name TEXT    NOT NULL,
+    thumb_name  TEXT,
+    bytes       INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    alias       TEXT,
+    recipe      TEXT    NOT NULL
+  );
+  CREATE INDEX works_user_updated ON works(user_id, updated_at);
+  `,
 ]
 
 /**
