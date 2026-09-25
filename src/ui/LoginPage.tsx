@@ -62,11 +62,18 @@ function EyeOffIcon() {
  *    · 旁边那份「（必填）」走 `.login-sr`：屏上**看不见**（1px、裁掉），但它在
  *      可访问性树里活着，于是那一格的可读名字是「名字（必填）」。
  *
+ *  ⚠️ **它只挂注册页那三格**（2026-09-26 用户拍板，原话：「登录页的密码和账户
+ *  不用加"*"」）。道理是"必填"在登录页上是**废话** —— 不填根本登不进去；那个记号
+ *  本来是**注册表单**的约定（注册时你可能有得选）。所以三处调用都得写成
+ *  `{mode === 'signup' && <Req />}`（名字 / 密码 / 邮箱，前两格是同一个组件两种长相）。
+ *  `App.test.tsx` 里那条「星号只属于注册页」**两个方向都钉着** —— 登录页多出来
+ *  会红、注册页少一个也红。
+ *
  *  为什么不用 HTML 的 `required` 属性来代替：那个属性会让浏览器用它**自己语言**
  *  的气泡抢先弹出来（桌面 Chrome 是英文的 "Please fill out this field."），
  *  而本仓库的提示是**自己写的、中文的、就地显示的**（`checkUsername` / `checkEmail` /
  *  `checkPassword` 各自那几句）—— 等于把用户看得懂的话换成看不懂的。
- *  `App.test.tsx` 里那条「三格都标了必填的 *」最后一句钉着"没人把 required 加回来"。
+ *  `App.test.tsx` 里那条「星号只属于注册页」最后一句钉着"没人把 required 加回来"。
  *
  *  颜色**故意不是红的**：本文件里那个红（#e06c75）是**错误**的颜色，见 styles.css
  *  里 `.login-error` 那段注释 —— 一个空着的必填格不是错误，只是还没填。 */
@@ -210,8 +217,11 @@ export function LoginPage({ onDone }: Props) {
             `*` 是什么意思（`.login-star` 是给眼睛看的记号，本身不会说话）。留下的
             那一半是 `Req` 里给读屏用的「（必填）」—— 所以这件事**可访问性那一半还在，
             屏上那一半没有了**。这不是漏了，是用户拍板的：他是看到成品之后说不要的。
+            ⚠️ 2026-09-26 补：**上面这一整段现在只管注册页了** —— 用户同一天又拍了
+            「登录页的密码和账户不用加 *」，于是登录那两格连星号带「（必填）」一起没了。
+            登录页上不再有"没人解释那个星号"这个问题（屏上压根没有星号）。
             将来谁觉得标题下面空、想加回来，先看 `App.test.tsx` 里那条
-            「三格都标了必填的 *」—— 它现在只钉后面那一半。 */}
+            「星号只属于注册页」—— 它两个方向都钉着。 */}
 
         {/* ★ ★★ 三个字段的顺序是「名字 → 密码 → 邮箱」（2026-09-25 用户拍板）。
             原来邮箱排在密码前面，用户看图说的原话是「这三个的顺序依次是账户和密码
@@ -230,7 +240,7 @@ export function LoginPage({ onDone }: Props) {
             `autoComplete` 那几个**一个字都没动** —— 它们按模式在
             `current-password` / `new-password` 之间分，动错了会惹那个密码管理器。 */}
         <label className="login-field">
-          <span>名字<Req /></span>
+          <span>名字{mode === 'signup' && <Req />}</span>
           <input name="username" value={username} onChange={e => setUsername(e.target.value)}
                  autoComplete="username" autoFocus />
         </label>
@@ -246,12 +256,14 @@ export function LoginPage({ onDone }: Props) {
             类名照旧是 `login-field`（只是挂在一个 div 上），
             `.login-field input` 那几条样式和测试里的选择器都不受影响。
 
-            ⚠️ 「可读名字」这件事现在**多了一层**：`<Req />` 里那份 `.login-sr` 的
-            「（必填）」也在这一格的 label 里，所以读屏的人听到的是「密码（必填）」——
-            这正是要的。而它是 `display: none` **不出来的**：那种写法会把节点从
-            可访问性树里一并删掉，等于没加（见 styles.css 里 `.login-sr` 那条）。 */}
+            ⚠️ 「可读名字」这件事**只在注册模式下多了一层**：那里 `<Req />` 里那份
+            `.login-sr` 的「（必填）」也在这一格的 label 里，所以读屏的人听到的是
+            「密码（必填）」—— 这正是要的。**登录模式下没有 `<Req />`**（2026-09-26
+            用户拍板），这一格的可读名字就是干干净净的「密码」。而 `.login-sr` 那份字
+            是 `display: none` **不出来的**：那种写法会把节点从可访问性树里一并删掉，
+            等于没加（见 styles.css 里 `.login-sr` 那条）。 */}
         <div className="login-field">
-          <label htmlFor="login-password">密码<Req /></label>
+          <label htmlFor="login-password">密码{mode === 'signup' && <Req />}</label>
           <div className="login-pw">
             <input id="login-password" name="password" value={password} onChange={e => setPassword(e.target.value)}
                    type={showPassword ? 'text' : 'password'}

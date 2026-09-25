@@ -1671,16 +1671,22 @@ describe('登录这道门', () => {
     expect(inputs.map(i => i.getAttribute('type') ?? 'text')).toEqual(['text', 'password', 'email'])
   })
 
-  it('★ 三格都标了必填的 *，读屏的人也听得到「必填」—— 星号自己不会说话', async () => {
+  it('★ 星号只属于注册页：登录那两格不标「必填」，注册三格都标 —— 星号自己不会说话', async () => {
     // 用户 2026-09-25 的第 2 条：「账户和密码是必填的所以可以打上"*"」。**邮箱也是
     // 必填的** —— 他以为它选填，是因为它没标星号
     // （设计 §6.4：邮箱是找回密码的唯一通道，而找回密码排在第三段）。
+    //
+    // ⚠️ 2026-09-26 用户又拍了第 3 条（原话）：「登录页的密码和账户不用加"*"」。
+    //    道理是"必填"在登录页上是**废话** —— 不填根本登不进去；那个记号本来就是
+    //    **注册表单**的约定（注册时你可能有得选）。所以这一条从"三格都标"改成
+    //    **按模式分**：登录页那两格都没有，注册页三格都有 —— **两个方向都得红**，
+    //    证明它守的是"按模式分"而不是"反正有没有"。
     //
     // ⚠️ 他当时还要了另半件：「找个地方解释"*"是必填」。上一轮落地的是一句**屏上
     //    看得见**的 `.login-hint`「打 * 的都得填」。**2026-09-25 他又看过页面，
     //    说那一句不要了** —— 元素删除，钉着它的那段断言**跟着删掉**（不是改松：
     //    它守的东西已经不存在了）。所以现在这句话**屏上那一半没有了**，
-    //    只剩下面这一条：可访问性树里那份「（必填）」。
+    //    只剩下面这一条：可访问性树里那份「（必填）」—— 而它现在也**只管注册页**。
     //
     // ⚠️ 光加一个裸的 `<span>*</span>` **不算做完**：读屏软件念一个孤零零的星号，
     //    听的人既不知道它什么意思，也不知道它在修饰哪一格。所以每一格的标签里
@@ -1693,11 +1699,15 @@ describe('登录这道门', () => {
     //    气泡抢先弹出来，把本仓库那几句自己写的中文提示挤掉（`checkUsername` /
     //    `checkEmail` / `checkPassword`）。最后一句钉着"没人把它加回来"。
     //
-    // ★ 变异①（这一轮跑过）：把某一格 `.login-star` 里的 `*` 去掉 →
-    //   红在下面那句 `expect(name).toContain('*')`（`star?.textContent` 也红）。
-    // ★ 变异②：只留裸 `<span>*</span>`（把 `.login-sr` 那半截删掉）→ 红在
+    // ★ 变异 A（这一轮跑过）：把 `<Req />` 加回**登录模式**的名字或密码那一格 →
+    //   红在第 ① 段（"登录页 xxx 那格不该有星号"，或紧跟着那句"读屏不该听到必填"）。
+    // ★ 变异 B（这一轮跑过）：把**注册模式**那三格里的 `<Req />` 去掉 →
+    //   红在第 ② 段（`username 那一格读不出"必填"`）。
+    // ★ 变异③：把某一格 `.login-star` 里的 `*` 去掉（但 `.login-sr` 留着）→
+    //   红在下面那句 `expect(m.name).toContain('*')`（`star?.textContent` 也红）。
+    // ★ 变异④：只留裸 `<span>*</span>`（把 `.login-sr` 那半截删掉）→ 红在
     //   「标签里有读得出的'必填'」。
-    // ★ 变异③：把 `.login-sr` 换成 `display: none`（jsdom 里查不出来）——
+    // ★ 变异⑤：把 `.login-sr` 换成 `display: none`（jsdom 里查不出来）——
     //   这一条**拦不住**，只有 styles.css 里那段注释知道。写在这儿免得下一个人
     //   以为这条测试把它也守住了。
     //
@@ -1710,8 +1720,6 @@ describe('登录这道门', () => {
     //    "它必须真的看得见"（不能借 `.login-sr` 那套藏起来）。那句被用户删了，
     //    元素和那段断言一起走 —— `LoginPage.tsx` 标题下面记着这件事的代价。
 
-    // 三格各有一份「必填」的可读等价物，星号自己则是 `aria-hidden` 的
-    await switchToSignup()
     /** 读屏软件听到的那一格名字 = 它的 `<label>` 的文字。
      *  名字/邮箱那两格的 label 是**包着** input 的，密码那格是 `htmlFor` 配对的 ——
      *  两种都得认（只认前一种的话，密码那格会静默地被跳过）。 */
@@ -1720,17 +1728,43 @@ describe('登录这道门', () => {
       if (wrap) return wrap.textContent ?? ''
       return container.querySelector(`label[for="${el.id}"]`)?.textContent ?? ''
     }
+    /** 一格此刻"必填"那套记号：星号在不在、读屏听不听得见、有没有原生 `required`。
+     *  三样一起看，因为它们**各自会被一种改法漏掉**：只钉星号的话，星号还在而
+     *  `.login-sr` 被顺手删掉（或换成 `display: none`）照样绿，而"听不听得见"
+     *  恰恰是用户要的那半；只钉可读名字的话，星号被摘掉也照样绿。 */
+    const reqMarks = (el: HTMLInputElement) => ({
+      star: el.closest('.login-field')?.querySelector('.login-star') ?? null,
+      name: readableName(el),
+      native: el.hasAttribute('required'),
+    })
 
+    // ① **登录页**（打开产品就是这一屏）：名字、密码两格**都不标**"必填"。
+    //    ★ 变异 A 红在这里。
+    for (const which of ['username', 'password'] as const) {
+      const m = reqMarks(field(which))
+      expect(m.star, `登录页 ${which} 那格不该有星号`).toBeNull()
+      expect(m.name, `登录页 ${which} 那格读屏不该听到"必填"`).not.toContain('必填')
+      expect(m.name).not.toContain('*')
+      expect(m.native).toBe(false)
+    }
+    // 前提：登录页真的只有那两格。少这句的话，将来谁把邮箱那一格漏在登录模式下，
+    // 上面那个循环还是绿的（它只遍历两格）—— 而"登录页问的只有我是谁"是另一条
+    // 测试在管的事，这里只说"这一段比的是那两格"。
+    expect(container.querySelectorAll('.login-field input')).toHaveLength(2)
+
+    // ② **注册页**：三格都标（用户 2026-09-25 要的那一条，原样保留）。
+    //    ★ 变异 B 红在这里。
+    await switchToSignup()
+    expect(container.querySelectorAll('.login-field input')).toHaveLength(3)
     for (const which of ['username', 'password', 'email'] as const) {
       const el = field(which)
-      const name = readableName(el)
-      expect(name, `${which} 那一格读不出"必填"`).toContain('必填')
-      expect(name).toContain('*')          // 星号也在同一格里
-      const star = el.closest('.login-field')?.querySelector('.login-star')
-      expect(star?.textContent).toBe('*')
-      expect(star?.getAttribute('aria-hidden')).toBe('true')
+      const m = reqMarks(el)
+      expect(m.name, `${which} 那一格读不出"必填"`).toContain('必填')
+      expect(m.name).toContain('*')          // 星号也在同一格里
+      expect(m.star?.textContent).toBe('*')
+      expect(m.star?.getAttribute('aria-hidden')).toBe('true')
       // ★ 而且**不要**原生 `required`（原因见上面那段注释）。
-      expect(el.hasAttribute('required')).toBe(false)
+      expect(m.native).toBe(false)
     }
   })
 })
