@@ -373,6 +373,21 @@ const GALLERY_FAKE = 500    // 假响应里放几条（§10 说的"造 500 条"�
 const GALLERY_FIRST = 60    // §3.5 的"先摆 60 张"，和 GalleryPage.tsx 里的 PAGE 是同一件事
 const DAY_MS = 86_400_000
 
+// ── 详情页 seed 的尺寸（终审 C1 的**一半**，另一半是下面那条判据）──────────
+// seed 一张**竖图**：手机上一屏放不下，详情页才真的比一屏长（判据"详情页自己滚了"
+// 才不是恒真）。600x900 在窄屏上是 350x525。
+const SEED_IMAGE_W = 600
+const SEED_IMAGE_H = 900
+/** seed 那张缩略图的边长上限 —— 和 `src/core/thumbnail.ts` 的 `THUMB_MAX_SIDE` **同一个数**。
+ *  ⚠️ 它原来不是个单独的图：`{ image, thumb: image }` 把**同一张 600x900** 同时当原图和
+ *  缩略图交上去，于是 `/thumb` 在检查里回的是**全尺寸图** —— 详情页那条判据（原来只判
+ *  `naturalWidth > 0`）对"详情页拿的是缩略图"这件事**永远失明**，C1 就是这么溜过去的。 */
+const SEED_THUMB_MAX = 160
+/** seed 原图的**长边** —— 详情页那条"拿到的必须是原图"的判据就对着它比。
+ *  为什么比长边而不是只比 `naturalWidth`：seed 是一张 600x900 的**竖图**，
+ *  `naturalWidth >= 900` 这种写法会让**正确**的实现也红（宽度只有 600）。 */
+const SEED_IMAGE_LONG = Math.max(SEED_IMAGE_W, SEED_IMAGE_H)
+
 /** 量作品页现在长什么样。 */
 async function measureGallery(page) {
   return page.evaluate(() => {
@@ -447,7 +462,8 @@ function judgeGallery(label, m) {
 // 判据**只有在真浏览器里才量得出来**：jsdom 没有排版引擎（getBoundingClientRect
 // 一律 0）、`window.scrollY` 恒为 0，连"一页比一屏长"都表达不出来。
 //
-// 量三件事：**文档滚了 0px、左栏还在 @top 0、两栏配方都在屏内**。
+// 量四件事：**那张大图真的是原图、文档滚了 0px、左栏还在 @top 0、两栏配方都在屏内**
+// （第四条是终审 C1 补的 —— 前三条对"详情页拿缩略图当大图"一条都不敏感）。
 
 /** 量详情页现在长什么样。 */
 async function measureDetail(page) {
@@ -464,6 +480,20 @@ async function measureDetail(page) {
     const boxes = [...document.querySelectorAll('.recipe-box')]
     return {
       name: document.querySelector('.detail-name')?.textContent ?? null,
+      // ★ 详情页那张"大图"到底是**哪一张**：natural 尺寸就是接口回的那个文件的尺寸
+      //   （CSS 缩放不影响它），所以"拿的是原图还是 160px 缩略图"直接量得出来。
+      //   终审 C1：这条以前**根本没有**，而 seed 又把 `/thumb` 喂成了全尺寸图 ——
+      //   两个洞叠起来，判据对"详情页把缩略图当大图"完全失明。
+      image: (() => {
+        const img = document.querySelector('.detail-image')
+        if (!img) return null
+        return {
+          src: img.getAttribute('src'),
+          naturalW: img.naturalWidth, naturalH: img.naturalHeight,
+          w: Math.round(img.getBoundingClientRect().width),
+          h: Math.round(img.getBoundingClientRect().height),
+        }
+      })(),
       // 两栏各自的盒子 top/bottom —— "挤到屏幕外"和"叠成一栏"都从这儿看得出来
       recipes: boxes.map(box),
       recipeTitles: boxes.map(b => b.querySelector('h3')?.textContent ?? ''),
@@ -489,11 +519,36 @@ async function measureDetail(page) {
 function judgeDetail(label, m, view) {
   console.log(`── ${label}`)
   console.log(`     名字 ${m.name ?? '（没有）'}   配方栏 ${m.recipeTitles.map(t => `「${t}」`).join(' ')}`)
+  console.log(`     大图 ${m.image
+    ? `${m.image.naturalW}x${m.image.naturalH} 自然 / ${m.image.w}x${m.image.h} 显示（${m.image.src}）`
+    : '**不在 DOM 里**'}   原图长边应为 ${SEED_IMAGE_LONG}`)
   console.log(`     详情页自己滚了 ${m.scrolled}px，文档滚了 ${m.docScroll}px，` +
     `左栏 ${m.nav ? `${m.nav.w}x${m.nav.h} @top ${m.nav.top}` : '**不在 DOM 里**'}`)
   console.log('     两栏配方：' + (m.recipes.map(b => b
     ? `${b.w}x${b.h} @top ${b.top}~${b.bottom}`
     : '**不在 DOM 里**').join('   |   ')))
+
+  // ★★ 那张"大图"必须是**原图本身**，不是 ≤160px 的缩略图（终审 C1）。
+  //   为什么这条判据长这样：
+  //     · 比**长边**（不是 `naturalWidth`）：seed 是 600x900 的竖图，只比宽的话
+  //       正确的实现也会红；
+  //     · 比 **natural** 尺寸（不是渲染尺寸）：`max-width: 100%; max-height: 60vh`
+  //       会把它在屏幕上缩到一屏以内，渲染尺寸量不出"接口回的是哪张文件"；
+  //     · 160 那道线是**真的分得开**的：缩略图 107x160、原图 600x900。
+  //   ⚠️ 这条以前写的是 `naturalWidth > 0`（"有像素"）—— 而 seed 把 `/thumb`
+  //   喂成同一张全尺寸图，于是它对 C1 那样的事**永远看不见**。判据和 seed 是
+  //   同一个洞的两半，改一处没用。
+  if (!m.image) {
+    fails.push(`${label}：详情页上没有那张大图（.detail-image 不在 DOM 里）`)
+  } else if (m.image.naturalW === 0) {
+    fails.push(`${label}：详情页那张大图解不开（naturalWidth 是 0）—— 用户点进来只看到一块空白`)
+  } else if (Math.max(m.image.naturalW, m.image.naturalH) < SEED_IMAGE_LONG) {
+    fails.push(`${label}：详情页那张「大图」拿到的**不是原图**` +
+      `（自然尺寸 ${m.image.naturalW}x${m.image.naturalH}，seed 原图的长边是 ${SEED_IMAGE_LONG}）` +
+      ' —— §3.5 说的是"点开一张 → 看大图"，而这一页现在和列表上那张小图是同一种东西。' +
+      '详情页的 .detail-image 和 .detail-download 两条都得走**原图**那条 URL（fullUrl），' +
+      '拿缩略图顶上就是 C1：而"下载到我的电脑"是 §3.4 之后用户把原图拿出服务器的唯一一条路')
+  }
 
   // ★ 两栏**永远是两栏**（§3.5.1）：数不到两个 = 谁把它们合成一个了
   if (m.recipes.length !== 2) {
@@ -811,26 +866,42 @@ try {
       // 左栏 @top 0"这种判据**永远不会红**（等于没写）。竖图在手机上是
       // 350×525，详情页稳稳超过一屏（判据自己还钉着下界，见 judgeDetail）。
       // 作品页那两段不受影响：缩略图是 `aspect-ratio: 1/1; object-fit: cover`。
-      const seeded = await page.evaluate(async (n) => {
+      //
+      // ⚠️⚠️ **原图和缩略图必须是两张、而且缩略图真的小（终审 C1 的那一半）。**
+      // 这里原来是 `{ image, thumb: image }` —— **同一张 600x900**，于是 `/thumb`
+      // 在检查里回的是全尺寸图，而详情页那条判据（当时只判 `naturalWidth > 0`）
+      // 对"详情页把缩略图当大图"**永远失明**。所以 seed 和判据必须**一起**改：
+      // 只改判据，它照样看不见；只改 seed，判据照样只问"有像素没有"。
+      const seeded = await page.evaluate(async (cfg) => {
         const c = document.createElement('canvas')
-        c.width = 600
-        c.height = 900
+        c.width = cfg.w
+        c.height = cfg.h
         const g = c.getContext('2d')
         g.fillStyle = '#4c8dff'; g.fillRect(0, 0, c.width, c.height)
         g.fillStyle = '#14161a'; g.fillRect(150, 225, 300, 450)
         const image = c.toDataURL('image/jpeg', 0.6)
+        // 缩略图用**真客户端那套算法**缩（`shared/size.ts` 的 fitWithin：等比、长边 ≤ max），
+        // 所以 600x900 → 107x160，和 `makeThumbnail(source, 160)` 的产出同一个尺寸级别。
+        const k = Math.min(1, cfg.thumbMax / Math.max(cfg.w, cfg.h))
+        const tc = document.createElement('canvas')
+        tc.width = Math.round(cfg.w * k)
+        tc.height = Math.round(cfg.h * k)
+        const tg = tc.getContext('2d')
+        tg.imageSmoothingQuality = 'high'
+        tg.drawImage(c, 0, 0, tc.width, tc.height)
+        const thumb = tc.toDataURL('image/jpeg', 0.7)
         const out = []
-        for (let i = 0; i < n; i++) {
+        for (let i = 0; i < cfg.n; i++) {
           const r = await fetch('/api/works', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ image, thumb: image }),
+            body: JSON.stringify({ image, thumb }),
           })
           const body = await r.json().catch(() => null)
           out.push(r.status === 200 && body ? body.id : `HTTP ${r.status}`)
         }
         return out
-      }, GALLERY_SEED)
+      }, { n: GALLERY_SEED, w: SEED_IMAGE_W, h: SEED_IMAGE_H, thumbMax: SEED_THUMB_MAX })
       if (seeded.some(x => typeof x !== 'number')) {
         fails.push(`${view.name}：走真接口放作品没成功（${seeded.join('/')}）—— ` +
           '后面那条懒加载的判据就没有能信的数据了')
@@ -864,14 +935,13 @@ try {
       await page.waitForFunction(
         () => document.querySelectorAll('.recipe-box').length === 2,
         null, { timeout: 10_000 })
-      // 大图落地之后再量：图没加载完的话版面还会动
+      // 大图落地之后再量：图没加载完的话版面还会动。
+      // ⚠️ 这里**只等不判** —— "解开了没有"和"拿的是不是原图"两条判据都在 `judgeDetail` 里
+      //   （终审 C1 把判据从"有像素"升成"必须是原图"时就一起收过去了）。
+      //   在这儿再判一遍的话，同一个毛病会红两次、而且**判据只有那一条**在讲为什么。
       await page.waitForFunction(
         () => (document.querySelector('.detail-image')?.naturalWidth ?? 0) > 0,
-        null, { timeout: 10_000 }).catch(() => { /* 取不到就在下面那条里报出来 */ })
-      if (!(await page.evaluate(
-        () => (document.querySelector('.detail-image')?.naturalWidth ?? 0) > 0))) {
-        fails.push(`${view.name}：详情页那张大图解不开（naturalWidth 是 0）—— 用户点进来只看到一块空白`)
-      }
+        null, { timeout: 10_000 }).catch(() => { /* 取不到就在下面那条判据里报出来 */ })
 
       // ★ 用**滚轮**滚（和用户做的是同一件事），滚到底再量。
       // ⚠️ 不能图省事写 `d.scrollTop = d.scrollHeight`：那样量的只是"这个元素
@@ -975,12 +1045,13 @@ if (fails.length) {
   console.log('窄屏上换不换行那一句）；那个按钮在 src/App.tsx 的 `.save-fail` 那一段里。')
   process.exitCode = 1
 } else {
-  console.log(`✅ ${VIEWS.length} 档 × 2 种状态都过：照片 ≥ ${MIN_LONG}x${MIN_SHORT}、` +
-    `画布完整在视口内、输入框在屏内、不用左右滑、`)
+  console.log(`✅ ${VIEWS.length} 档 × 3 种状态都过（刚传完照片 / 打开微调面板 / 存失败之后）：` +
+    `照片 ≥ ${MIN_LONG}x${MIN_SHORT}、画布完整在视口内、输入框在屏内、不用左右滑、`)
   console.log('   外加：红圈圆心落在点的地方、直径按画布长边算、小图真的解得出像素（全程零付费调用）')
   console.log('   外加存失败（§6.6 ①）：横幅和那个「下载到电脑」都完整在视口里、不用滚动、' +
     '画布还在、两个按钮的字各顶一行（不被 flex 挤扁）')
   console.log(`   外加作品页：${GALLERY_FAKE} 条时首屏只摆 ${GALLERY_FIRST} 张、圈在转、` +
     '滚到底真的接上后面的、整页不滚（左栏钉在原地）')
-  console.log('   外加详情页：两栏配方都在屏内、详情页自己滚而整页不滚（左栏还钉在原地）')
+  console.log(`   外加详情页：那张大图真的是原图（自然尺寸的长边 ≥ ${SEED_IMAGE_LONG}，不是 ${SEED_THUMB_MAX}px 的缩略图）、` +
+    '两栏配方都在屏内、详情页自己滚而整页不滚（左栏还钉在原地）')
 }

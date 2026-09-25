@@ -23,6 +23,7 @@ import { bitmapsToClose, attachThumb, jumpTo, pushSnapshot, type Snapshot } from
 import { makeThumbnail } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
 import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
+import type { Recipe } from '../shared/works.ts'
 
 /**
  * 建议卡片最多等这么久。
@@ -149,8 +150,16 @@ export default function App() {
   /** 这一趟修图（同一张上传的照片）里，上一次存进去的是哪个。
    *  **换图时清零** —— 它记的是"这张照片"，换一张就该重新问（§3.4）。 */
   const [savedId, setSavedId] = useState<number | null>(null)
-  /** 非 null = 正在问"上次那张要替换掉吗"，手里攥着刚做好的那张图。 */
-  const [asking, setAsking] = useState<{ blob: Blob; name: string } | null>(null)
+  /** 非 null = 正在问"上次那张要替换掉吗"，手里攥着刚做好的那张图。
+   *
+   *  ⚠️ **配方是"问的那一刻"那一份，不是回答那一刻的**（终审 M4）。`blob` 是
+   *  按下「保存」时导出的，而 `params` / `messages` 若等到他回答时现读，中间他
+   *  回头又改了一版（或又生成了一张）就会**张冠李戴**：存进去的图是旧那张、
+   *  配方却是新那套 —— 详情页会把一套这张图上根本没发生过的调整当教学讲给他
+   *  （§3.5.1 说这一页的全部价值就在"配方是真的"）。窗口很窄，但后果正好落在
+   *  那个价值上。 */
+  const [asking, setAsking] =
+    useState<{ blob: Blob; name: string; recipe: Recipe } | null>(null)
   /** 存失败时把图和名字留在这儿 —— **它是那个「下载到电脑」按钮的全部依据**（§6.6 ①）。
    *  ⚠️ `blob` 为 null 是**另一种失败**：图根本没做出来（`buildExportBlob` 那步就炸了）。
    *  那时候没有东西能给用户，说的话也不能是"图还在" —— 那是骗人（他会去找一个
@@ -575,14 +584,37 @@ export default function App() {
   //    给一个「下载到电脑」—— §6.6 ①，§10 点名它「最容易漏」。
 
   /**
+   * **此刻**这一份配方：参数 + 用户在屏幕上说过的原话。
+   *
+   * ★ 抽成一个函数只有一个理由：口径**只有一份**。`saveOnce` 平时现读它，
+   * 而「上次那张要替换掉吗」那条路要在**问的那一刻**把它拍下来（终审 M4）——
+   * 两处各写一遍的话，哪天口径变一处就会漏一处。
+   *
+   * ★ 原话 = 用户在屏幕上说过的那些话（裁定 ④）。
+   *   `role: 'user'` 有**两个**来源，两个都该在这里：`send`（他敲进去的那句）
+   *   和 `onCard`（**点建议卡片** —— 他点了「亮一点」，那就是他说了「亮一点」，
+   *   把卡片标签记成用户消息是**对的**，不是 bug）。
+   *   **不记 `editPrompt`** —— 那是给图片模型的英文 prompt，是我们的实现细节。
+   */
+  const recipeNow = useCallback((): Recipe => ({
+    params,
+    edits: messages.filter(m => m.role === 'user').map(m => m.text),
+  }), [params, messages])
+
+  /**
    * 存一次。`replaceId` 非 null = 替换掉那一张，null = 新存一张。
    *
    * ⚠️ **故意不收 `name`。** 文件名只对"下载到电脑"和失败时那句话有意义，
    *    存这一路用不上它 —— 服务端那份 `WorkInput` 只有 image / thumb / recipe，
    *    名字是详情页「改名」那条路管的（`renameWork`）。计划里那一版签名带着
    *    `name` 而从头到尾没读过它，`noUnusedParameters` 会当场红。
+   *
+   * ⚠️ `recipeAt` 传了就用它，没传才现读 `recipeNow()`（终审 M4）：
+   *    「上次那张要替换掉吗」那条路隔着用户的一次回答，横幅挂着的时候他可能回头
+   *    又改了一版。现读的话，存进去的是**旧图 + 新配方** —— 详情页会把这套调整
+   *    当教学讲给他，而这套调整在这张图上从没发生过。
    */
-  const saveOnce = useCallback(async (blob: Blob, replaceId: number | null) => {
+  const saveOnce = useCallback(async (blob: Blob, replaceId: number | null, recipeAt?: Recipe) => {
     const canvas = canvasElRef.current
     // 缩略图是**顺手带的**：生成失败不该让整张图存不进去（裁定 ②）
     let thumb: string | undefined
@@ -591,15 +623,7 @@ export default function App() {
     } catch (e) {
       console.error('缩略图没做出来，这张作品将没有缩略图：', e)
     }
-    // ★ 配方里的原话 = 用户在屏幕上说过的那些话（裁定 ④）。
-    //   `role: 'user'` 有**两个**来源，两个都该在这里：`send`（他敲进去的那句）
-    //   和 `onCard`（**点建议卡片** —— 他点了「亮一点」，那就是他说了「亮一点」，
-    //   把卡片标签记成用户消息是**对的**，不是 bug）。
-    //   **不记 `editPrompt`** —— 那是给图片模型的英文 prompt，是我们的实现细节。
-    const recipe = {
-      params,
-      edits: messages.filter(m => m.role === 'user').map(m => m.text),
-    }
+    const recipe = recipeAt ?? recipeNow()
     const body = { image: await blobToDataUrl(blob), thumb, recipe }
     if (replaceId !== null) {
       await replaceWork(replaceId, body)
@@ -611,9 +635,12 @@ export default function App() {
     // 不新加一套提示机制，也**绝不能**用 `setMessages` 手写一条 `role: 'user'`：
     // 那会当场变成"用户说过的原话"，混进上面那份配方里。
     say('存好了，在左边「作品」里。')
-    // ⚠️ 上面那句就是 `say` 必须进依赖表的原因 —— 漏了它，`saveOnce` 会闭包住
-    //    旧的那一份（本项目栽过好几次的那个形状）。
-  }, [params, messages, say])
+    // ⚠️ 上面那句就是 `say` 必须进依赖表的原因 —— **不是为了防"闭包住旧的那一份"**：
+    //    `say` 是 `useCallback(…, [])`（见 :186 附近），身份永远不变，陈旧那一说
+    //    在这儿不可能发生。留它在表里是对的（exhaustive-deps 要求"用了就写"，
+    //    哪天有人给 `say` 加一个依赖，这张表会自己把它捞回来），但理由就是这个。
+    //    —— 原来那句话描述的是一个**不可能发生的后果**（终审 M3）。
+  }, [recipeNow, say])
 
   const onSave = useCallback(async () => {
     const canvas = canvasElRef.current
@@ -630,7 +657,9 @@ export default function App() {
       if (savedId !== null) {
         // 同一张照片改过好几遍了 —— 问一句。不问的话改了 5 遍就是 5 张
         // 几乎一样的图，作品集立刻没法看（§3.4）。
-        setAsking({ blob, name })
+        // ⚠️ **顺手把配方一起拍下来**（终审 M4）：他回答之前可能又改了一版，
+        //    那时候现读的就是"新那套配旧那张图"。
+        setAsking({ blob, name, recipe: recipeNow() })
         return
       }
       await saveOnce(blob, null)
@@ -644,17 +673,20 @@ export default function App() {
     } finally {
       setDelivering(null)
     }
-  }, [savedId, saveOnce])
+  }, [savedId, saveOnce, recipeNow])
 
   /** 回答「上次那张要替换掉吗」：`replaceId` 非 null = 替换，null = 再存一张。
    *  两条回答走**同一段代码**，只有那一个参数不同 —— 分开写两份的话，
-   *  「存失败怎么办」那一半迟早只在其中一份里改。 */
+   *  「存失败怎么办」那一半迟早只在其中一份里改。
+   *
+   *  ⚠️ 配方用的是 `asking` 里**拍下来的那一份**（终审 M4），不是现读：
+   *  问的是"上次那张要替换掉吗"，那就得配着那张图当时的调整一起存。 */
   const answerAsk = useCallback((replaceId: number | null) => {
     const cur = asking
     if (!cur) return
     setAsking(null)
     setDelivering('save')
-    void saveOnce(cur.blob, replaceId)
+    void saveOnce(cur.blob, replaceId, cur.recipe)
       .catch((e) => setSaveFail({
         blob: cur.blob, name: cur.name,
         why: e instanceof Error ? e.message : '没存进去',

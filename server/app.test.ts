@@ -544,6 +544,48 @@ describe('取图：真的把字节发出去', () => {
     // 少了它，一个"回 200 但正文是空 / 是 JSON"的实现照样绿
     expect((await r.arrayBuffer()).byteLength).toBe(64)
   })
+
+  it('★ 多一截的路径必须 404 —— 四条路由正则的**锚定**终于有人在守（终审 I2）', async () => {
+    // ★ 这条补的是**锚定本身**。四条路由正则（`fileRoute` / `thumbRoute` / `oneRoute`，
+    //   `app.ts:206/215/230`）全都锚着整串，而**把那四个 `^…$` 全去掉，整个套件原来
+    //   是一片绿的**：唯一那条多段路径（上面那条 `/file/../../etc`）在 **fetch 那头**
+    //   就被归一化成 `/api/works/etc`，**走不到正则跟前**（Task 5 的注解里写明了这件事，
+    //   却顺手捎上一句"app.test.ts 里那条抓的正是它" —— 那句是**假的**，被抓的
+    //   那条正是它自己刚判定走不到跟前的那条）。
+    //
+    //   为什么值得一条用例：不锚定的 `/\/api\/works\/(\d+)/` 今天只影响"多一截"这种
+    //   畸形路径（没人这么请求），但它是**将来会被撞上的不变量** —— 下一段往
+    //   `/api/works/:id` 底下加第二条子路由（`/presets`、`/luts` 那种形状）时，
+    //   `oneRoute` 会**静默抢走**它，而那时候红的是别的功能的用例，没人会想到是这儿。
+    //
+    // ⚠️ **必须先真的存一张、并先证明它取得回来。** 库里没有这张作品时，`/file/`
+    //   本来也会 404（"没有这张作品"），不锚定的实现在这条用例上照样绿 ——
+    //   有图才有"200 + 把图给出去"那条岔路可走。
+    const { base, cookie } = await appWithUser()
+    const b64 = Buffer.from(new Uint8Array(64).fill(7)).toString('base64')
+    const created = await post(base, '/api/works', { image: `data:image/jpeg;base64,${b64}` }, cookie)
+    expect(created.status).toBe(200)
+    const id = (created.body as unknown as { id: number }).id
+
+    // 正面对照：这张图真的取得到。少了它，下面四条 404 可能只是因为图根本不在。
+    expect((await fetch(`${base}/api/works/${id}/file`, { headers: { cookie } })).status).toBe(200)
+
+    // 变异（**逐条实测过**，不是推的；Vitest 只报一个 `it` 里第一条失败的断言，
+    // 所以下面说的是"哪一条先红"）：
+    //   · 只去掉 `fileRoute` 的 `^…$` → 第 1 条（`/file/`）先红；
+    //   · 只去掉 `thumbRoute` 的 → 前两条绿、第 3 条（`/thumb/x`）先红
+    //     （`handleWorkThumb` 没有缩略图就退回原图，所以它回的是 200 + 那张图）；
+    //   · 只去掉 `oneRoute` 的 → **第 1 条就红**：它排在最后、也最宽松，
+    //     `/file/`、`/file/x`、`/thumb/x` 全被它抢走（回的是详情 JSON）。
+    //     单看最后那条（`/x`）也够 —— 把它单独留下跑过，一样红。
+    //   —— 那正是"静默抢走"的样子，也是下一段往 `/api/works/:id` 底下加
+    //   `/presets` 那种子路由时会撞上的事（那时候红的会是别的功能的用例）。
+    //   · 三个都去掉 → 整条用例红（这一轮先跑的正是这个）。
+    expect((await fetch(`${base}/api/works/${id}/file/`, { headers: { cookie } })).status).toBe(404)
+    expect((await fetch(`${base}/api/works/${id}/file/x`, { headers: { cookie } })).status).toBe(404)
+    expect((await fetch(`${base}/api/works/${id}/thumb/x`, { headers: { cookie } })).status).toBe(404)
+    expect((await fetch(`${base}/api/works/${id}/x`, { headers: { cookie } })).status).toBe(404)
+  })
 })
 
 describe('列表：路由真的接上了', () => {

@@ -1,7 +1,29 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getWork, renameWork, deleteWork, fileUrl } from '../api/works'
-import { workName, type WorkDetail } from '../../shared/works.ts'
+import { getWork, renameWork, deleteWork, fullUrl } from '../api/works'
+import { workName, type WorkMeta, type WorkDetail } from '../../shared/works.ts'
+import { buildFilename } from '../export/save'
 import { PARAM_LABELS, PARAM_KEYS, type Adjustments } from '../../shared/adjustments.ts'
+
+/**
+ * 详情页那个「下载到我的电脑」下下来叫什么。
+ *
+ * **`<a download>` 必须带值**：不带值时浏览器拿 URL 末段当文件名 ——
+ * 现在末段是 `file`（还可能跟着 `?v=…`），下下来就是一个**没有扩展名**的文件，
+ * 手机相册和看图软件认不出它。而编辑页那条下载走的是 `buildFilename()`（`p_xxx.jpg`）,
+ * 同一个动作两种结果。
+ *
+ * 名字的来源：别名优先（那是用户自己起的名字），没起名就用 id ——
+ * **不拿 `workName` 当文件名**：它没起名时是「11月15日 06:13」，中间那个 `:` 在
+ * Windows 上根本写不出去（而且斜杠、引号这些在别的系统上也不行）。
+ * 别名是用户手打的，同样可能要过这一关 —— 一并换成 `_`。
+ *
+ * ⚠️ 用的是**和编辑页同一个** `buildFilename`（`_ruixing` 那个后缀、扩展名从格式推），
+ * 不另造一套命名规则。
+ */
+export function downloadName(w: WorkMeta): string {
+  const stem = (w.alias ?? `作品${w.id}`).replace(/[\\/:*?"<>|]/g, '_').trim() || `作品${w.id}`
+  return buildFilename(stem, 'image/jpeg')
+}
 
 /**
  * 一张作品的详情页 —— **「这张图怎么来的」**（spec §3.5.1）。
@@ -118,11 +140,27 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
 
       {failed && <p className="detail-error">{failed}</p>}
 
-      <img className="detail-image" src={fileUrl(work)} alt={name} />
+      {/* ⚠️ **两条都必须走 `fullUrl`（原图），不是 `fileUrl`。**
+          `fileUrl` 那条是给**列表格子上那张小图**用的：`hasThumb` 时回 `/thumb`，
+          而缩略图 ≤160px（`THUMB_MAX_SIDE`），且每次保存都顺手带一张 —— 也就是
+          **几乎总是存在**。拿它当"大图"的后果实测过：点开一张看到的是 160px 的图，
+          §3.5 的「看大图」不成立；而「下载到我的电脑」下到的也是同一张 160px。
+
+          下载那条尤其要紧：§3.4 已经把"保存自动下载"拿掉了，所以**这个按钮是用户
+          把原图拿出服务器的唯一一条路**。§3.5 说"存满了先下载到本地再删，东西就不会
+          丢"—— 下载的是缩略图的话，那句话就从"不丢"变成了**真的丢**（本地那份是
+          缩略图，服务器上的原件随后被他自己删掉）。 */}
+      <img className="detail-image" src={fullUrl(work)} alt={name} />
 
       <div className="detail-actions">
-        {/* 下载就是把这个文件给他 —— 和存在服务器上的**是同一份**（裁定 ①） */}
-        <a className="detail-download" href={fileUrl(work)} download>下载到我的电脑</a>
+        {/* 下载给的是**存在服务器上的那一份**（裁定 ①：存的不是上传的原图，是导出
+            用的那个产物，所以"看到的"和"下载到的"必须是同一个东西）—— 它和上面那张
+            大图现在是**同一条 URL**，所以这句话今天成立；C1 之前它也写着这句，
+            而当时两处拿到的都是缩略图，那句话是**假的**。
+
+            `download` 带值（M2）：不带值时浏览器按 URL 末段起名 —— 现在末段是
+            `file`（还带 `?v=…`），下下来是个没有扩展名的文件。 */}
+        <a className="detail-download" href={fullUrl(work)} download={downloadName(work)}>下载到我的电脑</a>
         {confirming ? (
           <span className="detail-confirm">
             <span>删掉作品集里的这一份吗？删了就找不回来了。</span>

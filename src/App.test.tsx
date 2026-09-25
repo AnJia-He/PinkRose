@@ -1451,12 +1451,46 @@ describe('作品详情页：这张图怎么来的', () => {
     // ★ AI 那栏一个按钮都没有 —— 给了就是骗人（§3.5.1）
     expect(boxes[1]!.querySelectorAll('button').length).toBe(0)
     expect(boxes[1]!.textContent).toContain('把后面那个人去掉')
+    // ★ M8：两栏下面的**小字**也是设计的一部分（§3.5.1 那张图里就画着它们），
+    //   和 `h3` 一样钉住。"配方能带走、经历带不走"这件事**全靠这两句话讲给用户听** ——
+    //   只钉 h3 挡不住谁把第二栏的小字改成"这一套也能套到别的图上"（那就成了骗人：
+    //   「把后面那个人去掉」换一张照片就是另一回事）。
+    //   变异：各自改一句 → 各自那一条红（两条是互为反面的半句，谁被改都会当场露出来）。
+    expect(boxes[0]?.querySelector('.recipe-note')?.textContent).toContain('能套到别的图上')
+    expect(boxes[1]?.querySelector('.recipe-note')?.textContent).toContain('套不到别的图上')
     // ★ **详情页和作品页得叫同一个名字**（§3.5：「名字」只有一份，搜日期才等于按日期搜）。
     //   夹具是 2023-11（见 `openWork`）、今年是 2026，所以 `dayLabel` **一定**会补上年份。
     //   变异：把 `workName(work, now)` 改回 `workName(work, work.updatedAt)` → 这一条红，
-    //   而其余**五条**一声不吭 —— 这正是它当初会漏掉的原因。（"五条"随这个 describe
-    //   的条数走：写这句话时是 4 条 → 补了「套用真的生效」和「打不开这一张」之后是 6 条。）
+    //   而其余**六条**一声不吭 —— 这正是它当初会漏掉的原因。（"六条"随这个 describe
+    //   的条数走：写这句话时是 4 条 → 补了「套用真的生效」和「打不开这一张」之后是 6 条
+    //   → 终审 C1 补了「大图和下载都是原图」之后是 7 条。）
     expect(container.querySelector('.detail-name')!.textContent).toContain('2023年')
+  })
+
+  it('★ 大图和「下载到我的电脑」拿到的都得是**原图**，不是 160px 缩略图（终审 C1）', async () => {
+    // ★ 这一页原来两处都调 `fileUrl()` —— 而它在 `hasThumb` 时回 `/thumb`，缩略图
+    //   ≤160px（`THUMB_MAX_SIDE`），且每次保存都顺手带一张，**几乎总是存在**。
+    //   于是「点开一张 → 看大图」（§3.5）看到的是 160px；而「下载到我的电脑」下到的
+    //   也是同一张 160px —— 那正是 §3.4 拿掉"保存自动下载"之后，用户把**原图**拿出
+    //   服务器的唯一一个动作（§3.5 的「先下载到本地再删，东西就不会丢」全押在它上面）。
+    //   夹具的 updatedAt 是 1_700_000_000_000，所以 `?v=` 也一起钉住：少掉版本号，
+    //   浏览器会给长缓存里的**上一版**（替换过之后 id 不变）。
+    await openWork()
+    // ⚠️ 按**类名**找（结构），两条都带 `?.` —— 元素不在时红成
+    //   `expected undefined to ...`，而不是 `Cannot read properties of undefined`。
+    const img = container.querySelector('.detail-image') as HTMLImageElement | null
+    expect(img?.getAttribute('src')).toMatch(/^\/api\/works\/1\/file\?v=1700000000000$/)
+
+    const dl = container.querySelector('.detail-download') as HTMLAnchorElement | null
+    // 变异：两处改回 `fileUrl(work)` → 上面这两条红（拿到的会是 `/thumb`）
+    expect(dl?.getAttribute('href')).toMatch(/^\/api\/works\/1\/file\?v=1700000000000$/)
+    // M2：`<a download>` 必须**带值**。不带值时浏览器拿 URL 末段当文件名 —— 现在是
+    // `file`，下下来是个没有扩展名、手机相册认不出的东西（编辑页那条是 `p_xxx.jpg`）。
+    // 变异：把 `download={downloadName(work)}` 换回裸的 `download` → 这一条红
+    // （`getAttribute('download')` 回的是空串）；把 `downloadName` 里的
+    // `buildFilename` 去掉 → 下一条红。
+    expect(dl?.getAttribute('download') ?? '').toMatch(/\.jpg$/)
+    expect(dl?.getAttribute('download') ?? '').not.toBe('file')
   })
 
   it('★ 改个中文名，网址一动不动（§3.5.1）', async () => {
@@ -1594,7 +1628,7 @@ describe('作品详情页：这张图怎么来的', () => {
 /**
  * 2026-09-25 加（Task 13 —— 13 个任务里的最后一个）。**「保存」= 存进作品集**（§3.4）。
  *
- * 三件事在这一层钉住：
+ * 四件事在这一层钉住：
  *   ① 点「保存」不再偷偷下载。下载挪到作品集里，由用户自己决定要哪张、存到哪
  *      —— 顺带也不再往他的下载文件夹堆东西；
  *   ② 同一张照片存第二次起问一句「上次那张要替换掉吗」，而且**问完之后按下去
@@ -1604,6 +1638,8 @@ describe('作品详情页：这张图怎么来的', () => {
  *      **我们这边的限制**，不该让他连图都拿不到。所以当场得有一个真能按的
  *      「下载到电脑」。反过来，图**根本没导出来**的时候不许说"图还在"（那是骗人，
  *      用户会去找一个屏幕上不存在的按钮）。
+ *   ④ ②那条问句挂着的时候，**配方定格在问的那一刻**（终审 M4）：他回头又改了一版
+ *      再回答「替换」，存的仍是那张图当时的调整 —— 图和配方不能来自两个时刻。
  */
 describe('保存 = 存进作品集（Task 13）', () => {
   /**
@@ -1720,8 +1756,11 @@ describe('保存 = 存进作品集（Task 13）', () => {
     await clickTop('替换')          // 回答那个问句
 
     expect(fetchMock.mock.calls.filter(c => c[0] === '/api/works/9' && c[1]?.method === 'PUT')).toHaveLength(1)
-    // ★ 替换走的是 PUT，**不是又 POST 一张** —— 后者会让作品集里凭空多出一张
-    //   （变异：把 `replaceWork(replaceId, body)` 换成 `createWork(body)` → 两条一起红）
+    // ★ 替换走的是 PUT，**不是又 POST 一张** —— 后者会让作品集里凭空多出一张。
+    //   ⚠️ 变异（把 `replaceWork(replaceId, body)` 换成 `createWork(body)`）**只报上面
+    //   那一条**（PUT 数 0），下面这句**根本不会执行**：Vitest 只报一个 `it` 里第一个
+    //   失败的断言。原稿写的"两条一起红"是**错的** —— 那是一种"看起来更严格、其实
+    //   观察不到"的写法（计划的竣工回顾里专门更正过）。
     expect(fetchMock.mock.calls.filter(c => c[0] === '/api/works' && c[1]?.method === 'POST')).toHaveLength(1)
   })
 
@@ -1741,6 +1780,44 @@ describe('保存 = 存进作品集（Task 13）', () => {
 
     expect(fetchMock.mock.calls.filter(c => c[0] === '/api/works' && c[1]?.method === 'POST')).toHaveLength(2)
     expect(fetchMock.mock.calls.filter(c => c[0] === '/api/works/9' && c[1]?.method === 'PUT')).toHaveLength(0)
+  })
+
+  it('★★ 配方定格在**问的那一刻** —— 横幅挂着时又改了一版，回答「替换」存的仍是那一套（终审 M4）', async () => {
+    // 终审 M4：`asking` 里原来只存了 `blob`，配方是按下按钮那一刻**现读**的。
+    // 他在横幅挂着的时候回头又改了一版（或又生成一次），再点「替换」—— 存进去的是
+    // **旧那张图 + 新那套配方**。后果不是"少记一笔"：详情页会把一套这张图上
+    // **根本没发生过**的调整当教学讲给他，而 §3.5.1 说这一页的全部价值就在
+    // "配方是真的"。
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works' && init?.method === 'POST') return jsonResponse({ id: 9 })
+      if (url === '/api/works/9' && init?.method === 'PUT') return jsonResponse({ id: 9 })
+      return inner(url, init)
+    })
+
+    await renderApp()
+    await uploadPhoto()
+    await clickTop('保存')          // 第一次：POST，savedId = 9
+    await clickTop('保存')          // 第二次：问「替换掉吗」—— **配方在这一刻定格**
+    expect(container.textContent).toContain('上次那张要替换掉吗')
+
+    // 他还没回答，回头又改了一版：这一下**同时**改了 params 和"用户说过的原话"。
+    // 两样都改，是因为配方两个字段各要有人咬（只改一样的话，另一个字段漏掉快照看不出来）。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 20 }, reply: '给你提亮了。' }))
+    await say('亮一点')
+
+    await clickTop('替换')
+
+    const call = fetchMock.mock.calls.find(c => c[0] === '/api/works/9' && c[1]?.method === 'PUT')
+    // 没打到 PUT 时给 `undefined`（而不是崩在 `!` 上）：红出来的是
+    // `expected undefined to equal []`，一眼看得出是"那一下没存"，不是"测试自己坏了"。
+    const body = call ? JSON.parse(String(call[1]!.body)) : undefined
+    // ★ 必须是**问的那一刻**那一份：一句原话都还没有、参数还是零。
+    //   变异：`saveOnce` 里把 `recipeAt ?? recipeNow()` 改回无条件 `recipeNow()`
+    //   （或 `answerAsk` 不传 `cur.recipe`）→ 这两条红（会变成 ['亮一点'] / 20）。
+    expect(body?.recipe.edits).toEqual([])
+    expect(body?.recipe.params.exposure).toBe(0)
   })
 
   it('★★ 存不进去的时候，屏幕上必须出现一个**能拿到图**的按钮（§6.6 ①）', async () => {
@@ -1811,12 +1888,18 @@ describe('保存 = 存进作品集（Task 13）', () => {
     expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'decoded-1' } })
 
     // 横幅还在，而且**指的还是刚才那张**
-    expect(container.querySelector('.save-fail')).toBeTruthy()
-    expect(container.textContent).toContain('刚才那张')
-    // 变异：把这两句改回「这一张」→ 上面这句红（下面这句是同一个意思的另一半：
-    // 屏幕上已经是新的一版了，横幅就不该说"这一张"）。别处没有「这一张」这几个字
-    // —— 作品页/详情页那两句不在这一屏上。
-    expect(container.textContent).not.toContain('这一张')
+    const fail = container.querySelector('.save-fail')
+    expect(fail).toBeTruthy()
+    expect(fail?.textContent ?? '').toContain('刚才那张')
+    // ⚠️ **只扫横幅那一段，不扫整个屏幕。** 原来写的是 `container.textContent`
+    //   `.not.toContain('这一张')` —— 那是在赌"整屏别处恰好没有这几个字"：作品页和
+    //   详情页各有一句「这一张」，它们**今天**不在这一屏上。赌这种巧合的断言会在
+    //   别人加一句文案那天**悄悄失效**（不红了，而不是红得看不懂），而"整屏扫一句
+    //   否定"正是本段栽过第二次的形状（上一次是详情页那条 `not.toContain('你电脑')`
+    //   扫了整个 container，Task 12 收的）。
+    //   变异：把横幅那句改回「这一张」→ 上面那条红（这一条是同一个意思的另一半：
+    //   屏幕上已经是新的一版了，横幅就不该说"这一张"）。
+    expect(fail?.textContent ?? '').not.toContain('这一张')
 
     // ★ 而按钮给的必须是**失败那一刻那版**，不是屏幕上现在这版。
     const dl = container.querySelector('.save-fail button.download') as HTMLButtonElement | null
