@@ -39,6 +39,34 @@ describe('checkUsername', () => {
     expect(checkUsername('a😀').ok).toBe(false)
   })
 
+  it('汉字按 Unicode 的 Han 脚本收，不是码点范围 —— 真名不该被范围挡在外面', () => {
+    // 这几个都是「合法的汉字却被拒」：旧的范围（U+4E00–U+9FA5）只到 U+9FA5，
+    // 再往上全是真名用字 —— 而汉字并不止于那一个码点。
+    // 被它拒掉的人看到的是「只能用中文、字母、数字和下划线」——
+    // 等于被告知「你的名字不是中文」。
+    expect(checkUsername('龦明').ok).toBe(true)   // \u9FA6，就在 CJK 基本区里，只排在 U+9FA5 之上
+    expect(checkUsername('䶮明').ok).toBe(true)   // \u4DAE，扩展 A，龑 的简化形，人名用字
+    expect(checkUsername('𠮷明').ok).toBe(true)  // \u20BB7，扩展 B
+    expect(checkUsername('𪚥明').ok).toBe(true)  // \u2A6A5，扩展 B
+  })
+
+  it('长度按字符数算，扩展区汉字也算一个字 —— 否则真名会被长度卡掉', () => {
+    // 11 个 𠮷：按字符数是 11（合规），按 UTF-16 码元是 22（会被上限 20 拒）。
+    // 收进 Han 脚本之后，charLen 才第一次真的产生可观察差异 ——
+    // 在这之前它其实一直没被任何一条测试咬到。
+    expect(checkUsername('𠮷'.repeat(11)).ok).toBe(true)
+  })
+
+  it('名字里的中点不是符号 —— 少数民族全名能注册', () => {
+    expect(checkUsername('迪丽热巴·迪力木拉提')).toEqual({ ok: true, value: '迪丽热巴·迪力木拉提' })
+  })
+
+  it('三个长得一样的中点折成一个 —— 不然两个看着相同的名字会变成两个账号', () => {
+    const canonical = '尼格买提·热合曼'
+    expect(checkUsername('尼格买提・热合曼')).toEqual({ ok: true, value: canonical })   // \u30FB 片假名中点
+    expect(checkUsername('尼格买提‧热合曼')).toEqual({ ok: true, value: canonical })   // \u2027 连字点
+  })
+
   it('保留名不让注册', () => {
     for (const n of ['admin', 'root', 'system', 'administrator', 'ADMIN']) {
       expect(checkUsername(n).ok).toBe(false)
@@ -48,7 +76,9 @@ describe('checkUsername', () => {
   it('失败时 message 是给人看的中文', () => {
     const r = checkUsername('!')
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.message.length).toBeGreaterThan(0)
+    // 只断言「非空」是抓不住东西的：任何字符串都能过，包括 'invalid' 和一段英文堆栈。
+    // 这个项目被这类「没在测它名字说的东西」的测试咬过两次，所以这里真的验「是中文」。
+    if (!r.ok) expect(/[\u4E00-\u9FFF]/.test(r.message)).toBe(true)
   })
 
   it('USERNAME_MIN 就是 2 —— 改大了「小明」就注册不了', () => {
@@ -90,6 +120,9 @@ describe('checkPassword', () => {
     // 而密码这边是**用户原样敲的输入** —— 所以「只差大小写」也得算一样，
     // 否则 Same-Name-1 这种等于把名字抄了一遍、只换个大小写就能过。
     expect(checkPassword('Same-Name-1', 'same-name-1').ok).toBe(false)
+    // 名字在库里存的**必然**是小写，所以传进来一个没归一化的名字也必须挡住 ——
+    // 只折一边的话，错在这一侧的调用方会让这条规则**悄悄失效**（不报错、不红，最难查）。
+    expect(checkPassword('Other-Name', 'Other-Name').ok).toBe(false)
   })
 
   it('超长不行（防被人拿它当 DoS）', () => {

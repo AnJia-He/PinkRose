@@ -33,18 +33,40 @@ export type Check =
  */
 const charLen = (s: string): number => [...s].length
 
+/**
+ * `·` 的几个"看起来一模一样"的码点。
+ *
+ * 中文名字里该用的是 U+00B7（MIDDLE DOT），但输入法和复制粘贴常给出
+ * U+30FB（片假名中点）、U+2027（连字点）—— 人眼分不出来。
+ * 折成同一个的理由和大小写不敏感同源：不折的话，`尼格买提·热合曼` 和它的
+ * U+30FB 版本会是**两个看着完全一样的账号**，冒充就有了空子。
+ *
+ * 这里刻意写成 `\u` 转义而不是字面量：这几个字符印出来一模一样，
+ * 靠眼睛核对源码是核不出对错的，只有转义能让"到底是哪个码点"一眼可见。
+ */
+const MIDDLE_DOT = '\u00B7'
+const MIDDLE_DOT_ALIASES = /[\u30FB\u2027]/g
+const foldMiddleDot = (s: string): string => s.replace(MIDDLE_DOT_ALIASES, MIDDLE_DOT)
+
 export function checkUsername(raw: string): Check {
-  const v = raw.trim().toLowerCase()
+  const v = foldMiddleDot(raw.trim().toLowerCase())
   if (v.length === 0) return { ok: false, message: '起个名字吧' }
   const n = charLen(v)
   // 下限是 2 不是 3：英文网站常写 3（"ab" 这种两字母看着像垃圾号），但中文里
   // **两个字的名字太常见**（小明、阿宝、李雷），按 3 个卡他们会直接注册不了。
   if (n < USERNAME_MIN) return { ok: false, message: `名字至少 ${USERNAME_MIN} 个字` }
   if (n > USERNAME_MAX) return { ok: false, message: `名字最多 ${USERNAME_MAX} 个字` }
-  // 中文、字母、数字、下划线。**空格和符号不收** —— 空格开头结尾会让人看不出区别，
-  // 符号则是纯给冒充留余地（"官方客服★"）
-  if (!/^[一-龥a-z0-9_]+$/.test(v)) {
-    return { ok: false, message: '只能用中文、字母、数字和下划线' }
+  // 中文按 **Unicode 的 Han 脚本**判，不是码点范围。
+  // 曾经写的是 `一-龥`（U+4E00–U+9FA5）—— 那会拒掉**合法汉字**：`龥` 之上还有
+  // 整个 CJK 基本区（到 U+9FFF）、扩展 A~H、以及兼容汉字，全是真名用字
+  // （`龦` U+9FA6、`䶮` U+4DAE、`𠮷` U+20BB7、`﨎` U+FA0E…），
+  // 被拒的人看到的是"只能用中文"，等于被告知自己的名字不是中文。
+  // 这跟上面「下限 2 不是 3」是**同一个形状的错误**：拿一套习惯范围去卡另一群人的真名。
+  // **空格和符号不收** —— 空格开头结尾会让人看不出区别，符号则是纯给冒充留余地（"官方客服★"）。
+  // 中点 `·` 是唯一放行的"符号"：它是少数民族名字的一部分，不是装饰（见 foldMiddleDot）。
+  // `u` 标志是必须的 —— `\p{...}` 没有 `u` 直接是语法错误。
+  if (!/^[\p{Script=Han}a-z0-9_\u00B7]+$/u.test(v)) {
+    return { ok: false, message: '只能用中文、字母、数字、下划线和 ·' }
   }
   if (RESERVED_USERNAMES.includes(v)) {
     return { ok: false, message: '这个名字被保留了，换一个吧' }
@@ -70,10 +92,12 @@ export function checkPassword(raw: string, username?: string): Check {
   if (raw.length > PASSWORD_MAX) return { ok: false, message: `密码最多 ${PASSWORD_MAX} 位` }
   // **不强制大写/数字/符号。** 强制会逼出 Password1! 这种更好猜的密码 ——
   // 现在公认的做法是够长就行。中文、空格、符号都允许，它们只会让密码更强。
-  // 拿**原始输入**去比**库里的名字**，所以要把密码这边折成小写：名字传进来时
-  // 已经是 `checkUsername` 归一过的小写（Task 5 传的就是 `u.value`），
-  // 而密码是用户原样敲的。只差大小写也算一样 —— 否则把名字换个大小写就等于没设防。
-  if (username !== undefined && raw.toLowerCase() === username) {
+  // "不能和名字一样"这条**两边都折成小写**：名字在库里存的本来必然是小写
+  // （`checkUsername` 的 value 已归一，Task 5 传的就是 `u.value`），
+  // 而密码是用户原样敲的。对正确调用方这是个空操作 —— 它是一张**给粗心调用方的网**：
+  // 传进来一个没归一化的名字时，只折一边会让这条规则**悄悄失效**，
+  // 而且失效得毫无动静（不报错、不红），比大声挂掉难查得多。
+  if (username !== undefined && raw.toLowerCase() === username.toLowerCase()) {
     return { ok: false, message: '密码不能和名字一样' }
   }
   return { ok: true, value: raw }
