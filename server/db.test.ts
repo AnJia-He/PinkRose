@@ -4,6 +4,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb, MIGRATIONS } from './db.ts'
 
+/**
+ * 删临时库，连同 sqlite 的边车文件。**清不掉也不判红** —— 临时目录里的残留不说明
+ * 任何被测行为对错，而 Windows 上杀软/索引器偶尔会短暂占住刚建出来的文件。
+ */
+function removeTempDb(file: string): void {
+  try {
+    for (const f of [file, `${file}-journal`, `${file}-wal`, `${file}-shm`]) rmSync(f, { force: true })
+  } catch { /* 见上 */ }
+}
+
 describe('openDb', () => {
   it('建出 users 表，字段齐全', () => {
     const db = openDb(':memory:')
@@ -63,5 +73,43 @@ describe('openDb', () => {
         }
       } catch { /* 见上：清理失败与被测行为无关 */ }
     }
+  })
+
+  // 「一条迁移里有多句、后一句炸了」是后面几段最常见的形状（建表 + 插默认行、
+  // 建带外键的表）。下面两条分别盯住它的两种现场：全新的库，和已经升过级的库。
+  const BAD = 'CREATE TABLE half_applied (id INTEGER); CREATE TABLE half_applied (id INTEGER);'
+
+  it('迁移失败会回滚 —— 建到一半的表不许留下，版本也不许动', () => {
+    const file = join(tmpdir(), `ruixing-rollback-${process.pid}-${Date.now()}.db`)
+    try {
+      // 连开三次：每次都必须以同样的方式失败，而且**不许每失败一次就往版本表里再塞一行 0**
+      for (let n = 0; n < 3; n++) expect(() => openDb(file, [BAD])).toThrow()
+
+      // 拿一个空迁移序列把库打开看现场 —— 观测本身不改变任何状态（见 openDb 的注释）
+      const probe = openDb(file, [])
+      try {
+        // 第一句建的表必须不在：不在 = 回滚了 = 下次还能重试。在 = 这个库永久卡死
+        expect(probe.raw.prepare(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name='half_applied'`).get()).toBeUndefined()
+        expect(probe.raw.prepare('SELECT COUNT(*) AS n FROM schema_version').get()).toEqual({ n: 1 })
+        expect(probe.raw.prepare('SELECT MAX(version) AS v FROM schema_version').get()).toEqual({ v: 0 })
+      } finally { probe.close() }
+    } finally { removeTempDb(file) }
+  })
+
+  it('已经升过级的库，新追加的迁移失败时版本号不动', () => {
+    const file = join(tmpdir(), `ruixing-upgrade-${process.pid}-${Date.now()}.db`)
+    try {
+      openDb(file).close()                                  // 先正常升到 version=1
+      expect(() => openDb(file, [...MIGRATIONS, BAD])).toThrow()
+
+      const probe = openDb(file, [])
+      try {
+        expect(probe.raw.prepare('SELECT MAX(version) AS v FROM schema_version').get()).toEqual({ v: 1 })
+        expect(probe.raw.prepare('SELECT COUNT(*) AS n FROM schema_version').get()).toEqual({ n: 1 })
+        expect(probe.raw.prepare(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name='half_applied'`).get()).toBeUndefined()
+      } finally { probe.close() }
+    } finally { removeTempDb(file) }
   })
 })
