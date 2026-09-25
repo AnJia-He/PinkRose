@@ -5,6 +5,7 @@ import AdjustmentPanel from './ui/AdjustmentPanel'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import { LoginPage } from './ui/LoginPage'
 import { GalleryPage } from './ui/GalleryPage'
+import { WorkDetailPage } from './ui/WorkDetailPage'
 import { Nav } from './ui/Nav'
 import { pathOf, viewFromPath, type View } from './ui/view'
 import { me, type AccountUser } from './api/account'
@@ -701,9 +702,19 @@ export default function App() {
           `onOpen` 只把 id 交出去 —— 拼网址那条规则仍然只有一份（ui/view.ts），
           组件自己不认识"网址"这回事。 */}
       {view.kind === 'gallery' && <GalleryPage onOpen={(id) => go({ kind: 'work', id })} />}
-      {/* ⚠️ 这个是**占位**：Task 12 才建真的详情页。别把它做成一个像样的界面 ——
-          换掉的时候得一眼看出这几行是临时工。 */}
-      {view.kind === 'work' && <div className="placeholder">作品 #{view.id}</div>}
+      {view.kind === 'work' && (
+        <WorkDetailPage
+          id={view.id}
+          onBack={() => go({ kind: 'gallery' })}
+          canApply={image !== null}
+          onApply={(p) => {
+            // ★ 裸调，和滑块 / 预设 / 重置**同级** —— 改 params 从来不 push 快照，
+            //   「套用」也不该是例外（裁定 ⑤）。快照是给"生成式编辑"用的。
+            setParams(p)
+            go({ kind: 'edit' })
+          }}
+        />
+      )}
     </div>
   )
 }

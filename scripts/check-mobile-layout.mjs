@@ -430,6 +430,101 @@ function judgeGallery(label, m) {
   }
 }
 
+// ── 2026-09-25 加（Task 12）：作品详情页 ────────────────────────────────
+//
+// 详情页是**同一个坑的第二次**：它是 `.shell` 的**直接子元素**，不在 `.app` 里 ——
+// `.app` 那个 `overflow: hidden` 罩不到它，所以"自己滚"这条规则得自己写
+// （`.detail` 的 `overflow-y: auto`）。
+//
+// 不自己滚的后果 Task 11 已经在作品页量到过：文档被滚 13762px、左栏 @top -13762
+// （手机上整条导航划没了）。这不是"整页能滚就行"，是**左栏跟着一起走**。
+//
+// 判据**只有在真浏览器里才量得出来**：jsdom 没有排版引擎（getBoundingClientRect
+// 一律 0）、`window.scrollY` 恒为 0，连"一页比一屏长"都表达不出来。
+//
+// 量三件事：**文档滚了 0px、左栏还在 @top 0、两栏配方都在屏内**。
+
+/** 量详情页现在长什么样。 */
+async function measureDetail(page) {
+  return page.evaluate(() => {
+    const box = el => {
+      if (!el) return null
+      const b = el.getBoundingClientRect()
+      return {
+        w: Math.round(b.width), h: Math.round(b.height),
+        top: Math.round(b.top), bottom: Math.round(b.bottom),
+      }
+    }
+    const d = document.querySelector('.detail')
+    const boxes = [...document.querySelectorAll('.recipe-box')]
+    return {
+      name: document.querySelector('.detail-name')?.textContent ?? null,
+      // 两栏各自的盒子 top/bottom —— "挤到屏幕外"和"叠成一栏"都从这儿看得出来
+      recipes: boxes.map(box),
+      recipeTitles: boxes.map(b => b.querySelector('h3')?.textContent ?? ''),
+      // 这一页**自己滚了多少**：滚轮滚过之后 > 0 = 它真的在自己滚
+      scrolled: d ? Math.round(d.scrollTop) : null,
+      docScroll: Math.round(window.scrollY),
+      nav: box(document.querySelector('.nav')),
+      scrollW: document.documentElement.scrollWidth,
+      clientW: document.documentElement.clientWidth,
+    }
+  })
+}
+
+/**
+ * 判详情页的**版面**（和作品页那段同一个意思，只是页面换了一个）。
+ *
+ * ⚠️ `scrolled` 那一条是**判据自己的前提**，不是页面的性质：详情页要是根本没比
+ * 一屏长，上面那几条（文档滚没滚、左栏在不在）全是白判的 —— 一个"从来不会红"的
+ * 判据等于没有。真红了有两种可能（**看上面那条"文档被滚了"分清**）：要么这一页
+ * 没有自己滚（滚轮滚的是整个文档），要么**夹具太短** —— 后一种要把 seed 进去的
+ * 那张图放长，别去改判据。
+ */
+function judgeDetail(label, m, view) {
+  console.log(`── ${label}`)
+  console.log(`     名字 ${m.name ?? '（没有）'}   配方栏 ${m.recipeTitles.map(t => `「${t}」`).join(' ')}`)
+  console.log(`     详情页自己滚了 ${m.scrolled}px，文档滚了 ${m.docScroll}px，` +
+    `左栏 ${m.nav ? `${m.nav.w}x${m.nav.h} @top ${m.nav.top}` : '**不在 DOM 里**'}`)
+  console.log('     两栏配方：' + (m.recipes.map(b => b
+    ? `${b.w}x${b.h} @top ${b.top}~${b.bottom}`
+    : '**不在 DOM 里**').join('   |   ')))
+
+  // ★ 两栏**永远是两栏**（§3.5.1）：数不到两个 = 谁把它们合成一个了
+  if (m.recipes.length !== 2) {
+    fails.push(`${label}：配方该是**两个**盒子（「调色」＋「用 AI 做的」），数到 ${m.recipes.length} 个 —— ` +
+      '合成一个是骗人的：用户会以为"这一整套都能复用"（§3.5.1）')
+  }
+  for (const [i, b] of m.recipes.entries()) {
+    if (!b) {
+      fails.push(`${label}：第 ${i + 1} 栏配方不在 DOM 里`)
+      continue
+    }
+    // ★ 两栏都得**完整落在视口里** —— 被挤到屏幕外就是把信息藏起来了
+    if (b.top < -TOL || b.bottom > view.height + TOL) {
+      fails.push(`${label}：第 ${i + 1} 栏配方没完整落在屏幕里` +
+        `（@top ${b.top}~${b.bottom}，视口高 ${view.height}）`)
+    }
+  }
+  // ★ 详情页必须自己滚：整页滚动的话左栏跟着走
+  if (m.docScroll > TOL) {
+    fails.push(`${label}：整个文档被滚了 ${m.docScroll}px —— 详情页该**自己滚**` +
+      '（.detail 的 overflow-y: auto）；这样滚下去左栏会被划走，它的底色到一屏就断了')
+  }
+  if (!m.nav || m.nav.top < -TOL || m.nav.w < 40 || m.nav.h < 24) {
+    fails.push(`${label}：左栏不在屏幕上了（${m.nav ? `${m.nav.w}x${m.nav.h} @top ${m.nav.top}` : '不在 DOM 里'}）`)
+  }
+  if (m.scrolled === null || m.scrolled <= TOL) {
+    fails.push(`${label}：详情页一滚都没滚（scrollTop ${m.scrolled}）。两种可能，` +
+      '看上面那条"文档被滚了"：要么它没有自己滚（.detail 的 overflow-y: auto 不在，' +
+      '于是滚轮滚的是整个文档）；要么这一页没有比一屏长 —— 那上面那几条判据等于没判，' +
+      '得把 seed 进去的那张图放长一点')
+  }
+  if (m.scrollW > m.clientW) {
+    fails.push(`${label}：页面横向溢出，要左右滑（${m.scrollW} > ${m.clientW}）`)
+  }
+}
+
 console.log(`── 量的是 ${URL}`)
 console.log(`   ${await checkServedBuild()}`)
 
@@ -552,12 +647,20 @@ try {
       // ── 作品页（Task 11）────────────────────────────────────────────
       // 先在**真接口**上放几张：图是页面里现画的一张小 JPEG，不在脚本里塞一串
       // 几百个字符的 base64（那一串没人看得出是什么）。
+      //
+      // ⚠️ **画成竖的（600x900），不是 64x64 的小方块**（Task 12 改）。理由：
+      // 详情页那一段要量的前提是"这一页比一屏长" —— 一张 64x64 的图在手机上
+      // 高度才 64px，详情页整页不到 600px、压根没得滚，于是"文档滚了 0px、
+      // 左栏 @top 0"这种判据**永远不会红**（等于没写）。竖图在手机上是
+      // 350×525，详情页稳稳超过一屏（判据自己还钉着下界，见 judgeDetail）。
+      // 作品页那两段不受影响：缩略图是 `aspect-ratio: 1/1; object-fit: cover`。
       const seeded = await page.evaluate(async (n) => {
         const c = document.createElement('canvas')
-        c.width = c.height = 64
+        c.width = 600
+        c.height = 900
         const g = c.getContext('2d')
-        g.fillStyle = '#4c8dff'; g.fillRect(0, 0, 64, 64)
-        g.fillStyle = '#14161a'; g.fillRect(16, 16, 32, 32)
+        g.fillStyle = '#4c8dff'; g.fillRect(0, 0, c.width, c.height)
+        g.fillStyle = '#14161a'; g.fillRect(150, 225, 300, 450)
         const image = c.toDataURL('image/jpeg', 0.6)
         const out = []
         for (let i = 0; i < n; i++) {
@@ -593,6 +696,43 @@ try {
       }
       if (!real.end) {
         fails.push(`${view.name}：作品全摆完了，却没有那句「没有更多了」`)
+      }
+
+      // ── 详情页（Task 12）────────────────────────────────────────────
+      // 点第一格进去 —— 和用户做的是同一件事（`onOpen` 那条路）。
+      // ⚠️ 必须在装那 500 条的假响应**之前**做完：那批假 id 是不存在的，
+      //    点进去只会拿到一个 404 的详情页，量出来的会是错误界面。
+      await page.locator('.gallery-cell').first().click()
+      await page.waitForSelector('.detail', { timeout: 15_000 })
+      await page.waitForFunction(
+        () => document.querySelectorAll('.recipe-box').length === 2,
+        null, { timeout: 10_000 })
+      // 大图落地之后再量：图没加载完的话版面还会动
+      await page.waitForFunction(
+        () => (document.querySelector('.detail-image')?.naturalWidth ?? 0) > 0,
+        null, { timeout: 10_000 }).catch(() => { /* 取不到就在下面那条里报出来 */ })
+      if (!(await page.evaluate(
+        () => (document.querySelector('.detail-image')?.naturalWidth ?? 0) > 0))) {
+        fails.push(`${view.name}：详情页那张大图解不开（naturalWidth 是 0）—— 用户点进来只看到一块空白`)
+      }
+
+      // ★ 用**滚轮**滚（和用户做的是同一件事），滚到底再量。
+      // ⚠️ 不能图省事写 `d.scrollTop = d.scrollHeight`：那样量的只是"这个元素
+      //    能不能滚"，**文档那条永远会是 0**（谁也没去滚文档）—— 于是"左栏会不会
+      //    被划走"这条判据永远不会红，等于没写。滚轮落下来由浏览器决定是详情页滚
+      //    还是整个文档滚，两个问题一次量完。（作品页那段同一个道理。）
+      const dbox = await page.locator('.detail').boundingBox()
+      await page.mouse.move(dbox.x + dbox.width / 2, dbox.y + dbox.height / 2)
+      for (let i = 0; i < 6; i++) {
+        await page.mouse.wheel(0, 4000)
+        await page.waitForTimeout(120)
+      }
+      const detail = await measureDetail(page)
+      judgeDetail(`${view.name} · 详情页（一路滚到底之后）`, detail, view)
+      // 滚到底时最后那一栏一定看得见，所以"两栏都在屏内"这条在**这一屏**是能验的。
+      // 顺带看一眼：名字得在（它是"这张图怎么来的"的回答对象）。
+      if (!detail.name) {
+        fails.push(`${view.name}：详情页上没有名字（.detail-name 是空的）`)
       }
 
       // 500 条：**只能造假**（理由见上面那段长注释）。id 故意用不存在的 ——
@@ -672,7 +812,8 @@ if (fails.length) {
   console.log('宽窄两档共用的画布容器规则是 .canvas-wrap / .canvas（文件中部）；')
   console.log('红圈的定位/大小在 src/ui/Canvas.tsx（markerSize）和 src/image/mark.ts')
   console.log('（markerRadius，两边共用同一个公式）；作品页的排版在 src/styles.css 末尾那一段')
-  console.log('（.gallery 的 overflow-y: auto 就是"列表自己滚、左栏才不会被划走"那一句）。')
+  console.log('（.gallery 的 overflow-y: auto 就是"列表自己滚、左栏才不会被划走"那一句）；')
+  console.log('详情页的排版在 src/styles.css 的 .detail 那一段（同一条 overflow-y: auto）。')
   process.exitCode = 1
 } else {
   console.log(`✅ ${VIEWS.length} 档 × 2 种状态都过：照片 ≥ ${MIN_LONG}x${MIN_SHORT}、` +
@@ -680,4 +821,5 @@ if (fails.length) {
   console.log('   外加：红圈圆心落在点的地方、直径按画布长边算、小图真的解得出像素（全程零付费调用）')
   console.log(`   外加作品页：${GALLERY_FAKE} 条时首屏只摆 ${GALLERY_FIRST} 张、圈在转、` +
     '滚到底真的接上后面的、整页不滚（左栏钉在原地）')
+  console.log('   外加详情页：两栏配方都在屏内、详情页自己滚而整页不滚（左栏还钉在原地）')
 }

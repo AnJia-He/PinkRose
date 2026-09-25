@@ -184,6 +184,13 @@ function jsonResponse(body: unknown, status = 200) {
     { status, headers: { 'content-type': 'application/json' } })
 }
 
+/** 一条作品的**元数据**（列表和详情这两条路共用这个形状）。
+ *  原来是「作品页」那个 describe 里的局部函数，Task 12 挪到了这里 ——
+ *  详情页的用例也要造同一种东西，**造两份**的话哪天接口多一个字段，
+ *  只会有一份跟着改。第三个参数 `alias` 从 Task 11 起就在（默认 null = 用时间当名字）。 */
+const WORK = (id: number, updatedAt: number, alias: string | null = null) =>
+  ({ id, alias, createdAt: updatedAt, updatedAt, bytes: 100, hasThumb: true })
+
 function decision(over: Partial<RouteDecision> = {}): RouteDecision {
   return {
     route: 'params',
@@ -1283,9 +1290,6 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     })
   }
 
-  const WORK = (id: number, updatedAt: number, alias: string | null = null) =>
-    ({ id, alias, createdAt: updatedAt, updatedAt, bytes: 100, hasThumb: true })
-
   /**
    * 500 张作品，**一天一张**（隔两天排 —— 有夏令时的时区里差一天可能落回同一个"天"）。
    *
@@ -1370,8 +1374,11 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     await goNav('作品')
 
     expect(container.querySelector('.gallery-error')?.textContent ?? '').toContain('SENTINEL-列表读不出来')
-    // 出路那句话 —— 这一页不新造按钮（重试逻辑是 Task 12 的事），
-    // "刷新一下"是用户本来就有的。
+    // 出路那句话 —— 这一页不新造按钮，"刷新一下"是用户本来就有的。
+    // （原来这里写着"重试逻辑是 Task 12 的事"：Task 12 交出去的是详情页，
+    //   **没有**给作品页加重试 —— 作品页的出路到今天还是"刷新一下"。
+    //   那句话是假的，2026-09-25 改掉；GalleryPage.tsx 里还有同一句话没动，
+    //   那是 Task 11 的文件，报告里记了一笔。）
     expect(container.querySelector('.gallery-hint')?.textContent ?? '').toContain('刷新')
   })
 
@@ -1390,5 +1397,116 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     expect(none?.textContent ?? '').toContain('换个字')
     // "筛掉了"和"一张都没有"是两件事 —— 说错了用户会以为东西丢了
     expect(container.querySelector('.gallery-empty')).toBeNull()
+  })
+})
+
+/**
+ * 2026-09-25 加（Task 12）。**点开一张图之后那一页**（spec §3.5.1）：
+ * 配方永远分成两栏 —— 调色是配方（能带走），AI 编辑是这张图的经历（带不走）。
+ *
+ * 这一层守的是四件用户看得见的事：
+ *   ① 两栏永远是两栏，而且 AI 那栏**一个「套用」按钮都没有** —— 给了就是骗人
+ *      （「把后面那个人去掉」换一张照片就是另一回事）；
+ *   ② 名字只有一份：详情页和作品页对同一张图必须叫**同一个名字** ——
+ *      §3.5 的「名字就是日期，所以搜日期也能搜到」正是建立在这一条上；
+ *   ③ 没有图的时候「套用调色」是**禁用**的，而且说了为什么、怎么办（§3.7）；
+ *   ④ 删除确认不许替用户编一句"你电脑上那份还在" —— 服务器不可能知道。
+ */
+describe('作品详情页：这张图怎么来的', () => {
+  /** 打开第 1 张作品的详情页。 */
+  async function openWork(recipe?: unknown) {
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works') return jsonResponse({ works: [WORK(1, 1_700_000_000_000)] })
+      if (url === '/api/works/1' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse({
+          id: 1, alias: null, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_000,
+          bytes: 100, hasThumb: true,
+          recipe: recipe ?? { params: { ...ZERO, exposure: 20, contrast: 5 }, edits: ['把后面那个人去掉'] },
+        })
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+    await act(async () => {
+      (container.querySelector('.gallery-cell') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  it('★ 配方是两栏，而且 AI 那栏**没有**「套用」按钮', async () => {
+    await openWork()
+    const boxes = [...container.querySelectorAll('.recipe-box')]
+    expect(boxes.map(b => b.querySelector('h3')?.textContent)).toEqual(['调色', '用 AI 做的'])
+    expect(boxes[0]!.textContent).toContain('亮度')          // §3.5.2：不是「曝光」
+    expect(boxes[0]!.textContent).toContain('+20')
+    expect(boxes[0]!.querySelectorAll('button').length).toBe(1)   // 调色那栏有「套用」
+    // ★ AI 那栏一个按钮都没有 —— 给了就是骗人（§3.5.1）
+    expect(boxes[1]!.querySelectorAll('button').length).toBe(0)
+    expect(boxes[1]!.textContent).toContain('把后面那个人去掉')
+    // ★ **详情页和作品页得叫同一个名字**（§3.5：「名字」只有一份，搜日期才等于按日期搜）。
+    //   夹具是 2023-11（见 `openWork`）、今年是 2026，所以 `dayLabel` **一定**会补上年份。
+    //   变异：把 `workName(work, now)` 改回 `workName(work, work.updatedAt)` → 这一条红，
+    //   而其余四条**一声不吭** —— 这正是它当初会漏掉的原因。
+    expect(container.querySelector('.detail-name')!.textContent).toContain('2023年')
+  })
+
+  it('★ 改个中文名，网址一动不动（§3.5.1）', async () => {
+    await openWork()
+    const before = location.pathname + location.search
+    const inner = fetchMock.getMockImplementation()!
+    let patches = 0
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works/1' && init?.method === 'PATCH') {
+        patches += 1
+        return jsonResponse({ id: 1, alias: '海边那张', createdAt: 0, updatedAt: 0, bytes: 0, hasThumb: true })
+      }
+      return inner(url, init)
+    })
+
+    const btn = [...container.querySelectorAll('button')].find(b => (b.textContent ?? '').includes('改名'))!
+    await act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)) })
+    const box = container.querySelector('.rename-input') as HTMLInputElement
+    box.value = '海边那张'
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(container.textContent).toContain('海边那张')   // 名字变了……
+    expect(location.pathname + location.search).toBe(before)   // ★ ……网址一点没变
+    // ★ **改名请求只能发一次。** 两条保存路径（回车走 `onKeyDown`、点走别处走 `onBlur`）
+    //   都会调用 `doRename`；而回车会把输入框收掉 —— **输入框是在"有焦点"的状态下被卸载的**。
+    //   浏览器这时候会不会补一个 blur/focusout，各家实现不一致，jsdom 和真浏览器也可能不同。
+    //   补了就是**两次 PATCH**，第二次用的还是 rename 之前那个 `work` 闭包。
+    //   这条断言把那个不确定性变成**当场可观察**的：真发两次，这里就红。
+    expect(patches).toBe(1)
+  })
+
+  it('★ 没有图的时候「套用调色」是禁用的，而且说了为什么（裁定 ⑤）', async () => {
+    await openWork()   // 注意：这里**没有** uploadPhoto()，所以修图页还是空的
+    const apply = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').includes('套用到')) as HTMLButtonElement
+    expect(apply.disabled).toBe(true)
+    expect(container.textContent).toContain('先回修图页传一张照片')
+  })
+
+  it('删除确认只说「删了就找不回来了」', async () => {
+    await openWork()
+    const del = [...container.querySelectorAll('button')].find(b => (b.textContent ?? '') === '删除')!
+    await act(async () => { del.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    // ⚠️ **只扫确认框那一段，不是整个 container。** 整屏里本来就有一句
+    //   「下载到我的电脑」（那是**真的**，图就在他手上）—— 拿整屏去跑
+    //   `not.toContain('你电脑')`，赌的是那句文案的字，不是在校验确认框说了什么。
+    //   今天的 `下载到我的电脑` 恰好不含「你电脑」也恰好不含「下载的」，
+    //   所以两种写法今天都是绿的 —— 那正是"今天能过靠的是巧合"。
+    const confirm = container.querySelector('.detail-confirm')!
+    expect(confirm.textContent).toContain('删了就找不回来了')
+    // ★ 不许说"你电脑上那份还在" —— 服务器**不可能**知道用户本地有没有那张图
+    //   （他可能下载过、可能没下载、也可能下载完又删了）。宁可少安慰一句，不能骗人（§3.5）
+    expect(confirm.textContent).not.toContain('你电脑')
+    expect(confirm.textContent).not.toContain('下载的')
   })
 })

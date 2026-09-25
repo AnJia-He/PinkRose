@@ -351,3 +351,96 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .gallery-empty { margin-top: 48px; text-align: center; color: var(--muted); }
 .gallery-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
 .gallery-error { margin: 24px 0 0; color: #e06c75; }
+
+/* ── 作品详情页（Task 12）：这张图怎么来的 ──────────────────────────
+   ⚠️ **`.detail` 必须自己滚**（下面那条 overflow-y: auto），和 `.gallery` 同一条规矩：
+   它是 `.shell` 的**直接子元素**，不住在 `.app` 里 —— `.app` 那个 overflow: hidden
+   罩不到它。不自己滚的后果**不是"整页能滚就行"**，而是**左栏跟着一起滚走**：
+   Task 11 在作品页实测过，把 `overflow-y: auto` 拿掉之后文档被滚了 13762px、
+   左栏量到 `@top -13762`（手机上整条导航划没了）。详情页比一屏长是常态
+   （大图 + 两栏配方），这是同一个坑的第二次。*/
+.detail {
+  flex: 1; min-width: 0; min-height: 0;
+  overflow-y: auto;
+  padding: 0 20px 24px;
+}
+
+.detail-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 16px 0 12px; margin-bottom: 16px;
+  border-bottom: 1px solid #2a2e35;
+}
+/* 名字可能是用户起的长名字，也可能长到把「改名」挤出屏幕 —— 一行截断。 */
+.detail-name {
+  flex: 1; min-width: 0; margin: 0; font-size: 20px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.detail-rename { flex: none; }
+/* 改名输入框照 `.chat-input input` 那套（底色 #14161a、边框 #2f343c）。 */
+.rename-input {
+  flex: 1; min-width: 0;
+  background: #14161a; color: var(--text); font: inherit; font-size: 18px;
+  border: 1px solid var(--accent); border-radius: 8px; padding: 6px 12px;
+}
+.rename-input:focus { outline: none; }
+
+/* 大图。**不写死尺寸**：真照片是什么比例都有，宽高两条都封顶、由 object-fit 兜底。 */
+.detail-image {
+  display: block; margin: 0 auto; max-width: 100%; max-height: 60vh;
+  border-radius: 8px; background: #262b33;
+}
+
+.detail-actions {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 16px;
+}
+/* 「下载到我的电脑」是个 <a>（`download` 属性只有真链接才带得动），
+   所以按 button.primary 的样子手工上一套主色。 */
+.detail-download {
+  display: inline-block; text-decoration: none;
+  background: var(--accent); color: #fff; border-radius: 8px; padding: 7px 14px;
+}
+/* 删除确认**就地说**，不弹窗：一句"删了就找不回来了" + 两个按钮。
+   ⚠️ 里面**不许**出现"你电脑上那份还在"这类安慰 —— 服务器不可能知道
+   用户本地有没有那张图（§3.5）。样式上它是一句话加两个按钮，不是一整屏。 */
+.detail-confirm {
+  display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px;
+}
+.detail-delete, .detail-confirm button { padding: 6px 12px; }
+.detail-loading { margin: 24px 0 0; color: var(--muted); }
+.detail-error { margin: 24px 0 0; color: #e06c75; }
+
+/* ⚠️ **两栏永远是两栏**（§3.5.1）：调色是配方（能带走），AI 编辑是这张图的经历
+   （带不走）。窄屏只是**排成一列**，不是合成一个盒子 —— 盒子的个数不许变。 */
+.how { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 24px; }
+.how-title { grid-column: 1 / -1; margin: 0; font-size: 20px; }
+
+.recipe-box {
+  border: 1px solid #2f343c; border-radius: 10px;
+  background: var(--panel); padding: 14px 16px;
+  min-width: 0;
+}
+.recipe-box h3 { margin: 0 0 4px; font-size: 15px; }
+/* 这一句是**两栏为什么分开**的说明书，不是装饰 —— 别删。 */
+.recipe-note { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+
+.recipe-params { list-style: none; margin: 0 0 12px; padding: 0; }
+.recipe-params li {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 3px 0; font-size: 13px;
+}
+.recipe-param-name { color: var(--muted); }
+.recipe-param-value { font-variant-numeric: tabular-nums; }
+
+.recipe-apply { width: 100%; }
+.recipe-apply:disabled { opacity: .5; cursor: default; }
+.recipe-hint { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.recipe-edits { margin: 0; padding-left: 18px; font-size: 13px; }
+.recipe-edits li { margin: 4px 0; }
+.recipe-empty { margin: 0; font-size: 13px; color: var(--muted); }
+
+@media (max-width: 640px) {
+  /* 窄屏：两栏上下堆（**还是两个盒子**，见上面 .how 那段）。 */
+  .how { grid-template-columns: 1fr; }
+  .detail { padding: 0 14px 20px; }
+}
