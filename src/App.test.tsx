@@ -83,8 +83,23 @@ vi.mock('./image/prepare', () => ({
 }))
 
 /** 缩略图要 2D 画布，jsdom 没有。**返回画布上"此刻是什么颜色"** ——
- *  这样才测得出「缩略图是在画面更新之后才抓的」那件事。 */
-vi.mock('./core/thumbnail', () => ({ makeThumbnail: vi.fn(), THUMB_MAX_SIDE: 160 }))
+ *  这样才测得出「缩略图是在画面更新之后才抓的」那件事。
+ *
+ *  ⚠️ 常量走 `importOriginal` 拿**真的那一份**，不在这里另写一个数
+ *  （原来写的是 `THUMB_MAX_SIDE: 160`）。工厂式 mock **只导出它写出来的那几个名字**，
+ *  缺的那个名字就是这类坑的来源。本轮实测了它的两种形态（都不是"测试会红"）：
+ *    · 只写 `THUMB_MAX_SIDE`（原来的写法）：访问缺的那个名字时 vitest **当场抛**
+ *      （`No "GALLERY_THUMB_MAX_SIDE" export is defined on the mock`）—— 而那句访问
+ *      在 `saveOnce` 的 `try` 里，于是被 catch 吞掉、只留一行 console.error，
+ *      **作品没有缩略图地存进去**，测试一条都不红；
+ *    · mock 里自己写死一个旧值：那更坏 —— `makeThumbnail(canvas, 160)` 一声不吭地
+ *      照做，测试全绿而量出来的尺寸永远是错的。
+ *  所以只假掉 `makeThumbnail` 这一个真需要画布的东西，常量原样透传 —— 下面
+ *  「★ 作品页那张缩略图的上限是 480」那一条守着这两件事。 */
+vi.mock('./core/thumbnail', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./core/thumbnail')>()
+  return { ...actual, makeThumbnail: vi.fn() }
+})
 
 /** 把圈画进图里那一步要 2D 画布，jsdom 同样给不出来。
  *  **不假掉的话，整条「点了才花钱」的测试永远绿不了** —— 真的 markImage 会在
@@ -1469,9 +1484,11 @@ describe('作品详情页：这张图怎么来的', () => {
 
   it('★ 大图和「下载到我的电脑」拿到的都得是**原图**，不是 160px 缩略图（终审 C1）', async () => {
     // ★ 这一页原来两处都调 `fileUrl()` —— 而它在 `hasThumb` 时回 `/thumb`，缩略图
-    //   ≤160px（`THUMB_MAX_SIDE`），且每次保存都顺手带一张，**几乎总是存在**。
-    //   于是「点开一张 → 看大图」（§3.5）看到的是 160px；而「下载到我的电脑」下到的
-    //   也是同一张 160px —— 那正是 §3.4 拿掉"保存自动下载"之后，用户把**原图**拿出
+    //   是个小图（当时是 ≤160px 的 `THUMB_MAX_SIDE`，2026-09-25 起作品页那张改成
+    //   ≤480px 的 `GALLERY_THUMB_MAX_SIDE` —— 但不管多大，它都不是原图），
+    //   且每次保存都顺手带一张，**几乎总是存在**。
+    //   于是「点开一张 → 看大图」（§3.5）看到的是一张小图；而「下载到我的电脑」下到的
+    //   也是同一张 —— 那正是 §3.4 拿掉"保存自动下载"之后，用户把**原图**拿出
     //   服务器的唯一一个动作（§3.5 的「先下载到本地再删，东西就不会丢」全押在它上面）。
     //   夹具的 updatedAt 是 1_700_000_000_000，所以 `?v=` 也一起钉住：少掉版本号，
     //   浏览器会给长缓存里的**上一版**（替换过之后 id 不变）。
@@ -1678,6 +1695,38 @@ describe('保存 = 存进作品集（Task 13）', () => {
     const call = fetchMock.mock.calls.find(c => c[0] === '/api/works' && c[1]?.method === 'POST')
     return call ? JSON.parse(String(call[1]!.body)) : undefined
   }
+
+  /**
+   * ★ 作品页那张缩略图的上限 —— **这是个产品决定，不是一个实现细节**。
+   * 和 `shared/account.test.ts` 开头那条规矩一个意思（那里钉的是 `USERNAME_MIN 就是 2`）：
+   * 它被改了就应该是这一条红，而不是这一条跟着改。
+   *
+   * 480 是怎么算出来的（实测，数字在 `.superpowers/sdd/2026-09-25-gallery/thumb-sharpness.json`）：
+   *   · `.gallery-thumb` 是 `width: 100%; aspect-ratio: 1/1; object-fit: cover`
+   *     —— **一个正方形的框、按宽度铺**，`cover` 的系数是 `max(框宽/图宽, 框高/图高)`，
+   *     正方形框里起决定作用的是缩略图的**短边**；而 `makeThumbnail` 限的是**长边**
+   *     （`fitWithin`）。**限制的是长边、决定清晰度的是短边** —— 错配就在这儿。
+   *   · 竖图（1200×1600）在 `maxSide = 480` 下是 **360×480**，短边 360；格子最宽实测
+   *     181 CSS → DPR 2 时要铺 362 设备像素，360 差 0.6%（项目接受的那条线是 1.05×）。
+   *   · 160 时短边只有 120：`181/120 = ` **1.51×**（DPR 2 的屏上 3.02×）—— 这就是它糊的原因。
+   */
+  it('★ 作品页那张缩略图的上限是 480，而且保存时**真的传下去了**', async () => {
+    // ① 产品决定本身。变异：把真值（`GALLERY_THUMB_MAX_SIDE`）改回 160 → 这一条红。
+    //    真值是从 importOriginal 进来的，所以改真值这里会跟着变 —— 不是"断言的是
+    //    mock 里抄的那一份"（那种断言改了真值也不红，等于没守）。
+    expect(thumbMod.GALLERY_THUMB_MAX_SIDE).toBe(480)
+
+    // ② 常量对了也白对：`saveOnce` 不传的话 `makeThumbnail` 会回落到默认的 160，
+    //    一声不吭。变异：把 App.tsx 那一行的第二个实参去掉 → 这一条红。
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      (url === '/api/works' && init?.method === 'POST') ? jsonResponse({ id: 9 }) : inner(url, init))
+    await renderApp()
+    await uploadPhoto()
+    await clickTop('保存')
+    expect(savedBody()).toBeTruthy()     // 先证明那一趟真的走到存了，别让 ② 红在别的原因上
+    expect(thumbMod.makeThumbnail).toHaveBeenCalledWith(expect.anything(), 480)
+  })
 
   it('★ 点「保存」是存进作品集，**没有偷偷下载**（§3.4）', async () => {
     const inner = fetchMock.getMockImplementation()!

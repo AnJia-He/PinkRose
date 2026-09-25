@@ -45,6 +45,11 @@
  * 窄屏上会不会被 `.app` 悄悄切掉，jsdom 量不出来（见下面 measureSaveFail）。
  * 存不进去（413）是拦出来的：真服务器只在单张图超过 8 MB 时才 413，造不出来。
  *
+ * 2026-09-25 又加了第 7 件：**作品页列表上那张缩略图的清晰度**（源像素够不够它被
+ * 显示出来用的）。这一件是"用户先在真屏幕上看见了、四样检查全绿"的第二个例子 ——
+ * 缩略图在 181px 的正方格里被拉大 1.51×（DPR 2 的屏上 3.02×），而当时**没有任何
+ * 检查在量这个比值**（见 judgeGallery 里 `thumbCoverage` 那一段）。
+ *
  * 用法（服务器开着就行；dev 或 preview 都可以，脚本自己会核对是哪一版）：
  *   npm run dev                    （或者 npm run build && npm run preview）
  *   npm run check:layout
@@ -57,6 +62,18 @@ import { chromium } from 'playwright'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+/**
+ * ⚠️ **从应用源码里拿**作品页那张缩略图的边长上限，不在这里另写一个数。
+ *
+ * 下面 seed 进库的那张缩略图是**照着应用的做法**造的（同一个 `fitWithin`、同一个上限），
+ * 它和真应用必须永远是同一个数 —— 写两份就会漂，而漂了的样子是"检查绿着、用户那边糊着"
+ * （这一条判据本身就是为那个洞加的）。上面 `GALLERY_FIRST` 那种"和某个常量同一个数"
+ * 的注释式同步，在这里不够：**那张图是这条检查唯一的夹具**。
+ *
+ * node 24 直接吃 `.ts`（`server/index.ts` 也是这么跑的），而 `src/core/thumbnail.ts`
+ * 只有纯函数和常量，import 它不会碰 DOM。
+ */
+import { GALLERY_THUMB_MAX_SIDE } from '../src/core/thumbnail.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
@@ -378,11 +395,13 @@ const DAY_MS = 86_400_000
 // 才不是恒真）。600x900 在窄屏上是 350x525。
 const SEED_IMAGE_W = 600
 const SEED_IMAGE_H = 900
-/** seed 那张缩略图的边长上限 —— 和 `src/core/thumbnail.ts` 的 `THUMB_MAX_SIDE` **同一个数**。
+/** seed 那张缩略图的边长上限 —— **就是应用里给作品页用的那个数**
+ *  （从 `src/core/thumbnail.ts` 直接 import 的 `GALLERY_THUMB_MAX_SIDE`，不另抄一份；
+ *  2026-09-25 之前这里写死的是 160，和当时的 `THUMB_MAX_SIDE` 一样）。
  *  ⚠️ 它原来不是个单独的图：`{ image, thumb: image }` 把**同一张 600x900** 同时当原图和
  *  缩略图交上去，于是 `/thumb` 在检查里回的是**全尺寸图** —— 详情页那条判据（原来只判
  *  `naturalWidth > 0`）对"详情页拿的是缩略图"这件事**永远失明**，C1 就是这么溜过去的。 */
-const SEED_THUMB_MAX = 160
+const SEED_THUMB_MAX = GALLERY_THUMB_MAX_SIDE
 /** seed 原图的**长边** —— 详情页那条"拿到的必须是原图"的判据就对着它比。
  *  为什么比长边而不是只比 `naturalWidth`：seed 是一张 600x900 的**竖图**，
  *  `naturalWidth >= 900` 这种写法会让**正确**的实现也红（宽度只有 600）。 */
@@ -412,10 +431,34 @@ async function measureGallery(page) {
       docScroll: Math.round(window.scrollY),
       thumbsDecoded: [...document.querySelectorAll('.gallery-thumb')]
         .filter(i => i.naturalWidth > 0).length,
+      // ★ 每张缩略图的**真实像素**和**它被摆出来的盒子**（2026-09-25 加）。
+      //   这一对就是"糊不糊"的全部材料：`judgeGallery` 里那条判据拿它们相除。
+      //   要乘 dpr 才是"屏幕上要多少设备像素"，所以 dpr 一起量回来。
+      //   ⚠️ 盒子的宽高**不取整**：181.33 这种小数取整会白丢半像素，而它正是那条
+      //   判据的分母（列表里那张图只有一档几像素的富余时，取整能把绿判成红）。
+      dpr: devicePixelRatio,
+      thumbs: [...document.querySelectorAll('.gallery-thumb')].map(i => {
+        const b = i.getBoundingClientRect()
+        return { natW: i.naturalWidth, natH: i.naturalHeight, w: b.width, h: b.height }
+      }),
       scrollW: document.documentElement.scrollWidth,
       clientW: document.documentElement.clientWidth,
     }
   })
+}
+
+/**
+ * 那张缩略图**盖不盖得住**它被显示出来的尺寸（2026-09-25 加）。
+ *
+ * 为什么是这个式子：缩略图按**长边**缩（`fitWithin`），而 `.gallery-thumb` 是
+ * `width: 100%; aspect-ratio: 1/1; object-fit: cover` —— **正方形框、按宽度铺**，
+ * `cover` 的缩放系数 `max(框宽/图宽, 框高/图高)` 里起决定作用的是**短边**。
+ * 两个方向各算一次、取小的那个，就是"屏幕上每个点有没有真实像素垫着"：
+ *   ≥ 1 有；< 1 就是浏览器在**凭空造像素**（越大越糊）。
+ * 不看 DPR 也不看 CSS 宽度：DPR 2 的屏只是把差距再乘一遍。
+ */
+function thumbCoverage(t, m) {
+  return Math.min(t.natW / (t.w * m.dpr), t.natH / (t.h * m.dpr))
 }
 
 /**
@@ -424,8 +467,11 @@ async function measureGallery(page) {
  * 最要紧的一条是 `docScroll`：作品页是长列表，列表要是**不自己滚**、让整个
  * 文档滚，左栏那 92px 就会跟着划走、底色到一屏就断（这是 Task 10 交回去的
  * 那半个问题）。列表自己滚的话，文档永远不滚、左栏钉在原地。
+ *
+ * 2026-09-25 加的一条是**清晰度**（不是版面）：列表上那张缩略图的源像素够不够
+ * 它被显示出来用的 —— 见下面那段。
  */
-function judgeGallery(label, m) {
+function judgeGallery(label, m, view) {
   console.log(`── ${label}`)
   console.log(`     作品 ${m.cells} 张 / ${m.days} 天，缩略图解出 ${m.thumbsDecoded} 张` +
     `，日期标题 ${m.dayTitle ?? '（没有）'}`)
@@ -433,6 +479,34 @@ function judgeGallery(label, m) {
     `   到底了那句：${m.end ? '说了' : '没说'}`)
   console.log(`     文档滚了 ${m.docScroll}px，列表自己滚了 ${m.listScroll}px，` +
     `左栏 ${m.nav ? `${m.nav.w}x${m.nav.h} @top ${m.nav.top}` : '**不在 DOM 里**'}`)
+
+  // ── ★ 列表上那张缩略图：源像素够不够它被显示出来用的（2026-09-25 加）──────────
+  //
+  // **这个洞为什么能存在**：它糊了整整一轮而**没有任何检查在量它** ——
+  // 227 条测试（jsdom 没有排版引擎、也没有真解码的图）、typecheck、build、
+  // 这条布局检查自己，四样全绿。用户先在真屏幕上看见了。
+  //
+  // 判据只有一句：**两个方向上源都不该少于目标**（`thumbCoverage >= 1`）。
+  // 它不是"看着挺清楚"这种主观线，而是"浏览器要不要凭空造像素"。
+  //
+  // ⚠️ **这一条只判桌面档**（`view.isMobile === false`）。web 是给电脑用的
+  //    （2026-09-24 用户拍板，`specs/2026-09-24-accounts-and-gallery-design.md` 开头：
+  //    "手机那侧交给小程序"），手机档留在这条脚本里的作用是抓**版面**坏掉
+  //    （照片看不见、横向溢出），不是给缩略图的清晰度定政策。手机档的数字照打
+  //    （下面那两行），只是不判 —— **不判不等于不说**。
+  //    顺带一句实话：手机上（同一张 seed、DPR 2）这个数是 0.95，确实差一点点，
+  //    因为 seed 是 2:3 的竖图、比真照片（3:4）更吃亏；那一档该不该管，
+  //    等小程序那边定。
+  const decoded = m.thumbs.filter(t => t.natW > 0)
+  const worst = decoded.length === 0 ? null
+    : decoded.reduce((a, b) => (thumbCoverage(a, m) <= thumbCoverage(b, m) ? a : b))
+  if (worst) {
+    console.log(`     缩略图 ×${decoded.length}（列里共 ${m.thumbs.length} 张），最差的那张 ` +
+      `${worst.natW}x${worst.natH} 真实像素，盒子 ${worst.w}x${worst.h} CSS` +
+      ` ×DPR ${m.dpr} = 要盖 ${Math.round(worst.w * m.dpr)}x${Math.round(worst.h * m.dpr)} 设备像素`)
+    console.log(`     ★ 覆盖度 min(源/需要) = ${thumbCoverage(worst, m).toFixed(2)}` +
+      `（< 1 就是被拉大的${view.isMobile ? '；手机档只打不判，理由见源码注释' : ''}）`)
+  }
 
   if (m.cells === 0) {
     fails.push(`${label}：一张作品都没摆出来`)
@@ -447,6 +521,20 @@ function judgeGallery(label, m) {
   }
   if (m.scrollW > m.clientW) {
     fails.push(`${label}：页面横向溢出，要左右滑（${m.scrollW} > ${m.clientW}）`)
+  }
+  // ★★ 缩略图不许是"被拉大出来"的（理由见上面那一段）。
+  //    变异：把 `GALLERY_THUMB_MAX_SIDE` 改回 160 → 这一条红（seed 那张缩略图跟着
+  //    变成 107x160，盒子还是 181 上下）—— 它和夹具是**同一个数**的两端，改一边
+  //    是量不出东西的（见文件上面 import 那段注释）。
+  if (worst && !view.isMobile && thumbCoverage(worst, m) < 1) {
+    fails.push(`${label}：列表上那张缩略图**是被拉大出来的**（源 ${worst.natW}x${worst.natH}，` +
+      `盒子 ${worst.w}x${worst.h} CSS ×DPR ${m.dpr} = 要盖 ` +
+      `${Math.round(worst.w * m.dpr)}x${Math.round(worst.h * m.dpr)} 设备像素，` +
+      `只盖得住 ${thumbCoverage(worst, m).toFixed(2)}）—— 根因不是 DPR：.gallery-thumb 是` +
+      '正方形框、按宽度铺，**吃的是缩略图的短边**，而 makeThumbnail 的 maxSide 限的是长边' +
+      '（竖图 120x160 在 181 的框里就是 1.51x）。作品页那张要用 GALLERY_THUMB_MAX_SIDE' +
+      '（src/core/thumbnail.ts），而调用点（App.tsx 的 saveOnce）必须**显式传**它 —— ' +
+      '不传就回落到对话那张的 160，一声不吭。')
   }
 }
 
@@ -881,7 +969,10 @@ try {
         g.fillStyle = '#14161a'; g.fillRect(150, 225, 300, 450)
         const image = c.toDataURL('image/jpeg', 0.6)
         // 缩略图用**真客户端那套算法**缩（`shared/size.ts` 的 fitWithin：等比、长边 ≤ max），
-        // 所以 600x900 → 107x160，和 `makeThumbnail(source, 160)` 的产出同一个尺寸级别。
+        // 所以 600x900 → 320x480（上限是应用里那个 `GALLERY_THUMB_MAX_SIDE`，
+        // 见文件上面 import 那段），和 `makeThumbnail(source, 480)` 的产出同一个尺寸。
+        // ⚠️ 这里**必须**和真应用同一个上限，否则下面那条"缩略图不许被拉大"的判据
+        //    量的是**这个夹具**、不是应用 —— 夹具永远大、判据永远绿（那就是假绿）。
         const k = Math.min(1, cfg.thumbMax / Math.max(cfg.w, cfg.h))
         const tc = document.createElement('canvas')
         tc.width = Math.round(cfg.w * k)
@@ -914,7 +1005,7 @@ try {
         () => [...document.querySelectorAll('.gallery-thumb')].every(i => i.complete),
         null, { timeout: 10_000 }).catch(() => { /* 解不开的会在下面那条里报出来 */ })
       const real = await measureGallery(page)
-      judgeGallery(`${view.name} · 作品页（真接口放的 ${GALLERY_SEED} 张）`, real)
+      judgeGallery(`${view.name} · 作品页（真接口放的 ${GALLERY_SEED} 张）`, real, view)
       if (real.cells !== GALLERY_SEED) {
         fails.push(`${view.name}：真接口放了 ${GALLERY_SEED} 张作品，页面上却摆出来 ${real.cells} 张`)
       }
@@ -981,7 +1072,7 @@ try {
       await page.goto(`${URL}/works`, { waitUntil: 'load' })
       await page.waitForSelector('.gallery-cell', { timeout: 15_000 })
       const first = await measureGallery(page)
-      judgeGallery(`${view.name} · 作品页（${GALLERY_FAKE} 条，刚打开）`, first)
+      judgeGallery(`${view.name} · 作品页（${GALLERY_FAKE} 条，刚打开）`, first, view)
       // ★ §10 那一条：首屏**不能一次全渲染**
       if (first.cells > GALLERY_FIRST) {
         fails.push(`${view.name}：${GALLERY_FAKE} 条作品一次全渲染了（首屏 ${first.cells} 格）——` +
@@ -1018,7 +1109,7 @@ try {
         } catch { /* 再滚一下；五次都没接上就由下面那条报出来 */ }
       }
       const after = await measureGallery(page)
-      judgeGallery(`${view.name} · 作品页（滚到底之后）`, after)
+      judgeGallery(`${view.name} · 作品页（滚到底之后）`, after, view)
       if (!grew) {
         fails.push(`${view.name}：滚到底了却没接上后面的（还是 ${after.cells} 格）——` +
           '那个圈在转，可东西永远取不回来')
@@ -1052,6 +1143,8 @@ if (fails.length) {
     '画布还在、两个按钮的字各顶一行（不被 flex 挤扁）')
   console.log(`   外加作品页：${GALLERY_FAKE} 条时首屏只摆 ${GALLERY_FIRST} 张、圈在转、` +
     '滚到底真的接上后面的、整页不滚（左栏钉在原地）')
+  console.log('   外加作品页列表上那张缩略图**不是被拉大的**（源像素 ≥ 它被显示出来要的' +
+    '设备像素；只判桌面档，理由见 judgeGallery 那段）')
   console.log(`   外加详情页：那张大图真的是原图（自然尺寸的长边 ≥ ${SEED_IMAGE_LONG}，不是 ${SEED_THUMB_MAX}px 的缩略图）、` +
     '两栏配方都在屏内、详情页自己滚而整页不滚（左栏还钉在原地）')
 }

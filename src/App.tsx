@@ -20,7 +20,7 @@ import {
 import { prepareForModel, prepareForRouting, type Sizable } from './image/prepare'
 import { ApiError, postEdit, postRoute, postSuggest } from './api/client'
 import { bitmapsToClose, attachThumb, jumpTo, pushSnapshot, type Snapshot } from './core/history'
-import { makeThumbnail } from './core/thumbnail'
+import { GALLERY_THUMB_MAX_SIDE, makeThumbnail } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
 import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
 import type { Recipe } from '../shared/works.ts'
@@ -617,9 +617,14 @@ export default function App() {
   const saveOnce = useCallback(async (blob: Blob, replaceId: number | null, recipeAt?: Recipe) => {
     const canvas = canvasElRef.current
     // 缩略图是**顺手带的**：生成失败不该让整张图存不进去（裁定 ②）
+    // ⚠️ 这一张要**显式传** `GALLERY_THUMB_MAX_SIDE`（480），不能用默认的 160：
+    //    它下面是作品页那个**正方形**的格子（`aspect-ratio: 1/1; object-fit: cover`），
+    //    吃的是缩略图的**短边**，而 `maxSide` 限制的是长边 —— 竖图 120×160 在
+    //    181px 的格子里会被拉 1.51×（DPR 2 的屏上 3.02×）。算式在那个常量的注释里。
+    //    （对话/撤销历史里那张仍旧用默认的 160，那一档是对的，别一起改。）
     let thumb: string | undefined
     try {
-      if (canvas) thumb = makeThumbnail(canvas)
+      if (canvas) thumb = makeThumbnail(canvas, GALLERY_THUMB_MAX_SIDE)
     } catch (e) {
       console.error('缩略图没做出来，这张作品将没有缩略图：', e)
     }
