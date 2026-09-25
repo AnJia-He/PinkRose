@@ -92,8 +92,11 @@ describe('postEdit', () => {
  * 写这几条的时候它们**还没有调用方**。今天（2026-09-25 逐个核过一遍）：
  *   · **有**人调了：`patch` ← 详情页的 `renameWork`（`src/ui/WorkDetailPage.tsx:65`）、
  *     `del` ← 详情页的 `deleteWork`（同文件 `:76`）；
- *   · **仍然一个调用方都没有**：`put`，以及 `createWork` / `replaceWork` /
- *     `deleteWorks` 那三个接口函数（保存流程是 Task 13 的事）。
+ *   · **仍然一个调用方都没有**：`createWork` / `replaceWork` / `deleteWorks`
+ *     那三个接口函数（保存流程是 Task 13 的事）。
+ *     ⚠️ **别把 `put` 也算进"没人用"**：`put` **只有 `replaceWork` 在调**
+ *     （`src/api/works.ts:23`），而 `replaceWork` 自己没有调用方 ——
+ *     "这个动词有没有人用"和"这个接口有没有人用"是两件事，混在一起就是下一句假话。
  * 而方法名或路径写错的显形方式特别难查：不是报错，是那个界面上"点了没反应"。
  * 所以这里钉的是打出去的到底是哪个动词。变异：把 `send('PUT', …)` 写成
  * `send('POST', …)`…… 这条立刻红，而后端那条路由是精确匹配，真跑到就是 404。

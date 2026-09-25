@@ -1451,7 +1451,8 @@ describe('作品详情页：这张图怎么来的', () => {
     // ★ **详情页和作品页得叫同一个名字**（§3.5：「名字」只有一份，搜日期才等于按日期搜）。
     //   夹具是 2023-11（见 `openWork`）、今年是 2026，所以 `dayLabel` **一定**会补上年份。
     //   变异：把 `workName(work, now)` 改回 `workName(work, work.updatedAt)` → 这一条红，
-    //   而其余四条**一声不吭** —— 这正是它当初会漏掉的原因。
+    //   而其余**五条**一声不吭 —— 这正是它当初会漏掉的原因。（"五条"随这个 describe
+    //   的条数走：写这句话时是 4 条 → 补了「套用真的生效」和「打不开这一张」之后是 6 条。）
     expect(container.querySelector('.detail-name')!.textContent).toContain('2023年')
   })
 
@@ -1468,12 +1469,18 @@ describe('作品详情页：这张图怎么来的', () => {
       return inner(url, init)
     })
 
-    const btn = [...container.querySelectorAll('button')].find(b => (b.textContent ?? '').includes('改名'))!
-    await act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)) })
-    const box = container.querySelector('.rename-input') as HTMLInputElement
-    box.value = '海边那张'
+    // ⚠️ 按**类名**找，不按文案找 —— 和「套用」那条同一条规矩：
+    //   原来是 `[...buttons].find(b => b.textContent.includes('改名'))!`，
+    //   按钮不在时红的是 `Cannot read properties of undefined (reading 'click')` ——
+    //   那是"**测试自己**坏了"的语气，可实际发生的是"那个按钮没了"。
+    const btn = container.querySelector('.detail-rename') as HTMLButtonElement | null
+    expect(btn?.textContent ?? '').toContain('改名')      // 文案单独一条钉住
+    await act(async () => { btn?.click(); await new Promise(r => setTimeout(r, 0)) })
+    const box = container.querySelector('.rename-input') as HTMLInputElement | null
+    expect(box).toBeTruthy()      // 点完得真的进到"改名中"，不然下面崩在 null 上、红得看不懂
+    box!.value = '海边那张'
     await act(async () => {
-      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      box!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
       await new Promise(r => setTimeout(r, 0))
     })
 
@@ -1560,19 +1567,23 @@ describe('作品详情页：这张图怎么来的', () => {
 
   it('删除确认只说「删了就找不回来了」', async () => {
     await openWork()
-    const del = [...container.querySelectorAll('button')].find(b => (b.textContent ?? '') === '删除')!
-    await act(async () => { del.click(); await new Promise(r => setTimeout(r, 0)) })
+    // ⚠️ 同样按**类名**找（见上面「套用」「改名」两条）：`.find(...)!` 那种写法在
+    //   按钮不在时崩成 `Cannot read properties of undefined (reading 'click')`。
+    const del = container.querySelector('.detail-delete') as HTMLButtonElement | null
+    expect(del?.textContent ?? '').toContain('删除')      // 文案单独一条钉住
+    await act(async () => { del?.click(); await new Promise(r => setTimeout(r, 0)) })
 
     // ⚠️ **只扫确认框那一段，不是整个 container。** 整屏里本来就有一句
     //   「下载到我的电脑」（那是**真的**，图就在他手上）—— 拿整屏去跑
     //   `not.toContain('你电脑')`，赌的是那句文案的字，不是在校验确认框说了什么。
     //   今天的 `下载到我的电脑` 恰好不含「你电脑」也恰好不含「下载的」，
     //   所以两种写法今天都是绿的 —— 那正是"今天能过靠的是巧合"。
-    const confirm = container.querySelector('.detail-confirm')!
-    expect(confirm.textContent).toContain('删了就找不回来了')
+    const confirm = container.querySelector('.detail-confirm')
+    expect(confirm).toBeTruthy()   // 点完得真的弹出确认 —— 没弹时下面几句会崩在 null 上，红得看不懂
+    expect(confirm!.textContent).toContain('删了就找不回来了')
     // ★ 不许说"你电脑上那份还在" —— 服务器**不可能**知道用户本地有没有那张图
     //   （他可能下载过、可能没下载、也可能下载完又删了）。宁可少安慰一句，不能骗人（§3.5）
-    expect(confirm.textContent).not.toContain('你电脑')
-    expect(confirm.textContent).not.toContain('下载的')
+    expect(confirm!.textContent).not.toContain('你电脑')
+    expect(confirm!.textContent).not.toContain('下载的')
   })
 })
