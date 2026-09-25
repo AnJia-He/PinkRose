@@ -73,6 +73,26 @@ export function daysLeft(expiresAt: number, nowMs: number): number {
 }
 
 /**
+ * 票上写的过期时间。**只解析，不验签** —— 给"要不要续期"用。
+ *
+ * ⚠️ 这个名字带着一个前提：**调用方手里的票必须已经验过签**
+ * （server/app.ts 拿到的那张，是 findUserByCookie 交给 verifySession 验过的）。
+ * 它自己什么都验不了，拿它当"这张票是真的"用，等于没有签名。
+ *
+ * 为什么不做成"顺手再验一次"：调用点已经验过一遍，再验就是同一个 HMAC 算两遍，
+ * 还得把密码哈希到处递 —— 而那张票的形状（三段、过期时间是整数）本来就是
+ * verifySession 的返回值**保证**过的。
+ *
+ * 形状不对给 null：让调用方安静地跳过续期，而不是拿个 NaN 去跟 15 天比大小。
+ */
+export function expiryOf(token: string): number | null {
+  const parts = token.split('.')
+  if (parts.length !== 3) return null
+  const expiresAt = Number(parts[1])
+  return Number.isInteger(expiresAt) ? expiresAt : null
+}
+
+/**
  * 拼 Set-Cookie 的值。
  *
  * HttpOnly：JS 读不到 → 页面被塞了坏代码也偷不走。

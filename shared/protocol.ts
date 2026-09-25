@@ -59,6 +59,7 @@ export type EditResponse = { imageDataUrl: string; width: number; height: number
 
 export type AppErrorCode =
   | 'BAD_REQUEST'      // 请求体不合法，改请求也没用，400
+  | 'UNAUTHORIZED'     // 没登录、或票过期了 —— 先登录，401
   | 'UPSTREAM_LIMIT'   // 429 限流，稍后重试可能成功，503
   | 'UPSTREAM_FAILED'  // 上游挂了或超时，502
   | 'INTERNAL'

@@ -6,6 +6,8 @@ const cfg: Config = {
   apiKey: 'sk-test', baseUrl: 'https://x.cn/v1',
   imageModel: 'sensenova-u1.5-fast', vlmModel: 'sensenova-6.8-flash-lite', port: 0,
   dbPath: ':memory:',
+  // Config 上的必填字段（起服务要它），这个文件不碰账号
+  sessionSecret: 'test-secret',
 }
 
 /** 造一个假 fetch，记录请求体，返回给定响应。 */

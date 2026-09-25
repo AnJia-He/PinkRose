@@ -76,9 +76,13 @@ export function sendJson(res: ServerResponse, status: number, body: unknown): vo
  * `SnError` 只带 `code`，不带 HTTP 状态码；这张表是二者之间**唯一**的桥。
  * 少了它，上游限流/超时都会以 500 INTERNAL 的形状到达前端，
  * 前端按 `UPSTREAM_LIMIT` 分流的那条分支就成了死代码。
+ *
+ * ⚠️ `UNAUTHORIZED` 不会从上游来（是我们自己抛的 HttpError，状态码随它一起走）。
+ * 它出现在这里，是为了让这张表保持**穷尽**：AppErrorCode 上加一个成员而忘了
+ * 这里，必须是编译错误，而不是运行时一个 undefined 状态码。
  */
 const STATUS_BY_CODE: Record<AppErrorCode, number> = {
-  BAD_REQUEST: 400, UPSTREAM_LIMIT: 503, UPSTREAM_FAILED: 502, INTERNAL: 500,
+  BAD_REQUEST: 400, UNAUTHORIZED: 401, UPSTREAM_LIMIT: 503, UPSTREAM_FAILED: 502, INTERNAL: 500,
 }
 
 /**
@@ -90,6 +94,7 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
  */
 const USER_MESSAGE: Record<AppErrorCode, string> = {
   BAD_REQUEST: '这次请求有点问题，换个说法试试',
+  UNAUTHORIZED: '先登录一下',
   UPSTREAM_LIMIT: '排队的人有点多，稍等一下再试',
   UPSTREAM_FAILED: 'AI 服务暂时没响应，再试一次',
   INTERNAL: '出了点问题，再试一次',

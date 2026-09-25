@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   signSession, verifySession, parseCookies, sessionCookie, clearSessionCookie,
-  SESSION_COOKIE, SESSION_DAYS,
+  expiryOf, SESSION_COOKIE, SESSION_DAYS,
 } from './session.ts'
 
 const SECRET = 'test-secret-not-a-real-one'
@@ -70,6 +70,20 @@ describe('会话签名', () => {
       `7.${exp}.${sig}${sig}`, // 签名太长
     ]) {
       expect(verifySession(bad, HASH_A, NOW, SECRET)).toBeNull()
+    }
+  })
+
+  it('expiryOf 只读票上写的过期时间，**它不验签**', () => {
+    // ⚠️ 这条不是"顺手补个覆盖率"，是在钉一个**前提**：滑动续期
+    // （server/app.ts 的 renewSessionIfStale）拿到的票，是 findUserByCookie
+    // 已经验过签的那一张 —— 而 expiryOf 自己什么都验不了。
+    // 谁把它当成"这张票是真的"，就等于把签名那一层整个绕过去。
+    expect(expiryOf(signSession(7, HASH_A, EXP, SECRET))).toBe(EXP)
+    // 签名是假的、自己编的，照样读得出来 —— 这**正是**它不能用来放行的证据
+    expect(expiryOf(`7.${EXP}.${'A'.repeat(43)}`)).toBe(EXP)
+    // 形状不对给 null：调用方（续期）据此安静地跳过，而不是拿个 NaN 去比大小
+    for (const bad of ['', 'a', 'a.b', '1.2.3.4', '7.abc.x']) {
+      expect(expiryOf(bad)).toBeNull()
     }
   })
 })

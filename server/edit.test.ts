@@ -8,6 +8,8 @@ const cfg: Config = {
   apiKey: 'sk-test', baseUrl: 'https://x.cn/v1',
   imageModel: 'sensenova-u1.5-fast', vlmModel: 'v', port: 0,
   dbPath: ':memory:',
+  // Config 上的必填字段（起服务要它），这个文件不碰账号
+  sessionSecret: 'test-secret',
 }
 const IMG = 'data:image/jpeg;base64,AAAA'
 const deps = (c: SenseNovaClient) => ({ client: c, queue: new SerialQueue({ sleep: async () => {} }) })
