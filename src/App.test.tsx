@@ -1812,6 +1812,7 @@ describe('保存 = 存进作品集（Task 13）', () => {
     const call = fetchMock.mock.calls.find(c => c[0] === '/api/works/9' && c[1]?.method === 'PUT')
     // 没打到 PUT 时给 `undefined`（而不是崩在 `!` 上）：红出来的是
     // `expected undefined to equal []`，一眼看得出是"那一下没存"，不是"测试自己坏了"。
+    // `call` 有值 ⇒ `call[1]` 必有：`find` 的条件里已经 `c[1]?.method === 'PUT'` 过了一遍。
     const body = call ? JSON.parse(String(call[1]!.body)) : undefined
     // ★ 必须是**问的那一刻**那一份：一句原话都还没有、参数还是零。
     //   变异：`saveOnce` 里把 `recipeAt ?? recipeNow()` 改回无条件 `recipeNow()`
