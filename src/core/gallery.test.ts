@@ -23,4 +23,11 @@ describe('visibleGroups', () => {
     expect(visibleGroups([g('a', 3)], 60)).toHaveLength(1)
     expect(visibleGroups([], 60)).toEqual([])
   })
+
+  it('★ limit 是 0 也至少摆一组 —— "先摆后判"是刻意的（别把 break 挪到 push 前面）', () => {
+    // limit 只由调用方从 60 起往上加，0 不该出现；真要出现了，摆一组比摆零组
+    // 更接近用户的意思。给这一条配的变异：把 `if (n >= limit) break` 挪到
+    // `out.push(g)` 前面 —— 会红的就是它。
+    expect(visibleGroups([g('a', 3), g('b', 3)], 0).map(x => x.day)).toEqual(['a'])
+  })
 })

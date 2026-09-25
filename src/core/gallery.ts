@@ -11,6 +11,9 @@ export function visibleGroups(groups: readonly DayGroup[], limit: number): DayGr
   const out: DayGroup[] = []
   let n = 0
   for (const g of groups) {
+    // **先摆后判**（不是先判后摆）：limit 是 0 甚至负数时，也至少摆一组 —— 这是刻意的。
+    // limit 只由调用方从 60 起往上加，0 不该出现；真要出现了，摆一组比摆零组更接近
+    // 用户的意思。（这条行为在 gallery.test.ts 里钉着 —— 挪 `break` 会红。）
     out.push(g)
     n += g.works.length
     if (n >= limit) break

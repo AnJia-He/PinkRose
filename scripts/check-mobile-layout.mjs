@@ -382,7 +382,10 @@ async function measureGallery(page) {
       cells: document.querySelectorAll('.gallery-cell').length,
       days: document.querySelectorAll('.gallery-day').length,
       dayTitle: document.querySelector('.gallery-day-title')?.textContent ?? null,
-      more: more ? { visible: more.getBoundingClientRect().width > 0, text: more.textContent } : null,
+      // ⚠️ `hasBox` 量的是**有布局宽度**＝那个圈确实被渲染出来了、没被藏起来。
+      // **没有**量它在不在视野内 —— 滚到底之后它是列表的最后一个子元素，
+      // "它在不在视野里"几乎恒为真，那种断言是假的，这里不写。
+      more: more ? { hasBox: more.getBoundingClientRect().width > 0, text: more.textContent } : null,
       end: !!document.querySelector('.gallery-end'),
       nav: box(document.querySelector('.nav')),
       listScroll: g ? Math.round(g.scrollTop) : null,
@@ -406,7 +409,7 @@ function judgeGallery(label, m) {
   console.log(`── ${label}`)
   console.log(`     作品 ${m.cells} 张 / ${m.days} 天，缩略图解出 ${m.thumbsDecoded} 张` +
     `，日期标题 ${m.dayTitle ?? '（没有）'}`)
-  console.log(`     圈：${m.more ? `在（"${m.more.text}"，可见 ${m.more.visible}）` : '没有'}` +
+  console.log(`     圈：${m.more ? `在（"${m.more.text}"，有布局宽度 ${m.more.hasBox}）` : '没有'}` +
     `   到底了那句：${m.end ? '说了' : '没说'}`)
   console.log(`     文档滚了 ${m.docScroll}px，列表自己滚了 ${m.listScroll}px，` +
     `左栏 ${m.nav ? `${m.nav.w}x${m.nav.h} @top ${m.nav.top}` : '**不在 DOM 里**'}`)
@@ -617,9 +620,12 @@ try {
         fails.push(`${view.name}：${GALLERY_FAKE} 条作品一次全渲染了（首屏 ${first.cells} 格）——` +
           `§10 点名要防的就是这个（屏幕会卡），一次只该先摆 ${GALLERY_FIRST} 张`)
       }
-      // ★ §3.5：「那个圈**必须转**」—— 没有它，用户会以为到底了
-      if (!first.more || !first.more.visible) {
-        fails.push(`${view.name}：还有没摆完的，屏上却没有那个"正在取…"的圈 ——` +
+      // ★ §3.5：「那个圈**必须转**」—— 没有它，用户会以为到底了。
+      // ⚠️ 这一条量的是"那个圈**渲染出来了**"（有布局宽度＝存在、没被藏起来）——
+      // **没有**量它在不在视野里：滚到底之后它是列表最后一个子元素，那种断言
+      // 几乎恒为真，是"看着在守、其实守不住"，不写。
+      if (!first.more || !first.more.hasBox) {
+        fails.push(`${view.name}：还有没摆完的，页面上却没有那个"正在取…"的圈（没渲染出来）——` +
           '用户会以为到底了，而不是"还在加载"')
       }
       if (first.end) {

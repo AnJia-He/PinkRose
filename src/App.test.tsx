@@ -147,25 +147,33 @@ function makeGate() {
 
 // ── 假扮：IntersectionObserver（jsdom 里没有这个浏览器能力）─────────────
 // 作品页靠它知道"用户滚到底了"，而"滚动"在 jsdom 里根本演不出来 —— 所以这里
-// 给一个**能被测试按下去**的假的：记下谁在观察，测试想演"滚到底了"就按一下。
+// 给一个**能被测试按下去**的假的：记下谁在观察**哪个节点**，测试想演"滚到底了"
+// 就按一下。
 /** 现在活着的观察者。`beforeEach` 要清空 —— 上一条用例的组件已经卸载了。 */
-const ioObservers: { cb: (entries: { isIntersecting: boolean }[]) => void }[] = []
-/** 演"用户滚到底了"：把那条通知递给每一个还活着的观察者。 */
+const ioObservers: FakeIntersectionObserver[] = []
+/** 演"用户滚到底了"：把那条通知递给所有**真的在看东西**的观察者。
+ *  ⚠️ 一个没看任何元素的观察者**不通知** —— `io.observe(el)` 得真的算数：
+ *  把它整句删掉，这条测试必须红（"测试看不见它"那一类，这个仓库咬过好几次）。 */
 function scrollToEnd() {
-  for (const o of [...ioObservers]) o.cb([{ isIntersecting: true }])
+  for (const o of [...ioObservers]) {
+    if (o.watching.size > 0) o.cb([{ isIntersecting: true }])
+  }
 }
 class FakeIntersectionObserver {
   cb: (entries: { isIntersecting: boolean }[]) => void
+  /** 正在看谁 —— 真 IO 有这个集合，假的也得有，不然 `observe()` 就是个摆设。 */
+  watching = new Set<Element>()
   constructor(cb: (entries: { isIntersecting: boolean }[]) => void) {
     this.cb = cb
     ioObservers.push(this)
   }
-  observe() {}
-  unobserve() {}
+  observe(el: Element) { this.watching.add(el) }
+  unobserve(el: Element) { this.watching.delete(el) }
   /** ⚠️ 必须**真的**注销：React 每次重设观察者都会先断开上一个，
    *  不生效的话按一下"滚到底"会把那个已经作废的回调一起点火 —— limit 加两倍，
    *  而"一次滚到底到底接了多少张"正是这条要测的东西。 */
   disconnect() {
+    this.watching.clear()
     const i = ioObservers.indexOf(this)
     if (i >= 0) ioObservers.splice(i, 1)
   }
@@ -1264,6 +1272,17 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     })
   }
 
+  /** 盖上"取作品列表失败"这一条 —— 500 + 一句服务端的话（用 sentinel 认领它）。 */
+  function withWorksError(message: string) {
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse({ error: { code: 'INTERNAL', message } }, 500)
+      }
+      return inner(url, init)
+    })
+  }
+
   const WORK = (id: number, updatedAt: number, alias: string | null = null) =>
     ({ id, alias, createdAt: updatedAt, updatedAt, bytes: 100, hasThumb: true })
 
@@ -1341,5 +1360,35 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     await goNav('作品')
     expect(container.querySelector('.gallery')).toBeTruthy()
     expect(container.textContent).toContain('还没有作品')
+  })
+
+  it('★ 取列表失败时，除了"不行"还得给一句"怎么办"（§3.7）', async () => {
+    // 计划里的全局约束：凡告诉用户"不行"，都要同时告诉他"那怎么办" ——
+    // 只说"不行"的地方都是死胡同。
+    withWorksError('SENTINEL-列表读不出来')
+    await renderApp()
+    await goNav('作品')
+
+    expect(container.querySelector('.gallery-error')?.textContent ?? '').toContain('SENTINEL-列表读不出来')
+    // 出路那句话 —— 这一页不新造按钮（重试逻辑是 Task 12 的事），
+    // "刷新一下"是用户本来就有的。
+    expect(container.querySelector('.gallery-hint')?.textContent ?? '').toContain('刷新')
+  })
+
+  it('搜不到时说的是"没找到"＋换个字试试 —— 和"一张都没有"不是同一件事', async () => {
+    const day = new Date('2026-09-25T14:30:00').getTime()
+    withWorks([WORK(1, day)])
+    await renderApp()
+    await goNav('作品')
+
+    const box = container.querySelector('.gallery-search') as HTMLInputElement
+    await typeIn(box, '根本没有的字')
+    const none = container.querySelector('.gallery-none')
+    // `?? ''`：元素整个不在了的时候，要红成 `expected '' to contain …`，
+    // 而不是 vitest 那句"参数组合非法"—— 后者看不见是谁在守什么。
+    expect(none?.textContent ?? '').toContain('没找到')
+    expect(none?.textContent ?? '').toContain('换个字')
+    // "筛掉了"和"一张都没有"是两件事 —— 说错了用户会以为东西丢了
+    expect(container.querySelector('.gallery-empty')).toBeNull()
   })
 })

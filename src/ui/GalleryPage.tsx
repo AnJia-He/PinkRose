@@ -51,7 +51,14 @@ export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
                onChange={e => { setQ(e.target.value); setLimit(PAGE) }} />
       </header>
 
-      {failed && <p className="gallery-error">{failed}</p>}
+      {failed && (
+        <>
+          <p className="gallery-error">{failed}</p>
+          {/* §3.7：说"不行"的地方，都要同时告诉他"那怎么办"。这一页不新造按钮 ——
+              重试逻辑是 Task 12 的事，而"刷新一下页面"是用户本来就有的出路。 */}
+          <p className="gallery-hint">刷新一下页面，再试一次。</p>
+        </>
+      )}
       {!works && !failed && <p className="gallery-loading">正在打开…</p>}
 
       {works && works.length === 0 && (

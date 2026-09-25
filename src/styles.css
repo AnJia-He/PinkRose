@@ -344,8 +344,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .gallery-end { margin: 0; padding: 18px 0 0; text-align: center; color: var(--muted); font-size: 13px; }
 
 /* 三种"还没有图"的状态：**都没有图，说的却是三件不同的事**（还没拿到 /
-   一张都没有 / 筛掉了），所以各是各的句子，别合成一句。 */
+   一张都没有 / 筛掉了），所以各是各的句子，别合成一句。
+   `.gallery-hint` 也出现在"取列表失败"那条下面（§3.7 的出路那句话）——
+   所以它自己带颜色，不靠 `.gallery-empty` 继承。 */
 .gallery-loading, .gallery-none { margin: 24px 0 0; color: var(--muted); }
 .gallery-empty { margin-top: 48px; text-align: center; color: var(--muted); }
-.gallery-hint { margin: 6px 0 0; font-size: 13px; }
+.gallery-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
 .gallery-error { margin: 24px 0 0; color: #e06c75; }
