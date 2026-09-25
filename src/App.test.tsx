@@ -1010,9 +1010,28 @@ describe('登录这道门', () => {
     el.dispatchEvent(new Event('input', { bubbles: true }))
   }
 
+  /** 按**字段名**取某一格 —— 2026-09-25 起不再按"第几个"。
+   *
+   *  ⚠️ 这一条是那次踩出来的教训，不是洁癖。三格的顺序从「名字、邮箱、密码」
+   *  换成「名字、密码、邮箱」（用户拍板）时，全仓**有十七处**按位置填这几格的代码
+   *  （这个文件里十处、`.superpowers/` 下的验收探针里七处），谁都没写字段名。
+   *  它们**不会红** —— 填错框不是错，`type()` 照常成功、事件照常送到另一个
+   *  input 上，只是那笔字进了别人的格子，而后果要等到服务端回一句"密码不对"
+   *  才看得见（这一轮真跑过对照：按位置填 + 顺序换回去，那条用例**照样绿**）。
+   *  所以钩子（`name` 属性）现在是唯一的取法，顺序怎么调都不影响这些测试。
+   *
+   *  找不到就**抛**（而不是返回 null）：调用处要的失败语气是"屏幕上少了那一格"，
+   *  不是 `Cannot read properties of null` —— 后者读起来像"测试自己坏了"。 */
+  function field(which: 'username' | 'password' | 'email'): HTMLInputElement {
+    const el = container.querySelector<HTMLInputElement>(`.login-field input[name="${which}"]`)
+    if (!el) throw new Error(`屏幕上没有 name="${which}" 那一格`)
+    return el
+  }
+
   async function fillAndSubmit(username: string, password: string) {
-    // 登录模式下就两个输入框：名字、密码
-    const [name, pass] = container.querySelectorAll<HTMLInputElement>('.login-field input')
+    // 登录模式下就两个输入框：名字、密码（按字段名取，不按"第几个"）
+    const name = field('username')
+    const pass = field('password')
     await act(async () => {
       type(name, username)
       type(pass, password)
@@ -1039,14 +1058,16 @@ describe('登录这道门', () => {
 
   // ── 密码那一格的「看得见」开关（2026-09-25 加） ─────────────────────
   /** 密码那一格。
-   *  ⚠️ 按**结构**找（`.login-field input` 里最后那个），**不按 `[type=password]`
-   *  找** —— 这几条测试要断言的恰恰是它的 `type` 会变，拿 `type` 当锚点的话
-   *  开关一按它自己就先失联了（选择器再也找不到那个元素，红得莫名其妙）。
-   *  登录模式两个框（名字、密码）、注册模式三个（名字、邮箱、密码），
-   *  密码两种模式都在最后。 */
+   *  ⚠️ 按**字段名**找，**不按 `[type=password]` 找** —— 这几条测试要断言的
+   *  恰恰是它的 `type` 会变，拿 `type` 当锚点的话开关一按它自己就先失联了
+   *  （选择器再也找不到那个元素，红得莫名其妙）。
+   *
+   *  这里**原来还有一个理由**：「按结构找，密码两种模式都在最后」。那个说法在
+   *  2026-09-25 顺序换成「名字、密码、邮箱」之后就**不成立了** —— 注册模式下
+   *  最后一个是邮箱。所以这条注释和那个取法一起改了：位置是个会变的答案。
+   */
   function passwordBox(): HTMLInputElement | null {
-    const boxes = container.querySelectorAll<HTMLInputElement>('.login-field input')
-    return boxes.length ? boxes[boxes.length - 1] : null
+    return container.querySelector<HTMLInputElement>('.login-field input[name="password"]')
   }
 
   /** 点一下那个开关。按**类名**找，不按文案找。
@@ -1095,11 +1116,11 @@ describe('登录这道门', () => {
     await renderApp()
     await switchToSignup()
 
-    const boxes = container.querySelectorAll<HTMLInputElement>('.login-field input')
+    // 按字段名填（原来是 `boxes[0]/[1]/[2]` = 名字/邮箱/密码 —— 顺序一换就全错位）
     await act(async () => {
-      type(boxes[0], '小明')
-      type(boxes[1], 'a@b.com')
-      type(boxes[2], 'short')
+      type(field('username'), '小明')
+      type(field('email'), 'a@b.com')
+      type(field('password'), 'short')
     })
     const form = container.querySelector('form.login-box') as HTMLFormElement
     await act(async () => {
@@ -1210,8 +1231,10 @@ describe('登录这道门', () => {
     expect(submit.textContent).toContain('登录')   // 而且要重新说清这一步是干什么的
     // 用户打过的字也得还在：让他从头再打一遍密码，是最气人的一种失败
     // （顺带它还是"组件没被重新挂载"的探针 —— 重新挂载的话 state 会清空）
-    expect((container.querySelectorAll<HTMLInputElement>('.login-field input')[0]).value)
-      .toBe('小明')
+    // ⚠️ 两格**各看一次**，而且按字段名看：原来只看 `[0]` 那一格，也就是**只看
+    //    名字**。密码在不在没人管，而"密码被清空"恰恰是这里最气人的那一种。
+    expect(field('username').value).toBe('小明')
+    expect(field('password').value).toBe('password123')
   })
 
   it('★ 跟随请求还在半路时按钮必须还是「稍等…」—— 不许留一个"再点一次"的窗口', async () => {
@@ -1321,16 +1344,19 @@ describe('登录这道门', () => {
     await renderApp()
 
     // 登录模式下只有两个框：名字、密码（邮箱那一格在注册模式下才渲染）
-    const before = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
-    expect(before).toHaveLength(2)
+    // 数**几个**仍然是位置无关的判据（"登录页不给邮箱格"就靠它），所以留着；
+    // 但**填哪一格**一律按字段名走，不按第几个。
+    expect(container.querySelectorAll('.login-field input')).toHaveLength(2)
+    const beforeName = field('username')
+    const beforePass = field('password')
     await act(async () => {
-      type(before[0], '小明')
-      type(before[1], 'password123')
+      type(beforeName, '小明')
+      type(beforePass, 'password123')
     })
     // ★ 前提：字**真的**打进去了。少了这两行，下面"三个框都是空的"是白捡的 ——
     //   `type` 哪天失灵（React 换了 tracker 的挂法之类），这条测试照样绿。
-    expect(before[0].value).toBe('小明')
-    expect(before[1].value).toBe('password123')
+    expect(beforeName.value).toBe('小明')
+    expect(beforePass.value).toBe('password123')
 
     const sw = container.querySelector('.login-switch') as HTMLButtonElement
     expect(sw).toBeTruthy()
@@ -1349,10 +1375,11 @@ describe('登录这道门', () => {
     expect(sub.textContent).toContain('注册')
     expect(submit.textContent).toContain('注册')
 
-    // 三个框全空：现在是名字、邮箱、密码
-    const after = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
-    expect(after).toHaveLength(3)
-    expect(after.map(f => f.value)).toEqual(['', '', ''])
+    // 三个框全空：现在是名字、密码、邮箱（**逐格按字段名看**，不按"第几个"）
+    expect(container.querySelectorAll('.login-field input')).toHaveLength(3)
+    expect(field('username').value).toBe('')
+    expect(field('password').value).toBe('')
+    expect(field('email').value).toBe('')
 
     // ── 反向那半圈：注册 → 登录 → 注册 ────────────────────────────────
     // 上面那半圈**碰不到邮箱那一格**（它在登录模式下根本不渲染），所以它是
@@ -1367,23 +1394,30 @@ describe('登录这道门', () => {
         await new Promise(r => setTimeout(r, 0))
       })
     }
-    const fillAll = async (values: string[]) => {
-      const els = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
-      await act(async () => { els.forEach((el, i) => type(el, values[i])) })
+    /** 一次把三格都填上。**按字段名填** —— 原来传的是 `['阿花', 'a@b.com',
+     *  'password123']` 再按 `i` 取第几格，顺序一换成「名字/密码/邮箱」，
+     *  这个数组就把邮箱打进了密码格（而测试照样绿）。 */
+    const fillAll = async (username: string, password: string, email: string) => {
+      await act(async () => {
+        type(field('username'), username)
+        type(field('password'), password)
+        type(field('email'), email)
+      })
     }
 
-    await fillAll(['阿花', 'a@b.com', 'password123'])
+    await fillAll('阿花', 'password123', 'a@b.com')
     await switchOnce()                        // 注册 → 登录
-    const atLogin = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
-    expect(atLogin).toHaveLength(2)
+    expect(container.querySelectorAll('.login-field input')).toHaveLength(2)
     // ★ 这一步的断言不是装饰：少了它，一个**只往一个方向清**的写法能溜过去 ——
     //   比如 `if (mode === 'login') { 清空 }`：登录 → 注册那半圈照清（上面全绿），
     //   反向不清（这里不查的话也绿），而最后那一步又清了一遍（还是绿）。
-    expect(atLogin.map(f => f.value)).toEqual(['', ''])
+    expect(field('username').value).toBe('')
+    expect(field('password').value).toBe('')
     await switchOnce()                        // 登录 → 再注册
-    const back = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
-    expect(back).toHaveLength(3)
-    expect(back.map(f => f.value)).toEqual(['', '', ''])
+    expect(container.querySelectorAll('.login-field input')).toHaveLength(3)
+    expect(field('username').value).toBe('')
+    expect(field('password').value).toBe('')
+    expect(field('email').value).toBe('')
   })
 
   it('★ 点一下那个开关，密码就看得见了；再点一下，又变回圆点', async () => {
@@ -1463,16 +1497,15 @@ describe('登录这道门', () => {
     meUser = null
     await renderApp()
 
-    const [name, pass] = container.querySelectorAll<HTMLInputElement>('.login-field input')
-    expect(name).toBeTruthy()
-    expect(pass).toBeTruthy()
+    const name = field('username')
+    const pass = field('password')
     await act(async () => {
-      if (name) type(name, '小明')
-      if (pass) type(pass, 'password123')
+      type(name, '小明')
+      type(pass, 'password123')
     })
     // 前提：字真的都进去了（名字不合法的话，下面那几条全是白捡的）
-    expect(name?.value).toBe('小明')
-    expect(pass?.value).toBe('password123')
+    expect(name.value).toBe('小明')
+    expect(pass.value).toBe('password123')
 
     await toggleEye()
 
@@ -1502,6 +1535,102 @@ describe('登录这道门', () => {
     //   **红在这一句**（模式切了、密码也清空了，但那一格还开着明文）。
     expect(passwordBox()?.getAttribute('type')).toBe('password')
     expect(container.querySelector('.login-eye')?.getAttribute('aria-label')).toBe('显示密码')
+  })
+
+  it('★ 三个框的先后是「名字 → 密码 → 邮箱」（用户拍板），而且它们挂着自己的字段名', async () => {
+    // 用户 2026-09-25 的原话：「这三个的顺序依次是账户和密码然后是邮箱」。
+    // 道理是**必填的两个挨着，性质不同的那个放最后**（邮箱是留给"以后找回密码"
+    // 的备件，见设计 §6.4）。
+    //
+    // ⚠️ 这一条不只是在钉一个审美决定 —— 它是**位置式取法**的唯一守卫。
+    // 这个仓库里原来有十七处代码按"第几个框"去填这三格（这个文件里十处、
+    // `.superpowers/` 下的验收探针七处），谁都没写字段名：顺序一换，它们
+    // **照样是绿的**，只是全都在往错误的框里打字（对照实测过，见 `field()` 那段）。
+    // 那些地方现在都改按 `name` 取了，而这一条负责在有人把顺序调回去时
+    // **当场喊一声**，而不是让一屏绿着的测试继续骗人。
+    //
+    // ★ 变异①：把 LoginPage 里邮箱那一块挪回密码前面 → 红在第①句
+    //   （`['username','email','password']` vs `['username','password','email']`）。
+    // ★ 变异②：把三个 `name=` 属性删掉 → 红在第①句（`[null,null,null]`）。
+    meUser = null
+    await renderApp()
+    await switchToSignup()
+
+    const inputs = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
+    // 前提：注册模式下真的是三格（少一个的话下面两句比的是别的东西）
+    expect(inputs).toHaveLength(3)
+
+    // ① 每一格挂着自己的字段名 —— 这是那些代码现在取值的**钩子**，也是这一格的身份
+    expect(inputs.map(i => i.getAttribute('name'))).toEqual(['username', 'password', 'email'])
+
+    // ② 再拿**不依赖那个钩子**的东西钉一遍顺序：三格各自的 `type`。
+    //    只钉 `name` 的话，把钩子挂错元素（比如 `name="password"` 挂到邮箱那格上）
+    //    这一条照样绿 —— 而那正是最坏的一种错：钩子看着在、指向却是别人。
+    //    名字格没有 type（就是默认的文本），密码是 password，邮箱是 email。
+    //    ⚠️ 密码那格的 type 会跟着那颗小眼睛变，这里断言的是**默认**（圆点）那一档。
+    expect(inputs.map(i => i.getAttribute('type') ?? 'text')).toEqual(['text', 'password', 'email'])
+  })
+
+  it('★ 三格都标了必填的 *，而且那句解释在屏上看得见 —— 星号自己不会说话', async () => {
+    // 用户 2026-09-25 的第 2 条：「账户和密码是必填的所以可以打上"*"，找个地方
+    // 解释"*"是必填」。**邮箱也是必填的** —— 他以为它选填，是因为它没标星号
+    // （设计 §6.4：邮箱是找回密码的唯一通道，而找回密码排在第三段）。
+    //
+    // ⚠️ 光加一个裸的 `<span>*</span>` **不算做完**：读屏软件念一个孤零零的星号，
+    //    听的人既不知道它什么意思，也不知道它在修饰哪一格。所以每一格的标签里
+    //    都配了一份**只在可访问性树里在**的字（`Req` 里那份 `.login-sr` 的
+    //    「（必填）」），于是那一格的可读名字是「名字（必填）」。
+    //    而星号自己挂 `aria-hidden`：不然会听到"名字 星号 （必填）"，
+    //    那个音节没有任何意义。
+    //
+    // ⚠️ 另外**故意没有**加 HTML 的 `required`：它会让浏览器用**自己语言**的
+    //    气泡抢先弹出来，把本仓库那几句自己写的中文提示挤掉（`checkUsername` /
+    //    `checkEmail` / `checkPassword`）。最后一句钉着"没人把它加回来"。
+    //
+    // ★ 变异①：删掉 `<p className="login-hint">` 那一行 → 红在"屏上那句解释"。
+    // ★ 变异②：只留裸 `<span>*</span>`（把 `.login-sr` 那半截删掉）→ 红在
+    //   「标签里有读得出的'必填'」。
+    // ★ 变异③：把 `.login-sr` 换成 `display: none`（jsdom 里查不出来）——
+    //   这一条**拦不住**，只有 styles.css 里那段注释知道。写在这儿免得下一个人
+    //   以为这条测试把它也守住了。
+    meUser = null
+    await renderApp()
+
+    // ① 屏上那句解释：**看得见的字**，而且位置在字段**之前**（看到星号时不用回头找）。
+    //    它在 `.login-sub` 后面 —— 用 `nextElementSibling` 钉住这个位置关系，
+    //    不然"解释被挪到屏外/挪到折叠后面"这种改法这条测试是看不见的。
+    const sub = container.querySelector('.login-sub')
+    const hint = container.querySelector('.login-hint')
+    expect(hint).toBeTruthy()
+    expect(sub?.nextElementSibling).toBe(hint)
+    expect(hint?.textContent).toContain('*')
+    expect(hint?.textContent).toContain('都得填')
+    // 它是给眼睛看的，**不能**借 `.login-sr` 那套（那套屏上什么都不显示）——
+    // jsdom 没有版面，查不出"看不看得见"，能查的只是"有没有被标成隐藏"。
+    expect(hint?.classList.contains('login-sr')).toBe(false)
+
+    // ② 三格各有一份「必填」的可读等价物，星号自己则是 `aria-hidden` 的
+    await switchToSignup()
+    /** 读屏软件听到的那一格名字 = 它的 `<label>` 的文字。
+     *  名字/邮箱那两格的 label 是**包着** input 的，密码那格是 `htmlFor` 配对的 ——
+     *  两种都得认（只认前一种的话，密码那格会静默地被跳过）。 */
+    const readableName = (el: HTMLInputElement) => {
+      const wrap = el.closest('label')
+      if (wrap) return wrap.textContent ?? ''
+      return container.querySelector(`label[for="${el.id}"]`)?.textContent ?? ''
+    }
+
+    for (const which of ['username', 'password', 'email'] as const) {
+      const el = field(which)
+      const name = readableName(el)
+      expect(name, `${which} 那一格读不出"必填"`).toContain('必填')
+      expect(name).toContain('*')          // 星号也在同一格里
+      const star = el.closest('.login-field')?.querySelector('.login-star')
+      expect(star?.textContent).toBe('*')
+      expect(star?.getAttribute('aria-hidden')).toBe('true')
+      // ★ 而且**不要**原生 `required`（原因见上面那段注释）。
+      expect(el.hasAttribute('required')).toBe(false)
+    }
   })
 })
 

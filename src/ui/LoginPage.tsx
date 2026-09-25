@@ -52,6 +52,33 @@ function EyeOffIcon() {
   )
 }
 
+/** 「这一格必填」那个星号 —— 外加它的**可读等价物**（2026-09-25 用户要的）。
+ *
+ *  为什么分成两个 `<span>`：一个**光秃秃的** `<span>*</span>` 对读屏的人等于没说 ——
+ *  念出来就是一个孤零零的"星号"，听的人既不知道它是什么意思，也不知道它在修饰哪一格。
+ *  所以：
+ *    · `*` 自己挂 `aria-hidden="true"`（它是**给眼睛看的**记号，没有语义），
+ *      不进名字计算 —— 否则读屏的人会听到"名字 星号 （必填）"，多一个没意义的音节；
+ *    · 旁边那份「（必填）」走 `.login-sr`：屏上**看不见**（1px、裁掉），但它在
+ *      可访问性树里活着，于是那一格的可读名字是「名字（必填）」。
+ *
+ *  为什么不用 HTML 的 `required` 属性来代替：那个属性会让浏览器用它**自己语言**
+ *  的气泡抢先弹出来（桌面 Chrome 是英文的 "Please fill out this field."），
+ *  而本仓库的提示是**自己写的、中文的、就地显示的**（`checkUsername` / `checkEmail` /
+ *  `checkPassword` 各自那几句）—— 等于把用户看得懂的话换成看不懂的。
+ *  `App.test.tsx` 里那条「三格都标了必填的 *」最后一句钉着"没人把 required 加回来"。
+ *
+ *  颜色**故意不是红的**：本文件里那个红（#e06c75）是**错误**的颜色，见 styles.css
+ *  里 `.login-error` 那段注释 —— 一个空着的必填格不是错误，只是还没填。 */
+function Req() {
+  return (
+    <>
+      <span className="login-star" aria-hidden="true">*</span>
+      <span className="login-sr">（必填）</span>
+    </>
+  )
+}
+
 /**
  * 登录 / 注册。**这是打开产品看到的第一屏**，所以它自己被产品规则约束着：
  * 一行一句人话、错了说清为什么、正在忙的时候按钮不能重复点。
@@ -158,20 +185,33 @@ export function LoginPage({ onDone }: Props) {
       <form className="login-box" onSubmit={submit}>
         <h1 className="login-title">随心</h1>
         <p className="login-sub">{mode === 'login' ? '登录一下，你的图都在这儿' : '注册一个，图就留下来了'}</p>
+        {/* ★ 2026-09-25 用户要的：「找个地方解释"*"是必填」。**在屏上看得见**是
+            这件事的一半 —— 另一半在 `Req` 里（每一格的标签里那份读得出的「（必填）」）。
+            放这儿而不是贴着提交按钮，是因为它是**读字段之前**就该知道的事：
+            看到星号再回头找解释，那一眼是白费的。 */}
+        <p className="login-hint">打 * 的都得填</p>
 
+        {/* ★ ★★ 三个字段的顺序是「名字 → 密码 → 邮箱」（2026-09-25 用户拍板）。
+            原来邮箱排在密码前面，用户看图说的原话是「这三个的顺序依次是账户和密码
+            然后是邮箱」—— 道理是**必填的两个挨着，性质不同的那个放最后**。
+
+            ⚠️ 顺序和下面那三个 `name=` 是**一件事的两半**，别只改一半：
+            这个仓库里原来有十七处代码按"第几个框"去填这三个字段
+            （`App.test.tsx` 里十处、`.superpowers/` 下的验收探针七处），谁都没写
+            字段名 —— 顺序一换，它们照样是绿的，只是**全都在往错误的框里打字**
+            （把邮箱打进密码格，而报错要等到服务端。这一轮真跑过对照，确认是静默绿的）。
+            所以：`name="username" / "password" / "email"` 是那十七处的**新钩子**，
+            而 `App.test.tsx` 里那条「三个框的先后」钉着顺序本身。
+
+            `name` 这个属性的选择不是随手挑的：它是标准 HTML，对浏览器的密码管理器
+            （它按 `name` + `autoComplete` 认哪一格是哪个）有好处，顺便才当了测试的钩子。
+            `autoComplete` 那几个**一个字都没动** —— 它们按模式在
+            `current-password` / `new-password` 之间分，动错了会惹那个密码管理器。 */}
         <label className="login-field">
-          <span>名字</span>
-          <input value={username} onChange={e => setUsername(e.target.value)}
+          <span>名字<Req /></span>
+          <input name="username" value={username} onChange={e => setUsername(e.target.value)}
                  autoComplete="username" autoFocus />
         </label>
-
-        {mode === 'signup' && (
-          <label className="login-field">
-            <span>邮箱</span>
-            <input value={email} onChange={e => setEmail(e.target.value)}
-                   type="email" autoComplete="email" />
-          </label>
-        )}
 
         {/* ⚠️ 密码这一格外面**不是** `<label>`（名字和邮箱那两格是），是有理由的：
             那个开关得和输入框**并排**，而 `<button>` 也是 labelable 元素 ——
@@ -182,11 +222,16 @@ export function LoginPage({ onDone }: Props) {
                 顺序稍不留神就会点到那个按钮上去。
             所以这一格用 `htmlFor` 显式配对，结构上把开关和输入框放进同一行。
             类名照旧是 `login-field`（只是挂在一个 div 上），
-            `.login-field input` 那几条样式和测试里的选择器都不受影响。 */}
+            `.login-field input` 那几条样式和测试里的选择器都不受影响。
+
+            ⚠️ 「可读名字」这件事现在**多了一层**：`<Req />` 里那份 `.login-sr` 的
+            「（必填）」也在这一格的 label 里，所以读屏的人听到的是「密码（必填）」——
+            这正是要的。而它是 `display: none` **不出来的**：那种写法会把节点从
+            可访问性树里一并删掉，等于没加（见 styles.css 里 `.login-sr` 那条）。 */}
         <div className="login-field">
-          <label htmlFor="login-password">密码</label>
+          <label htmlFor="login-password">密码<Req /></label>
           <div className="login-pw">
-            <input id="login-password" value={password} onChange={e => setPassword(e.target.value)}
+            <input id="login-password" name="password" value={password} onChange={e => setPassword(e.target.value)}
                    type={showPassword ? 'text' : 'password'}
                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
             {/* ⚠️⚠️ `type="button"` 一个字都不能省。这个 `<button>` 在
@@ -222,6 +267,16 @@ export function LoginPage({ onDone }: Props) {
             </button>
           </div>
         </div>
+
+        {/* 邮箱排最后（见上面那段顺序说明）。它在**登录模式下整个不渲染** ——
+            注册才要它，而登录页问的只有"我是谁"。 */}
+        {mode === 'signup' && (
+          <label className="login-field">
+            <span>邮箱<Req /></span>
+            <input name="email" value={email} onChange={e => setEmail(e.target.value)}
+                   type="email" autoComplete="email" />
+          </label>
+        )}
 
         {error && <p className="login-error">{error}</p>}
 

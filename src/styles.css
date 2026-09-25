@@ -283,6 +283,29 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .login-box { display: flex; flex-direction: column; gap: 14px; width: 320px; }
 .login-title { margin: 0; font-size: 28px; }
 .login-sub { margin: 0 0 6px; opacity: .7; font-size: 14px; }
+/* ★ 2026-09-25 用户要的那句「解释 * 是必填」（`.login-hint` = "打 * 的都得填"）。
+   `margin-top: -6px` 是**故意的**：`.login-box` 那条 gap 是 14px，而这两句是
+   一句话的两半（"这是什么" + "要填什么"），拉开 14px 就散成两段了。
+   比副标题再小一号、再暗一档 —— 它是注脚，不该和副标题抢第一眼。
+   ⚠️ 它必须是**看得见的**字，不能借 `.login-sr`（那套是给读屏的，屏上什么都不显示）——
+   `App.test.tsx` 里那条「三格都标了必填的 *」钉着它的字和位置，
+   而"真的占地方"（有宽高、不透明）是 `.superpowers/…/login-fields-probe.mjs`
+   在真浏览器里量出来的（jsdom 没有版面，量不了）。 */
+.login-hint { margin: -6px 0 0; font-size: 12px; opacity: .55; }
+/* `.login-field` 里那个必填的星号。
+   颜色走 `--accent` 而**不是**本文件里那个红（#e06c75）：那个红是**错误**的颜色
+   （见下面 `.login-error` 那段"本文件里唯一一处给字用的红"）—— 而一个空着的
+   必填格此刻并没有错，只是还没填；拿错误的颜色去标它，用户会先去找哪儿出事了。
+   `--accent` 也正是主按钮和焦点框的颜色，"这里要你动手"在整屏上是同一套语言。 */
+.login-star { color: var(--accent); margin-left: 2px; }
+/* 只给读屏软件看的字（`<Req />` 里那份「（必填）」就在这个类里）。
+   ⚠️ **不能用 `display: none` / `visibility: hidden`** —— 那两种写法会把节点从
+   **可访问性树**里一并删掉，读屏的人一个字都听不到，等于没加（而屏上看不出来，
+   所以这种"加了等于没加"最难发现）。这里那套（1px + 裁掉 + 不换行）是标准做法：
+   屏上不占任何位置、不改变版面，但它在可访问性树里活着。
+   `position: absolute` 顺带把"它在 label 里会挤动别的字"这件事也去掉了。 */
+.login-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .login-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .login-field input { padding: 10px 12px; border-radius: 8px; border: 1px solid #2f343c; background: #14161a; color: inherit; font-size: 15px; }
 .login-field input:focus { outline: none; border-color: var(--accent); }
