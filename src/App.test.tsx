@@ -23,7 +23,8 @@ import { ZERO } from '../shared/adjustments.ts'
  *  用 hoisted：vi.mock 的工厂会被提到所有 import 之前执行。 */
 const canvasProps = vi.hoisted(() => ({
   images: [] as { width: number; height: number }[],
-  props: [] as { originalPreview: string | null; picking: boolean; marker: unknown }[],
+  props: [] as { originalPreview: string | null; picking: boolean; marker: unknown
+                  params: Record<string, number> }[],
 }))
 
 /** 画布：真的那个要 WebGL2。这里给一个真 <canvas> 并挂上 ref ——
@@ -33,7 +34,7 @@ vi.mock('./ui/Canvas', async () => {
   return {
     default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint }: any) => {
       canvasProps.images.push(image)
-      canvasProps.props.push({ originalPreview, picking, marker })
+      canvasProps.props.push({ originalPreview, picking, marker, params })
       return React.createElement('canvas', {
         ref: (node: HTMLElement | null) => {
           canvasRef.current = node
@@ -1138,10 +1139,14 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(location.pathname).toBe('/works')
 
     await goNav('修图')
-    // ★ 三样都还在：说过的话、那张底、那个画布
+    // ★ 四样都还在：说过的话、那张底、那个画布、**用户拖过的滑块**
     expect(container.textContent).toContain('亮一点')
     expect(container.querySelector('canvas')).toBeTruthy()
     expect(canvasProps.images.at(-1)).toBeTruthy()
+    // ★ 第四样是后补的：上面三样都只盯着"东西还在不在"，盯不住**值**还在不在。
+    //   在 go 里顺手 setParams(ZERO)，这条测试**照样绿**（实测）—— 而用户回来一看
+    //   颜色全没了。§3.2 那句承诺有两半，"界面没被拆"只是第一半。
+    expect(canvasProps.props.at(-1)?.params.exposure).toBe(20)
   })
 
   it('★ 浏览器后退 / 前进 —— 界面跟着地址走，不是只跟着那两个按钮走', async () => {
@@ -1187,5 +1192,17 @@ describe('左栏导航：切界面不丢工作', () => {
     await goNav('作品')                 // 人还在作品页，又点了一次同一个地方
     expect(history.length).toBe(before + 1)   // 一条都不该多
     expect(location.pathname).toBe('/works')
+  })
+
+  it('★ 刷新页面 / 从网址直接进来 —— 一打开就该在原处，不是每次都回修图页', async () => {
+    // 地址栏是**可以被直接打开的**：用户收藏了 /works，或者按了 F5。
+    // 少了这条，`useState(() => viewFromPath(location.pathname))` 换成常量
+    // `{ kind: 'edit' }` 全套测试照样绿 —— 而"刷新能回到原处"正是它存在的理由。
+    // （地址在 beforeEach 里已经被摆回 '/' 了，所以这一步是"用户此刻打开的是这条"。）
+    history.replaceState(null, '', '/works')
+    await renderApp()
+    expect(container.querySelector('.placeholder')).toBeTruthy()   // 落在作品页
+    expect(container.querySelector('.workspace')).toBeNull()       // 不是修图页
+    expect(container.querySelector('.nav-item.on')?.textContent).toBe('作品')
   })
 })

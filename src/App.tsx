@@ -576,12 +576,17 @@ export default function App() {
    *  于是"切导航不丢工作"是结构上的必然，不是"记得保存"（§3.2）。 */
   const [view, setView] = useState<View>(() => viewFromPath(location.pathname))
 
-  /** 点导航：先改地址栏，再改状态。顺序反过来会在后退时多一条记录。
+  /** 点导航：改状态，顺手把地址栏换成对应的那条。
+   *
+   *  这两条语句**谁先谁后无所谓**：`pushState` 不会触发 `popstate`（规范就这么定的），
+   *  `setView` 也不碰历史栈 —— 先写地址只是读起来顺，别在这儿找讲究。
    *
    *  ⚠️ 必须写 `window.history`（不能省成 `history`）：这个组件里有一份**同名**的
-   *  撤销历史 `const [history, setHistory] = useState<Snapshot[]>([])`，
-   *  它把全局那个 `history` 遮住了 —— 省掉 `window.` 的话这一行会在运行时炸
-   *  「history.pushState is not a function」，而 typecheck 和别的用例全绿。 */
+   *  撤销历史 `const [history, setHistory] = useState<Snapshot[]>([])`，它把全局那个
+   *  `history` 遮住了 —— 省掉 `window.` 是个**编译期**的错
+   *  （`TS2339: Property 'pushState' does not exist on type 'Snapshot[]'`）。
+   *  写全是为了让下一个人一眼看见"要的是浏览器那个 history"，而不是先去读一遍
+   *  类型错误才知道。 */
   const go = useCallback((v: View) => {
     const p = pathOf(v)
     if (location.pathname !== p) window.history.pushState(null, '', p)
