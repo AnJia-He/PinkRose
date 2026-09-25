@@ -326,6 +326,43 @@ describe('handleDeleteWork / handleDeleteWorks / handleReplaceWork', () => {
     }
   })
 
+  it('★ 记录删不掉 → 请求真的失败，而且**文件一步都没走过**（顺序反过来在这儿就露馅了）', async () => {
+    // ★ 这条才是真正能把两种顺序分开的那条 —— 上面那条分不开它们：`remove` 那一步是**吞错**的
+    // （上面那条用例钉着它必须吞），所以只要 `remove` 成功，"文件先删还是后删"**从外面看不出来**
+    // —— 记录都删了、请求都成功、日志都响、孤儿文件也是同一个。黑盒同形。
+    //
+    // 两者真正分岔的时刻是「**记录那一步失败**」：
+    // - 对的顺序：记录先抛 → 文件那一步**根本没走到** → 文件还在、记录还在。用户重来一次还能删掉
+    // - 错的顺序：文件已经先没了 → 记录再失败 → **图没了、记录还在**。那条记录永远打不开、
+    //   也删不掉第二次（再删一次还是同样的顺序）
+    //
+    // 所以下面**两句缺一不可**，只有一句都分不开：光看"请求失败"，两种顺序一样；
+    // 光看"文件在不在"，得先有那句失败才问得出意思。
+    //
+    // 假 Db 只拦 `DELETE` 那一句（`prepare` 拿到的就是这句 SQL），别的照常走 ——
+    // 所以 loadOwned 查的那句 SELECT 还是真的。
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    const name = (db.raw.prepare('SELECT stored_name FROM works WHERE id = ?')
+      .get(id) as { stored_name: string }).stored_name
+    const broken = {
+      ...deps,
+      db: {
+        ...deps.db,
+        raw: {
+          prepare: (sql: string) => {
+            if (sql.startsWith('DELETE')) throw new Error('database is locked')
+            return deps.db.raw.prepare(sql)
+          },
+        },
+      } as unknown as Db,
+    }
+
+    // ① 指名道姓：这条守的是"记录删不掉"这件事本身，不是随便抛了什么 —— 更不许静默吞掉
+    await expect(handleDeleteWork(id, USER, broken)).rejects.toThrow(/database is locked/)
+    // ② ★ 文件**还在**。错的顺序到这儿文件已经没了（先删了）—— 那才是"图丢了"
+    expect(readdirSync(root)).toEqual([name])
+  })
+
   it('删两次：第二次当"它已经不在了"，不炸', async () => {
     const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
     await handleDeleteWork(id, USER, deps)
