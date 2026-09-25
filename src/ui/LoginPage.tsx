@@ -116,9 +116,23 @@ export function LoginPage({ onDone }: Props) {
         </button>
 
         {/* 切换模式时清掉上一条错误：那一句说的是**另一种模式**下的事
-            （"这个名字已经有人用了"在登录模式下毫无意义），留着会误导。 */}
+            （"这个名字已经有人用了"在登录模式下毫无意义），留着会误导。
+
+            框里那几个字**一并清掉**，理由是同一件事的两面：它们也是**在另一种
+            模式下**打进来的，切过去之后含义就不是用户写的那句话了。最要紧的是
+            密码那一格 —— 登录页上它问的是"我的密码"，注册页上它问的是"给我设的
+            新密码"，所以用户在登录页手滑打错的一个字符，会在他毫不知情的情况下
+            变成新账号的密码（他以为只是"切过去看一眼，再切回来"）。名字那格同理：
+            登录页问"我是谁"，注册页问"我想叫什么"。留着它们不是"省用户一遍手"，
+            是**替用户做主用了他没打算交出去的那几笔字**。 */}
         <button type="button" className="login-switch"
-                onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(null) }}>
+                onClick={() => {
+                  setMode(mode === 'login' ? 'signup' : 'login')
+                  setError(null)
+                  setUsername('')
+                  setEmail('')
+                  setPassword('')
+                }}>
           {mode === 'login' ? '还没有账号？注册一个' : '已经有账号了？去登录'}
         </button>
       </form>

@@ -1175,6 +1175,85 @@ describe('登录这道门', () => {
     expect(container.querySelector('.login-box')).toBeTruthy()
     expect(container.querySelector('form.chat-input')).toBeNull()   // 修图界面整个让位
   })
+
+  it('⚠️ 从登录切到注册 → 框里那几个字不能跟着过去', async () => {
+    // 用户在用的时候发现的：「如果没有账号，切到注册页面不应该自动填充用户在
+    // 登录页填充的信息」。查下去发现这不是"有人想过、权衡后留下的设计"，是
+    // **没人想过** —— 那个切换按钮原来只做 setMode + setError(null)，三个输入
+    // state 一个字都没动，注释里也只解释了为什么清 error。而它**一条测试都没有**，
+    // 所以一直没人看见。
+    //
+    // 代价最难看清的是密码那一格：登录页上它问的是"我的密码"，注册页上它问的是
+    // "给我设的新密码"，于是用户在登录页手滑打错的一个字符，会在他毫不知情的
+    // 情况下变成新账号的密码。
+    meUser = null
+    await renderApp()
+
+    // 登录模式下只有两个框：名字、密码（邮箱那一格在注册模式下才渲染）
+    const before = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
+    expect(before).toHaveLength(2)
+    await act(async () => {
+      type(before[0], '小明')
+      type(before[1], 'password123')
+    })
+    // ★ 前提：字**真的**打进去了。少了这两行，下面"三个框都是空的"是白捡的 ——
+    //   `type` 哪天失灵（React 换了 tracker 的挂法之类），这条测试照样绿。
+    expect(before[0].value).toBe('小明')
+    expect(before[1].value).toBe('password123')
+
+    const sw = container.querySelector('.login-switch') as HTMLButtonElement
+    expect(sw).toBeTruthy()
+    await act(async () => {
+      sw.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // 模式真的换了：副标题和提交按钮上的字都改了。
+    // **按类名定位、只看文案** —— 按文案找元素的话，这条会退化成
+    // "我按那句话找到了那个按钮"，而不是"用户看到的字变了没有"。
+    const sub = container.querySelector('.login-sub') as HTMLParagraphElement
+    const submit = container.querySelector('.login-submit') as HTMLButtonElement
+    expect(sub).toBeTruthy()
+    expect(submit).toBeTruthy()
+    expect(sub.textContent).toContain('注册')
+    expect(submit.textContent).toContain('注册')
+
+    // 三个框全空：现在是名字、邮箱、密码
+    const after = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
+    expect(after).toHaveLength(3)
+    expect(after.map(f => f.value)).toEqual(['', '', ''])
+
+    // ── 反向那半圈：注册 → 登录 → 注册 ────────────────────────────────
+    // 上面那半圈**碰不到邮箱那一格**（它在登录模式下根本不渲染），所以它是
+    // 「登录页填的东西跟过去」这一半；邮箱那一格只有这半圈守得住 ——
+    // 实测：单独删掉 `setEmail('')` 那一行，上面的断言全绿。
+    // 先在注册页把三个框都填上，再往回切两次，看它们有没有原地复活。
+    const switchOnce = async () => {
+      const btn = container.querySelector('.login-switch') as HTMLButtonElement
+      expect(btn).toBeTruthy()
+      await act(async () => {
+        btn.click()
+        await new Promise(r => setTimeout(r, 0))
+      })
+    }
+    const fillAll = async (values: string[]) => {
+      const els = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
+      await act(async () => { els.forEach((el, i) => type(el, values[i])) })
+    }
+
+    await fillAll(['阿花', 'a@b.com', 'password123'])
+    await switchOnce()                        // 注册 → 登录
+    const atLogin = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
+    expect(atLogin).toHaveLength(2)
+    // ★ 这一步的断言不是装饰：少了它，一个**只往一个方向清**的写法能溜过去 ——
+    //   比如 `if (mode === 'login') { 清空 }`：登录 → 注册那半圈照清（上面全绿），
+    //   反向不清（这里不查的话也绿），而最后那一步又清了一遍（还是绿）。
+    expect(atLogin.map(f => f.value)).toEqual(['', ''])
+    await switchOnce()                        // 登录 → 再注册
+    const back = [...container.querySelectorAll<HTMLInputElement>('.login-field input')]
+    expect(back).toHaveLength(3)
+    expect(back.map(f => f.value)).toEqual(['', '', ''])
+  })
 })
 
 /**
