@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { createHash } from 'node:crypto'
 import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,18 +40,47 @@ describe('openDb', () => {
     db.close()
   })
 
-  it('迁移是幂等的 —— 开两次不炸', () => {
-    const db = openDb(':memory:')
-    db.close()
-    // 同一个文件开两次（这里用内存库模拟"再开一次"）
-    expect(() => { const d = openDb(':memory:'); d.close() }).not.toThrow()
-  })
-
   it('迁移数组只增不改 —— 拿掉一条就会炸在旧库上', () => {
     const db = openDb(':memory:')
     const v = db.raw.prepare('SELECT MAX(version) AS v FROM schema_version').get() as any
     expect(v.v).toBe(MIGRATIONS.length)
     db.close()
+  })
+
+  /**
+   * ⭐ 已发布迁移的**指纹清单**。
+   *
+   * `MIGRATIONS` 上面那句"只许往后追加、永远不许改或删已经发布过的那几条"是
+   * 这一整段最重要的承诺（后面四段全压在它上面）—— 而在这条测试出现之前，
+   * **它没有任何东西守着**：把 `MIGRATIONS[0]` 改掉一个字符，全仓测试照样全绿，
+   * 而"新库"和"老库升上来的"从此长得不一样（现场跑过的那个不会重跑）。
+   *
+   * 用 sha256 而不是把 SQL 原文再抄一份：抄一份的话，改代码时顺手把抄件一起改掉
+   * 照样绿 —— 那等于没守。
+   *
+   * ⚠️ 指纹**不含行尾差异**：JS 的模板字面量自己会把 CRLF 归一成 LF
+   * （ECMAScript 的规定，本机实测：文件是 CRLF，字符串里一个 `\r` 都没有），
+   * 所以这份清单不会因为换台机器（`core.autocrlf`）就红。
+   *
+   * **怎么维护**：以后每追加一条迁移，把它的指纹**加到清单末尾**（不是重新生成
+   * 整份清单）。比较是**前缀**比，逐个来：追加（唯一被允许的那条路）不红，
+   * 改老的、删老的必红。故意不做"整体相等"—— 那会让每次追加都红一次，
+   * 而下一个人最省事的做法就是把测试打印出来的那几行整段贴回去；
+   * 一个训练人闭眼重生成清单的守卫，等于没有守卫。
+   */
+  const PINNED_MIGRATIONS = [
+    // 1 —— users
+    '8a9a1a445d01f8ff0e9e242fc398e653048af972c4102686d3688c9758bff38a',
+  ]
+
+  it('★ 已发布的迁移一个字都不许改 —— 指纹对不上 = "老库和新库从此是两个形状"', () => {
+    const actual = MIGRATIONS.map(m => createHash('sha256').update(m, 'utf8').digest('hex'))
+    PINNED_MIGRATIONS.forEach((pinned, i) => {
+      expect(actual[i],
+        `第 ${i + 1} 条迁移的指纹变了。老库不会重跑它，所以这一改 = "新库"和"老库升上来的"` +
+        `从此长得不一样（见 db.ts 里 MIGRATIONS 上面那条契约）。真要改结构：追加一条新的，别动老的。`,
+      ).toBe(pinned)
+    })
   })
 
   it('迁移在真文件上幂等 —— 同一个物理库开两次，第二次从 version=1 接着走', () => {
@@ -79,6 +109,29 @@ describe('openDb', () => {
   // 建带外键的表）。下面两条分别盯住它的两种现场：全新的库，和已经升过级的库。
   const BAD = 'CREATE TABLE half_applied (id INTEGER); CREATE TABLE half_applied (id INTEGER);'
 
+  it('★ 迁移串自带 BEGIN → 当场拒掉，而且说清是第几条', () => {
+    // 谁要照抄 SQLite 官方那套"改表"配方（`PRAGMA foreign_keys=OFF; BEGIN; …; COMMIT;`），
+    // 内层的 BEGIN 会撞上外层那个事务 —— 原来炸出来的是 SQLite 那句
+    // `cannot start a transaction within a transaction`，**而且炸在开库这一步**：
+    // 服务根本起不来、用户手里没有自救路径（正是 R20 要消灭的那一类）。
+    // 现在在碰数据库之前就有一个说得清的结局。
+    //
+    // 三个样本各问一件事：BEGIN 被认出并报第几条、PRAGMA foreign_keys 也在名单里、
+    // **触发器体里的 BEGIN/END 不许被误伤**（那是 CREATE TRIGGER 的一部分，不是独立语句）。
+    expect(() => openDb(':memory:', [...MIGRATIONS, 'BEGIN; CREATE TABLE x (id INTEGER); COMMIT;']))
+      .toThrow(/第 2 条[\s\S]*BEGIN[\s\S]*不许自带/)
+
+    expect(() => openDb(':memory:', ['PRAGMA foreign_keys=OFF; CREATE TABLE y (id INTEGER);']))
+      .toThrow(/第 1 条[\s\S]*PRAGMA foreign_keys/)
+
+    // 反过来的那一半：合法迁移照常能跑（守卫是"拒绝这一种写法"，不是"拒绝一切"）
+    const trigger = `
+      CREATE TABLE log (id INTEGER);
+      CREATE TRIGGER log_it AFTER INSERT ON log BEGIN UPDATE log SET id = id; END;
+    `
+    expect(() => openDb(':memory:', [...MIGRATIONS, trigger]).close()).not.toThrow()
+  })
+
   it('迁移失败会回滚 —— 建到一半的表不许留下，版本也不许动', () => {
     const file = join(tmpdir(), `ruixing-rollback-${process.pid}-${Date.now()}.db`)
     try {
@@ -94,6 +147,51 @@ describe('openDb', () => {
         expect(probe.raw.prepare('SELECT COUNT(*) AS n FROM schema_version').get()).toEqual({ n: 1 })
         expect(probe.raw.prepare('SELECT MAX(version) AS v FROM schema_version').get()).toEqual({ v: 0 })
       } finally { probe.close() }
+    } finally { removeTempDb(file) }
+  })
+
+  it('★ COMMIT 自己抛（延迟外键）也不许留下半个状态 —— 版本停在原地、库照样打得开', () => {
+    // 别的"迁移失败"用例炸的都是**某一句语句**；这一条炸的是 **COMMIT 本身** ——
+    // 也就是"语句全过了、最后一步才失败"那个现场（盘满也是这一种）。
+    //
+    // 怎么造出来：**延迟外键**。违反外键的那一句在 INSERT 时不报错，一直留到 COMMIT
+    // 才查出来（实测：`FOREIGN KEY constraint failed`）。盘满没法在测试里复现，
+    // 但两者在代码里是同一条路 —— COMMIT 抛了。
+    //
+    // ⚠️ **这一条钉的是"结局"，不是 finally 里那两句话本身。** 实测过：把 COMMIT
+    // 挪回 try 外面（原来的形状），这条**照样绿** —— 延迟外键这种 COMMIT 失败，
+    // SQLite 自己会把事务回滚掉，而泄漏的那个连接在有人看它之前就被 GC 收走了。
+    // 真实现场（盘满 / 有并发读者）不一样：那时事务会**留在打开状态**，连接也一直
+    // 占着文件（探针实测：新连接写不进去、文件删都删不掉 EPERM）—— 所以那两行
+    // 是**防御性的**，守的是"每次启动都炸 + 用户没有自救路径"那一类。别把这条
+    // 测试当成那两行的守卫。
+    const file = join(tmpdir(), `ruixing-commit-${process.pid}-${Date.now()}.db`)
+    const DEFERRED_FK = `
+      CREATE TABLE parent (id INTEGER PRIMARY KEY);
+      CREATE TABLE child (id INTEGER, pid INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);
+      INSERT INTO child (id, pid) VALUES (1, 999);
+    `
+    try {
+      openDb(file).close()                                  // 先正常升到 version=1
+      expect(() => openDb(file, [...MIGRATIONS, DEFERRED_FK])).toThrow()
+
+      // 现场：那两张表一个都不能留下，版本也得停在 1，而且这个库还得能重新打开 ——
+      // "下次还能重试"就是靠这三件一起成立的。
+      const probe = openDb(file, [])
+      try {
+        for (const t of ['parent', 'child']) {
+          expect(probe.raw.prepare(
+            `SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(t)).toBeUndefined()
+        }
+        expect(probe.raw.prepare('SELECT MAX(version) AS v FROM schema_version').get()).toEqual({ v: 1 })
+      } finally { probe.close() }
+
+      // 再来一次：失败不许有累积效应（每失败一次留一点东西的写法，这里会开始不一样）
+      expect(() => openDb(file, [...MIGRATIONS, DEFERRED_FK])).toThrow()
+      const again = openDb(file, [])
+      try {
+        expect(again.raw.prepare('SELECT COUNT(*) AS n FROM schema_version').get()).toEqual({ n: 1 })
+      } finally { again.close() }
     } finally { removeTempDb(file) }
   })
 

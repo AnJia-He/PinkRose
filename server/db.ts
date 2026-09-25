@@ -25,6 +25,17 @@ const sqlite = process.getBuiltinModule('node:sqlite')
  * ⚠️ 只许往后追加，永远不许改或删已经发布过的那几条 —— 用户的库是按顺序跑过来的，
  * 改一条老的就等于让"新库"和"老库升上来的"长得不一样，而现场已经跑过的那个不会重跑。
  * 要改结构就追加一条新的（ALTER TABLE / 新建表都行）。
+ *
+ * ⚠️ **迁移串里不许自带 `BEGIN` / `COMMIT` / `ROLLBACK` / `PRAGMA foreign_keys`** ——
+ * 外层已经把它整条包进事务了（见 openDb）。这一条不是洁癖，是有人一定会踩的坑：
+ * **SQLite 官方那套"改表"配方正是 `PRAGMA foreign_keys=OFF; BEGIN; …; COMMIT;`**
+ * （建新表 → 拷数据 → 删旧表 → 改名，中间那两句就是这个形状）。照抄进来，
+ * 内层的 `BEGIN` 会抛 `cannot start a transaction within a transaction`，
+ * 而且**炸在开库那一步** —— 服务根本起不来，用户手里也没有自救路径。
+ * 同一段配方里的 `PRAGMA foreign_keys` 更阴：事务里它是**静默的空操作**，
+ * 写的人以为自己关掉了外键，其实没有。
+ * 设计文档 §12 排着四段，每段都要往这个数组里追加 —— 所以这句契约写在这儿，
+ * 并且由 openDb 里那道守卫**当场拒掉**（不是等 SQLite 抛一句看不懂的话）。
  */
 export const MIGRATIONS: readonly string[] = [
   // 1 —— users
@@ -38,6 +49,39 @@ export const MIGRATIONS: readonly string[] = [
   );
   `,
 ]
+
+/**
+ * 迁移串里不该出现的语句：**句首的**事务控制语句，和 `PRAGMA foreign_keys`。
+ *
+ * 两个刻意的取舍：
+ * - 只认"句首"（串开头、或分号后面）那一种。所以触发器体里的
+ *   `CREATE TRIGGER … BEGIN … END;` 不会误伤：那里面的 BEGIN / END 属于
+ *   CREATE TRIGGER 这一句，不是独立的语句（END 因此干脆不进这个名单 ——
+ *   触发器体里 `…; END;` 太常见，而它当 COMMIT 的用法本来就罕见）。
+ * - 不用 `m` 标志：`^` 是整串的开头，不是每一行的开头。行首缩进的 BEGIN
+ *   要拦，靠的是它前面那个分号。
+ */
+const FORBIDDEN_IN_MIGRATION =
+  /(?:^|;)\s*(BEGIN|COMMIT|ROLLBACK|PRAGMA\s+foreign_keys)\b/i
+
+/**
+ * 迁移数组的契约检查。**在碰数据库之前**跑 —— 契约被违反是写代码时的事，
+ * 不该先建库建到一半再发现。
+ *
+ * 错误信息里要带上**是第几条**：这个数组只会越来越长，只说"有非法语句"
+ * 等于让下一个人自己一条条翻。
+ */
+function assertMigrationsArePlain(migrations: readonly string[]): void {
+  migrations.forEach((sql, i) => {
+    const hit = FORBIDDEN_IN_MIGRATION.exec(sql)
+    if (!hit) return
+    throw new Error(
+      `第 ${i + 1} 条迁移里有 "${hit[1]}" —— 迁移串不许自带事务控制语句 / PRAGMA foreign_keys，` +
+      '外层已经整条包进事务了（见 db.ts 里 MIGRATIONS 上面那段契约）。' +
+      'SQLite 官方那套"改表"配方就是 PRAGMA foreign_keys=OFF + BEGIN + … + COMMIT，照抄会炸在开库这一步。',
+    )
+  })
+}
 
 export type Db = {
   raw: DatabaseSync
@@ -53,8 +97,14 @@ export type Db = {
  * `migrations` 是给测试留的：要验"迁移失败会不会留下半个状态"，就得往序列里塞一条会炸的。
  * 做成参数，而不是让测试去 push/pop `MIGRATIONS` —— 那个数组的整个契约就是"只许追加"，
  * 让测试亲手示范一个不该有的用法，比多一个参数贵。生产路径永远走默认值。
+ *
+ * 传进来的那一份也要守 `MIGRATIONS` 上面那条契约（不许自带开始/结束事务的语句），
+ * 由 assertMigrationsArePlain 当场拒掉 —— 测试塞坏迁移时要的是"这条迁移本身炸"，
+ * 不是"绕开契约去测另一种炸法"。
  */
 export function openDb(path: string, migrations: readonly string[] = MIGRATIONS): Db {
+  // 先验契约，再碰文件 —— 数组写坏了不该先建出一个库来才发现
+  assertMigrationsArePlain(migrations)
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
   const raw = new sqlite.DatabaseSync(path)
 
@@ -75,18 +125,28 @@ export function openDb(path: string, migrations: readonly string[] = MIGRATIONS)
     // 不包的后果：迁移第二句失败时，第一句建出来的表已经永久生效而版本没记上，
     // 下次开库从同一条重跑 → 撞 already exists → 每次启动都炸，**而且用户没有自救路径**。
     // 今天只有一条单句 DDL 触发不了，但后面几段全是"建表 + 插默认行"这种两句起步的。
-    raw.exec('BEGIN')
+    //
+    // ★ 三句（BEGIN / 语句 / COMMIT）**全在 try 里面、收拾全在 finally 里**：
+    //   COMMIT 自己也会抛（盘满、延迟外键检查），而它原来站在 try 外面 ——
+    //   那样一来这次失败既不 ROLLBACK 也不 close，和上面那段要防的是同一个后果。
+    //   用 `inTransaction` 而不是"无条件 ROLLBACK"：成功那条路上没有事务可回滚，
+    //   硬滚只会多抛一个要吞掉的错。
+    let inTransaction = false
     try {
+      raw.exec('BEGIN')
+      inTransaction = true
       raw.exec(migrations[i]!)
       raw.prepare('UPDATE schema_version SET version = ?').run(i + 1)
-    } catch (e) {
-      // 回滚失败也不能盖掉原始错误 —— 用户要看的是"哪条迁移炸了"，不是"回滚也炸了"
-      try { raw.exec('ROLLBACK') } catch { /* 见上 */ }
-      // 把手柄关掉再抛。不然失败的那个库一直占着文件，Windows 上删除会被拒（EPERM）
-      raw.close()
-      throw e
+      raw.exec('COMMIT')
+      inTransaction = false
+    } finally {
+      if (inTransaction) {
+        // 回滚失败也不能盖掉原始错误 —— 用户要看的是"哪条迁移炸了"，不是"回滚也炸了"
+        try { raw.exec('ROLLBACK') } catch { /* 见上 */ }
+        // 把手柄关掉再抛。不然失败的那个库一直占着文件，Windows 上删除会被拒（EPERM）
+        raw.close()
+      }
     }
-    raw.exec('COMMIT')
   }
 
   return {
