@@ -1113,6 +1113,10 @@ describe('登录这道门', () => {
  * （照片、参数、对话、历史）一个都不碰，所以"不丢"是结构上的必然。
  * 测试咬住的是三样最容易在"顺手清一下"里被丢掉的：说过的话、那张底、画布。
  *
+ * 后两条补的是同一个承诺的另外半边：**地址栏也是一条入口** —— 浏览器后退 / 前进
+ * 得跟着走（只认那两个按钮的话，按了后退键就成了"屏幕和地址栏说的不是一回事"），
+ * 以及"同一个地方再点一次"不该多推一条历史。
+ *
  * ⚠️ 它同时钉住那个**会让用例互相污染的坑**：`history.pushState` 改的是
  * 全局 `location`，jsdom 里所有用例共用同一个 —— 所以上面 `beforeEach` 里
  * 那句 `history.replaceState(null, '', '/')` 是这条测试的**前提**，不是装饰。
@@ -1126,10 +1130,10 @@ describe('左栏导航：切界面不丢工作', () => {
     await say('亮一点')
 
     await goNav('作品')
+    // ⚠️ 这条**守不住任何东西**：传过照片之后 `input[type=file]` 本来就不在 DOM 里
+    //   （Uploader 只在还没有图的时候渲染）—— 实测把它想守的那件事拆坏，它一声不吭。
+    //   配得上「修图界面确实让位了」这句话的是**下面那条**。
     expect(container.querySelector('input[type="file"]')).toBeNull()   // 修图界面确实让位了
-    // ⚠️ 上面那条其实**咬不住"渲染分支写错了"** —— 传过照片之后 `input[type=file]`
-    //   本来就不在 DOM 里（Uploader 只在还没有图的时候渲染）。真正能红的是这条：
-    //   修图工作区整个从 DOM 里让位了。
     expect(container.querySelector('.workspace')).toBeNull()
     expect(location.pathname).toBe('/works')
 
@@ -1138,5 +1142,50 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(container.textContent).toContain('亮一点')
     expect(container.querySelector('canvas')).toBeTruthy()
     expect(canvasProps.images.at(-1)).toBeTruthy()
+  })
+
+  it('★ 浏览器后退 / 前进 —— 界面跟着地址走，不是只跟着那两个按钮走', async () => {
+    // 按钮只是**改地址的其中一条路**。用户按的是浏览器后退键时，
+    // 地址变了而 `view` 不动 —— 屏幕上是修图页、地址栏是 /works，
+    // 再点一下就走到别的地方去了。popstate 就是接住这一半的。
+    //
+    // 这里手动 pushState + 派发 popstate 来演"后退"：真正的 history.back()
+    // 在 jsdom 里是异步排队的一步，而这条要断言的**只是那个监听的契约** ——
+    // 它读的就是 `location.pathname`，所以把地址摆好、把事件递进去就够。
+    await renderApp()
+    await uploadPhoto()
+    expect(container.querySelector('.workspace')).toBeTruthy()   // 起点：修图页
+
+    history.pushState(null, '', '/works')
+    await act(async () => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    // 真的切了 —— 用 .placeholder 正面确认是**作品页那一支**，不是"两边都没了"
+    expect(container.querySelector('.placeholder')).toBeTruthy()
+    expect(container.querySelector('.workspace')).toBeNull()
+
+    // 再按一次前进（或者后退），回到修图页 —— 两个方向都得跟
+    history.pushState(null, '', '/')
+    await act(async () => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelector('.workspace')).toBeTruthy()
+    expect(container.querySelector('.placeholder')).toBeNull()
+  })
+
+  it('★ 已经在作品页再点一次「作品」—— 不该多推一条历史（后退要退一次，不是退两次）', async () => {
+    await renderApp()
+    const before = history.length
+    await goNav('作品')
+    // 先证明这把尺子量得出东西：真推了一条，length 就该 +1。
+    // 少了这一句，下面那句"没变"可能是**假绿** —— 尺子自己不动的话，
+    // 它什么都证明不了（这条测试自己踩的就是"看着在守、其实守不住"那个坑）。
+    expect(history.length).toBe(before + 1)
+
+    await goNav('作品')                 // 人还在作品页，又点了一次同一个地方
+    expect(history.length).toBe(before + 1)   // 一条都不该多
+    expect(location.pathname).toBe('/works')
   })
 })
