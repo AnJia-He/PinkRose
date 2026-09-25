@@ -136,6 +136,22 @@ describe('会话', () => {
     db.raw.prepare('DELETE FROM users').run()
     expect(findUserByCookie(`${SESSION_COOKIE}=${token}`, deps)).toBeNull()
   })
+
+  it('★ 票过期之后就查不出人了', () => {
+    // ⚠️ 上面几条的票**全是新鲜的** —— `clock` 钉死在某一个时刻，从头到尾没拨动过。
+    // 于是"过期"这件事一条都没问过，而 30 天这条线是设计给的硬承诺。
+    // 唯一执行它的地方，就是 findUserByCookie 转交给 verifySession 的"现在是几点"：
+    // 把它写死成 0，票就**永不过期**，而上面 21 条照样全绿（审查实测）。
+    //
+    // 这和 Task 2 修掉的那条是**同一个形状** —— 一行没人测的守卫，管的是一个
+    // 安全性质：那次是"任意密码能登录空哈希记录"，这次是"过期票永久有效"。
+    // 守卫没人守着，就等于没有：它会安安静静地被改坏，而测试全绿。
+    handleSignup(GOOD, deps)
+    const { token } = handleLogin({ username: '小明', password: 'goodpassword' }, deps)
+    // 同一个 deps、同一张票，只把"现在"拨过 30 天那条线。
+    clock += 30 * 86400_000 + 1
+    expect(findUserByCookie(`${SESSION_COOKIE}=${token}`, deps)).toBeNull()
+  })
 })
 
 describe('改密码', () => {
