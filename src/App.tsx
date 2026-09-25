@@ -27,6 +27,23 @@ import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
  */
 const SUGGEST_WAIT_MS = 10_000
 
+/**
+ * 这一趟失败，是不是"票不管用了"（而不是"这次编辑没成"）？
+ *
+ * 票会中途失效，而且不止一条路：30 天到期、**在别的设备改了密码**（签名里掺着
+ * 密码哈希，老票自己就验不过了）、`.env` 里换了 SESSION_SECRET、库被重建、
+ * 或者被 CSRF 打一次 `/api/logout`。这些情形后端回的都是 UNAUTHORIZED。
+ *
+ * ⚠️ **认出来之后必须把人放回登录页**，不能只在聊天里说一句「先登录一下」：
+ * 这一段界面上没有"退出"按钮、也没有用户管理页，说了那句话而界面上没有任何
+ * 回到登录页的路，用户就只剩**刷新页面**这一条出路 —— 那和 2d333bb 修掉的是
+ * 同一个形状的死胡同（"只能靠刷新脱身"）。
+ *
+ * 置空 `user` 而不是整页重载：App 不卸载，用户重新登录之后**修图状态原样还在**。
+ */
+const isUnauthorized = (e: unknown): boolean =>
+  e instanceof ApiError && e.code === 'UNAUTHORIZED'
+
 /** 「按住看原图」那张预览的边长上限。
  *  不直接拿原图：3000 万像素重新上传一次纹理很贵，而"看原图"永远是在
  *  屏幕大小上比的，1280 已经看不出和原图的差别。 */
@@ -218,6 +235,9 @@ export default function App() {
       // 失败时用户的参数一点都不丢（spec §4.7 的铁律）。
       // 只加一句提示，绝不去动 params。
       console.error(e)
+      // 票中途失效 → 回登录页（见 isUnauthorized）。这一句和下面那句 say 是
+      // **互斥**的：说"没改成"和"你被登出了"是两件事，不能一起说。
+      if (isUnauthorized(e)) { setUser(null); return }
       say(e instanceof ApiError ? e.message : '这次没改成功，再试一次？')
     } finally {
       setBusy(null)
@@ -367,6 +387,9 @@ export default function App() {
       await applyDecision(decision)
     } catch (e) {
       console.error(e)
+      // 同上：票失效不是"出了点问题"，是"你得再登录一次"——而这句话只有在
+      // 登录页上才成立。回登录页，不是留一句提示。
+      if (isUnauthorized(e)) { setUser(null); return }
       say(e instanceof ApiError ? e.message : '出了点问题，再试一次？')
     } finally {
       setBusy(null)

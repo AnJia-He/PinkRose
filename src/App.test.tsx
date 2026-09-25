@@ -983,7 +983,8 @@ describe('登录这道门', () => {
     //
     // 项目规矩：凡是说"不行"的地方都要同时说"那怎么办"。一个永远转的按钮
     // 连"不行"都没说 —— 用户不知道要不要等，比报错更糟。
-    meUser = null
+    // 这一条不用把 `meUser` 置空：`meFails` 一开，/api/me **每一次**都回 401
+    // （不管是开页那次还是跟随那次），置空那一行是冗余的。
     meFails = true
     await renderApp()
     await fillAndSubmit('小明', 'password123')
@@ -1023,5 +1024,70 @@ describe('登录这道门', () => {
     })
     expect(container.querySelector('input[type="file"]')).toBeTruthy()
     expect(container.querySelector('.login-box')).toBeNull()
+  })
+
+  it('★ 用着用着票失效了（/api/route 回 401）→ 回到登录页，而不是一句提示', async () => {
+    // ⚠️ 这条钉的是一个**死胡同**，落在 Task 6 和 Task 7 的**缝**里：
+    // Task 6 的审查问"三个 AI 接口挡没挡住没登录的人"，Task 7 的审查问"登录页
+    // 本身对不对"，**没有人问"401 到了前端之后会发生什么"**。
+    // 而这一段界面上没有"退出"按钮、也没有用户管理页 —— 401 没人处理的话，
+    // 用户看到的只是聊天里一句「先登录一下」，屏幕上没有任何回到登录页的路，
+    // **唯一的出路是刷新页面**。和 2d333bb 修掉的是同一个形状。
+    //
+    // 这里**特意走真的 postRoute**（这个文件平时把它整个假掉）：让 /api/route
+    // 真回一个 401，把 "401 → ApiError(UNAUTHORIZED) → App 认出来" 整条链走完。
+    // 直接拿一个 ApiError 去 reject 会漏掉前半截 —— 而前半截正是"后端回的
+    // code 到底是不是 UNAUTHORIZED"，链子断在那儿，App 这边再对也没用。
+    const real = await vi.importActual<typeof import('./api/client')>('./api/client')
+    vi.mocked(api.postRoute).mockImplementation(real.postRoute)
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === '/api/route'
+        ? jsonResponse({ error: { code: 'UNAUTHORIZED', message: '先登录一下' } }, 401)
+        : inner(url, init))
+
+    await renderApp()
+    await uploadPhoto()
+    const before = canvasProps.images.at(-1)   // 已经打开的那张照片
+    await say('亮一点')
+
+    // 回到登录页：登录框在，修图那套（连选照片的入口）整个不在了
+    expect(container.querySelector('.login-box')).toBeTruthy()
+    expect(container.querySelector('input[type="file"]')).toBeNull()
+
+    // ★ 而且**再登录回来之后，那张照片还在**。
+    //   这就是"置空 user 而不是整页重载"要的副作用：App 没有卸载，修图状态
+    //   原样留着。少了这一条，"回登录页"可以用 `location.reload()` 蒙过去 ——
+    //   用户回来面对的是一张白纸，刚才那张照片得重新选。
+    await fillAndSubmit('小明', 'password123')
+    // 回来了，而且**一样都没丢**：登录页没了、照片还在画布上、刚才那句话还在
+    // （注意这里不能拿 `input[type=file]` 当"回来了"的判据 —— 那是**没照片**时
+    //  才有的上传入口，而这一趟照片一直都在。）
+    expect(container.querySelector('.login-box')).toBeNull()
+    expect(canvasProps.images.at(-1)).toBe(before)
+    expect(container.textContent).toContain('亮一点')
+  })
+
+  it('★ 票失效的**另一条**路（/api/edit 回 401）也得回登录页 —— 两处 catch 各要有人咬', async () => {
+    // 上面那条走的是 send → /api/route；这一条走的是生成那一段 → /api/edit。
+    // "回登录页"在两处 catch 里各写了一遍（send / runGenerate），**只修一处照样
+    // 是一条死胡同** —— 所以两处各要有一条测试咬住。只测其中一处的话，另一处
+    // 删掉之后全仓照样绿，那条缝就还开着。
+    const real = await vi.importActual<typeof import('./api/client')>('./api/client')
+    vi.mocked(api.postEdit).mockImplementation(real.postEdit)
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === '/api/edit'
+        ? jsonResponse({ error: { code: 'UNAUTHORIZED', message: '先登录一下' } }, 401)
+        : inner(url, init))
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '去掉后面的路人' }))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+
+    expect(container.querySelector('.login-box')).toBeTruthy()
+    expect(container.querySelector('form.chat-input')).toBeNull()   // 修图界面整个让位
   })
 })
