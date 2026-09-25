@@ -110,6 +110,12 @@ describe('PARAM_LABELS', () => {
     expect(Object.keys(PARAM_LABELS).sort()).toEqual([...PARAM_KEYS].sort())
   })
 
+  it('八条标签互不相同', () => {
+    // 变异：`contrast: '亮度'` 这种复制粘贴事故 —— 上面那条数键、这条管值，
+    // 少了这条，两条参数在界面上会顶同一个名字，而所有别的断言都照绿。
+    expect(new Set(Object.values(PARAM_LABELS)).size).toBe(8)
+  })
+
   it('exposure 显示成「亮度」，不是「曝光」', () => {
     // §3.5.2 的两条理由：用户找的是「亮度」；而 Lightroom 里"曝光"是 EV(-5~+5)，
     // 我们这套是 -100~+100 —— 挂在"曝光"这个名字下会让用过 Lightroom 的人误判数量级
