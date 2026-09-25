@@ -123,8 +123,12 @@ export function openDb(path: string, migrations: readonly string[] = MIGRATIONS)
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
   const raw = new sqlite.DatabaseSync(path)
 
-  // 外键默认是关的，得显式打开。现在只有一个表用不上，
-  // 但后面 works.user_id 要靠它保证删用户时不留孤儿。
+  // 外键。SQLite 自身的默认是**关**的，容易想当然把这一句当"承重句" ——
+  // 实测不是：node:sqlite 的 DatabaseSync 默认就开着外键
+  // （enableForeignKeyConstraints 默认 true，PRAGMA 读出来是 1），
+  // **拿掉这一句，db.test.ts 全绿**。真正守"删用户不留孤儿"的是那两条行为用例
+  // （拒绝孤儿作品、拒绝删还有作品的用户）—— 它们守的是"外键在拦"这个事实，
+  // 不关心开关是谁打开的。这一句留着：不依赖驱动默认值。
   raw.exec('PRAGMA foreign_keys = ON')
 
   raw.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`)
@@ -139,7 +143,8 @@ export function openDb(path: string, migrations: readonly string[] = MIGRATIONS)
     // 一条迁移里的多条语句必须**一起生效或一起不生效**。SQLite 的 DDL 是事务性的，包上就够。
     // 不包的后果：迁移第二句失败时，第一句建出来的表已经永久生效而版本没记上，
     // 下次开库从同一条重跑 → 撞 already exists → 每次启动都炸，**而且用户没有自救路径**。
-    // 今天只有一条单句 DDL 触发不了，但后面几段全是"建表 + 插默认行"这种两句起步的。
+    // 第 2 条迁移就是"两句"的（建表 + 建索引）—— 这条路已经真的在开库里走过了，
+    // 不是"以后总会遇到"。
     //
     // ★ 三句（BEGIN / 语句 / COMMIT）**全在 try 里面、收拾全在 finally 里**：
     //   COMMIT 自己也会抛（盘满、延迟外键检查），而它原来站在 try 外面 ——

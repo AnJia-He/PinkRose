@@ -85,7 +85,18 @@ describe('openDb', () => {
     })
   })
 
-  it('迁移在真文件上幂等 —— 同一个物理库开两次，第二次从 version=1 接着走', () => {
+  it('★ 指纹表和迁移表一样长 —— 追加一条迁移就必须给它打指纹', () => {
+    // ⚠️ 上面那个循环遍历 `PINNED_MIGRATIONS`、索引 `actual`，所以"迁移表比指纹表长"
+    // 会被**静默容忍** —— 新迁移没打指纹也全绿。这不是理论问题：
+    // 第 2 条迁移自己就整整一轮没打指纹。
+    //
+    // 代价（**有意的**）：以后每次追加迁移都会红一次。上面那段设计注释本来刻意避开这一点，
+    // 怕人养成"红了就把哈希列表整个重新粘贴一遍"的坏习惯 —— 但"追加时红一次"是**正确的信号**
+    // （你确实该给它打指纹），而"重新粘贴整个列表"是纪律问题，不该靠"不加断言"来防。
+    expect(PINNED_MIGRATIONS.length).toBe(MIGRATIONS.length)
+  })
+
+  it('迁移在真文件上幂等 —— 同一个物理库开两次，第二次从当前版本（MIGRATIONS.length）接着走', () => {
     // ⚠️ 这条不是上面「开两次不炸」的重复，是它的补丁：开两次 :memory: 开的是**两个全新的
     // 空库**，走的永远是 current === 0 那条路 —— 把迁移循环改成 `for (let i = 0; ...)`
     // 上面那条照样全绿（实测过）。而「同一个库升上来，不会重跑已经跑过的迁移」是迁移系统
@@ -93,8 +104,8 @@ describe('openDb', () => {
     const file = join(tmpdir(), `ruixing-migrate-${process.pid}-${Date.now()}.db`)
     try {
       openDb(file).close()
-      // 第二次开：users 已经在了，schema_version 已经是 1，循环必须从 1 起 ——
-      // 从 0 起就会重跑建表，炸在 "table users already exists" 上。
+      // 第二次开：迁移全跑过了，schema_version 已经是 MIGRATIONS.length（当前 2），
+      // 循环必须从那儿起 —— 从 0 起就会重跑建表，炸在 "table users already exists" 上。
       expect(() => { openDb(file).close() }).not.toThrow()
     } finally {
       // 清不掉也不能把测试判红：临时目录里的残留不说明任何被测行为对错，
