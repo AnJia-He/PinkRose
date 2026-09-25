@@ -127,6 +127,18 @@ function fakeDecoded(tag: string) {
 let container: HTMLDivElement
 let root: Root
 
+// ── 登录这件事（Task 7） ─────────────────────────────────────────────
+/** 默认"已经登录"的那个人。修图那些测试的前提都是他。 */
+const LOGGED_IN = { id: 1, username: '小明', email: 'a@b.com' }
+/** 后端此刻认不认人。null = 没登录（`/api/me` 回 401）。 */
+let meUser: { id: number; username: string; email: string } | null = LOGGED_IN
+let fetchMock: ReturnType<typeof vi.fn>
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body),
+    { status, headers: { 'content-type': 'application/json' } })
+}
+
 function decision(over: Partial<RouteDecision> = {}): RouteDecision {
   return {
     route: 'params',
@@ -183,7 +195,27 @@ beforeEach(() => {
   }))
   // 生成回来的图：走 fetch -> blob -> createImageBitmap 这条真链路
   vi.stubGlobal('createImageBitmap', vi.fn(async () => fakeBitmap(`decoded-${++bitmapSeq}`)))
-  vi.stubGlobal('fetch', vi.fn(async () => ({ blob: async () => new Blob(['x']) })))
+  // ★ 2026-09-25（Task 7）加：开页那一次 `/api/me` 要回一个**登录着的人**——
+  //   这一整个文件测的是修图那条线，它的前提就是"已经登录"（后端现在只认
+  //   登录过的人，不认就直接 401）。要测登录页本身的那几条把 `meUser` 置空。
+  meUser = LOGGED_IN
+  fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === '/api/me') {
+      return meUser
+        ? jsonResponse({ user: meUser })
+        : jsonResponse({ error: { code: 'UNAUTHORIZED', message: '先登录一下' } }, 401)
+    }
+    // 注册 / 登录：把票（cookie）这件事省掉（jsdom 里没有 cookie 罐），
+    // 就用"后端从此认这个人"来代替 —— 下一次 /api/me 会回他。
+    if (url === '/api/login' || url === '/api/signup') {
+      const body = JSON.parse(String(init?.body)) as { username: string; email?: string }
+      meUser = { id: 1, username: body.username, email: body.email ?? 'a@b.com' }
+      return jsonResponse({ user: meUser })
+    }
+    // 别的都是生成回来的那张图：fetch(url) -> blob -> createImageBitmap
+    return { blob: async () => new Blob(['x']) }
+  })
+  vi.stubGlobal('fetch', fetchMock)
 
   // ★ 假的 markImage = "**画过圈的那张**"。把源图自己的记号带上、再加一层，
   //   这样断言分得清送出去的是原位图还是画了圈的：一旦谁改成不画圈直接送，
@@ -859,5 +891,71 @@ describe('图上点选消歧', () => {
     await act(async () => { cancel.click() })
 
     expect(canvasProps.props.at(-1)?.picking).toBe(false)
+  })
+})
+
+/**
+ * 2026-09-25 加（Task 7）。**前端从这一天起知道有"登录"这件事了**：
+ * 后端那三个 AI 接口只认登录过的人，所以这一层的验收就是那两句话 ——
+ * 没登录时不把修图那套挂出来（挂上去也只是让用户先挑好照片再在下一步撞 401），
+ * 登录之后真的进得来。
+ */
+describe('登录这道门', () => {
+  /** 往受控输入框里打字。React 靠自己的 value tracker 判断"值变没变"，
+   *  直接写 `el.value` 它看不见 —— 得用原型上的 setter 绕过去再派一个 input 事件。 */
+  function type(el: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    setter.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  async function fillAndSubmit(username: string, password: string) {
+    // 登录模式下就两个输入框：名字、密码
+    const [name, pass] = container.querySelectorAll<HTMLInputElement>('.login-field input')
+    await act(async () => {
+      type(name, username)
+      type(pass, password)
+    })
+    const form = container.querySelector('form.login-box') as HTMLFormElement
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  const calledWith = (path: string) => fetchMock.mock.calls.filter(c => c[0] === path)
+
+  it('没登录 → 只有登录页，修图那套一个都不挂载', async () => {
+    meUser = null
+    await renderApp()
+
+    expect(container.querySelector('.login-box')).toBeTruthy()
+    // 上传入口**不出现**：让用户先挑好照片、再在下一步撞 401，是最糟的顺序。
+    expect(container.querySelector('input[type="file"]')).toBeNull()
+  })
+
+  it('登录成功 → 进得来（上传入口出现），请求也带着 cookie', async () => {
+    meUser = null
+    await renderApp()
+    await fillAndSubmit('小明', 'password123')
+
+    expect(container.querySelector('input[type="file"]')).toBeTruthy()
+    expect(container.querySelector('.login-box')).toBeNull()
+
+    // 会话在 cookie 里，不带 credentials 的话浏览器根本不发它 ——
+    // 现象是「登录了还是用不了」，排查时很难往这里想（见 api/client.ts 那段注释）。
+    const call = calledWith('/api/login')[0]
+    expect((call[1] as RequestInit).credentials).toBe('same-origin')
+    // 登录成功后 App 是**重新问一次 /api/me** 拿的真身，不是拿名字拼的假人
+    expect(calledWith('/api/me').length).toBeGreaterThan(1)
+  })
+
+  it('⚠️ 密码太短 → 一个请求都不发，而且说清为什么', async () => {
+    meUser = null
+    await renderApp()
+    await fillAndSubmit('小明', 'short')
+
+    expect(container.textContent).toContain('密码至少 8 位')
+    expect(calledWith('/api/login')).toHaveLength(0)
   })
 })

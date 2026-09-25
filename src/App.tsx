@@ -3,6 +3,8 @@ import Canvas from './ui/Canvas'
 import Uploader from './ui/Uploader'
 import AdjustmentPanel from './ui/AdjustmentPanel'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
+import { LoginPage } from './ui/LoginPage'
+import { me, type AccountUser } from './api/account'
 import { decodeImageFile, type DecodedImage } from './image/decode'
 import { resizeBitmap } from './image/resize'
 import { fitToLimit, probeLimit } from './render/limits'
@@ -88,6 +90,13 @@ async function fitToDevice(
 type PendingMark = { text: string; marker: NormPoint | null }
 
 export default function App() {
+  /** 当前登录的人。null = 没登录（或者还在问后端）。 */
+  const [user, setUser] = useState<AccountUser | null>(null)
+  /** 开机那一次"我是谁"问完了没有。
+   *  它和 `user` 是**两件事**：`user === null` 既可能是"没登录"、也可能是
+   *  "还没问出来"，不分开的话每个还没登录的人都会先看到登录页闪一下。 */
+  const [checking, setChecking] = useState(true)
+
   const [image, setImage] = useState<DecodedImage | null>(null)
   const [params, setParams] = useState<Adjustments>(ZERO)
   const [showPanel, setShowPanel] = useState(false)
@@ -124,6 +133,18 @@ export default function App() {
   const pendingRef = useRef<string | null>(null)
 
   const nextId = () => ++idRef.current
+
+  /**
+   * 打开页面先问一句"我是谁"。没登录就显示登录页。
+   *
+   * 问的是后端而不是读 localStorage 之类的本地记号：**只有后端拿得出真身**
+   * （id、email，而且"改密码把别的设备踢掉"这类事也发生在那一边 —— 票被作废了，
+   * 本地那份记号却还留着，用户会以为自己登着）。`me()` 失败也返回 null，
+   * 于是最坏情况退回登录页，不会把整个应用卡在"正在打开…"上。
+   */
+  useEffect(() => {
+    me().then(u => { setUser(u); setChecking(false) })
+  }, [])
 
   /** 追加一条助手消息，返回它的 id —— 快照要用同一个 id 挂「回到这一步」。 */
   const say = useCallback((text: string): number => {
@@ -518,6 +539,16 @@ export default function App() {
       console.error('缩略图生成失败（不影响修图）', e)
     }
   }, [history])
+
+  // 还没问出"我是谁"之前什么都别显示 —— 认出没登录的访客是**一次网络往返**，
+  // 直接按 user === null 渲染的话，每个登录着的用户回访时都会先看到登录页闪一下。
+  if (checking) return <div className="app-loading">正在打开…</div>
+  // 没登录就只有登录页。底下那些修图的东西一样都不挂载：三个 AI 接口现在
+  // 都只认登录过的人（否则 401），挂上去也只是让用户先挑好照片再被拒。
+  //
+  // `onDone` 里**重新问一次 `/api/me`**，而不是让登录页回传一个名字去拼一个
+  // `{ id: 0, ... }` —— 那个 id 不是任何一个真 id，是内存里的一个假人。
+  if (!user) return <LoginPage onDone={() => { me().then(setUser) }} />
 
   return (
     <div className="app">

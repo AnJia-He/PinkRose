@@ -20,15 +20,19 @@ export class ApiError extends Error {
  * 只做三件事：打过去、把非 2xx 翻成 ApiError、把"响应根本不是 JSON"
  * 也翻成 ApiError。**绝不让 JSON.parse 的 SyntaxError 冒到调用方**——
  * 那条错误对用户毫无意义，而我们有一个现成的、能显示给人看的错误类型。
+ *
+ * ⚠️ `credentials: 'same-origin'` 是**必须有**的 —— 账号的会话在 cookie 里
+ * （见 server/session.ts），不带这一句浏览器根本不发那个 cookie，于是**每个**
+ * 请求看上去都是"没登录"。而现象是「登录了还是用不了」——票明明拿到了、
+ * 页面上也看不出任何异常，排查时很难往这里想。有测试专门钉着这一句。
+ *
+ * 写成 `{ credentials, ...init }` 而不是各调用点自己带：这样"会不会带 cookie"
+ * 只有**这一个**地方能决定，将来加接口的人不必记得补。
  */
-async function post<T>(path: string, body: unknown): Promise<T> {
+async function request<T>(path: string, init: RequestInit): Promise<T> {
   let res: Response
   try {
-    res = await fetch(path, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    res = await fetch(path, { credentials: 'same-origin', ...init })
   } catch {
     throw new ApiError('UPSTREAM_FAILED', '连不上服务器，检查一下网络？')
   }
@@ -62,6 +66,21 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     throw new ApiError(code, message)
   }
   return parsed as T
+}
+
+/** 写接口。今天三个 AI 接口和账号那几个都在用。 */
+export async function post<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+/** 读接口（今天只有 `/api/me` 用，但它不该是内联在账号模块里的一句 fetch ——
+ *  那样 cookie 和错误翻译这两件事就又有了第二个说法）。 */
+export async function get<T>(path: string): Promise<T> {
+  return request<T>(path, { method: 'GET' })
 }
 
 export async function postRoute(o: RouteRequest): Promise<RouteDecision> {

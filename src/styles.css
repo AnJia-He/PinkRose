@@ -203,3 +203,26 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   border: 1px solid #3a4048;
 }
 .bubble-thumb:hover { border-color: var(--accent); }
+
+/* ── 登录 / 注册（Task 7） ────────────────────────────────────────
+   这是打开产品看到的第一屏。它和别的组件有一点不同：`.login` 和
+   `.app-loading` 是**整个应用的最外层**，没有父亲给它撑高 ——
+   所以高度只能自己写 `100vh`（和上面 `.app` 同一个理由：`height: 100%`
+   在 auto 高度的父元素上等于没写，登录框会贴着屏幕顶，居中就白写了）。
+
+   色值全部取自本文件已有的那套：输入框照 `.chat-input input`（底色
+   #14161a、边框 #2f343c），主按钮照 `button.primary`（--accent）。
+   错误文案那个红是这份文件里唯一一处"文字用的红"—— 画布上那个 #ff3b30
+   是画在照片上的圈，不是给字用的。 */
+.login { display: flex; align-items: center; justify-content: center; height: 100vh; }
+.login-box { display: flex; flex-direction: column; gap: 14px; width: 320px; }
+.login-title { margin: 0; font-size: 28px; }
+.login-sub { margin: 0 0 6px; opacity: .7; font-size: 14px; }
+.login-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.login-field input { padding: 10px 12px; border-radius: 8px; border: 1px solid #2f343c; background: #14161a; color: inherit; font-size: 15px; }
+.login-field input:focus { outline: none; border-color: var(--accent); }
+.login-error { margin: 0; font-size: 13px; color: #e06c75; }
+.login-submit { padding: 11px; border-radius: 8px; border: 0; background: var(--accent); color: #fff; font-size: 15px; cursor: pointer; }
+.login-submit:disabled { opacity: .5; cursor: default; }
+.login-switch { border: 0; background: none; color: inherit; opacity: .7; font-size: 13px; cursor: pointer; }
+.app-loading { display: flex; align-items: center; justify-content: center; height: 100vh; opacity: .6; }
