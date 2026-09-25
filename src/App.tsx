@@ -4,6 +4,8 @@ import Uploader from './ui/Uploader'
 import AdjustmentPanel from './ui/AdjustmentPanel'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import { LoginPage } from './ui/LoginPage'
+import { Nav } from './ui/Nav'
+import { pathOf, viewFromPath, type View } from './ui/view'
 import { me, type AccountUser } from './api/account'
 import { decodeImageFile, type DecodedImage } from './image/decode'
 import { resizeBitmap } from './image/resize'
@@ -563,6 +565,36 @@ export default function App() {
     }
   }, [history])
 
+  // ── 左栏导航 + 网址（Task 10） ──────────────────────────────────────
+  //
+  // **不引路由库**：零依赖是硬约束，而我们要的只有两条路径 + 一条带参数的
+  // —— `history.pushState` 就够了。引一个路由库来管三条路径，是拿一个新依赖
+  // 换 20 行代码。路径怎么认、怎么拼，规则**只有一份**（ui/view.ts 那个纯函数），
+  // 不散在这里。
+
+  /** 现在在哪一屏。**它是切界面唯一会动的东西** —— 别的 state 一个都不碰，
+   *  于是"切导航不丢工作"是结构上的必然，不是"记得保存"（§3.2）。 */
+  const [view, setView] = useState<View>(() => viewFromPath(location.pathname))
+
+  /** 点导航：先改地址栏，再改状态。顺序反过来会在后退时多一条记录。
+   *
+   *  ⚠️ 必须写 `window.history`（不能省成 `history`）：这个组件里有一份**同名**的
+   *  撤销历史 `const [history, setHistory] = useState<Snapshot[]>([])`，
+   *  它把全局那个 `history` 遮住了 —— 省掉 `window.` 的话这一行会在运行时炸
+   *  「history.pushState is not a function」，而 typecheck 和别的用例全绿。 */
+  const go = useCallback((v: View) => {
+    const p = pathOf(v)
+    if (location.pathname !== p) window.history.pushState(null, '', p)
+    setView(v)
+  }, [])
+
+  // 浏览器的后退 / 前进：跟着地址走
+  useEffect(() => {
+    const onPop = () => setView(viewFromPath(location.pathname))
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
   // 还没问出"我是谁"之前什么都别显示 —— 认出没登录的访客是**一次网络往返**，
   // 直接按 user === null 渲染的话，每个登录着的用户回访时都会先看到登录页闪一下。
   if (checking) return <div className="app-loading">正在打开…</div>
@@ -579,78 +611,91 @@ export default function App() {
   if (!user) return <LoginPage onDone={() => me().then(setUser)} />
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <span className="brand">RuiXing</span>
-        {image && (
-          <div className="actions">
-            <button onClick={() => setShowPanel(v => !v)}>微调</button>
-            {/* 不能分享的设备上这个按钮**干脆不出现**：桌面 Chrome 有
-                navigator.share 但不认图片，留一个点了弹不出东西的按钮更糟。
-                它不出现时，「保存」顶上当主按钮。 */}
-            {canShare && (
-              <button className="primary" onClick={() => deliver(true)} disabled={delivering !== null}>
-                {delivering === 'share' ? '准备中…' : '分享'}
-              </button>
+    <div className="shell">
+      {/* 左栏在**所有**界面里都在：作品页、详情页是同一个壳，换的只是右边那一格。 */}
+      <Nav view={view} onGo={go} />
+
+      {view.kind === 'edit' && (
+        <div className="app">
+          <header className="topbar">
+            <span className="brand">RuiXing</span>
+            {image && (
+              <div className="actions">
+                <button onClick={() => setShowPanel(v => !v)}>微调</button>
+                {/* 不能分享的设备上这个按钮**干脆不出现**：桌面 Chrome 有
+                    navigator.share 但不认图片，留一个点了弹不出东西的按钮更糟。
+                    它不出现时，「保存」顶上当主按钮。 */}
+                {canShare && (
+                  <button className="primary" onClick={() => deliver(true)} disabled={delivering !== null}>
+                    {delivering === 'share' ? '准备中…' : '分享'}
+                  </button>
+                )}
+                <button
+                  className={canShare ? '' : 'primary'}
+                  onClick={() => deliver(false)}
+                  disabled={delivering !== null}
+                >
+                  {delivering === 'save' ? '准备中…' : '保存'}
+                </button>
+              </div>
             )}
-            <button
-              className={canShare ? '' : 'primary'}
-              onClick={() => deliver(false)}
-              disabled={delivering !== null}
-            >
-              {delivering === 'save' ? '准备中…' : '保存'}
-            </button>
-          </div>
-        )}
-      </header>
+          </header>
 
-      {!image && (
-        <main className="stage">
-          {busy ? <div className="hint">{busy}</div> : <Uploader onPick={onPick} />}
-        </main>
-      )}
+          {!image && (
+            <main className="stage">
+              {busy ? <div className="hint">{busy}</div> : <Uploader onPick={onPick} />}
+            </main>
+          )}
 
-      {image && (
-        <main className="workspace">
-          <div className="stage">
-            {/* params 直接传下去：[-100,100] → [-1,1] 的换算只发生在
-                TonePipeline.render 里（唯一入口） */}
-            <Canvas
-              image={image}
-              params={params}
-              canvasRef={canvasElRef}
-              originalPreview={originalPreview}
-              picking={picking}
-              marker={marker}
-              onPickPoint={onPickPoint}
+          {image && (
+            <main className="workspace">
+              <div className="stage">
+                {/* params 直接传下去：[-100,100] → [-1,1] 的换算只发生在
+                    TonePipeline.render 里（唯一入口） */}
+                <Canvas
+                  image={image}
+                  params={params}
+                  canvasRef={canvasElRef}
+                  originalPreview={originalPreview}
+                  picking={picking}
+                  marker={marker}
+                  onPickPoint={onPickPoint}
+                />
+              </div>
+              <ChatPanel
+                messages={messages}
+                cards={cards}
+                busy={busy}
+                onSend={send}
+                onCard={onCard}
+                onJump={onJump}
+                jumpableIds={history.map(s => s.id)}
+                thumbs={Object.fromEntries(history.map(s => [s.id, s.thumb]))}
+                // marker 非空必然 picking 为真（两者出自同一个对象），所以这里
+                // 不必再 or 一次 —— 从 `pending` 推出来的东西不可能互相打架。
+                marking={picking}
+                canConfirmMark={!!marker && !!pendingText}
+                onConfirmMark={confirmMark}
+                onCancelMark={cancelPick}
+              />
+            </main>
+          )}
+
+          {image && showPanel && (
+            <AdjustmentPanel
+              value={params}
+              onChange={setParams}
+              onReset={() => setParams(ZERO)}
             />
-          </div>
-          <ChatPanel
-            messages={messages}
-            cards={cards}
-            busy={busy}
-            onSend={send}
-            onCard={onCard}
-            onJump={onJump}
-            jumpableIds={history.map(s => s.id)}
-            thumbs={Object.fromEntries(history.map(s => [s.id, s.thumb]))}
-            // marker 非空必然 picking 为真（两者出自同一个对象），所以这里
-            // 不必再 or 一次 —— 从 `pending` 推出来的东西不可能互相打架。
-            marking={picking}
-            canConfirmMark={!!marker && !!pendingText}
-            onConfirmMark={confirmMark}
-            onCancelMark={cancelPick}
-          />
-        </main>
+          )}
+        </div>
       )}
 
-      {image && showPanel && (
-        <AdjustmentPanel
-          value={params}
-          onChange={setParams}
-          onReset={() => setParams(ZERO)}
-        />
-      )}
+      {/* ⚠️ 这两个是**占位**：Task 11 / Task 12 才建真的作品页和详情页，这一步先用
+          一个元素让 typecheck 过（`view.kind` 的三个分支必须都有人接）。别把它做成
+          一个像样的界面 —— 换掉的时候得一眼看出这几行是临时工。 */}
+      {view.kind === 'gallery' && <div className="placeholder">作品</div>}
+      {view.kind === 'work' && <div className="placeholder">作品 #{view.id}</div>}
     </div>
   )
 }

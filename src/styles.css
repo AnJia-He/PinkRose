@@ -19,11 +19,29 @@ body {
 /* 这里原来是 Task 6 临时自测页的 .app（28px、居中），已删——
    它的 align-items/justify-content/font-size 会和新布局打架。 */
 
-/* 改：整个 app 锁在一屏内，由 flex 分配高度。
-   原来是 min-height:100vh，子元素各报各的高度 ——
-   画布 78vh + 面板最多 42vh 加起来超过 100vh，
-   面板最后两个滑块被推到屏幕外（实测底边 1111px vs 视口 900px）。 */
-.app { height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+/* ── 左栏导航 + 网址（Task 10） ────────────────────────────────────
+   `.shell` = 左栏 + 内容那一格。**整页锁在一屏内这件事从 .app 挪到了这里** ——
+   多出一个左栏之后，谁都得给左栏让地方，"一屏"就只能由最外面这一层说了算。
+
+   2026-09-23 那次的理由照旧：整个 app 锁在一屏内、由 flex 分配高度。
+   （原来是 min-height:100vh，子元素各报各的高度 —— 画布 78vh + 面板最多 42vh
+   加起来超过 100vh，面板最后两个滑块被推到屏幕外，实测底边 1111px vs 视口 900px。） */
+.shell { height: 100vh; display: flex; overflow: hidden; }
+
+.nav {
+  flex: none;
+  display: flex; flex-direction: column; gap: 6px;
+  width: 92px; padding: 12px 10px;
+  border-right: 1px solid #2a2e35; background: var(--panel);
+}
+/* 当前在哪一屏只能有一个是亮的，所以亮的那一个用主色（和 button.primary 同一套）。
+   详情页时亮的是「作品」—— 详情页属于作品那一支，不是第三个地方。 */
+.nav-item.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 改（Task 10）：高度不再自己写 100vh —— 它现在住在 .shell 里，"一屏"由上面管。
+   flex:1 吃掉左栏之外的全部；那两个 0 是"里面再宽再高，也不许把左栏挤没、
+   也不许把一屏撑破"（.workspace 的对话栏写死了 340px，不挡住它就会顶出来）。 */
+.app { flex: 1; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
@@ -172,6 +190,18 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
    断点取 640：再宽一点（768 的竖屏平板）对话 340 + 画布 388 + 内边距 40
    仍然放得下；再窄就一定会挤坏。 */
 @media (max-width: 640px) {
+  /* 左栏收成**顶部一行**（Task 10）。竖着放会直接吃掉 92px 宽度，而手机上
+     这张照片本来就是被宽度卡住的（390 − 40 内边距 = 350，高度那条链根本
+     没吃上劲）—— 少 92px 是实打实地小一圈。收成横排只吃掉约 40px 高度。 */
+  .shell { flex-direction: column; }
+  .nav {
+    flex-direction: row;
+    width: auto;
+    border-right: none;
+    border-bottom: 1px solid #2a2e35;
+    padding: 8px 10px;
+  }
+
   .workspace { flex-direction: column; }
   .workspace .stage { flex: 1 1 auto; }
   .chat {

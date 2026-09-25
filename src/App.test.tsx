@@ -162,6 +162,9 @@ function decision(over: Partial<RouteDecision> = {}): RouteDecision {
 }
 
 beforeEach(() => {
+  // ★ 地址栏是所有用例共用的一份全局状态：上一个用例切到了 /works，
+  //   不清掉的话，下一个用例一 `renderApp()` 就**已经在作品页**了。
+  history.replaceState(null, '', '/')
   vi.clearAllMocks()
   bitmapSeq = 0
   canvasProps.images.length = 0
@@ -286,6 +289,17 @@ async function say(text: string) {
 function lastReply(): string {
   const bubbles = container.querySelectorAll('.bubble.assistant:not(.pending)')
   return bubbles.length ? (bubbles[bubbles.length - 1].textContent ?? '') : ''
+}
+
+/** 点左栏导航。按**文字**找，不按位置 —— 位置是排版的事，文字才是用户的认知。 */
+async function goNav(name: string) {
+  const btn = [...container.querySelectorAll('.nav button')].find(
+    b => (b.textContent ?? '').trim() === name) as HTMLButtonElement
+  expect(btn).toBeTruthy()
+  await act(async () => {
+    btn.click()
+    await new Promise(r => setTimeout(r, 0))
+  })
 }
 
 // ── 测试 ─────────────────────────────────────────────────────────
@@ -1089,5 +1103,40 @@ describe('登录这道门', () => {
 
     expect(container.querySelector('.login-box')).toBeTruthy()
     expect(container.querySelector('form.chat-input')).toBeNull()   // 修图界面整个让位
+  })
+})
+
+/**
+ * spec §3.2：「切导航不丢工作 —— 修到一半跑去看作品，切回来还在原地」。
+ *
+ * 这一条**不是靠"记得保存"**：切界面只动 `view` 这一个 state，别的 state
+ * （照片、参数、对话、历史）一个都不碰，所以"不丢"是结构上的必然。
+ * 测试咬住的是三样最容易在"顺手清一下"里被丢掉的：说过的话、那张底、画布。
+ *
+ * ⚠️ 它同时钉住那个**会让用例互相污染的坑**：`history.pushState` 改的是
+ * 全局 `location`，jsdom 里所有用例共用同一个 —— 所以上面 `beforeEach` 里
+ * 那句 `history.replaceState(null, '', '/')` 是这条测试的**前提**，不是装饰。
+ */
+describe('左栏导航：切界面不丢工作', () => {
+  it('★ 切到作品再切回来，改到一半的东西一点没丢', async () => {
+    await renderApp()
+    await uploadPhoto()
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 20 }, reply: '亮了一点。' }))
+    await say('亮一点')
+
+    await goNav('作品')
+    expect(container.querySelector('input[type="file"]')).toBeNull()   // 修图界面确实让位了
+    // ⚠️ 上面那条其实**咬不住"渲染分支写错了"** —— 传过照片之后 `input[type=file]`
+    //   本来就不在 DOM 里（Uploader 只在还没有图的时候渲染）。真正能红的是这条：
+    //   修图工作区整个从 DOM 里让位了。
+    expect(container.querySelector('.workspace')).toBeNull()
+    expect(location.pathname).toBe('/works')
+
+    await goNav('修图')
+    // ★ 三样都还在：说过的话、那张底、那个画布
+    expect(container.textContent).toContain('亮一点')
+    expect(container.querySelector('canvas')).toBeTruthy()
+    expect(canvasProps.images.at(-1)).toBeTruthy()
   })
 })
