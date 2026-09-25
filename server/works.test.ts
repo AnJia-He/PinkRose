@@ -296,6 +296,36 @@ describe('handleDeleteWork / handleDeleteWorks / handleReplaceWork', () => {
     expect(row.stored_name).toBeTruthy()           // （读一下，免得上面那行被优化掉）
   })
 
+  it('★ 文件删不掉 → 照样成功、记录照样没了，而且**响一声**', async () => {
+    // ★ 这条钉的是「先删记录、再删文件」那个顺序**换来的结果**：文件那一步炸了，
+    // 也绝不能连累记录 —— 记录没了，对用户来说这件事**就是成功了**（§3.5「目标已达成」），
+    // 盘上留个孤儿文件只是浪费一点空间。
+    //
+    // 反过来写（先删文件，且让它抛出去）会怎么样：`remove` 一炸就**轮不到删记录** ——
+    // 请求失败、记录还在。而那条记录指向的文件已经没了，于是它**永远打不开、
+    // 也删不掉第二次**（再删一次还是同样的顺序）。这条用例在那种写法下必红。
+    //
+    // 假 storage 只换掉 `remove`（真把文件删不掉：权限、盘满、被占用，现场都造不出来）；
+    // 顺便把 console.error 打桩掉 —— 这条要**验**那一声响，不是要它把 stderr 弄脏
+    // （本文件上面已有三条是同一个做法）。
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    const broken = {
+      ...deps,
+      storage: { ...deps.storage, remove: async () => { throw new Error('EACCES: 删不掉') } } as unknown as Storage,
+    }
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // ① 请求**成功** —— 文件删不掉不该让用户看到失败
+      await expect(handleDeleteWork(id, USER, broken)).resolves.toEqual({ ok: true })
+      // ② 记录**真的没了** —— 这才是"先删记录"那一步的落点
+      expect(db.raw.prepare('SELECT * FROM works WHERE id = ?').get(id)).toBeUndefined()
+      // ③ 吞掉不等于静默（和 handleCreateWork 那条 catch 同一条规矩）
+      expect(String(spy.mock.calls.flat().join(' '))).toContain('作品文件没删掉')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('删两次：第二次当"它已经不在了"，不炸', async () => {
     const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
     await handleDeleteWork(id, USER, deps)

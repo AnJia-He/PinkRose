@@ -595,3 +595,43 @@ describe('详情与改名：路由真的接上了', () => {
     expect(r.status).toBe(401)
   })
 })
+
+describe('删与替换：路由真的接上了', () => {
+  it('三条新路由没登录都是 401（两条读体的，请求体根本没被读）', async () => {
+    // 列表、详情改名、加上这三条 —— 同一个洞第三次出现：把 app.ts 里那三块 `if`
+    // 删掉、或者方法/路径敲错，别处一条都不会红（一个 404 看着就像"本来就没有这个接口"）。
+    // 401 同时说明两件事：路由挂上了，而且认人接上了。
+    //
+    // ⚠️ PUT 和 POST 那两条故意送**畸形**请求体：认人排在读体前面，顺序反了它当场
+    // 变 400，"没登录"这个更重要的结局就被盖掉（同 PATCH 那条）。DELETE 不读体，
+    // 没什么可送的。
+    const { base } = await appWithUser()
+
+    const del = await fetch(`${base}/api/works/1`, { method: 'DELETE' })
+    expect(del.status).toBe(401)
+
+    const put = await fetch(`${base}/api/works/1`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: '这根本不是 JSON',
+    })
+    expect(put.status).toBe(401)
+
+    const bulk = await fetch(`${base}/api/works/delete`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '这根本不是 JSON',
+    })
+    expect(bulk.status).toBe(401)
+  })
+
+  it('DELETE 一个不存在的 id → 404，而且是「没有这张作品」，不是「没有这个接口」', async () => {
+    // ★ 光有 404 不够：路由**整块不见**的时候，兜底那句**也是 404**。两句文案不一样 ——
+    // 这里点的是 handler 说的"没有这张作品"，不是路由没挂时说的"没有这个接口"，
+    // 少了这一句，"路由其实没挂上"和"挂上了、这张作品不在"长得一模一样。
+    //
+    // 数据隔离那半归 works.test.ts（「删别人的 → 拒，而且他的一动没动」）——
+    // 这条只守接线，一个不带 `WHERE user_id` 的实现也能过它，两件事各归各的用例。
+    const { base, cookie } = await appWithUser()
+    const r = await fetch(`${base}/api/works/1`, { method: 'DELETE', headers: { cookie } })
+    expect(r.status).toBe(404)
+    const body = await r.json() as { error: { message: string } }
+    expect(body.error.message).toContain('没有这张作品')
+  })
+})
