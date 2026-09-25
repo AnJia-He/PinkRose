@@ -1026,6 +1026,17 @@ describe('登录这道门', () => {
 
   const calledWith = (path: string) => fetchMock.mock.calls.filter(c => c[0] === path)
 
+  /** 切到注册模式。有几条规矩（"密码至少 8 位"、"密码不能和名字一样"）**只属于注册**，
+   *  要测它们就得先站到那条路上 —— 登录模式下连邮箱那一格都不渲染。 */
+  async function switchToSignup() {
+    const sw = container.querySelector('.login-switch') as HTMLButtonElement | null
+    expect(sw).toBeTruthy()
+    await act(async () => {
+      sw?.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
   // ── 密码那一格的「看得见」开关（2026-09-25 加） ─────────────────────
   /** 密码那一格。
    *  ⚠️ 按**结构**找（`.login-field input` 里最后那个），**不按 `[type=password]`
@@ -1075,12 +1086,104 @@ describe('登录这道门', () => {
     expect(calledWith('/api/me').length).toBeGreaterThan(1)
   })
 
-  it('⚠️ 密码太短 → 一个请求都不发，而且说清为什么', async () => {
+  it('⚠️ 注册模式下密码太短 → 一个请求都不发，而且说清为什么', async () => {
+    // ⚠️ 这条**原来是在登录模式下测的**（那时候登录页也跑注册那套规矩）。
+    // 2026-09-25 起登录不再跑它，所以这条挪回它真正的主人：注册。
+    // 断言一个字没改，只换了模式 —— 它钉的是「密码至少 8 位」这条注册规矩
+    // 真的接在**注册**这条路上（谁把那行 `checkPassword` 删了，这条红）。
+    meUser = null
+    await renderApp()
+    await switchToSignup()
+
+    const boxes = container.querySelectorAll<HTMLInputElement>('.login-field input')
+    await act(async () => {
+      type(boxes[0], '小明')
+      type(boxes[1], 'a@b.com')
+      type(boxes[2], 'short')
+    })
+    const form = container.querySelector('form.login-box') as HTMLFormElement
+    await act(async () => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(container.textContent).toContain('密码至少 8 位')
+    expect(calledWith('/api/signup')).toHaveLength(0)
+  })
+
+  it('★ 登录模式下密码太短**不拦** —— 打的是什么就是什么，对不对由服务端说', async () => {
+    // 「至少 8 位」是给**新密码**定的规矩。登录时用户打的是什么就是什么：
+    // 一个老账号的密码可能只有 6 位（规则改过，或者他注册得早），本地按今天的
+    // 注册规矩拦下来，等于**他自己的密码永远打不进去** —— 而屏幕上那句
+    // "密码至少 8 位"还会让他开始怀疑是自己记错了。
     meUser = null
     await renderApp()
     await fillAndSubmit('小明', 'short')
 
-    expect(container.textContent).toContain('密码至少 8 位')
+    // ★ 变异：把登录那条路上的 `checkPassword` 加回来 → **红在这一句**
+    //   （`expected [] to have a length of 1`）。
+    const call = calledWith('/api/login')
+    expect(call).toHaveLength(1)
+    // 而且是**原话**送出去的：没被"顺手"补长、截短或者归一化（那是别人密码的一部分）。
+    expect(JSON.parse(String((call[0]?.[1] as RequestInit).body)).password).toBe('short')
+  })
+
+  it('★★ 用户撞的那个 case：登录模式下打 `Admin`，屏幕上不许出现"留给官方账号"', async () => {
+    // 2026-09-25 用户真撞的：他在登录页打 `admin` / `admin123`，屏幕上跳出
+    // 「这个名字是留给官方账号的，换一个吧」—— **一个请求都没发出去**。
+    // 那句话回答的是"能不能拿这个名字注册"，而他要问的是"我能不能进去"；
+    // 他读完问的是「是已经有这个账户了吗？」。
+    //
+    // 这里打 `Admin`（大写）而不是 `admin`：同一个 case —— `checkUsername` 会先
+    // 折小写再撞保留名 —— 顺带把**归一化**也钉住（请求体里必须是 `admin`）。
+    meUser = null
+    await renderApp()
+
+    // 服务端此刻的答案就是新的那一句（服务端那边有两条自己的测试钉着）。
+    // 这里**故意让它失败**：不然登录成功、页面切走，就看不见"服务端那句话
+    // 到底有没有到屏幕上"。
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === '/api/login'
+        ? jsonResponse({ error: { code: 'BAD_REQUEST', message: '没有这个账号' } }, 400)
+        : inner(url, init))
+
+    await fillAndSubmit('Admin', 'admin123')
+
+    // ① 注册规矩的话一个字都不许出现在登录页上
+    expect(container.textContent).not.toContain('留给官方账号')
+    expect(container.textContent).not.toContain('官方')
+    // ② 请求真的发出去了 —— 而且名字是**归一化之后**的（`Admin` → `admin`）。
+    //   ★ 变异：把登录模式也加回 `checkUsername`（老代码）→ 红在①②
+    //     （一个请求都没有，屏幕上还挂着"留给官方账号"）；
+    //     把 `normalizeUsername` 换成原样送 `username` → 红在第②句。
+    const call = calledWith('/api/login')
+    expect(call).toHaveLength(1)
+    expect(JSON.parse(String((call[0]?.[1] as RequestInit).body)))
+      .toEqual({ username: 'admin', password: 'admin123' })
+    // ③ 屏幕上出现的是**服务端那句话** —— 登录页对"名字在不在"一无所知，
+    //   它只能把问题交出去，然后把答案原样摆出来。
+    expect(container.querySelector('.login-error')?.textContent).toBe('没有这个账号')
+    // 失败就是失败：还停在登录页，没有"半进去"这回事。
+    expect(container.querySelector('.login-box')).toBeTruthy()
+  })
+
+  it('登录模式下名字是空的 → 「起个名字吧」，一个请求都不发', async () => {
+    // 登录这条路上**只剩这一条**本地规矩：名字不能空 —— 空了连"查谁"都无从谈起。
+    // 顺便它还是"出路"那一类：说了哪里不对，用户就知道该往哪儿填。
+    //
+    // 两次输入：一次真的是空的，一次只有空格。后者钉的是**先归一化、再判空**，
+    // 写成 `username.length === 0` 的话它会溜过去 —— 发一条用户名是几个空格的
+    // 登录请求出去，服务端只能回一句用户看不懂的话。
+    meUser = null
+    await renderApp()
+
+    await fillAndSubmit('', 'password123')
+    expect(container.querySelector('.login-error')?.textContent).toBe('起个名字吧')
+    expect(calledWith('/api/login')).toHaveLength(0)
+
+    await fillAndSubmit('   ', 'password123')
+    expect(container.querySelector('.login-error')?.textContent).toBe('起个名字吧')
     expect(calledWith('/api/login')).toHaveLength(0)
   })
 

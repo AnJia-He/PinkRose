@@ -80,14 +80,49 @@ describe('登录', () => {
     expect(handleLogin({ username: 'ALICE', password: 'goodpassword' }, deps).user.username).toBe('alice')
   })
 
-  it('★ 密码错和用户不存在，报的是同一句话 —— 不告诉别人哪些名字是真的', () => {
+  // ── 2026-09-25 用户拍板：两种错**分开说**。原来是三种情况共用一句
+  //    「用户名或密码不对」，理由是"区分了就等于告诉别人哪些用户名是真的"。
+  //    那条理由现在站不住了：**注册接口本来就会告诉你某个名字有没有人用**
+  //    （下面「同一个名字注册第二次被拒」那条测的就是它），谁都能拿一张名字表
+  //    把存在性筛一遍 —— 登录接口捂着它不换来任何防护，只换来一句用户看不懂、
+  //    照着走不下去的话。完整论证在 `server/account.ts` 的 handleLogin 里。
+  //
+  //    这条改动**代价明确**：登录接口从此是一个"存在性查询接口"了。之所以接受，
+  //    是因为那个能力**早就**由注册接口免费提供着（见上）—— 不是这里新开的口子。
+
+  it('★ 查无此人 → 「没有这个账号」', () => {
+    // 变异：把 handleLogin 里那两处 throw 合并回一句（原来那个 `WRONG`）→
+    //      这一条和下面那条**一起红**（两条各要自己那句话，合并了必然有一条对不上）。
     handleSignup(GOOD, deps)
-    const a = (() => { try { handleLogin({ username: '小明', password: 'wrongpassword' }, deps) } catch (e) { return (e as Error).message } })()
-    const b = (() => { try { handleLogin({ username: '查无此人', password: 'wrongpassword' }, deps) } catch (e) { return (e as Error).message } })()
-    // 两句必须**一模一样**。区分了就等于发了一张"这个用户名存在"的查询接口，
-    // 谁都能拿一个名字表来筛出哪些是真的 —— 后面的撞库就有了目标。
-    expect(a).toBe(b)
-    expect(a).toBeTruthy()
+    expect(() => handleLogin({ username: '查无此人', password: 'goodpassword' }, deps))
+      .toThrow('没有这个账号')
+  })
+
+  it('★ 名字不合注册规矩也走同一句 —— 登录这条路不再拿 checkUsername 去筛名字', () => {
+    // 钉的是"登录这条路不跑注册那套规矩"的**服务端那一半**。
+    // `a-b` 过不了字符类、`!` 过不了长度下限 —— 它们在库里**必然不存在**，
+    // 所以「没有这个账号」对它们是**真的**。而"格式不对"那几句话一旦出现在
+    // 登录页上就是答非所问（用户已经有号了，改名字对他没用），
+    // 顺带还会把"是哪条格式规矩拦的"漏成一个筛子。
+    //
+    // 变异：把 handleLogin 里的 `normalizeUsername` 换回 `checkUsername`
+    //      （并像原来那样在格式不对时先抛）→ 这一条红（拿到的是「只能用中文、字母…」）。
+    handleSignup(GOOD, deps)
+    for (const bad of ['a-b', '!', 'a b']) {
+      expect(() => handleLogin({ username: bad, password: 'goodpassword' }, deps))
+        .toThrow('没有这个账号')
+    }
+  })
+
+  it('★ 密码不对 → 「密码不对，再试一次」', () => {
+    // 和上面那条是**两个方向**：这个人知道名字是对的（号就是他注册的），
+    // 他要回答的是"要不要接着试密码"。原来那句「用户名或密码不对」把他也推去
+    // 怀疑自己的名字，而下一步该做什么没人告诉他。
+    //
+    // 变异：把这一处也改回「用户名或密码不对」→ 这一条红。
+    handleSignup(GOOD, deps)
+    expect(() => handleLogin({ username: '小明', password: 'wrongpassword' }, deps))
+      .toThrow('密码不对，再试一次')
   })
 })
 

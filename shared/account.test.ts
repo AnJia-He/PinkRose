@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { checkUsername, checkEmail, checkPassword, USERNAME_MIN } from './account.ts'
+import { checkUsername, checkEmail, checkPassword, normalizeUsername, USERNAME_MIN } from './account.ts'
 
 /**
  * 账号格式规则的测试。这一份刻意不测"实现长什么样"，只测**规矩本身** ——
@@ -146,6 +146,25 @@ describe('checkUsername', () => {
 
   it('USERNAME_MIN 就是 2 —— 改大了「小明」就注册不了', () => {
     expect(USERNAME_MIN).toBe(2)
+  })
+})
+
+describe('normalizeUsername', () => {
+  it('★ 只做归一化，一条规矩都不带 —— 登录那条路就靠它', () => {
+    // 2026-09-25 从 `checkUsername` 里抽出来的（抽出来本身是纯重构，
+    // 上面那批断言负责证明"行为一个字节都没变"）。为什么它得单独存在：
+    // **登录要的是"用户说的是哪个名字"，不是"这个名字合不合规矩"** ——
+    // 用户已经有一个号了，他要问的是"我能不能进去"。
+    //
+    // 所以它必须**照收** checkUsername 会拒掉的那些：`admin` 是保留名、
+    // `a-b` 带符号、`!` 太短 —— 这些在登录页上被拦就是答非所问
+    // （2026-09-25 用户真撞过：登录时被告知"这个名字是留给官方账号的"）。
+    // 变异：去掉 `.toLowerCase()` / `foldMiddleDot` / `.trim()` 任意一处 → 这一条红。
+    expect(normalizeUsername('  Admin  ')).toBe('admin')
+    expect(normalizeUsername('a-b')).toBe('a-b')
+    expect(normalizeUsername('!')).toBe('!')
+    expect(normalizeUsername('尼格买提・热合曼')).toBe('尼格买提·热合曼')
+    expect(normalizeUsername('')).toBe('')
   })
 })
 

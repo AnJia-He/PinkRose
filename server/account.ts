@@ -1,6 +1,6 @@
 import type { Db } from './db.ts'
 import { hashPassword, verifyPassword } from './password.ts'
-import { checkUsername, checkEmail, checkPassword } from '../shared/account.ts'
+import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../shared/account.ts'
 import {
   signSession, verifySession, sessionExpiry, parseCookies, SESSION_COOKIE,
 } from './session.ts'
@@ -102,20 +102,44 @@ export function handleSignup(body: unknown, deps: AccountDeps) {
 
 export function handleLogin(body: unknown, deps: AccountDeps) {
   const o = asObject(body)
-  const name = checkUsername(str(o.username))
+  // ⚠️ 归一化用 `normalizeUsername`，**不是** `checkUsername` —— 后者还带着一整串
+  // 「能不能拿这个名字注册」的规矩（长度、字符类、保留名），而登录问的是另一件事：
+  // 用户已经有一个号了，他要问的是「我能不能进去」。
+  // 用 checkUsername 的代价是**答非所问**，而它真的发生过：一个叫 `admin` 的人
+  // （库里本来就有这个号）在登录页被告知「这个名字是留给官方账号的，换一个吧」，
+  // 他读完问的是「是已经有这个账户了吗？」（2026-09-25）。
+  const name = normalizeUsername(str(o.username))
   const rawPw = str(o.password)
 
-  // ★ 无论是"查无此人"还是"密码不对"，都抛**同一句话**。
-  // 区分了就等于告诉别人哪些用户名是真的（可以拿来枚举，然后撞库）。
-  // 名字格式不对也走这一句：不然"格式不对"这四个字本身就成了一个筛子。
-  const WRONG = () => new HttpError('BAD_REQUEST', '用户名或密码不对')
+  // ★ 两种错，两句话（2026-09-25 用户拍板改；原来三种情况共用一句
+  //   「用户名或密码不对」）：
+  //     · 查无此人（**也包括名字格式不对** —— 见下面那段）→「没有这个账号」
+  //     · 密码不对                                          →「密码不对，再试一次」
+  //
+  // ⚠️ 为什么"分开说"现在是**安全的** —— 这条论证必须写在这里，因为它推翻的
+  // 正是原来那段注释的道理（「区分了就等于告诉别人哪些用户名是真的」）：
+  //
+  //   **注册接口本来就会告诉你某个名字有没有人用** —— `handleSignup` 撞上数据库
+  //   唯一约束时抛的「这个名字有人用了，换一个吧」（就在上面几十行处）。
+  //   也就是说，"某个用户名存不存在"这件事**任何人早已经能一趟一趟试出来**，
+  //   登录接口这里是捂着它**不换来任何防护**，只换来一句用户看不懂、照着走不
+  //   下去的话（他拿到的是"密码不对"还是"没这个人"，决定他下一步去试密码还是
+  //   去注册 —— 而这个方向本来就摆在注册按钮上，不是秘密）。
+  //
+  // 「格式不对」为什么也并进这一句，而不是单独给一句更精确的：
+  //   ① 这句话对它是**真的** —— 过不了格式的名字在库里必然不存在；
+  //   ② "格式不对"四个字单独出现，就重新变成一个筛子（用户会开始猜是哪条格式
+  //      规矩拦的），而上面那半句已经说明存在性本来就可探测 —— 所以这里选的
+  //      不是"少说一点"，是**只说真话、不说废话**。
+  const NO_SUCH = () => new HttpError('BAD_REQUEST', '没有这个账号')
 
-  if (!name.ok) throw WRONG()
   const row = deps.db.raw
     .prepare('SELECT id, username, email, password_hash FROM users WHERE username = ?')
-    .get(name.value) as Row | undefined
-  if (!row) throw WRONG()
-  if (!verifyPassword(rawPw, row.password_hash)) throw WRONG()
+    .get(name) as Row | undefined
+  if (!row) throw NO_SUCH()
+  if (!verifyPassword(rawPw, row.password_hash)) {
+    throw new HttpError('BAD_REQUEST', '密码不对，再试一次')
+  }
 
   return issue({ id: row.id, username: row.username, email: row.email }, row.password_hash, deps)
 }

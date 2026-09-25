@@ -48,8 +48,26 @@ const MIDDLE_DOT = '\u00B7'
 const MIDDLE_DOT_ALIASES = /[\u30FB\u2027]/g
 const foldMiddleDot = (s: string): string => s.replace(MIDDLE_DOT_ALIASES, MIDDLE_DOT)
 
+/**
+ * 归一化：把用户打的字折成"这个名字到底是谁"。
+ *
+ * 三件事，全是"同一个名字的几种写法"，一件都不是规矩：
+ * 去掉首尾空白、折成小写、把那几个同形中点折成 `·`（见 foldMiddleDot）。
+ *
+ * ⚠️ **它和 `checkUsername` 里那些规矩是两件事**，抽出来正是为了这个区分：
+ * 这一句回答「用户说的是哪个名字」，后面那些（长度、字符类、保留名）回答
+ * 「这个名字能不能拿来开号」。**登录只用得上前一句** —— 用户已经有一个号了，
+ * 他问的是"我能不能进去"，不是"这个名字合不合注册的规矩"。
+ * 少了归一化，一个已经存在的账号用户照着打都进不去
+ * （他打 `Admin`，库里存的是 `admin`）；多了那些规矩，他会在登录页上
+ * 收到一句答非所问的话（见 `src/ui/LoginPage.tsx` 里那段，2026-09-25 真撞过）。
+ */
+export function normalizeUsername(raw: string): string {
+  return foldMiddleDot(raw.trim().toLowerCase())
+}
+
 export function checkUsername(raw: string): Check {
-  const v = foldMiddleDot(raw.trim().toLowerCase())
+  const v = normalizeUsername(raw)
   if (v.length === 0) return { ok: false, message: '起个名字吧' }
   const n = charLen(v)
   // 下限是 2 不是 3：英文网站常写 3（"ab" 这种两字母看着像垃圾号），但中文里

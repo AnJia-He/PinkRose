@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { login, signup } from '../api/account'
-import { checkUsername, checkEmail, checkPassword } from '../../shared/account.ts'
+import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../../shared/account.ts'
 
 /** `onDone` **不带参数**，但要 **await 它** —— 它交出去的是"App 去问一次
  *  `/api/me` 拿真身"这件事，而登录页的「稍等…」要盖住整个过程（见下面 finally）。
@@ -35,12 +35,42 @@ export function LoginPage({ onDone }: Props) {
     if (busy) return
     setError(null)
 
-    // 前端这遍是**体验**（一边打一边知道哪不对），不是规矩 ——
-    // 后端还会再验一遍，因为请求可以伪造。
-    const u = checkUsername(username)
-    if (!u.ok) return setError(u.message)
-    const p = checkPassword(password, u.value)
-    if (!p.ok) return setError(p.message)
+    // 名字先归一化 —— **登录和注册都要这一步**：他打 `Admin` 得能找到 `admin`，
+    // 打 U+30FB 的中点得能找到半角那个。就是 shared/account.ts 里抽出来的
+    // `normalizeUsername`；少了它，一个已经存在的账号用户照着打都进不去。
+    const normalized = normalizeUsername(username)
+    if (normalized.length === 0) return setError('起个名字吧')
+
+    // ⚠️ **下面这一段（长度、字符类、保留名、密码至少 8 位、密码不能和名字一样）
+    // 是「能不能拿这个名字开号」的规矩，只属于注册。**
+    //
+    // 登录要问的是另一件事：名字在不在、密码对不对 —— 那不是本地能回答的，
+    // 只有库那头知道（见 server/account.ts 的 handleLogin）。
+    // 在登录页上跑注册那套规矩，用户撞上的是**答非所问**的话：
+    // 2026-09-25 真撞过 —— 他在登录页打 `admin` / `admin123`，屏幕上跳出
+    // 「这个名字是留给官方账号的，换一个吧」，于是他问"是已经有这个账户了吗？"。
+    // 那句话回答的是"能不能拿它注册"，而他要问的是"我能不能进去"，照着它
+    // 一步也走不下去。所以登录这条路只做「归一化 + 非空」，其余交给服务端。
+    //
+    // 前端这一遍是**体验**（一边打一边知道哪不对），不是规矩 ——
+    // 后端还会再验一遍，因为请求可以伪造。注册这条路照旧两边都跑。
+    let name = normalized
+    let pw = password
+    if (mode === 'signup') {
+      const u = checkUsername(username)
+      if (!u.ok) return setError(u.message)
+      // 值走 `u.value` 而不是上面那个 `normalized`：规矩和它归一化后的值一起给，
+      // 两边将来要是分了岔（比如再加一种折叠），注册这条路仍然送的是**被验过的**
+      // 那个值。
+      name = u.value
+      // ⚠️ `u.value` 必须传进去 —— 「密码不能和名字一样」唯一的落地处（注册这一路）。
+      // 那参数是**可选**的，忘了传不会报错、不会红，只会让这条规则**静默失效**。
+      // 登录那条路**不跑**这一条：那里"密码等于名字"恰恰是一个**正确**的密码
+      // （有人真的就叫 admin、密码也叫 admin），拦下来等于让他登不进自己的号。
+      const p = checkPassword(password, u.value)
+      if (!p.ok) return setError(p.message)
+      pw = p.value
+    }
 
     setBusy(true)
     try {
@@ -49,11 +79,11 @@ export function LoginPage({ onDone }: Props) {
         // 名字和密码都没问题才值得提邮箱，否则用户一次只看到一条提示。
         const em = checkEmail(email)
         if (!em.ok) { setError(em.message); return }
-        await signup({ username: u.value, email: em.value, password: p.value })
+        await signup({ username: name, email: em.value, password: pw })
       } else {
         // 密码送**原话**：它可能带空格、可能是中文，而任何一种"顺手归一化"
         // 都会让用户下次照原样敲反而登不上（见 shared/account.ts 里那条注释）。
-        await login({ username: u.value, password: password })
+        await login({ username: name, password })
       }
       // `await` 是**故意**的：等 App 把"我是谁"问出来，这一趟才算交棒完。
       // 不 await 的话按钮会在跟随请求还在半路时就变回可点 ——
