@@ -545,3 +545,21 @@ describe('取图：真的把字节发出去', () => {
     expect((await r.arrayBuffer()).byteLength).toBe(64)
   })
 })
+
+describe('列表：路由真的接上了', () => {
+  it('没登录 → 401；登录了、库里空的 → 200 + { works: [] }', async () => {
+    // 这条守的**不是**数据隔离（那是 works.test.ts 里「列表：只有自己的」那条的事）——
+    // 守的是"这条路由真的挂上了"：把 app.ts 里那一整块删掉、或者把方法或路径敲错，
+    // 别的用例一条都不会红（一个 404 看着就像"本来就没有这个接口"）。
+    //
+    // 空库要回的是**空数组**，不是 null、也不是 404 —— 客户端靠它区分
+    // "这个人的作品集是空的"和"列表接口坏了"。这两件事对用户是两种界面。
+    const { base, cookie } = await appWithUser()
+
+    expect((await fetch(`${base}/api/works`)).status).toBe(401)
+
+    const r = await fetch(`${base}/api/works`, { headers: { cookie } })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ works: [] })
+  })
+})
