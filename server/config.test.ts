@@ -92,6 +92,28 @@ describe('loadConfig', () => {
   it('给了 DB_PATH 就用它 —— 不许被默认值盖掉', () => {
     expect(loadConfig({ ...FULL, DB_PATH: '/tmp/x.db' }).dbPath).toBe('/tmp/x.db')
   })
+
+  it('没给 PHOTO_DIR 时落在"当前工作目录"的 data/photos —— 和 dbPath 一样跟着 cwd 走', () => {
+    // 形状和理由都照上面那条 dbPath 的（"别复读实现"那一段）：照片目录同样必须跟着
+    // cwd 走 —— 改成按模块位置派生的话，从别处启动就会把图存进另一个目录，而
+    // "用户的图在哪"一旦有两个答案，排查起来很贵（config.ts 里那段注释）。
+    // 库和照片**必须落在同一个根下**，不然备份/搬家会漏掉一半。
+    const dir = mkdtempSync(join(tmpdir(), 'ruixing-cfg-photos-'))
+    const before = process.cwd()
+    try {
+      process.chdir(dir)
+      expect(loadConfig(FULL).photoDir).toBe(resolve(process.cwd(), 'data', 'photos'))
+      process.chdir(before)
+      expect(loadConfig(FULL).photoDir).toBe(resolve(before, 'data', 'photos'))
+    } finally {
+      process.chdir(before)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('给了 PHOTO_DIR 就用它 —— 不许被默认值盖掉', () => {
+    expect(loadConfig({ ...FULL, PHOTO_DIR: '/tmp/pics' }).photoDir).toBe('/tmp/pics')
+  })
 })
 
 describe('describeConfig', () => {

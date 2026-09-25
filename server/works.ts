@@ -64,19 +64,25 @@ export async function handleCreateWork(
     throw new HttpError('BAD_REQUEST', '这张图太大了，存不下', 413)
   }
 
-  // 缩略图是**可选**的：前端生成失败时，不该让整张图都存不进去（裁定 ②）
+  // 缩略图是**可选**的：前端生成失败时，不该让整张图都存不进去（裁定 ②）。
+  //
+  // ⚠️ **解码和落盘必须在同一个 try 里**。缩略图坏的姿势有两种 —— 形状不对（解不出来）
+  // 和存不下去（盘满 / 权限），而两种都只是"这张作品没有缩略图"，不该让用户丢掉整张照片。
+  // 一开始只包了落盘那一步：形状坏的缩略图会从 decodeDataUrl 抛出去，把整个请求变成 400，
+  // 整张图跟着一起丢 —— 那正是裁定 ② 要防的事，只是从另一条路绕回来了。
   const thumbRaw = str(o.thumb)
-  const thumb = thumbRaw ? decodeDataUrl(thumbRaw) : null
   const recipe = readRecipe(o.recipe)
 
   const storedName = await deps.storage.save(image.bytes, image.ext)
   let thumbName: string | null = null
-  if (thumb) {
+  if (thumbRaw) {
     try {
+      const thumb = decodeDataUrl(thumbRaw)
       thumbName = await deps.storage.save(thumb.bytes, thumb.ext)
     } catch (e) {
-      // 缩略图存不下不该拖垮整张图 —— 但也不能静默，不然盘满的时候没人知道
-      console.error('缩略图存不进去，这张作品没有缩略图：', e)
+      // 两种失败都不该拖垮整张图 —— 但也不能静默：不然盘满、或者前端一直在送坏缩略图，
+      // 服务端没有第二个地方会说话
+      console.error('缩略图用不了（解不开或者存不下），这张作品没有缩略图：', e)
     }
   }
 

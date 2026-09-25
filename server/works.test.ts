@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -50,6 +50,55 @@ describe('handleCreateWork', () => {
       { image: JPEG, recipe: { params: {}, edits: [] } }, USER, deps)
     const row = db.raw.prepare('SELECT thumb_name FROM works WHERE id = ?').get(id) as { thumb_name: string | null }
     expect(row.thumb_name).toBe(null)
+  })
+
+  it('★ 缩略图**存不下去**（第二次 save 抛）→ 整张图照样存进去，thumb_name 是 NULL', async () => {
+    // 裁定 ② 的核心承诺：缩略图是**附带**的，它失败不能拖垮整张图。
+    // 真的把盘写满做不到，但这里要验的恰恰是"第二次 save 抛出来之后 handleCreateWork 怎么走"
+    // —— 那件事只取决于 storage 会不会抛，所以造一个"第一次成功、第二次抛"的就够了。
+    let calls = 0
+    const flaky: Storage = {
+      ...storage,
+      save: (bytes, ext) => {
+        if (++calls === 2) return Promise.reject(new Error('ENOSPC: 盘满了'))
+        return storage.save(bytes, ext)
+      },
+    }
+    // 代码里那句"不能静默"要留一声响 —— 顺手把 console.error 打桩掉，不然这条用例
+    // 会把 stderr 弄脏（http.test.ts 里验日志的那几条是同一个做法）。
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const { id } = await handleCreateWork(
+        { image: JPEG, thumb: JPEG }, USER, { ...deps, storage: flaky })
+
+      const row = db.raw.prepare('SELECT stored_name, thumb_name FROM works WHERE id = ?')
+        .get(id) as { stored_name: string; thumb_name: string | null }
+      expect(row.thumb_name).toBe(null)
+      // 不只是"库里有一行"：原图那个文件得真的在盘上、真的读得回来
+      expect(readdirSync(root)).toEqual([row.stored_name])
+      expect(await storage.read(row.stored_name))
+        .toEqual(new Uint8Array(Buffer.from('/9j/4AAQSkZJRg==', 'base64')))
+      expect(String(spy.mock.calls.flat().join(' '))).toContain('缩略图')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('★ 缩略图**解不开**（非空但形状坏）→ 也只丢缩略图，不丢整张图', async () => {
+    // 和上一条是同一个承诺的另一个入口：形状不对时 decodeDataUrl 会抛。
+    // 那个抛必须和"存不下去"走同一条路（记日志、thumb_name 留 NULL）——
+    // 解码要是留在 try 外面，这一条会变成 400，整张照片跟着一起丢。
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const { id } = await handleCreateWork(
+        { image: JPEG, thumb: 'data:image/gif;base64,AAAA' }, USER, deps)
+      const row = db.raw.prepare('SELECT thumb_name FROM works WHERE id = ?')
+        .get(id) as { thumb_name: string | null }
+      expect(row.thumb_name).toBe(null)
+      expect(readdirSync(root)).toHaveLength(1)
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('recipe 不传 = 什么都没改过（八个 0 + 没有原话），不是 null', async () => {
