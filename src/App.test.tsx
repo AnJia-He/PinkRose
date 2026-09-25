@@ -1265,6 +1265,72 @@ describe('登录这道门', () => {
     expect(container.querySelector('.login-box')).toBeNull()
   })
 
+  it('★ 登录请求还在半路时，两颗按钮都得是禁用的（切换那颗也不许半路换模式）', async () => {
+    // ★ 上一轮探针实测出来的形状（四条断言全中）：忙的时候点那颗切换按钮，
+    //   **标题当场翻成「注册」**，而在飞的仍是一条**登录**请求 —— 它要是失败，
+    //   服务端那句关于**登录**的话（「没有这个账号，去注册一个吧」）会落在
+    //   「注册」标题底下。用户读到一句**归错地方**的话，照着它一步也走不下去。
+    //
+    //   为什么这轮才看得见：副标题上一轮删了、提交按钮忙的时候只肯说「稍等…」，
+    //   于是忙的这几秒里**标题是屏上唯一还在说模式的字**（上面那条「标题就说这一步
+    //   是干什么的」守的就是它）。标题以前写死「随心」、不参与模式，切换过去也
+    //   看不出来 —— 这个错位一直躲在"看不出来"里。
+    //
+    //   `submit` 开头那句 `if (busy) return` 是**同一件事的半边**，它挡的是
+    //   "用户等不及连点两下、交出去两条"；这一条守的是**另外半边**。
+    //
+    // ★ 变异（这一轮跑过）：把 `disabled={busy}` 从 `.login-switch` 上删掉 →
+    //   红在 `expect(sw.disabled).toBe(true)`（`expected false to be true`）。
+    meUser = null
+    await renderApp()
+
+    // 把**登录那一次请求**挂住不回。⚠️ 特意不用上面那条的 `meGate`：那条挂的是
+    // 跟进的 `/api/me`，而这里要的形状是"用户点切换的那一瞬间，在飞的是登录请求
+    // **本身**"—— 只有这个形状才演得到"它失败时那句话落在错误的标题底下"。
+    const gate = makeGate()
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/login') await gate.promise
+      return inner(url, init)
+    })
+
+    await fillAndSubmit('小明', 'password123')
+
+    // 前提之一：确实"忙着"（提交按钮的口径 —— 它和切换按钮读的是同一个 `busy`）
+    const submit = container.querySelector('.login-submit') as HTMLButtonElement
+    expect(submit.disabled).toBe(true)
+    expect(submit.textContent).toContain('稍等')
+    // 前提之二：那条登录请求**真的在飞**。少了这一句，"忙"可以是本地校验卡住的假象，
+    // 而这条用例讲的正是"在飞的那条和屏上说的模式对不上"。
+    expect(calledWith('/api/login')).toHaveLength(1)
+
+    // ★ 这一条的主角：提交按钮挡了、切换按钮没挡，等于没挡 —— 两处是同一个判断
+    //   的落地，得一挡全挡。
+    const sw = container.querySelector('.login-switch') as HTMLButtonElement
+    // 少了这颗按钮要红成"少了这颗按钮"，不是 `Cannot read properties of null`
+    expect(sw).toBeTruthy()
+    expect(sw.disabled).toBe(true)
+
+    // ★ 而且**点它模式不变** —— 这才是用户看得见的那一句。
+    //   （jsdom 照 HTML 规范实现：点一颗禁用的表单控件等于没点。）
+    await act(async () => {
+      sw.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelector('.login-title')?.textContent).toBe('登录')
+    // 提交按钮也还在等它那条请求：忙的这几秒它一个字都不说模式（见上面标题那段），
+    // 所以此刻屏幕上还在说"这一步是登录"的只有标题 —— 这正是不能让它翻面的理由。
+    expect((container.querySelector('.login-submit') as HTMLButtonElement).textContent).toContain('稍等')
+
+    // 放行：让在飞的那条走完（不在用例末尾留一个挂着的 promise），
+    // 顺便确认"挡住切换"没有把正常这条路一起挡坏。
+    await act(async () => {
+      gate.open()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelector('.login-box')).toBeNull()
+  })
+
   it('★ 用着用着票失效了（/api/route 回 401）→ 回到登录页，而不是一句提示', async () => {
     // ⚠️ 这条钉的是一个**死胡同**，落在 Task 6 和 Task 7 的**缝**里：
     // Task 6 的审查问"三个 AI 接口挡没挡住没登录的人"，Task 7 的审查问"登录页

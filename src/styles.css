@@ -345,6 +345,13 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .login-submit { padding: 11px; border-radius: 8px; border: 0; background: var(--accent); color: #fff; font-size: 15px; cursor: pointer; }
 .login-submit:disabled { opacity: .5; cursor: default; }
 .login-switch { border: 0; background: none; color: inherit; opacity: .7; font-size: 13px; cursor: pointer; }
+/* ★ 忙的时候那颗切换按钮也**看得见地**挡住（2026-09-26 加，和 `disabled={busy}` 是一对）。
+   原来它只有上面那一条 `.7`，禁用之后连"淡一点"都没有 —— 屏上能说出"现在点不动"
+   的只剩光标形状那一处，而光标只在鼠标已经挪上去之后才说话。
+   所以再淡一档（`.7` → `.4`，比提交按钮的 `.5` 更淡：它是次要动作，忙的时候
+   本来就该退到后面），光标也换回默认箭头 —— `cursor: pointer` 那只小手是
+   **承诺"点得动"**的，禁用之后还留着它是骗人。写法照上面 `.login-submit:disabled`。 */
+.login-switch:disabled { opacity: .4; cursor: default; }
 .app-loading { display: flex; align-items: center; justify-content: center; height: 100vh; opacity: .6; }
 
 /* ── 作品页（Task 11） ────────────────────────────────────────────
