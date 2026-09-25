@@ -101,3 +101,40 @@ export async function handleCreateWork(
     throw e
   }
 }
+
+const MIME: Record<string, string> = { '.jpg': 'image/jpeg', '.png': 'image/png' }
+
+/** 从文件名尾巴推 MIME。认不出来就按 jpeg —— 存进去的只可能是这两种 */
+function mimeOf(name: string): string {
+  return MIME[name.slice(name.lastIndexOf('.'))] ?? 'image/jpeg'
+}
+
+/**
+ * 取一张**属于这个人的**作品。
+ *
+ * ★ 这个函数是 §6.1「每条查询都带 user_id」的落点 —— 所有按 id 取作品的路径
+ * 都必须经过它，不许有人自己写一条 `WHERE id = ?` 就完事。
+ *
+ * 不是他的、和不存在，回**同一句话**：分开说就等于告诉别人哪些 id 是真的。
+ */
+export function loadOwned(id: number, user: PublicUser, deps: WorksDeps): WorkRow {
+  const row = deps.db.raw.prepare(
+    'SELECT * FROM works WHERE id = ? AND user_id = ?',
+  ).get(id, user.id) as WorkRow | undefined
+  if (!row) throw new HttpError('BAD_REQUEST', '没有这张作品', 404)
+  return row
+}
+
+export async function handleWorkFile(id: number, user: PublicUser, deps: WorksDeps) {
+  const row = loadOwned(id, user, deps)
+  return { bytes: await deps.storage.read(row.stored_name), contentType: mimeOf(row.stored_name) }
+}
+
+export async function handleWorkThumb(id: number, user: PublicUser, deps: WorksDeps) {
+  const row = loadOwned(id, user, deps)
+  // 没缩略图就退回原图。缩略图是**前端生成的**，可能失败；
+  // 前端按 hasThumb 选 URL，这儿只是兜底 —— 万一两处对不上（比如文件被手工删了），
+  // 让用户看到一张大图，也比看到一块白屏强。
+  const name = row.thumb_name ?? row.stored_name
+  return { bytes: await deps.storage.read(name), contentType: mimeOf(name) }
+}

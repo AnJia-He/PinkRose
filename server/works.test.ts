@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDb, type Db } from './db.ts'
 import { createStorage, type Storage } from './storage.ts'
-import { handleCreateWork } from './works.ts'
+import { handleCreateWork, handleWorkFile, handleWorkThumb } from './works.ts'
 import type { PublicUser } from './account.ts'
 
 const USER: PublicUser = { id: 1, username: '小明', email: 'a@x.com' }
@@ -126,5 +126,37 @@ describe('handleCreateWork', () => {
     // 指名道姓：这条守的是"外键挡住了 INSERT"，不是"随便抛了什么"
     await expect(handleCreateWork({ image: JPEG }, ghost, deps)).rejects.toThrow(/FOREIGN KEY/)
     expect(readdirSync(root)).toEqual([])
+  })
+
+  it('取自己的图 —— 字节原样回来', async () => {
+    const b64 = bytesOf(64)
+    const { id } = await handleCreateWork({ image: `data:image/jpeg;base64,${b64}` }, USER, deps)
+    const got = await handleWorkFile(id, USER, deps)
+    expect(got.contentType).toBe('image/jpeg')
+    expect(got.bytes.byteLength).toBe(64)
+  })
+
+  it('★ 取别人的图 → 当它不存在（404），不是 403、更不能给图', async () => {
+    // ⚠️ 这条是整段里最要紧的一条断言（spec §10 说它"最重要"）。
+    // 变异：把 loadOwned 里的 `AND user_id = ?` 去掉 → 它必须红。
+    //
+    // 回 404 而不是 403 是**故意的**：301/403 会告诉他"这个 id 是真的、只是不是你的"，
+    // 那就成了枚举别人作品 id 的入口 —— 和登录那句"用户名或密码不对"同一个道理。
+    const other: PublicUser = { id: 2, username: '小红', email: 'b@x.com' }
+    db.raw.prepare(`INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)`)
+      .run(other.username, other.email, 'h', 1)
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+
+    // ⚠️ **指名道姓** —— 这两条守的是**安全属性**（不许取别人的图）。
+    // 不带参数的 `toThrow()` 会让"别的什么抛了"也算过关。
+    await expect(handleWorkFile(id, other, deps)).rejects.toThrow(/没有这张作品/)
+    await expect(handleWorkThumb(id, other, deps)).rejects.toThrow(/没有这张作品/)
+  })
+
+  it('没有缩略图的，/thumb 退回原图 —— 不白屏', async () => {
+    const b64 = bytesOf(64)
+    const { id } = await handleCreateWork({ image: `data:image/jpeg;base64,${b64}` }, USER, deps)
+    const got = await handleWorkThumb(id, USER, deps)
+    expect(got.bytes.byteLength).toBe(64)   // 原图那 64 字节，不是 404
   })
 })

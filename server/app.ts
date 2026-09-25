@@ -7,7 +7,7 @@ import {
 } from './account.ts'
 import type { Config } from './config.ts'
 import { handleEdit } from './edit.ts'
-import { HttpError, readJsonBody, sendError, sendJson } from './http.ts'
+import { HttpError, readJsonBody, sendBytes, sendError, sendJson } from './http.ts'
 import type { SerialQueue } from './queue.ts'
 import { handleRoute } from './route.ts'
 import {
@@ -17,7 +17,7 @@ import {
 import type { SenseNovaClient } from './sn.ts'
 import type { Storage } from './storage.ts'
 import { handleSuggest } from './suggest.ts'
-import { handleCreateWork } from './works.ts'
+import { handleCreateWork, handleWorkFile, handleWorkThumb } from './works.ts'
 
 export type AppDeps = {
   config: Config
@@ -179,6 +179,30 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
       sendJson(res, 200, await handleCreateWork(await readJsonBody(req), user, {
         db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
       }))
+      return
+    }
+    // ★ 全仓库第一个带路径参数的接口。这个仓库没有路由表（全是精确匹配），
+    // 所以参数得自己从 path 里剖出来。正则**必须锚定整串**：
+    // 不锚定的话 `/api/works/1/file/../../etc` 也能匹配上。
+    //
+    // 两条都是 GET，所以**不读请求体** —— 那会挂住等一个永远不会来的流。
+    // 依赖的形状同上面那条 POST：库藏在 auth 里，整个 deps 传下去编译器当场会拦。
+    const fileRoute = /^\/api\/works\/(\d+)\/file$/.exec(path)
+    if (req.method === 'GET' && fileRoute) {
+      const user = requireUser(deps, req, res)
+      const { bytes, contentType } = await handleWorkFile(Number(fileRoute[1]), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      })
+      sendBytes(res, 200, bytes, contentType)
+      return
+    }
+    const thumbRoute = /^\/api\/works\/(\d+)\/thumb$/.exec(path)
+    if (req.method === 'GET' && thumbRoute) {
+      const user = requireUser(deps, req, res)
+      const { bytes, contentType } = await handleWorkThumb(Number(thumbRoute[1]), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      })
+      sendBytes(res, 200, bytes, contentType)
       return
     }
     if (req.method === 'POST' && path === '/api/route') {

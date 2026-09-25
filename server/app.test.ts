@@ -449,6 +449,12 @@ describe('账号与鉴权', () => {
     expect(r.status).toBe(401)
   })
 
+  it('取图要登录；路径不匹配的（多一截）也是 404，不是把别人的东西给出去', async () => {
+    const { base } = await appWithUser()
+    expect((await fetch(`${base}/api/works/1/file`)).status).toBe(401)
+    expect((await fetch(`${base}/api/works/1/file/../../etc`)).status).toBe(404)
+  })
+
   it('退出 → cookie 被清掉', async () => {
     const { base, cookie } = await appWithUser()
     const res = await fetch(`${base}/api/logout`, { method: 'POST', headers: { cookie } })
