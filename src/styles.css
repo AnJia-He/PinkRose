@@ -282,16 +282,13 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .login { display: flex; align-items: center; justify-content: center; height: 100vh; }
 .login-box { display: flex; flex-direction: column; gap: 14px; width: 320px; }
 .login-title { margin: 0; font-size: 28px; }
-.login-sub { margin: 0 0 6px; opacity: .7; font-size: 14px; }
-/* ★ 2026-09-25 用户要的那句「解释 * 是必填」（`.login-hint` = "打 * 的都得填"）。
-   `margin-top: -6px` 是**故意的**：`.login-box` 那条 gap 是 14px，而这两句是
-   一句话的两半（"这是什么" + "要填什么"），拉开 14px 就散成两段了。
-   比副标题再小一号、再暗一档 —— 它是注脚，不该和副标题抢第一眼。
-   ⚠️ 它必须是**看得见的**字，不能借 `.login-sr`（那套是给读屏的，屏上什么都不显示）——
-   `App.test.tsx` 里那条「三格都标了必填的 *」钉着它的字和位置，
-   而"真的占地方"（有宽高、不透明）是 `.superpowers/…/login-fields-probe.mjs`
-   在真浏览器里量出来的（jsdom 没有版面，量不了）。 */
-.login-hint { margin: -6px 0 0; font-size: 12px; opacity: .55; }
+/* `.login-sub`（副标题）和 `.login-hint`（"打 * 的都得填"）两条规则在
+   **2026-09-25 被一起删掉**了：用户看过页面之后说这两句都不要，两个元素整个
+   不渲染了（见 `LoginPage.tsx` 标题下面那处注释 —— 那里记着这件事的代价）。
+   `grep -rn "login-sub\|login-hint"` 确认除了**另一个**类 `.login-submit`
+   （提交按钮，还在用）没有别处引用它们，删掉不会留下孤儿样式。
+   ⚠️ `.login-hint` 那个 `margin-top: -6px`（拿来抵消 `.login-box` 那条 14px 的
+   gap 用的）也随它一起走了 —— 将来谁要往标题下面再加一行小字，别照抄那个负 margin。 */
 /* `.login-field` 里那个必填的星号。
    颜色走 `--accent` 而**不是**本文件里那个红（#e06c75）：那个红是**错误**的颜色
    （见下面 `.login-error` 那段"本文件里唯一一处给字用的红"）—— 而一个空着的

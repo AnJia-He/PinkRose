@@ -1365,14 +1365,19 @@ describe('登录这道门', () => {
       await new Promise(r => setTimeout(r, 0))
     })
 
-    // 模式真的换了：副标题和提交按钮上的字都改了。
+    // 模式真的换了：提交按钮上的字从「登录」改成了「注册」。
     // **按类名定位、只看文案** —— 按文案找元素的话，这条会退化成
     // "我按那句话找到了那个按钮"，而不是"用户看到的字变了没有"。
-    const sub = container.querySelector('.login-sub') as HTMLParagraphElement
+    //
+    // ⚠️ 这里**原来还看一个 `.login-sub`（副标题）**：登录模式说"登录一下，你的图
+    //    都在这儿"、注册模式说"注册一个，图就留下来了"。2026-09-25 用户看过页面
+    //    之后说那一行不要了，元素整个不再渲染 —— 于是信号换成**提交按钮的文案**
+    //    （`登录` / `注册`，见 LoginPage 里那行 `busy ? '稍等…' : …`）。
+    //    它同样稳：不忙的时候这两种模式就这两个词，而这条用例从头到尾不碰 busy。
+    //    **换的只是信号，守的东西没换** —— 下面这几句仍然要能被"点了切换却不改
+    //    mode"咬住（这一轮的变异跑过：把 `setMode(...)` 摘掉，这条立刻红）。
     const submit = container.querySelector('.login-submit') as HTMLButtonElement
-    expect(sub).toBeTruthy()
     expect(submit).toBeTruthy()
-    expect(sub.textContent).toContain('注册')
     expect(submit.textContent).toContain('注册')
 
     // 三个框全空：现在是名字、密码、邮箱（**逐格按字段名看**，不按"第几个"）
@@ -1571,10 +1576,16 @@ describe('登录这道门', () => {
     expect(inputs.map(i => i.getAttribute('type') ?? 'text')).toEqual(['text', 'password', 'email'])
   })
 
-  it('★ 三格都标了必填的 *，而且那句解释在屏上看得见 —— 星号自己不会说话', async () => {
-    // 用户 2026-09-25 的第 2 条：「账户和密码是必填的所以可以打上"*"，找个地方
-    // 解释"*"是必填」。**邮箱也是必填的** —— 他以为它选填，是因为它没标星号
+  it('★ 三格都标了必填的 *，读屏的人也听得到「必填」—— 星号自己不会说话', async () => {
+    // 用户 2026-09-25 的第 2 条：「账户和密码是必填的所以可以打上"*"」。**邮箱也是
+    // 必填的** —— 他以为它选填，是因为它没标星号
     // （设计 §6.4：邮箱是找回密码的唯一通道，而找回密码排在第三段）。
+    //
+    // ⚠️ 他当时还要了另半件：「找个地方解释"*"是必填」。上一轮落地的是一句**屏上
+    //    看得见**的 `.login-hint`「打 * 的都得填」。**2026-09-25 他又看过页面，
+    //    说那一句不要了** —— 元素删除，钉着它的那段断言**跟着删掉**（不是改松：
+    //    它守的东西已经不存在了）。所以现在这句话**屏上那一半没有了**，
+    //    只剩下面这一条：可访问性树里那份「（必填）」。
     //
     // ⚠️ 光加一个裸的 `<span>*</span>` **不算做完**：读屏软件念一个孤零零的星号，
     //    听的人既不知道它什么意思，也不知道它在修饰哪一格。所以每一格的标签里
@@ -1587,29 +1598,24 @@ describe('登录这道门', () => {
     //    气泡抢先弹出来，把本仓库那几句自己写的中文提示挤掉（`checkUsername` /
     //    `checkEmail` / `checkPassword`）。最后一句钉着"没人把它加回来"。
     //
-    // ★ 变异①：删掉 `<p className="login-hint">` 那一行 → 红在"屏上那句解释"。
+    // ★ 变异①（这一轮跑过）：把某一格 `.login-star` 里的 `*` 去掉 →
+    //   红在下面那句 `expect(name).toContain('*')`（`star?.textContent` 也红）。
     // ★ 变异②：只留裸 `<span>*</span>`（把 `.login-sr` 那半截删掉）→ 红在
     //   「标签里有读得出的'必填'」。
     // ★ 变异③：把 `.login-sr` 换成 `display: none`（jsdom 里查不出来）——
     //   这一条**拦不住**，只有 styles.css 里那段注释知道。写在这儿免得下一个人
     //   以为这条测试把它也守住了。
+    //
+    // ⚠️ 原来这里还列着一条变异「删掉 `<p className="login-hint">` 那一行 → 红在
+    //    屏上那句解释」。那句被用户删了，元素和那条变异一起走。
     meUser = null
     await renderApp()
 
-    // ① 屏上那句解释：**看得见的字**，而且位置在字段**之前**（看到星号时不用回头找）。
-    //    它在 `.login-sub` 后面 —— 用 `nextElementSibling` 钉住这个位置关系，
-    //    不然"解释被挪到屏外/挪到折叠后面"这种改法这条测试是看不见的。
-    const sub = container.querySelector('.login-sub')
-    const hint = container.querySelector('.login-hint')
-    expect(hint).toBeTruthy()
-    expect(sub?.nextElementSibling).toBe(hint)
-    expect(hint?.textContent).toContain('*')
-    expect(hint?.textContent).toContain('都得填')
-    // 它是给眼睛看的，**不能**借 `.login-sr` 那套（那套屏上什么都不显示）——
-    // jsdom 没有版面，查不出"看不看得见"，能查的只是"有没有被标成隐藏"。
-    expect(hint?.classList.contains('login-sr')).toBe(false)
+    // ⚠️ 这里原来是 ①：钉着屏上那句解释（`.login-hint`）的**字和位置**，以及
+    //    "它必须真的看得见"（不能借 `.login-sr` 那套藏起来）。那句被用户删了，
+    //    元素和那段断言一起走 —— `LoginPage.tsx` 标题下面记着这件事的代价。
 
-    // ② 三格各有一份「必填」的可读等价物，星号自己则是 `aria-hidden` 的
+    // 三格各有一份「必填」的可读等价物，星号自己则是 `aria-hidden` 的
     await switchToSignup()
     /** 读屏软件听到的那一格名字 = 它的 `<label>` 的文字。
      *  名字/邮箱那两格的 label 是**包着** input 的，密码那格是 `htmlFor` 配对的 ——
