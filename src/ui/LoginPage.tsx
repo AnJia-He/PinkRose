@@ -41,7 +41,7 @@ export function LoginPage({ onDone }: Props) {
         // 邮箱只在这一条路上要。放进 busy 之后是因为它排在上面两条校验后面：
         // 名字和密码都没问题才值得提邮箱，否则用户一次只看到一条提示。
         const em = checkEmail(email)
-        if (!em.ok) { setError(em.message); setBusy(false); return }
+        if (!em.ok) { setError(em.message); return }
         await signup({ username: u.value, email: em.value, password: p.value })
       } else {
         // 密码送**原话**：它可能带空格、可能是中文，而任何一种"顺手归一化"
@@ -54,6 +54,21 @@ export function LoginPage({ onDone }: Props) {
       // 原样显示。**不清空任何输入框** —— 最气人的一种失败是密码输错一次、
       // 表单被清空，用户得从头再打一遍。
       setError(err instanceof Error ? err.message : '出了点问题，再试一次')
+    } finally {
+      // ⚠️ 复位在 `finally` 里 —— **成功那一路也要复位**。直觉上"成功之后
+      // 就该走了、复位不复位无所谓"，但有一条真能走到的死路：
+      // `onDone()` 只是让 App 去问一次 `/api/me`，而**那一次失败也返回 null**
+      // （服务器重启、网络瞬断），于是 App 又渲染回登录页 —— 而 React 在
+      // 同一个位置**复用组件 state**，busy 还是 true。用户看到的是一个
+      // 永远转下去的「稍等…」，唯一的出路是刷新页面。
+      //
+      // 一个永远转的按钮比一句报错更糟：报错至少说了"不行"，它连"不行"
+      // 都没说 —— 用户不知道要不要等。复位之后最坏也只是"回到一个可以
+      // 再点一次的登录页"，而用户打过的字还在。
+      //
+      // 代价：复位到 App 认出登录之间，按钮会短暂地亮回来（本地几毫秒）。
+      // 那时再点一下会多发一次登录（幂等）或注册（会回一句"这个名字已经
+      // 有人用了"）—— 比"永远卡住"轻得多。
       setBusy(false)
     }
   }

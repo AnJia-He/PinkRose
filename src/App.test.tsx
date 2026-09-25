@@ -132,6 +132,8 @@ let root: Root
 const LOGGED_IN = { id: 1, username: '小明', email: 'a@b.com' }
 /** 后端此刻认不认人。null = 没登录（`/api/me` 回 401）。 */
 let meUser: { id: number; username: string; email: string } | null = LOGGED_IN
+/** `/api/me` 这一路单独坏掉（登录成了、但紧接着那一次问不出"我是谁"）。 */
+let meFails = false
 let fetchMock: ReturnType<typeof vi.fn>
 
 function jsonResponse(body: unknown, status = 200) {
@@ -199,8 +201,11 @@ beforeEach(() => {
   //   这一整个文件测的是修图那条线，它的前提就是"已经登录"（后端现在只认
   //   登录过的人，不认就直接 401）。要测登录页本身的那几条把 `meUser` 置空。
   meUser = LOGGED_IN
+  meFails = false
   fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/me') {
+      // `meFails` 演的是"登录/注册成功之后那一次问不出来"（服务器重启、网络瞬断）
+      if (meFails) return jsonResponse({ error: { code: 'UNAUTHORIZED', message: '先登录一下' } }, 401)
       return meUser
         ? jsonResponse({ user: meUser })
         : jsonResponse({ error: { code: 'UNAUTHORIZED', message: '先登录一下' } }, 401)
@@ -957,5 +962,26 @@ describe('登录这道门', () => {
 
     expect(container.textContent).toContain('密码至少 8 位')
     expect(calledWith('/api/login')).toHaveLength(0)
+  })
+
+  it('⚠️ 登录成了、紧接着那一次 /api/me 失败 → 按钮不能还是「稍等…」', async () => {
+    // 这条钉的是一个**死胡同**，不是"体验差"：onDone() 只是让 App 去问一次
+    // /api/me，那一次失败也返回 null，于是 App 又渲染回登录页 —— 而 React 在
+    // 同一个位置**复用组件 state**，登录页里那个 busy 还是 true。
+    // 用户看到的是一个永远转下去的「稍等…」，唯一的出路是刷新页面。
+    //
+    // 项目规矩：凡是说"不行"的地方都要同时说"那怎么办"。一个永远转的按钮
+    // 连"不行"都没说 —— 用户不知道要不要等，比报错更糟。
+    meUser = null
+    meFails = true
+    await renderApp()
+    await fillAndSubmit('小明', 'password123')
+
+    const submit = container.querySelector('.login-submit') as HTMLButtonElement
+    expect(submit.disabled).toBe(false)          // 不能卡在"忙"上
+    expect(submit.textContent).toContain('登录')   // 而且要重新说清这一步是干什么的
+    // 用户打过的字也得还在：让他从头再打一遍密码，是最气人的一种失败
+    expect((container.querySelectorAll<HTMLInputElement>('.login-field input')[0]).value)
+      .toBe('小明')
   })
 })
