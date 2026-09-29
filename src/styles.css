@@ -207,13 +207,24 @@ button {
   transition: background-color var(--dur-1) ease, border-color var(--dur-1) ease,
               color var(--dur-1) ease, transform var(--dur-1) var(--ease);
 }
-button:hover:not(:disabled) { background: var(--hover); border-color: #4a515e; }
-button:active:not(:disabled) { transform: scale(.97); }
+/* ⚠️ 下面这三条裸按钮的默认态**必须走 `:where()`**（它把特异性降到 0，
+   整条选择器只剩 `button` 那一点）。
+   2026-09-30 踩过一次，是真 bug：原来写成 `button:hover:not(:disabled)`，
+   特异性 **0-2-1** —— 比 `.nav-item.on`（0-2-0）还高。于是鼠标停在左栏当前
+   那一项上时，这条通用规则把它的粉底顶掉，换成 `--hover` 的深灰底，而字色
+   还是 `--accent-ink` 那个近黑 —— **深色的字压在深灰的底上，几乎读不出来**。
+   受害者不止一个：`.bubble-jump`（0-2-0）、`.presets button`、`button.primary`
+   全都被同一条压过，只是那几处的字色没跟着变，所以没那么显眼。
+   `:where()` 之后，任何带类名的规则都能盖过它，以后加新按钮不必再数特异性。
+   ⚠️ `.nav-item.on` 和 `.nav-item:hover` 特异性相同（0-2-0），靠**文件顺序**
+   分胜负（`.on` 在后）—— 别把 `.on` 那条挪到 `:hover` 前面去。 */
+button:where(:hover):where(:not(:disabled)) { background: var(--hover); border-color: #4a515e; }
+button:where(:active):where(:not(:disabled)) { transform: scale(.97); }
 /* 禁用要**看得见**：原来只有部分按钮自己有 :disabled 规则，别的按下去没反应
    却长得和能点的一模一样 —— 用户会以为是自己没点准。全站统一一档。 */
-button:disabled { opacity: .45; cursor: default; }
+button:where(:disabled) { opacity: .45; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-button.primary:hover:not(:disabled) { background: var(--rose-500); border-color: var(--rose-500); }
+button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500); border-color: var(--rose-500); }
 
 /* 画布那一格。它同时是"还没选图"时的空舞台。
    ⚠️ 底色不是纯 --bg：纯平的黑会把照片以外的部分读成"没画完"。
@@ -697,42 +708,55 @@ button.primary:hover:not(:disabled) { background: var(--rose-500); border-color:
   background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
-.gallery-title { margin: 0; font-size: 20px; }
+.gallery-title { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
 /* 输入框照 .chat-input input 那套（底色 var(--bg)、边框 var(--line-2)），
    主色只在聚焦时出现 —— 这一页的重点是那些图，不是搜索框。 */
 .gallery-search {
-  flex: 1; min-width: 200px;
-  background: var(--bg); color: var(--text); font: inherit;
-  border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 12px;
+  flex: 1; min-width: 200px; max-width: 420px;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 14px;
+  border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 9px 12px;
+  transition: border-color var(--dur-1) ease, box-shadow var(--dur-1) ease;
 }
-.gallery-search:focus { outline: none; border-color: var(--accent); }
+.gallery-search:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(232, 138, 171, .16);
+}
+.gallery-search::placeholder { color: var(--muted-2); }
 
-.gallery-day { margin-top: 18px; }
-/* 日期比图小、比图淡：它是**分组线**，不是内容。 */
-.gallery-day-title { margin: 0 0 10px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.gallery-day { margin-top: var(--sp-5); }
+/* 日期比图小、比图淡：它是**分组线**，不是内容。
+   它右边拖一条横线到尽头 —— 一列图在一片深色里没有横向的锚，分组会糊在一起。 */
+.gallery-day-title {
+  display: flex; align-items: center; gap: var(--sp-3);
+  margin: 0 0 var(--sp-3); font-size: 13px; font-weight: 500; color: var(--muted);
+}
+.gallery-day-title::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .gallery-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--sp-3);
 }
 
 /* 一格先**给图留好方框**（aspect-ratio）：图是 loading="lazy" 一张张跳出来的，
    不留框的话每张加载完都会把后面的格子推一下，60 张就是 60 次抖动。 */
 .gallery-cell {
   display: block; width: 100%;
-  padding: 0; border: 0; border-radius: 8px; background: none;
+  padding: 0; border: 0; border-radius: var(--r-sm); background: none;
   text-align: left; cursor: pointer;
 }
 /* 键盘用户要一路 Tab 过 60 格，得看得见自己停在哪。 */
 .gallery-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .gallery-thumb {
   display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: cover;
-  border: 1px solid var(--line-2); border-radius: 8px; background: var(--raised);
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--raised);
+  transition: border-color var(--dur-1) ease, transform var(--dur-2) var(--ease);
 }
-.gallery-cell:hover .gallery-thumb { border-color: var(--accent); }
+/* 悬停时格子**轻轻抬起来一点**：60 张平铺的方图里，指针落在哪一格
+   是件看不清的事（尤其深色底上的暗照片）。1.5% + 一道粉边就够指路了。 */
+.gallery-cell:hover .gallery-thumb { border-color: var(--accent); transform: translateY(-2px); }
 /* 名字可能是用户起的长名字：撑歪格子会把整行挤变形，所以一行截断。 */
 .gallery-name {
-  display: block; margin-top: 6px; font-size: 12px; color: var(--muted);
+  display: block; margin-top: var(--sp-2); font-size: 12px; color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .gallery-cell:hover .gallery-name { color: var(--text); }
@@ -740,8 +764,8 @@ button.primary:hover:not(:disabled) { background: var(--rose-500); border-color:
 /* ⚠️ 那个圈**必须转**（§3.5）：没有它，用户会以为到底了，而不是"还在加载"。
    纯 CSS 画一个（零依赖、也不用引一张图），转得慢一点 —— 它转得快会像卡住。 */
 .gallery-more {
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 18px 0; color: var(--muted); font-size: 13px;
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  padding: var(--sp-5) 0; color: var(--muted); font-size: 13px;
 }
 .gallery-more::before {
   content: ''; width: 14px; height: 14px; border-radius: 50%;
@@ -749,16 +773,28 @@ button.primary:hover:not(:disabled) { background: var(--rose-500); border-color:
   animation: gallery-spin .8s linear infinite;
 }
 @keyframes gallery-spin { to { transform: rotate(360deg); } }
-.gallery-end { margin: 0; padding: 18px 0 0; text-align: center; color: var(--muted); font-size: 13px; }
+/* 到底了。**它是一句话，不是一块内容** —— 原来居中挂在整页宽的正中间，
+   左边那一列作品还在的时候，它孤零零飘在右边一大片空地上。改成居中 + 两侧短线。 */
+.gallery-end {
+  display: flex; align-items: center; gap: var(--sp-4);
+  margin: var(--sp-6) 0 0; color: var(--muted-2); font-size: 12.5px;
+}
+.gallery-end::before, .gallery-end::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 
 /* 三种"还没有图"的状态：**都没有图，说的却是三件不同的事**（还没拿到 /
    一张都没有 / 筛掉了），所以各是各的句子，别合成一句。
    `.gallery-hint` 也出现在"取列表失败"那条下面（§3.7 的出路那句话）——
    所以它自己带颜色，不靠 `.gallery-empty` 继承。 */
-.gallery-loading, .gallery-none { margin: 24px 0 0; color: var(--muted); }
-.gallery-empty { margin-top: 48px; text-align: center; color: var(--muted); }
-.gallery-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
-.gallery-error { margin: 24px 0 0; color: var(--danger); }
+.gallery-loading, .gallery-none { margin: var(--sp-5) 0 0; color: var(--muted); }
+.gallery-empty {
+  margin-top: 18vh; text-align: center; color: var(--text);
+  animation: welcome-in .5s var(--ease) both;
+}
+/* "还没有作品"是**这一页的主句**：它原来和下面那句小字一样大、一样灰，
+   于是整屏看上去只是"没加载出来"。两句拉开档次才读得出"这是一句结论"。 */
+.gallery-empty p:first-child { margin: 0; font-size: 17px; }
+.gallery-hint { margin: var(--sp-2) 0 0; font-size: 13px; color: var(--muted); }
+.gallery-error { margin: var(--sp-5) 0 0; color: var(--danger); }
 
 /* ── 作品详情页（Task 12）：这张图怎么来的 ──────────────────────────
    ⚠️ **`.detail` 必须自己滚**（下面那条 overflow-y: auto），和 `.gallery` 同一条规矩：
@@ -774,13 +810,18 @@ button.primary:hover:not(:disabled) { background: var(--rose-500); border-color:
 }
 
 .detail-head {
-  display: flex; align-items: center; gap: 12px;
-  padding: 16px 0 12px; margin-bottom: 16px;
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-4) 0 var(--sp-3); margin-bottom: var(--sp-4);
+  background: var(--bg);
   border-bottom: 1px solid var(--line);
 }
+/* 返回 + 名字：返回是**路径**，不是内容，所以它比名字小一档、淡一档。 */
+.detail-back { flex: none; border-color: transparent; background: transparent; color: var(--muted); }
+.detail-back:hover { background: var(--hover); color: var(--text); border-color: transparent; }
 /* 名字可能是用户起的长名字，也可能长到把「改名」挤出屏幕 —— 一行截断。 */
 .detail-name {
-  flex: 1; min-width: 0; margin: 0; font-size: 20px;
+  flex: 1; min-width: 0; margin: 0; font-size: 20px; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .detail-rename { flex: none; }
@@ -788,67 +829,87 @@ button.primary:hover:not(:disabled) { background: var(--rose-500); border-color:
 .rename-input {
   flex: 1; min-width: 0;
   background: var(--bg); color: var(--text); font: inherit; font-size: 18px;
-  border: 1px solid var(--accent); border-radius: 8px; padding: 6px 12px;
+  border: 1px solid var(--accent); border-radius: var(--r-sm); padding: 6px 12px;
+  box-shadow: 0 0 0 3px rgba(232, 138, 171, .16);
 }
 .rename-input:focus { outline: none; }
 
-/* 大图。**不写死尺寸**：真照片是什么比例都有，宽高两条都封顶、由 object-fit 兜底。 */
+/* 大图。**不写死尺寸**：真照片是什么比例都有，宽高两条都封顶、由 object-fit 兜底。
+   和修图页那张一个待遇（投影 + 圆角）：同一张图在两个屏幕上不该长得像两件事。
+   ⚠️ `max-height` 是 vh 不是 %：`.detail` 是个会滚的长列表，"父元素多高"
+   在这儿没有意义（照片该按**窗口**多高来定，不是按这一页多长）。 */
 .detail-image {
-  display: block; margin: 0 auto; max-width: 100%; max-height: 60vh;
-  border-radius: 8px; background: var(--raised);
+  display: block; margin: 0 auto; max-width: 100%; max-height: 68vh;
+  border-radius: var(--r-md); background: var(--raised); box-shadow: var(--shadow-2);
 }
 
 .detail-actions {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin-top: 16px;
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  margin-top: var(--sp-4);
 }
 /* 「下载到我的电脑」是个 <a>（`download` 属性只有真链接才带得动），
-   所以按 button.primary 的样子手工上一套主色。 */
+   所以按 button.primary 的样子手工上一套主色 —— 连悬停和按下也要，
+   否则这一页上它和旁边那些 <button> 的手感是两回事。 */
 .detail-download {
-  display: inline-block; text-decoration: none;
-  background: var(--accent); color: var(--accent-ink); border-radius: var(--r-sm); padding: 7px 14px;
+  display: inline-block; text-decoration: none; font-weight: 600;
+  background: var(--accent); color: var(--accent-ink);
+  border-radius: var(--r-sm); padding: 8px 16px;
+  transition: background-color var(--dur-1) ease;
 }
+.detail-download:hover { background: var(--rose-500); }
 /* 删除确认**就地说**，不弹窗：一句"删了就找不回来了" + 两个按钮。
    ⚠️ 里面**不许**出现"你电脑上那份还在"这类安慰 —— 服务器不可能知道
-   用户本地有没有那张图（§3.5）。样式上它是一句话加两个按钮，不是一整屏。 */
+   用户本地有没有那张图（§3.5）。样式上它是一句话加两个按钮，不是一整屏。
+   给它一块自己的底：它是**一个正在问你的问题**，和旁边那些"点一下就完事"
+   的按钮不是一类东西。 */
 .detail-confirm {
-  display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px;
+  display: inline-flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; font-size: 13px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--danger); border-radius: var(--r-sm);
+  background: var(--danger-bg);
 }
-.detail-delete, .detail-confirm button { padding: 6px 12px; }
-.detail-loading { margin: 24px 0 0; color: var(--muted); }
-.detail-error { margin: 24px 0 0; color: var(--danger); }
+.detail-confirm button:first-of-type { border-color: var(--danger); color: var(--danger); }
+.detail-delete:hover { border-color: var(--danger); color: var(--danger); }
+.detail-loading { margin: var(--sp-5) 0 0; color: var(--muted); }
+.detail-error { margin: var(--sp-5) 0 0; color: var(--danger); }
 /* §3.7 的"那怎么办"那句话 —— 和 `.gallery-hint` 同一套观感：同一句话在两个页面上
    （作品页「取列表失败」、详情页「打不开这一张」），不该长得像两件事。
    自己带颜色，别指望从 `.detail-error` 继承。 */
-.detail-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+.detail-hint { margin: var(--sp-2) 0 0; font-size: 13px; color: var(--muted); }
 
 /* ⚠️ **两栏永远是两栏**（§3.5.1）：调色是配方（能带走），AI 编辑是这张图的经历
    （带不走）。窄屏只是**排成一列**，不是合成一个盒子 —— 盒子的个数不许变。 */
-.how { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 24px; }
-.how-title { grid-column: 1 / -1; margin: 0; font-size: 20px; }
+.how { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); margin-top: var(--sp-6); }
+.how-title { grid-column: 1 / -1; margin: 0 0 var(--sp-1); font-size: 20px; font-weight: 600; }
 
 .recipe-box {
-  border: 1px solid var(--line-2); border-radius: 10px;
-  background: var(--panel); padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--panel); padding: var(--sp-4) var(--sp-5) var(--sp-5);
   min-width: 0;
 }
-.recipe-box h3 { margin: 0 0 4px; font-size: 15px; }
+.recipe-box h3 { margin: 0 0 var(--sp-1); font-size: 15px; font-weight: 600; }
 /* 这一句是**两栏为什么分开**的说明书，不是装饰 —— 别删。 */
-.recipe-note { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+.recipe-note { margin: 0 0 var(--sp-4); font-size: 12.5px; color: var(--muted); }
 
-.recipe-params { list-style: none; margin: 0 0 12px; padding: 0; }
+.recipe-params { list-style: none; margin: 0 0 var(--sp-4); padding: 0; }
 .recipe-params li {
-  display: flex; justify-content: space-between; gap: 12px;
-  padding: 3px 0; font-size: 13px;
+  display: flex; justify-content: space-between; gap: var(--sp-3);
+  padding: 6px 0; font-size: 13px;
+  border-bottom: 1px solid var(--line);
 }
+.recipe-params li:last-child { border-bottom: 0; }
 .recipe-param-name { color: var(--muted); }
-.recipe-param-value { font-variant-numeric: tabular-nums; }
+/* 表里**只有真的改过的那几条**（见 WorkDetailPage 那段），所以每个数字
+   都是这一页要讲的重点 —— 用主色，不是跟标签一样的灰。 */
+.recipe-param-value { font-variant-numeric: tabular-nums; color: var(--rose-300); font-weight: 600; }
 
 .recipe-apply { width: 100%; }
-.recipe-apply:disabled { opacity: .5; cursor: default; }
-.recipe-hint { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
-.recipe-edits { margin: 0; padding-left: 18px; font-size: 13px; }
-.recipe-edits li { margin: 4px 0; }
+.recipe-hint { margin: var(--sp-2) 0 0; font-size: 12px; color: var(--muted); }
+.recipe-edits { margin: 0; padding-left: var(--sp-5); font-size: 13px; }
+.recipe-edits li { margin: var(--sp-1) 0; }
+/* 那个点默认是一颗灰豆子；它是"这一栏列出来的每一件事"的记号，
+   和调色那栏的粉数字是同一层意思，所以用同一个色。 */
+.recipe-edits li::marker { color: var(--accent); }
 .recipe-empty { margin: 0; font-size: 13px; color: var(--muted); }
 
 @media (max-width: 640px) {

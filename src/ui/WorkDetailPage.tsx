@@ -117,6 +117,15 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
 
   const name = workName(work, now)
   const { params, edits } = work.recipe
+  /** 这一张**真的改过**的那几个参数。
+   *
+   *  ⚠️ 原来八条全列，没动过的显示一个「—」。那条注释自己写着"0 就不列了 ——
+   *  一排 0 只是噪音，用户要的是'改过什么'"，可代码给的是破折号，也就是**照样列**。
+   *  这一页要回答的是"这张图怎么来的"，答案就是"改过这几样"；
+   *  六个「—」夹着两个数字，读的人得自己从噪音里挑。
+   *  （`PARAM_KEYS` 的顺序保留 —— 让"改过的"按调色面板那个固定顺序出现，
+   *   而不是按用户点的先后乱跳。） */
+  const changed = PARAM_KEYS.filter(k => params[k] !== 0)
 
   return (
     <section className="detail">
@@ -181,17 +190,20 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
         <section className="recipe-box">
           <h3>调色</h3>
           <p className="recipe-note">这一套能套到别的图上</p>
-          <ul className="recipe-params">
-            {PARAM_KEYS.map(k => (
-              <li key={k}>
-                <span className="recipe-param-name">{PARAM_LABELS[k]}</span>
-                <span className="recipe-param-value">
-                  {/* 0 就不列了 —— 一排 0 只是噪音，用户要的是"改过什么" */}
-                  {params[k] === 0 ? '—' : (params[k] > 0 ? `+${params[k]}` : String(params[k]))}
-                </span>
-              </li>
-            ))}
-          </ul>
+          {changed.length === 0
+            ? <p className="recipe-empty">这一张是原样，没有调过色。</p>
+            : (
+              <ul className="recipe-params">
+                {changed.map(k => (
+                  <li key={k}>
+                    <span className="recipe-param-name">{PARAM_LABELS[k]}</span>
+                    <span className="recipe-param-value">
+                      {params[k] > 0 ? `+${params[k]}` : String(params[k])}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           <button className="recipe-apply" disabled={!canApply} onClick={() => onApply(params)}>
             把这套调色套用到我正在改的图
           </button>
