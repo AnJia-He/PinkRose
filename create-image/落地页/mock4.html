@@ -83,8 +83,11 @@ h2 .dim{color:var(--ink-3)}
   background:rgba(10,11,14,.5);backdrop-filter:blur(18px) saturate(150%);
   border-bottom:1px solid rgba(255,255,255,.08)}
 .nav .wrap{display:flex;align-items:center;gap:36px;height:68px}
-.brand{display:flex;align-items:center;gap:9px;color:#fff;font-weight:500;font-size:15.5px;letter-spacing:.01em}
-.brand img{width:20px;height:20px;display:block;flex:none}
+.brand{display:flex;align-items:center;gap:13px;color:#fff;font-weight:500;font-size:15.5px;letter-spacing:.01em}
+/* ⚠️ 36px 是**用户定的**，2026-09-29。他看过 32 / 36 / 40 三档，要「大一点」那个。
+   别按 App 顶栏那 26px 往回缩 —— 落地页是门面，标志值得大一点。
+   （26px 是**下限**，不是目标：项目记忆（logo）里写着彩色版再小粉色就糊成一个点。） */
+.brand img{width:36px;height:36px;display:block;flex:none}
 .nav nav{display:flex;gap:4px;margin-left:auto}
 .nav nav a{color:#a9aebb;text-decoration:none;font-size:14px;padding:9px 14px;border-radius:var(--pill);
   transition:color .3s ease}
