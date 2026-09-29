@@ -177,15 +177,29 @@ export default function App() {
    *  屏幕上根本不存在的按钮）。 */
   const [saveFail, setSaveFail] =
     useState<{ blob: Blob | null; name: string; why: string } | null>(null)
+  /** 顶上那条**通报**：这件事没成，把话说给用户，说完可以收走（2026-09-30）。
+   *
+   *  它取代了原来三处 `window.alert`。系统弹窗有两个毛病：它把整页冻住，
+   *  而且长得**不像这个产品的一部分** —— 一个花了一整天做视觉的产品，
+   *  出错时突然跳出一个灰扑扑的系统框，那一下就把"做完了"的感觉打回去了。
+   *
+   *  ⚠️ 它和 `saveFail` 是**两种东西，别合并**：那条横幅是"图还在，先拿到手"，
+   *  自带一个下载按钮，而且**不许被关掉**（关掉用户就真的拿不到那张图了）；
+   *  这条只是通报，「知道了」就该收走。 */
+  const [notice, setNotice] = useState<string | null>(null)
 
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const originalFileRef = useRef<File | null>(null)
   const idRef = useRef(0)
-  /** 每次选图 +1。晚到的卡片结果靠它对号，免得贴到下一张照片上。 */
+  /** 每次选图 +1。只做一件事：**认出"这句提示还该不该挂"** ——
+   *  它和 `myPick` 配对，用来收掉那句"正在看这张照片能改什么…"
+   *  （见 onPick 里的 `settle`）。卡片**算不算数**看的是 `baseSeqRef`，
+   *  不是它 —— 两件事，别合并（理由写在 loadCards 那段）。 */
   const pickIdRef = useRef(0)
-  /** **底图**换过几次。上传 +1、每一次生成式编辑 +1。
-   *  它是"卡片是不是还算数"的那道闸门（见 loadCards）—— 和 pickIdRef 判的
-   *  是两件事：那张说的是"还是同一张照片吗"，这张说的是"还是同一版底图吗"。 */
+  /** **底图**换过几版。上传 +1、每一次生成式编辑 +1。
+   *  它是"卡片是不是还算数"的那道闸门（见 loadCards）——
+   *  「回到这一步」换底图**故意不算**（它换回的是同一张照片的旧版本，
+   *  卡片说的仍然成立，而且跳回原图之后那批卡片恰好又是对的）。 */
   const baseSeqRef = useRef(0)
   /** 用户**这一趟说过的原话**（send / 卡片各写各的）。
    *  模型说拿不准时要把它留到用户点完图 —— 届时"原来那句话"是**那一刻**的那句，
@@ -336,28 +350,34 @@ export default function App() {
    * **失败和超时都不影响任何主功能**，所以它自己不抛、只记日志：抛出去会被
    * `onPick` 的 catch 当成"这张图打不开"，而那根本不是事实。
    *
-   * ⚠️ 两道闸门，判的是**两件不同的事**，缺一不可：
-   *   · `pickIdRef` —— 说的是"还在看同一张照片吗"。少了它，看第一张时发出的
-   *     请求回来时会**贴到第二张照片上**（卡片说的是一张屏幕上已经没有的图）。
-   *   · `baseSeqRef` —— 说的是"这张照片**还是原来那张吗**"。上传和每一次
-   *     生成式编辑都会换掉底图，而卡片是**照着换之前那张算的**：
-   *     "把后面的人去掉"（生成路，一次约 12,900 tokens）在人已经被去掉之后
-   *     还挂在屏上，点一下就是**白花一次钱去改一件已经做完的事**。
+   * ⚠️ 回来时要过一道闸门：**底图还是原来那版吗**（`baseSeqRef`）。
+   * 卡片是照着**上传那一刻那张照片**算的，而它要 11~15 秒才回来 —— 这十几秒里
+   * 用户完全可能已经生成过一版（"把后面那些人去掉"），底图就换了。那时候
+   * 这张卡还挂在屏上，点一下就是**花钱去改一件已经做完的事**（一次约
+   * 12,900 tokens）。
    *
-   *   为什么不是"用户一说话就作废"：参数类的话（"亮一点"）**不换底图**，
-   *   卡片说的仍然成立（后面那两个人还在那儿）。作废的判据必须是**底图变了**，
-   *   不是"用户开口了"。`App.test.tsx` 里那条「卡片落进点选流程」正是这个形状
-   *   —— 用户说过一句拿不准的话，但底图没换，卡片照旧该落地。
+   * 判据是**底图变没变**，不是"用户开没开口"：参数类的话（"亮一点"）不换底图，
+   * 卡片说的仍然成立，照旧该落地。`App.test.tsx` 里那两条一正一反钉着它俩
+   * （「卡片落进点选流程」= 该落地的那半；「底图换过之后」= 该丢掉的那半）。
+   *
+   * ⚠️ **为什么只要一道闸门**：换照片也走 `baseSeqRef`（`onPick` 里那两行 `++`
+   * 挨着写），所以"底图版本没变"**蕴含**"还是同一张照片"。原来这里还挂着
+   * `pickIdRef`，它一次都没单独挡住过东西（两道计数器看着都得维护，实际一道是死的）。
+   * `pickIdRef` 本身留着 —— 它另有用处：收那句"正在看…"提示（见 `onPick` 里的
+   * `settle`）。**那道闸门换不得**：生成式编辑也会 +1 `baseSeq`，拿它当判据的话，
+   * 等卡片期间改一版就会把"正在看…"永远挂在屏上。两件事，两个计数器。
+   *
+   * ⚠️ 「回到这一步」（`onJump`）换底图**故意不算**：它换回的是同一张照片的
+   * 旧版本，卡片说的仍然成立；而且跳回原图之后，那批卡片恰好又是对的。
    */
-  const loadCards = useCallback(async (img: DecodedImage, pickId: number) => {
+  const loadCards = useCallback(async (img: DecodedImage) => {
     const baseSeq = baseSeqRef.current
     try {
       const preview = await prepareForRouting(img.bitmap)
       const s = await postSuggest({ imageDataUrl: preview.dataUrl })
-      // 晚到的那份属于上一张照片（或上一版底图）就丢掉。
       // 用原图而不是画布：此刻 params 还是全零，两者本就一样，
       // 直接用原图省掉一次"画布到底挂上了没"的竞态。
-      if (pickIdRef.current === pickId && baseSeqRef.current === baseSeq) setCards(s.cards)
+      if (baseSeqRef.current === baseSeq) setCards(s.cards)
     } catch (e) {
       console.error(e)
     }
@@ -420,10 +440,10 @@ export default function App() {
       const settle = () => { if (pickIdRef.current === myPick) setSuggesting(false) }
       const timer = setTimeout(settle, SUGGEST_WAIT_MS)
       // `void`：loadCards 自己吞掉所有错（它绝不 reject），这里也不等它。
-      void loadCards(img, myPick).finally(() => { clearTimeout(timer); settle() })
+      void loadCards(img).finally(() => { clearTimeout(timer); settle() })
     } catch (e) {
       console.error(e)
-      alert('这张图打不开，换一张试试')
+      setNotice('这张图打不开，换一张试试')
     } finally {
       setBusy(null)
     }
@@ -567,6 +587,26 @@ export default function App() {
     setParams(target.params)
   }, [history, cancelPick])
 
+  /**
+   * **把此刻画布上这张图导出来**：一个 blob + 一个文件名。
+   *
+   * ★ 抽出来只为**口径只有一份**。分享、下载、保存三条路的开头五句一字不差
+   * （取两个 ref、挡一下没准备好、定格式和画质、拼文件名），分开写的话
+   * `'image/jpeg', 0.95` 这个决定会散在三个地方 —— 哪天要加 PNG 选项或改画质，
+   * 只改一处、另两处静默不一致，而**用户拿到手的会是两种质量**。
+   *
+   * 返回 null = 还没准备好（没画布或没文件）。调用方直接收工。
+   */
+  const exportCurrent = useCallback(async () => {
+    const canvas = canvasElRef.current
+    const file = originalFileRef.current
+    if (!canvas || !file) return null
+    return {
+      blob: await buildExportBlob(canvas, file, 'image/jpeg', 0.95),
+      name: buildFilename(file.name, 'image/jpeg'),
+    }
+  }, [])
+
   // 分享：画布尺寸就是当前 base 的尺寸。调色不缩图（spec §4.4）。
   //
   // 用户在真机上跑完 30 秒那条线后的原话：「下载后用户第一时间是不知道在哪里的」
@@ -581,30 +621,28 @@ export default function App() {
   // 下面 catch 里的"退回下载"**留着**：用户点的是"把图给我"，分享只是其中一种
   // 给法，失败不该让他两手空空（用户明确说过有时候就是不想分享）。
   const onShare = useCallback(async () => {
-    const canvas = canvasElRef.current
-    const file = originalFileRef.current
-    if (!canvas || !file) return
+    if (!canvasElRef.current || !originalFileRef.current) return
     setDelivering('share')
     try {
-      const blob = await buildExportBlob(canvas, file, 'image/jpeg', 0.95)
-      const name = buildFilename(file.name, 'image/jpeg')
+      const out = await exportCurrent()
+      if (!out) return
       try {
-        await shareImage(blob, name)
+        await shareImage(out.blob, out.name)
       } catch (e) {
         // 分享真的失败了（没权限、系统拒绝）。退回下载，至少让他拿得到图。
         // 用户自己取消**不会**走到这儿 —— shareImage 把取消当成正常结束。
         console.error(e)
-        downloadImage(blob, name)
+        downloadImage(out.blob, out.name)
       }
     } catch (e) {
       // 走到这儿只剩一种可能：`buildExportBlob` 自己失败了（图都没做出来），
       // 那时候也没有能退回下载的东西。
       console.error(e)
-      alert('分享失败，再试一次')
+      setNotice('分享失败，再试一次')
     } finally {
       setDelivering(null)
     }
-  }, [])
+  }, [exportCurrent])
 
   // ── 「下载」= 桌面上把图拿到手的唯一一条路（2026-09-30 补）────────────
   //
@@ -621,25 +659,24 @@ export default function App() {
   //    （原来那格空着，理由是"不留一个点了没用的按钮"—— 那个理由对
   //    "点了没反应"成立，对"这是唯一一条拿图的路"不成立。）
   const onDownload = useCallback(async () => {
-    const canvas = canvasElRef.current
-    const file = originalFileRef.current
-    if (!canvas || !file) return
+    if (!canvasElRef.current || !originalFileRef.current) return
     setDelivering('download')
     try {
-      const blob = await buildExportBlob(canvas, file, 'image/jpeg', 0.95)
-      downloadImage(blob, buildFilename(file.name, 'image/jpeg'))
+      const out = await exportCurrent()
+      if (out) downloadImage(out.blob, out.name)
     } catch (e) {
       // 走到这儿只剩一种可能：`buildExportBlob` 自己失败了（图都没做出来）。
-      // 和别处一样走 `say()`：用户此刻正盯着这一屏，说在对话里他看得见。
+      // 和分享那条**说同一句话** —— 用户看到的都是"把图给我"这一件事没成，
+      // 分成两种说法只会让他以为出了两种毛病。
       console.error(e)
-      say('图没能导出来，再点一次「下载」试试。')
+      setNotice('图没能导出来，再试一次')
     } finally {
       setDelivering(null)
     }
-  }, [say])
+  }, [exportCurrent])
 
   // ── 「保存」= 存进作品集（Task 13，§3.4）──────────────────────────────
-  //  // ⚠️ 这条路**一个字节都不下载**。下载挪到作品集里，由用户自己决定要哪张、
+  // ⚠️ 这条路**一个字节都不下载**。下载挪到作品集里，由用户自己决定要哪张、
   //    存到哪 —— 设一个"默认开"的开关很别扭，因为**用户一开始根本不知道有
   //    那么个开关**；顺带也不再偷偷往他的下载文件夹堆东西。
   //
@@ -712,37 +749,39 @@ export default function App() {
   }, [recipeNow, say])
 
   const onSave = useCallback(async () => {
-    const canvas = canvasElRef.current
-    const file = originalFileRef.current
-    if (!canvas || !file) return
+    if (!canvasElRef.current || !originalFileRef.current) return
     setDelivering('save')
     setSaveFail(null)
-    const name = buildFilename(file.name, 'image/jpeg')
     // ⚠️ 声明在 try 外面、留着 null：它同时是"图做出来了没有"的标记，
     //    catch 里要靠它决定能不能给用户一个「下载到电脑」（§6.6 ①）。
-    let blob: Blob | null = null
+    let out: { blob: Blob; name: string } | null = null
     try {
-      blob = await buildExportBlob(canvas, file, 'image/jpeg', 0.95)
+      out = await exportCurrent()
+      if (!out) return
       if (savedId !== null) {
         // 同一张照片改过好几遍了 —— 问一句。不问的话改了 5 遍就是 5 张
         // 几乎一样的图，作品集立刻没法看（§3.4）。
         // ⚠️ **顺手把配方一起拍下来**（终审 M4）：他回答之前可能又改了一版，
         //    那时候现读的就是"新那套配旧那张图"。
-        setAsking({ blob, name, recipe: recipeNow() })
+        setAsking({ blob: out.blob, name: out.name, recipe: recipeNow() })
         return
       }
-      await saveOnce(blob, null)
+      await saveOnce(out.blob, null)
     } catch (e) {
       console.error(e)
       // ★★ §6.6 ①：那一刻他的目的是"拿到图去发朋友圈"。存不进去是**我们这边的
       //    限制**，不该让他连图都拿不到。所以把 blob 留下来，界面上出现一个
       //    能下载的按钮。`blob` 还是 null 就是**另一种失败**（图都没做出来），
       //    那种情况下没有东西可以给，说的话也不一样 —— 见下面那段。
-      setSaveFail({ blob, name, why: e instanceof Error ? e.message : '没存进去' })
+      //    （`out` 为 null 时那个 `name` 永远不会被读到：没图就没有下载按钮。）
+      setSaveFail({
+        blob: out?.blob ?? null, name: out?.name ?? '',
+        why: e instanceof Error ? e.message : '没存进去',
+      })
     } finally {
       setDelivering(null)
     }
-  }, [savedId, saveOnce, recipeNow])
+  }, [savedId, saveOnce, recipeNow, exportCurrent])
 
   /** 回答「上次那张要替换掉吗」：`replaceId` 非 null = 替换，null = 再存一张。
    *  两条回答走**同一段代码**，只有那一个参数不同 —— 分开写两份的话，
@@ -882,6 +921,18 @@ export default function App() {
             )}
           </header>
 
+          {/* 通报条（取代了原来的 window.alert）。它和下面那两条横幅是**三种东西**：
+              这条是"这件事没成"的通报、可以收走；`.ask` 是**在问用户一句话**；
+              `.save-fail` 是"图还在，先拿到手"（自带下载按钮，而且不许关）。
+              三块都住在顶栏下面、都按"一整条横幅"排，所以它们并排出现时读起来
+              是一列消息，不是三坨按钮。 */}
+          {notice && (
+            <div className="notice">
+              <p>{notice}</p>
+              <button onClick={() => setNotice(null)}>知道了</button>
+            </div>
+          )}
+
           {/* 「上次那张要替换掉吗？」（§3.4）—— 同一张照片存第二次才会出现。
               ⚠️ **不放进 `.topbar`**：那一条是 `justify-content: space-between`
               的一行，塞进去会把品牌名和那两个按钮挤成一团（`check:layout` 量的
@@ -959,6 +1010,7 @@ export default function App() {
                   picking={picking}
                   marker={marker}
                   onPickPoint={onPickPoint}
+                  onFail={setNotice}
                 />
               </div>
               <ChatPanel

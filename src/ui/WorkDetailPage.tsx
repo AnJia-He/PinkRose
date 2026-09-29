@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getWork, renameWork, deleteWork, fullUrl } from '../api/works'
 import { workName, type WorkMeta, type WorkDetail } from '../../shared/works.ts'
 import { buildFilename } from '../export/save'
-import { PARAM_LABELS, PARAM_KEYS, type Adjustments } from '../../shared/adjustments.ts'
+import { PARAM_LABELS, PARAM_KEYS, isChanged, type Adjustments } from '../../shared/adjustments.ts'
 
 /**
  * 详情页那个「下载到我的电脑」下下来叫什么。
@@ -124,8 +124,10 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
    *  这一页要回答的是"这张图怎么来的"，答案就是"改过这几样"；
    *  六个「—」夹着两个数字，读的人得自己从噪音里挑。
    *  （`PARAM_KEYS` 的顺序保留 —— 让"改过的"按调色面板那个固定顺序出现，
-   *   而不是按用户点的先后乱跳。） */
-  const changed = PARAM_KEYS.filter(k => params[k] !== 0)
+   *   而不是按用户点的先后乱跳。）
+   *  ⚠️ "动过没有"走 `isChanged` —— 微调面板点亮滑块问的是同一件事，
+   *  两处各判一次的话，哪天判据变了会出现**两个屏幕对同一张图说法不一致**。 */
+  const changed = PARAM_KEYS.filter(k => isChanged(params, k))
 
   return (
     <section className="detail">
@@ -174,7 +176,11 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
         {confirming ? (
           <span className="detail-confirm">
             <span>删掉作品集里的这一份吗？删了就找不回来了。</span>
-            <button onClick={() => void doDelete()} disabled={busy}>删掉</button>
+            {/* ⚠️ 这一颗带类名（`detail-delete`，和外面那颗开启确认的是同一个），
+                样式才认得出"这是那个危险动作" —— 原来靠的是 `:first-of-type`
+                这种 DOM 位置，把「取消」挪到前面（很常见的一次改动）就会让
+                红/灰**静静地对调**，测试和评审都不会红。 */}
+            <button className="detail-delete" onClick={() => void doDelete()} disabled={busy}>删掉</button>
             <button onClick={() => setConfirming(false)}>取消</button>
           </span>
         ) : (

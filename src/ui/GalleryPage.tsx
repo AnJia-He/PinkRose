@@ -67,7 +67,10 @@ export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
 
       {works && works.length === 0 && (
         <div className="gallery-empty">
-          <p>还没有作品。</p>
+          {/* ⚠️ 那个类名不是多余的：主句和下面那句小字**必须拉开档次**（CSS 里
+              那句"整屏看上去只是'没加载出来'"就是为它写的），而按 `p:first-child`
+              那种 DOM 位置去选，谁在前面加一句就当场错位。 */}
+          <p className="gallery-empty-title">还没有作品。</p>
           {/* §3.7：告诉用户"不行"的地方，都要同时告诉他"那怎么办" */}
           <p className="gallery-hint">左边点「修图」，做一张试试。</p>
         </div>

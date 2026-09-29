@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react'
 import { TonePipeline } from '../render/pipeline'
 import type { DecodedImage } from '../image/decode'
 import type { NormPoint } from '../image/mark'
@@ -17,13 +17,16 @@ type Props = {
   /** 用户点的那个点，0~1（**相对照片左上角**）。null = 还没点。 */
   marker?: NormPoint | null
   onPickPoint?: (x: number, y: number) => void
+  /** 画面这条路出了事，把**要说给用户的那句话**交出去（由 App 决定在哪儿显示）。
+   *  组件自己不弹窗、不存状态：它只负责"把话说清楚"，说不说、在哪儿说是上层的事。 */
+  onFail?: (message: string) => void
 }
 
 /** 画布相对 wrapper 的盒子，单位像素。红圈按它定位（理由见下面那段注释）。 */
 type CanvasBox = { left: number; top: number; width: number; height: number }
 
 /**
- * 渲染链路的统一失败出口：控制台留痕 + 用户可见的 alert。
+ * 渲染链路的三条失败路径 → **说给用户的那句话**。纯函数，没有副作用。
  *
  * 三条路径共用它，但**说给用户的话必须分开**——它们该做的事完全不同：
  *   1. 浏览器拿不到 WebGL2   → 换个浏览器就好
@@ -34,31 +37,17 @@ type CanvasBox = { left: number; top: number; width: number; height: number }
  * **分不清是哪一种**，白白多猜了一轮。而且第 2 种那句话里带着
  * 照片的真实尺寸和设备的真实上限——那是排查时最有用的一条线索，别丢。
  */
-/** 上一句已经弹过的提示。用来防重复弹窗：开发模式下 React 会把 effect 跑两遍，
- *  **同一句话弹两次**既莫名其妙又像出了两个错。内容不同的错照弹。 */
-let lastShown = ''
-
-function fail(e: unknown) {
-  console.error(e)
+export function describeFailure(e: unknown): string {
   const msg = e instanceof Error ? e.message : ''
-  let say: string
-  if (msg.includes('不支持 WebGL2')) {
-    say = '这个浏览器打不开 WebGL2。请换 Chrome 或 Safari 打开。'
-  } else if (msg.includes('超出本浏览器的画布上限')) {
-    say = `${msg}。换一张小一点的照片试试。`
-  } else if (msg.includes('上下文丢失')) {
-    say = '这张照片太大，浏览器画到一半扛不住了。换一张小一点的照片试试。'
-  } else {
-    say = '画面出问题了。先刷新一下；还不行就换 Chrome 或 Safari。'
-  }
-  if (say === lastShown) return
-  lastShown = say
-  alert(say)
+  if (msg.includes('不支持 WebGL2')) return '这个浏览器打不开 WebGL2。请换 Chrome 或 Safari 打开。'
+  if (msg.includes('超出本浏览器的画布上限')) return `${msg}。换一张小一点的照片试试。`
+  if (msg.includes('上下文丢失')) return '这张照片太大，浏览器画到一半扛不住了。换一张小一点的照片试试。'
+  return '画面出问题了。先刷新一下；还不行就换 Chrome 或 Safari。'
 }
 
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
 export default function Canvas({
-  image, params, originalPreview, canvasRef, picking, marker, onPickPoint,
+  image, params, originalPreview, canvasRef, picking, marker, onPickPoint, onFail,
 }: Props) {
   const innerRef = useRef<HTMLCanvasElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -68,20 +57,35 @@ export default function Canvas({
   /** 画布相对 wrapper 的盒子。红圈的定位基准 —— 见下面那个 effect 里的理由。 */
   const [box, setBox] = useState<CanvasBox | null>(null)
 
+  /** 画面这条路出事时走这里：控制台留痕 + 把话说给上层（App 决定显示在哪）。
+   *
+   *  ⚠️ 它出现在三个 effect 的依赖数组里。今天传进来的 `onFail` 是 App 的
+   *  `setNotice`（React 保证稳定），所以这条回调的身份永远不变、effect 不会
+   *  重跑；哪天有人传一个现造的箭头函数进来，**代价是 pipeline 被反复重建**
+   *  （看得见、测得出来），不是静默失灵 —— 这是故意选的那一边。
+   *
+   *  原来这里是一个模块级的 `alert` + `lastShown` 去重（防开发模式下 effect
+   *  跑两遍弹两次）。改成通报条之后那层去重**不需要了**：同一句话再设一次
+   *  是个幂等的 setState，React 自己会 bail out。 */
+  const report = useCallback((e: unknown) => {
+    console.error(e)
+    onFail?.(describeFailure(e))
+  }, [onFail])
+
   useEffect(() => {
     const canvas = innerRef.current
     if (!canvas) return
     try {
-      const pipe = new TonePipeline(canvas, fail)
+      const pipe = new TonePipeline(canvas, report)
       pipeRef.current = pipe
       return () => {
         pipe.dispose()
         pipeRef.current = null
       }
     } catch (e) {
-      fail(e)
+      report(e)
     }
-  }, [])
+  }, [report])
 
   // ① 图片换了才上传纹理、重设画布尺寸。
   //    这两件事都很贵——上传一次 1200 万像素的纹理、重设画布尺寸会清空
@@ -95,9 +99,9 @@ export default function Canvas({
     } catch (e) {
       // 尺寸超出浏览器上限会从这里抛出来——pipeline 按「调色不缩图」的铁律
       // 拒绝静默降采样，所以这里必须显式提示，不能把错误咽掉。
-      fail(e)
+      report(e)
     }
-  }, [image])
+  }, [image, report])
 
   // ② 换图后、以及拖滑块时，都只更新 uniform 重绘一次。
   //    不碰纹理、不碰画布尺寸（spec §5.2：拖滑块只更新 uniform → 60fps）。

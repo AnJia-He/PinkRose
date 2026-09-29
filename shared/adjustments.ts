@@ -61,6 +61,21 @@ export const PARAM_MIN = -100
 export const PARAM_MAX = 100
 
 /**
+ * 这一条**动过没有**。
+ *
+ * 两个界面各问过这个问题一次，而且问的是同一件事：
+ *   · 微调面板 —— 这一条滑块要不要点亮（`AdjustmentPanel.tsx`）；
+ *   · 作品详情页 —— 「这张图怎么来的」那张表里要不要列它（`WorkDetailPage.tsx`）。
+ * 判据各写一份的话，哪天它变了（比如以后 ±2 以内都算没动），会出现**两个屏幕
+ * 对同一张图说法不一致**：详情页说"这一张是原样，没有调过色"，而面板那边
+ * 照样亮着。所以和 `PARAM_LABELS` 同款处理：抽出来，界面这一侧只许有这一份。
+ *
+ * ⚠️ 判的是**相对中立值**，不是"和上一次比"。八个参数都是"0 = 什么都没做"
+ * （见 `ZERO`），所以 0 就是那个中立值。
+ */
+export const isChanged = (a: Adjustments, k: keyof Adjustments): boolean => a[k] !== 0
+
+/**
  * 非有限值（NaN / ±Infinity）一律当中立 0。
  *
  * 只写 Math.min(100, NaN) 是没用的——结果还是 NaN，它会一路穿过

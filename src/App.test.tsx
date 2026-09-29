@@ -154,9 +154,16 @@ let meFails = false
 let meGate: { promise: Promise<void>; open: () => void } | null = null
 let fetchMock: ReturnType<typeof vi.fn>
 
-function makeGate() {
-  let open!: () => void
-  const promise = new Promise<void>(res => { open = res })
+/** 把一个**还在飞的请求挂住不回**，返回它的 promise 和放行用的 `open`。
+ *
+ *  "挂住一个请求"这个动作在本文件里出现过好几处（`/api/me` 两条、建议卡片两条），
+ *  手搓的写法每处都要重复三行 `let open!` + `new Promise(res => { open = res })`。
+ *  `T` 是**那个请求的返回类型**（不给就是 `void`）—— 卡片那两条要的是
+ *  `SuggestResponse`，写成 `void` 的话放行时带的数据会被丢掉。
+ */
+function makeGate<T = void>() {
+  let open!: (v: T) => void
+  const promise = new Promise<T>(res => { open = res })
   return { promise, open }
 }
 
@@ -920,33 +927,26 @@ describe('图上点选消歧', () => {
   })
 
   it('⚠️ 卡片落进点选流程 —— 点了卡片，那条「就改这里」必须收掉', async () => {
-    // 卡片是**会迟到**的：上传时发出去的那一次，`SUGGEST_WAIT_MS`（10 秒）一到
-    // 就把用户先放出来，而它还在后台跑、回来了照样把卡片贴上。所以"卡片和
-    // 确认条同时在屏上"这件事真会发生 —— 而那条确认守的是**哪一件事**，
-    // 取决于用户有没有在这中间改过主意。
+    // 卡片是**会迟到**的：上传时发出去的那一次要 11~15 秒才回来，而（2026-09-30
+    // 起）用户**在那之前就能说话**了。所以"卡片和确认条同时在屏上"这件事真会发生
+    // —— 而那条确认守的是**哪一件事**，取决于用户有没有在这中间改过主意。
     //
-    // 这一趟的三个时间点是关键，所以把定时器换成假的：
-    //   ① 上传（卡片请求挂着）
-    //   ② 10 秒到 → 超时那条路赢 → busy 清空，用户能说话了
-    //   ③ 用户说了句拿不准的话 → 点选模式开着 → 卡片这时才落地
-    let deliver!: (v: SuggestResponse) => void
-    // 卡片那一次请求**挂着不回**（真实世界里它是"超时之后才回来"的那一半）
-    vi.mocked(api.postSuggest).mockReturnValueOnce(new Promise(res => { deliver = res }))
+    // 时间线：① 上传（卡片请求挂着）→ ② 用户说了句拿不准的话 → ③ 卡片才落地。
+    // 卡片那一次请求**挂着不回**（真实世界里它是"晚到"的那一半）
+    const gate = makeGate<SuggestResponse>()
+    vi.mocked(api.postSuggest).mockReturnValueOnce(gate.promise)
     await renderApp()
-    vi.useFakeTimers()
-    try {
-      const input = container.querySelector('input[type="file"]') as HTMLInputElement
-      const file = new File(['x'], 'p.jpg', { type: 'image/jpeg' })
-      Object.defineProperty(input, 'files', { value: [file], configurable: true })
-      await act(async () => {
-        input.dispatchEvent(new Event('change', { bubbles: true }))
-        await vi.advanceTimersByTimeAsync(0)
-      })
-      // ② 10 秒过去。常量若被改大，这一步会红 —— 是响的，不是静默的。
-      await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
-    } finally {
-      vi.useRealTimers()
-    }
+    // ⚠️ **这一趟不需要假定时器**（2026-09-30 删掉了）。原来这里要
+    // `advanceTimersByTimeAsync(10_000)` 把用户从等待里"放出来"，而那次改动之后
+    // 用户从上传那一刻起就能说话 —— 那 10 秒**什么都不再断言了**，留着只会让
+    // 下一个人以为它还管着什么（原注释甚至写着"常量若被改大这一步会红"，
+    // 而那时它已经是句假话：改大照样绿）。
+    await uploadPhoto()
+    // 顺手把新行为钉住：**卡片还在路上时，发送键必须是能按的**。
+    // （下面 `say()` 能真的把话送到模型，靠的就是它 —— 但那是**间接**的：
+    //  发送键要是变回 disabled，坏掉的是后面几条断言，报错看着像别的事。）
+    const sendBtn = container.querySelector('.chat-input button') as HTMLButtonElement
+    expect(sendBtn.disabled).toBe(false)
 
     vi.mocked(api.postEdit).mockResolvedValue({
       imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
@@ -961,7 +961,7 @@ describe('图上点选消歧', () => {
 
     // 但卡片是在**这之后**才落地的（① 那次请求还在半路）
     await act(async () => {
-      deliver({
+      gate.open({
         cards: [{
           label: '把后面的人去掉', route: 'generate',
           paramDeltas: {}, editPrompt: '去掉后面那个人',
@@ -996,8 +996,8 @@ describe('图上点选消歧', () => {
     // ⚠️ 判据是**底图变没变**，不是"用户开没开口"：参数类的话（"亮一点"）
     //   不换底图，卡片说的仍然成立（后面那两个人还在），照旧该落地 ——
     //   上面那条「卡片落进点选流程」钉的正是另一半。
-    let deliver!: (v: SuggestResponse) => void
-    vi.mocked(api.postSuggest).mockReturnValueOnce(new Promise(res => { deliver = res }))
+    const gate = makeGate<SuggestResponse>()
+    vi.mocked(api.postSuggest).mockReturnValueOnce(gate.promise)
 
     await renderApp()
     await uploadPhoto()
@@ -1015,7 +1015,7 @@ describe('图上点选消歧', () => {
 
     // 卡片**在这之后**才落地
     await act(async () => {
-      deliver({
+      gate.open({
         cards: [{
           label: '把后面的人去掉', route: 'generate',
           paramDeltas: {}, editPrompt: '去掉后面那些人',

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { ZERO, PARAM_KEYS, PARAM_LABELS, clampAdjustments, applyDeltas, toUnit } from './adjustments.ts'
+import { readFileSync } from 'node:fs'
+import { ZERO, PARAM_KEYS, PARAM_LABELS, isChanged, clampAdjustments, applyDeltas, toUnit } from './adjustments.ts'
 
 describe('PARAM_KEYS', () => {
   it('固定八个参数，名字不能改', () => {
@@ -128,6 +129,29 @@ describe('PARAM_LABELS', () => {
     for (const [key, label] of Object.entries(PARAM_LABELS)) {
       expect(label).not.toBe(key)
       expect(/[一-鿿]/.test(label)).toBe(true)
+    }
+  })
+})
+
+describe('isChanged', () => {
+  it('中立值（0）算没动过，别的都算动过', () => {
+    expect(PARAM_KEYS.filter(k => isChanged(ZERO, k))).toEqual([])
+    expect(PARAM_KEYS.filter(k => isChanged({ ...ZERO, exposure: 1 }, k))).toEqual(['exposure'])
+    expect(PARAM_KEYS.filter(k => isChanged({ ...ZERO, vignette: -1 }, k))).toEqual(['vignette'])
+  })
+
+  it('★ 两个界面问的是同一个问题 —— 判据只有一份', () => {
+    // 微调面板靠它点亮滑块，作品详情页靠它决定那张表里列哪些行。
+    // 两处各写一份 `!== 0` 的话，判据一变（比如以后 ±2 以内都算没动）会出现
+    // **两个屏幕对同一张图说法不一致**：详情页说"这一张是原样"，面板那边还亮着。
+    //
+    // 这条测试钉的是"两处真的都走这里"，做法和 `PARAM_LABELS` 那条同款
+    // （读源码，断言没人自己写死一份）。
+    for (const f of ['../src/ui/AdjustmentPanel.tsx', '../src/ui/WorkDetailPage.tsx']) {
+      const src = readFileSync(new URL(f, import.meta.url), 'utf8')
+      expect(src, `${f} 该用 isChanged`).toContain('isChanged')
+      // 变异：在任一处写回 `params[k] !== 0` / `value[k] !== 0` → 必须红
+      expect(src, `${f} 里还有人自己判 null 值`).not.toMatch(/\w+\[k\]\s*!==\s*0/)
     }
   })
 })

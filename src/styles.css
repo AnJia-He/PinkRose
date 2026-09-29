@@ -22,14 +22,16 @@
      ⚠️ 主按钮是**浅粉底 + 近黑字**（不是白字）：白字压在这档粉上只有 2.43:1，
      读不了。近黑字是 7.32:1。落地页 v4 那套按钮也是这个路数
      （--accent:#ffd93d 配 --accent-ink:#14161b）—— 同一个产品，同一套按钮。 */
-  --rose-100: #fbe3ec;   /* 最浅，只在浅底上出现 */
   --rose-300: #f3aec7;   /* 深底上的**文字级**强调（链接、当前项）10.6:1 */
   --rose-400: #e88aab;   /* 主色：按钮底、聚焦环、进度 */
   --rose-500: #d16a90;   /* 悬停/按下 */
   --rose-700: #bc587d;   /* 标志方框那层底色 */
   --rose-ink: #2a0f1b;   /* 压在浅粉上的字 */
   --rose-tint: #2b1a21;  /* 粉的极淡底（选中的行、气泡） */
-  --leaf: #7f9c79;       /* 叶子那点绿。用得极少 —— 只给"成功了" */
+  /* ⚠️ `--rose-100`（最浅那档）和 `--leaf`（叶子那点绿）在这一版里**声明了却
+     一次都没用过**，2026-09-30 按"用到再加"删掉了 —— 颜色令牌不像间距尺
+     （`--sp-7` 空着无所谓，那是一整条尺度），孤立的色号摆着只会让人以为
+     "某处该用它"而去找。真要用的时候从 rose.svg 里取回来就是一行。 */
 
   /* ── 中性：到底的六档 ──────────────────────────────────────────────
      从"页面底"到"悬停"是一条连续的路，谁在哪一档是**有规定的**：
@@ -41,6 +43,14 @@
   --hover:     #262a33;
   --line:      #262a32;
   --line-2:    #363c47;
+  /* 悬停/聚焦那一档的描边，比 --line-2 亮一档。**给它一个名字**是因为它原来
+     在本文件里以裸值 `#4a515e` 出现三次（滚动条、通用按钮悬停、登录输入框悬停），
+     而裸值就是"第七个灰"的开始 —— 旧文件同一位置还漂过 `#4a515b`。 */
+  --line-3:    #4a515e;
+  /* 聚焦时那圈淡粉外圈。一像素的描边在深色底上变化太小，用户看不出焦点
+     进没进这一格，所以四个输入框（对话 / 登录 / 搜索 / 改名）都加了它 ——
+     **四处共用这一条**，别再各写一份 rgba（品牌粉一改，那四处会留在旧粉上）。 */
+  --ring: 0 0 0 3px rgba(232, 138, 171, .16);
 
   --text:      #eceef2;
   /* 这两档都是**量过的**，不是挑好看的（WCAG 对比度，正文要 4.5:1）：
@@ -90,7 +100,6 @@ body {
   color: var(--text);
   font: 14px/1.5 var(--font);
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
 }
 
 /* 键盘用户走到哪都要看得见（全站统一，各组件不必再各写一遍）。
@@ -98,16 +107,36 @@ body {
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
 
 /* 滚动条：默认那条在深色界面上是一道惨白的槽，比内容还抢眼。
-   只改颜色，不改宽度 —— 改宽度会让"面板内容宽多少"这条老账全部重算。 */
+   ⚠️ **只写这两条标准属性，不要写 `::-webkit-scrollbar` 那一组。**
+   那一组会把浏览器切到"自绘占位式"滚动条（宽度由我们说了算），于是
+   `.chat-log` / `.panel` / `.gallery` / `.detail` 四个滚动容器的内容盒
+   各自窄掉一截 —— 而 `.panel` 的 `minmax(300px,1fr)` 和作品页的
+   `auto-fill` 是**按内容盒算列数**的，差几像素就可能少一列。
+   更麻烦的是 Chrome 只认下面这两条、Safari 只认那一组：**同一个宽度在
+   两个浏览器上不一样，而 `check:layout` 量的是 Chrome，看不见 Safari 那半。**
+   （2026-09-30 删掉那一组时实测：Chrome 上像素级没变——它本来就走这两条。） */
 * { scrollbar-color: var(--line-2) transparent; scrollbar-width: thin; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: var(--line-2); border: 3px solid var(--bg); border-radius: var(--r-pill);
-}
-::-webkit-scrollbar-thumb:hover { background: #4a515e; }
 
 ::selection { background: var(--rose-700); color: #fff; }
+
+/* ── 那个转圈（全站只有这一个形状）──────────────────────────────────
+   它出现在五个地方：上传前那句「正在打开照片…」、对话里那条「正在…」、
+   卡片那句「正在看这张照片能改什么…」、开机那句「正在打开…」、
+   作品页的「正在取…」。五处的**形状一模一样**，只有尺寸分三档。
+   所以形状在这儿写一次，各处只写自己的宽高 —— 分开写的话，哪天调转速或
+   主色就得改五处，漏一处屏幕上就出现两个长得不一样的转圈。
+   ⚠️ 它不是装饰，是**状态指示器**：没有它，用户会以为到底了 / 卡住了，
+   而不是"还在加载"（§3.5）。转得慢一点 —— 转得快会像卡住。 */
+.hint::before,
+.app-loading::before,
+.gallery-more::before,
+.bubble.pending::before,
+.cards-now::before {
+  content: ''; flex: none; border-radius: 50%;
+  border: 2px solid var(--line-2); border-top-color: var(--accent);
+  animation: gallery-spin .8s linear infinite;
+}
+@keyframes gallery-spin { to { transform: rotate(360deg); } }
 
 /* 这里原来是 Task 6 临时自测页的 .app（28px、居中），已删——
    它的 align-items/justify-content/font-size 会和新布局打架。 */
@@ -140,7 +169,7 @@ body {
   color: var(--muted);
   transition: background-color var(--dur-1) ease, color var(--dur-1) ease;
 }
-.nav-item:hover { background: var(--hover); color: var(--text); border-color: transparent; }
+.nav-item:hover { background: var(--hover); color: var(--text); }
 .nav-item.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 
 /* 改（Task 10）：高度不再自己写 100vh —— 它现在住在 .shell 里，"一屏"由上面管。
@@ -169,12 +198,19 @@ body {
 .brand-mark { display: block; flex: none; }
 .actions { display: flex; align-items: center; gap: var(--sp-2); }
 
-/* ── 保存那两条路（Task 13，§3.4 / §6.6 ①）──────────────────────────
-   两块都住在顶栏**下面**、修图页最上面那一行。
+/* ── 顶栏下面那三条横幅 ──────────────────────────────────────────────
+   三块都住在顶栏**下面**、修图页最上面那几行，都按"一整条横幅"排：
+   一句话 + 几个按钮，窄屏自己换行。它们并排出现时读起来是**一列消息**。
    ⚠️ 故意**不塞进 `.topbar`**：那一条是 `justify-content: space-between`
    的一行，塞进去会把品牌名和按钮挤成一团，而 `check:layout` 量的正是
-   顶栏会不会被挤爆。它们按"一整条横幅"排：一句话 + 几个按钮，窄屏自己换行。 */
-.ask, .save-fail {
+   顶栏会不会被挤爆。
+
+   三条**说的是三件不同的事，别合并**：
+     · `.notice`     —— 通报（这件事没成），看完可以收走；
+     · `.ask`        —— **在问用户一句话**（上次那张要替换掉吗）；
+     · `.save-fail`  —— 图还在，先拿到手（自带下载按钮，而且**不许被关掉**：
+                        关掉用户就真的拿不到那张图了）。 */
+.ask, .save-fail, .notice {
   display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3);
   flex: none;
   padding: var(--sp-3) var(--sp-5);
@@ -185,7 +221,15 @@ body {
 }
 /* 横幅是"从顶栏下面掉下来"的，不是凭空出现 —— 它接的是用户刚按的那一下。 */
 @keyframes banner-in { from { transform: translateY(-6px); opacity: 0 } }
-.ask p, .save-fail p { margin: 0; font-size: 13px; }
+.ask p, .save-fail p, .notice p { margin: 0; font-size: 13px; }
+
+/* 通报条（2026-09-30 加）。**它取代了原来三处 `window.alert`**：
+   系统弹窗会把整页冻住，而且长得不像这个产品的一部分 ——
+   一个花了一整天做视觉的产品，出错时突然跳出一个灰扑扑的系统框，
+   那一下就把"做完了"的感觉打回去了。
+   红边跟 `.save-fail` 同一套语言（都是"出事了"），但**底色不跟**：
+   它没有"图还在"要保，只是通报一句。 */
+.notice { border-left: 3px solid var(--danger); }
 
 /* 失败那条挂一道红边（"给字用的红"就是 var(--danger)）——
    不是装饰：§6.6 ② 要的是「明确告诉他，不含糊」，而这一条得在用户刚按完
@@ -195,11 +239,10 @@ body {
    它回答"那到底是怎么了"。 */
 .save-fail-why { color: var(--muted); }
 /* 「下载到电脑」是这一条横幅里**真正要用户做的事**（§6.6 ①：他是来拿图的），
-   所以它是主按钮。⚠️ `.download` 这个类名同时是测试按**结构**找它的锚点
+   所以它穿的是主按钮那套长相 —— 具体那几条声明在下面「主按钮」那一段里，
+   这里只留这句话当作路标（它离得远，读到这里的人得知道长相不在这儿）。
+   ⚠️ `.download` 这个类名同时是测试按**结构**找它的锚点
    （`.save-fail button.download`）—— 文案只留给文案断言，别改回按文字找。 */
-.save-fail button.download {
-  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600;
-}
 
 button {
   background: var(--raised); color: var(--text); border: 1px solid var(--line-2);
@@ -218,13 +261,35 @@ button {
    `:where()` 之后，任何带类名的规则都能盖过它，以后加新按钮不必再数特异性。
    ⚠️ `.nav-item.on` 和 `.nav-item:hover` 特异性相同（0-2-0），靠**文件顺序**
    分胜负（`.on` 在后）—— 别把 `.on` 那条挪到 `:hover` 前面去。 */
-button:where(:hover):where(:not(:disabled)) { background: var(--hover); border-color: #4a515e; }
+button:where(:hover):where(:not(:disabled)) { background: var(--hover); border-color: var(--line-3); }
 button:where(:active):where(:not(:disabled)) { transform: scale(.97); }
 /* 禁用要**看得见**：原来只有部分按钮自己有 :disabled 规则，别的按下去没反应
    却长得和能点的一模一样 —— 用户会以为是自己没点准。全站统一一档。 */
 button:where(:disabled) { opacity: .45; cursor: default; }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500); border-color: var(--rose-500); }
+
+/* ── 主按钮：全站一份长相 ──────────────────────────────────────────────
+   浅粉底 + 近黑字 + 半粗，悬停深一档。
+   ⚠️ 下面这四个**载体不同、长相必须相同**：真正的 `<button class="primary">`；
+   保存失败横幅里那个 `<button class="download">`（那条横幅的主按钮，
+   类名是测试按结构找它的锚点，不能改）；登录页那颗提交钮；详情页那个
+   `<a class="detail-download">`（`download` 属性只有真链接带得动，
+   所以它只能是个 `<a>`，于是得手工穿上这套长相 —— "手工"正是要收进这里的原因）。
+   各处的**尺寸**（内边距、字号、占不占满一行）留在各自那条规则里：那是布局，不是长相。
+   ⚠️ 这一块必须写在 `button:where(:hover)` 那几条**后面**：通用规则的特异性
+   已经被 `:where()` 压成 0，这里才盖得住它。 */
+button.primary,
+.save-fail button.download,
+.login-submit,
+.detail-download {
+  background: var(--accent); border-color: var(--accent);
+  color: var(--accent-ink); font-weight: 600;
+}
+button.primary:where(:hover):where(:not(:disabled)),
+.save-fail button.download:where(:hover),
+.login-submit:where(:hover):where(:not(:disabled)),
+.detail-download:hover {
+  background: var(--rose-500); border-color: var(--rose-500);
+}
 
 /* 画布那一格。它同时是"还没选图"时的空舞台。
    ⚠️ 底色不是纯 --bg：纯平的黑会把照片以外的部分读成"没画完"。
@@ -290,6 +355,10 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
    所以内联的宽高和圆心算法对得上。） */
 .canvas-marker {
   position: absolute;
+  /* ⚠️ 这是全站**唯一**一处故意不取令牌的颜色。它是画在**照片上**的记号，
+     要满足的条件和界面配色完全不同：不管底下是红墙、黄灯还是蓝天都得看见。
+     所以它不走 --rose-* 那一套 —— 品牌粉压在粉色晚霞上就是一团糊。
+     （下面那道黑描边是同一个用途的另一半：浅色照片上靠它立住。） */
   border: 4px solid #ff3b30;
   border-radius: 50%;
   box-shadow: 0 0 0 2px rgba(0, 0, 0, .45);   /* 浅色照片上也要看得见 */
@@ -352,28 +421,25 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
 /* 还没选图时的"正在忙"（正在解码、或者正在看这张照片）。
    配一个转圈 —— 空舞台上就一句干字，看着像卡住了。 */
 .hint { display: flex; align-items: center; gap: var(--sp-3); color: var(--muted); font-size: 14px; }
-.hint::before {
-  content: ''; flex: none; width: 16px; height: 16px; border-radius: 50%;
-  border: 2px solid var(--line-2); border-top-color: var(--accent);
-  animation: gallery-spin .8s linear infinite;
-}
+.hint::before { width: 16px; height: 16px; }
 
 /* 面板不再自己封顶 42vh，改成"最多占 40vh，不够就滚"。
-   ⚠️ 2026-09-30：从"一行一条滑块"改成**分栏**。原来八条滑块横着铺满整个
-   屏幕宽（1440 的屏上一条滑轨有 1170px），拇指要横跨半个屏幕去追它，
-   而右边那个数字孤零零贴在屏幕最边上、离滑块一米远。分栏之后每栏约 500px。 */
+   ⚠️ 2026-09-30：八条滑块从"一行一条横铺满整屏宽"改成了**分栏**（1440 的屏上
+   原来是 1170px 一条滑轨，拇指要横跨半个屏幕去追它，右边那个数字孤零零贴在
+   屏幕最边上、离滑块一米远）。分栏落在 **`.panel-sliders` 那一层**，不是这里 ——
+   面板本身仍然是"头 / 预设 / 滑块组"的竖列，理由见 AdjustmentPanel.tsx 里那段。 */
 .panel {
   flex: none;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  align-content: start;
-  column-gap: var(--sp-6);
   border-top: 1px solid var(--line); background: var(--panel);
   padding: var(--sp-4) var(--sp-5) var(--sp-5);
   max-height: 40vh; overflow-y: auto;
 }
-/* 这两个是横跨全宽的头，滑块才分栏。 */
-.panel-head, .presets { grid-column: 1 / -1; }
+.panel-sliders {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-content: start;
+  column-gap: var(--sp-6);
+}
 .panel-head {
   display: flex; justify-content: space-between; align-items: center;
   margin-bottom: var(--sp-2); color: var(--text); font-weight: 600; font-size: 13px;
@@ -399,14 +465,14 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
 }
 .slider-label { color: var(--muted); font-size: 13px; }
 /* 数字是"这一条现在到底多少"的唯一读法。默认跟标签一样淡（满屏的 0 不该抢眼），
-   **动过的那一条**才亮起来（`data-on` 由 AdjustmentPanel 挂上）——
+   **动过的那一条**才亮起来（`on` 由 AdjustmentPanel 挂上）——
    一眼扫过去就知道自己碰过哪几个，不用逐个去读数字。 */
 .slider-value {
   text-align: right; font-variant-numeric: tabular-nums; font-size: 13px;
   color: var(--muted-2); transition: color var(--dur-1) ease;
 }
-.slider:has(input[data-on]) .slider-label { color: var(--text); }
-.slider:has(input[data-on]) .slider-value { color: var(--rose-300); font-weight: 600; }
+.slider.on .slider-label { color: var(--text); }
+.slider.on .slider-value { color: var(--rose-300); font-weight: 600; }
 
 /* ── 滑块本体 ────────────────────────────────────────────────────────
    浏览器原生那条在深色界面上是一道白槽配一颗白钮，和这套界面完全不搭。
@@ -472,11 +538,7 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
   display: flex; align-items: center; gap: var(--sp-2);
   color: var(--muted); background: transparent; border-style: dashed;
 }
-.bubble.pending::before {
-  content: ''; flex: none; width: 12px; height: 12px; border-radius: 50%;
-  border: 2px solid var(--line-2); border-top-color: var(--accent);
-  animation: gallery-spin .8s linear infinite;
-}
+.bubble.pending::before { width: 12px; height: 12px; }
 /* 「回到这一步」= 撤销。**它是这一栏里第二重要的东西**（spec §2.4：不设撤销
    按钮，翻聊天记录就是撤销），原来却是一颗 78×24 的小钮 —— 手机上够不着，
    正好是这个项目最在意的那种"点不到"。撑到 32px 高（触屏的最小可点尺寸），
@@ -501,7 +563,6 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
 }
 @keyframes card-in { from { opacity: 0; transform: translateY(4px) } }
 .card:hover:not(:disabled) { border-color: var(--accent); color: var(--rose-300); background: var(--rose-tint); }
-.card:disabled { opacity: .5; cursor: default; }
 /* 一排卡片的入场错开一点（第 5 张往后不再延后 —— 不然最后一张要等半秒）。 */
 .card:nth-child(2) { animation-delay: .04s }
 .card:nth-child(3) { animation-delay: .08s }
@@ -513,11 +574,7 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
   display: flex; align-items: center; gap: var(--sp-2);
   font-size: 12.5px; color: var(--muted-2);
 }
-.cards-now::before {
-  content: ''; flex: none; width: 12px; height: 12px; border-radius: 50%;
-  border: 2px solid var(--line-2); border-top-color: var(--accent);
-  animation: gallery-spin .8s linear infinite;
-}
+.cards-now::before { width: 12px; height: 12px; }
 
 .chat-input { display: flex; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); }
 .chat-input input {
@@ -530,7 +587,7 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
    变化太小，用户看不出焦点进没进这一格。 */
 .chat-input input:focus {
   outline: none; border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(232, 138, 171, .16);
+  box-shadow: var(--ring);
 }
 .chat-input input::placeholder { color: var(--muted-2); }
 
@@ -659,12 +716,12 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
   background: var(--bg); color: var(--text); font-size: 15px;
   transition: border-color var(--dur-1) ease, box-shadow var(--dur-1) ease;
 }
-.login-field input:hover { border-color: #4a515e; }
+.login-field input:hover { border-color: var(--line-3); }
 /* 和对话栏那个输入框同一套焦点观感 —— 一像素的描边在深色底上变化太小，
    用户看不出焦点进没进这一格。 */
 .login-field input:focus {
   outline: none; border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(232, 138, 171, .16);
+  box-shadow: var(--ring);
 }
 /* 密码那一格：输入框占满，那颗小眼睛**坐在输入框里面**靠右
    （2026-09-25 第二轮：原来是一颗框外右边的文字按钮，用户要的是框里一个眼睛图标）。
@@ -702,29 +759,26 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
    写法照同文件里的 `.gallery-cell:focus-visible`。 */
 .login-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .login-error { margin: 0; font-size: 13px; color: var(--danger); }
-.login-submit { padding: 12px; border-radius: var(--r-sm); border: 0; background: var(--accent); color: var(--accent-ink); font-size: 15px; font-weight: 600; cursor: pointer; transition: background-color var(--dur-1) ease; }
-.login-submit:hover:not(:disabled) { background: var(--rose-500); }
-.login-submit:disabled { opacity: .5; cursor: default; }
+/* 只留尺寸和字号：底色/字色/字重那一套在 **主按钮** 那段统一写着
+   （`button.primary, .save-fail button.download, .login-submit, .detail-download`）。 */
+.login-submit { padding: 12px; border-radius: var(--r-sm); border: 0; font-size: 15px; cursor: pointer; transition: background-color var(--dur-1) ease; }
 .login-switch { border: 0; background: none; color: inherit; opacity: .7; font-size: 13px; cursor: pointer; padding: 6px; border-radius: var(--r-sm); }
 .login-switch:hover:not(:disabled) { opacity: 1; background: var(--hover); }
-/* ★ 忙的时候那颗切换按钮也**看得见地**挡住（2026-09-26 加，和 `disabled={busy}` 是一对）。
+/* ★ 忙的时候那颗切换按钮**看得见地**挡住（2026-09-26 加，和 `disabled={busy}` 是一对）。
    原来它只有上面那一条 `.7`，禁用之后连"淡一点"都没有 —— 屏上能说出"现在点不动"
    的只剩光标形状那一处，而光标只在鼠标已经挪上去之后才说话。
-   所以再淡一档（`.7` → `.4`，比提交按钮的 `.5` 更淡：它是次要动作，忙的时候
-   本来就该退到后面），光标也换回默认箭头 —— `cursor: pointer` 那只小手是
-   **承诺"点得动"**的，禁用之后还留着它是骗人。写法照上面 `.login-submit:disabled`。 */
-.login-switch:disabled { opacity: .4; cursor: default; }
+   ⚠️ 2026-09-30：这一条原来自己写了 `opacity: .4`（还有 `.login-submit:disabled`
+   和 `.card:disabled` 各写 `.5`），于是页面上同时存在 **.45 / .5 / .4 三个不同的
+   "禁用有多淡"**——而全局那条（`button:where(:disabled)`）的本意正是"全站统一一档"。
+   现在三处一起删了，就留全局那一个值；`.4` 和 `.45` 的差别肉眼看不出来，
+   为它多维护一条规则不值。 */
 /* 开机那一次"我是谁"还没问完（一次网络往返）。配个转圈 ——
    一句干字在整片空屏上看着像卡住了，而这一屏往往只有几百毫秒。 */
 .app-loading {
   display: flex; align-items: center; justify-content: center; gap: var(--sp-3);
   height: 100vh; color: var(--muted); font-size: 14px;
 }
-.app-loading::before {
-  content: ''; flex: none; width: 16px; height: 16px; border-radius: 50%;
-  border: 2px solid var(--line-2); border-top-color: var(--accent);
-  animation: gallery-spin .8s linear infinite;
-}
+.app-loading::before { width: 16px; height: 16px; }
 
 /* ── 作品页（Task 11） ────────────────────────────────────────────
    它和修图页是**两种版面**：修图页一屏锁死（那是 .app 的 overflow: hidden 管的），
@@ -762,7 +816,7 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
 }
 .gallery-search:focus {
   outline: none; border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(232, 138, 171, .16);
+  box-shadow: var(--ring);
 }
 .gallery-search::placeholder { color: var(--muted-2); }
 
@@ -810,12 +864,7 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
   display: flex; align-items: center; justify-content: center; gap: var(--sp-2);
   padding: var(--sp-5) 0; color: var(--muted); font-size: 13px;
 }
-.gallery-more::before {
-  content: ''; width: 14px; height: 14px; border-radius: 50%;
-  border: 2px solid var(--line-2); border-top-color: var(--accent);
-  animation: gallery-spin .8s linear infinite;
-}
-@keyframes gallery-spin { to { transform: rotate(360deg); } }
+.gallery-more::before { width: 14px; height: 14px; }
 /* 到底了。**它是一句话，不是一块内容** —— 原来居中挂在整页宽的正中间，
    左边那一列作品还在的时候，它孤零零飘在右边一大片空地上。改成居中 + 两侧短线。 */
 .gallery-end {
@@ -835,7 +884,7 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
 }
 /* "还没有作品"是**这一页的主句**：它原来和下面那句小字一样大、一样灰，
    于是整屏看上去只是"没加载出来"。两句拉开档次才读得出"这是一句结论"。 */
-.gallery-empty p:first-child { margin: 0; font-size: 17px; }
+.gallery-empty-title { margin: 0; font-size: 17px; }
 .gallery-hint { margin: var(--sp-2) 0 0; font-size: 13px; color: var(--muted); }
 .gallery-error { margin: var(--sp-5) 0 0; color: var(--danger); }
 
@@ -861,7 +910,7 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
 }
 /* 返回 + 名字：返回是**路径**，不是内容，所以它比名字小一档、淡一档。 */
 .detail-back { flex: none; border-color: transparent; background: transparent; color: var(--muted); }
-.detail-back:hover { background: var(--hover); color: var(--text); border-color: transparent; }
+.detail-back:hover { background: var(--hover); color: var(--text); }
 /* 名字可能是用户起的长名字，也可能长到把「改名」挤出屏幕 —— 一行截断。 */
 .detail-name {
   flex: 1; min-width: 0; margin: 0; font-size: 20px; font-weight: 600;
@@ -873,7 +922,7 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
   flex: 1; min-width: 0;
   background: var(--bg); color: var(--text); font: inherit; font-size: 18px;
   border: 1px solid var(--accent); border-radius: var(--r-sm); padding: 6px 12px;
-  box-shadow: 0 0 0 3px rgba(232, 138, 171, .16);
+  box-shadow: var(--ring);
 }
 .rename-input:focus { outline: none; }
 
@@ -911,7 +960,10 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
   border: 1px solid var(--danger); border-radius: var(--r-sm);
   background: var(--danger-bg);
 }
-.detail-confirm button:first-of-type { border-color: var(--danger); color: var(--danger); }
+/* 「删掉」那颗是危险动作的颜色。**按类名找，不按 `:first-of-type`** ——
+   按 DOM 位置的话，把「取消」挪到前面（很常见的一次改动）就会让红/灰静静地对调，
+   测试和评审都不会红。 */
+.detail-confirm .detail-delete { border-color: var(--danger); color: var(--danger); }
 .detail-delete:hover { border-color: var(--danger); color: var(--danger); }
 .detail-loading { margin: var(--sp-5) 0 0; color: var(--muted); }
 .detail-error { margin: var(--sp-5) 0 0; color: var(--danger); }
