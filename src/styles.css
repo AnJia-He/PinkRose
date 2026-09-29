@@ -210,14 +210,23 @@ button:disabled { opacity: .45; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 button.primary:hover:not(:disabled) { background: var(--rose-500); border-color: var(--rose-500); }
 
-.stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
+/* 画布那一格。它同时是"还没选图"时的空舞台。
+   ⚠️ 底色不是纯 --bg：纯平的黑会把照片以外的部分读成"没画完"。
+   这里铺一层极淡的顶光（几乎看不见，但照片四周有了层次），照片再压一道
+   投影浮起来 —— 于是那圈留白读起来是**相框的卡纸**，不是漏洞。
+   修图工具里照片永远是主角，界面交给它的是一块安静的底。 */
+.stage {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-5);
+  background: radial-gradient(120% 70% at 50% 0%, rgba(255, 255, 255, .035), transparent 72%);
+}
 
 /* 改：workspace 变成"左画布右对话"的一行 */
 .workspace { flex: 1; display: flex; min-height: 0; }
 .workspace .stage { flex: 1; min-width: 0; min-height: 0; }
 
 /* 改：画布不再用固定的 78vh，改为撑满给它的空间 */
-.canvas { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+.canvas { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--r-sm); box-shadow: var(--shadow-3); }
 
 /* 「按住看原图」的容器（spec §2.5）。
    它替 .stage 干"把画布居中"这件事：撑满 .stage 留给它的整个空间，
@@ -242,7 +251,8 @@ button.primary:hover:not(:disabled) { background: var(--rose-500); border-color:
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-3);
   /* 它只是给人看的，不接收指针事件：事件全落到下面的 wrapper 上，
      系统也就没有"这张图"可存、可复制了（Android Chrome 长按 <img>
      会弹"下载图片"）。指针事件照旧冒泡到 wrapper，松手收得到。 */
@@ -279,25 +289,83 @@ button.primary:hover:not(:disabled) { background: var(--rose-500); border-color:
 
 .hint { color: var(--muted); }
 
-/* 改：面板不再自己封顶 42vh，改成"最多占 40vh，不够就滚" */
+/* 面板不再自己封顶 42vh，改成"最多占 40vh，不够就滚"。
+   ⚠️ 2026-09-30：从"一行一条滑块"改成**分栏**。原来八条滑块横着铺满整个
+   屏幕宽（1440 的屏上一条滑轨有 1170px），拇指要横跨半个屏幕去追它，
+   而右边那个数字孤零零贴在屏幕最边上、离滑块一米远。分栏之后每栏约 500px。 */
 .panel {
-  border-top: 1px solid var(--line); background: var(--panel);
-  padding: 14px 20px; max-height: 40vh; overflow-y: auto;
   flex: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-content: start;
+  column-gap: var(--sp-6);
+  border-top: 1px solid var(--line); background: var(--panel);
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+  max-height: 40vh; overflow-y: auto;
 }
+/* 这两个是横跨全宽的头，滑块才分栏。 */
+.panel-head, .presets { grid-column: 1 / -1; }
 .panel-head {
   display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 10px; color: var(--muted);
+  margin-bottom: var(--sp-2); color: var(--text); font-weight: 600; font-size: 13px;
 }
-.presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+/* 「重置」是这一栏里的次要动作：它不该和预设抢眼，所以是一个没有框的文字钮。
+   （和顶栏那些按钮区分开 —— 顶栏是"你要做的事"，这里是"改坏了可以退"。） */
+.panel-head button {
+  background: none; border: 0; color: var(--muted); font-size: 12px; padding: 4px 8px;
+  border-radius: var(--r-sm);
+}
+.panel-head button:hover { background: var(--hover); color: var(--text); }
+.presets { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-4); }
+/* 预设是"一键"的东西：药丸形，比普通按钮小一档 —— 一排六个不许换行成两排。 */
+.presets button {
+  border-radius: var(--r-pill); padding: 5px 14px; font-size: 13px;
+  background: var(--raised); border-color: var(--line);
+}
+.presets button:hover { border-color: var(--accent); color: var(--rose-300); background: var(--rose-tint); }
 
 .slider {
-  display: grid; grid-template-columns: 64px 1fr 44px;
-  align-items: center; gap: 12px; margin: 6px 0;
+  display: grid; grid-template-columns: 56px 1fr 40px;
+  align-items: center; gap: var(--sp-3); margin: 5px 0;
 }
 .slider-label { color: var(--muted); font-size: 13px; }
-.slider-value { text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
-.slider input { width: 100%; }
+/* 数字是"这一条现在到底多少"的唯一读法。默认跟标签一样淡（满屏的 0 不该抢眼），
+   **动过的那一条**才亮起来（`data-on` 由 AdjustmentPanel 挂上）——
+   一眼扫过去就知道自己碰过哪几个，不用逐个去读数字。 */
+.slider-value {
+  text-align: right; font-variant-numeric: tabular-nums; font-size: 13px;
+  color: var(--muted-2); transition: color var(--dur-1) ease;
+}
+.slider:has(input[data-on]) .slider-label { color: var(--text); }
+.slider:has(input[data-on]) .slider-value { color: var(--rose-300); font-weight: 600; }
+
+/* ── 滑块本体 ────────────────────────────────────────────────────────
+   浏览器原生那条在深色界面上是一道白槽配一颗白钮，和这套界面完全不搭。
+   自己画：轨道 4px 圆头，拇指一颗粉色圆点带深色描边。
+   ⚠️ `-webkit-` 和 `-moz-` 两套都要写，少一套就在某个浏览器上退回原生样子
+   （Chrome 认前者，Firefox 只认后者）。 */
+.slider input[type='range'] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 20px; margin: 0; background: transparent; cursor: pointer;
+}
+.slider input[type='range']::-webkit-slider-runnable-track {
+  height: 4px; border-radius: var(--r-pill); background: var(--line-2);
+}
+.slider input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%; margin-top: -5px;
+  background: var(--accent); border: 2px solid var(--bg); box-shadow: var(--shadow-1);
+  transition: transform var(--dur-1) var(--ease), background-color var(--dur-1) ease;
+}
+.slider input[type='range']:hover::-webkit-slider-thumb { transform: scale(1.18); }
+.slider input[type='range']:active::-webkit-slider-thumb { transform: scale(1.05); background: var(--rose-300); }
+.slider input[type='range']::-moz-range-track {
+  height: 4px; border-radius: var(--r-pill); background: var(--line-2);
+}
+.slider input[type='range']::-moz-range-thumb {
+  width: 14px; height: 14px; border: 2px solid var(--bg); border-radius: 50%;
+  background: var(--accent); box-shadow: var(--shadow-1);
+}
 
 .chat {
   width: 340px; flex: none; display: flex; flex-direction: column; min-height: 0;
