@@ -19,11 +19,11 @@
 
   /* ── 品牌：粉玫瑰 ──────────────────────────────────────────────────
      色值取自标志本身，所以"按钮的粉"和"标志的粉"不可能对不上。
-     ⚠️ 主按钮是**浅粉底 + 近黑字**（不是白字）：白字压在这档粉上只有 2.3:1，
-     读不了。近黑字是 8.4:1。落地页 v4 那套按钮也是这个路数
+     ⚠️ 主按钮是**浅粉底 + 近黑字**（不是白字）：白字压在这档粉上只有 2.43:1，
+     读不了。近黑字是 7.32:1。落地页 v4 那套按钮也是这个路数
      （--accent:#ffd93d 配 --accent-ink:#14161b）—— 同一个产品，同一套按钮。 */
   --rose-100: #fbe3ec;   /* 最浅，只在浅底上出现 */
-  --rose-300: #f3aec7;   /* 深底上的**文字级**强调（链接、当前项）9.0:1 */
+  --rose-300: #f3aec7;   /* 深底上的**文字级**强调（链接、当前项）10.6:1 */
   --rose-400: #e88aab;   /* 主色：按钮底、聚焦环、进度 */
   --rose-500: #d16a90;   /* 悬停/按下 */
   --rose-700: #bc587d;   /* 标志方框那层底色 */
@@ -43,8 +43,13 @@
   --line-2:    #363c47;
 
   --text:      #eceef2;
-  --muted:     #9ba2ae;   /* 对 --panel 6.7:1，正文级可读，不是"灰得看不清" */
-  --muted-2:   #6f7683;   /* 再淡一档：只给真正次要的字（时间戳、计数） */
+  /* 这两档都是**量过的**，不是挑好看的（WCAG 对比度，正文要 4.5:1）：
+     --muted 对面板 6.85:1、对页面底 7.41:1；--muted-2 对页面底 5.41:1。
+     --muted-2 原来写的是 #6f7683，只有 4.17:1 —— 它挂在 12.5px 的小字上
+     （时间戳、示范句），小字本来就更难认，对比度再欠一档就是"看不清"。
+     ⚠️ 改这两档之前**先算一遍**，别凭眼睛看。 */
+  --muted:     #9ba2ae;
+  --muted-2:   #828995;
   --danger:    #e06c75;
   --danger-bg: #3a2126;
 
@@ -280,14 +285,67 @@ button.primary:hover:not(:disabled) { background: var(--rose-500); border-color:
   pointer-events: none;         /* 别挡住下一次点击 */
 }
 
+/* ── 上传前那一屏（2026-09-30 重做） ────────────────────────────────
+   这是登录之后看到的第一张脸。原来是**一个虚线框、里面四个字**，浮在一整片
+   黑里：不说这是什么产品、不说能拿它干嘛、也不说该怎么做。用户看完整套界面
+   的评语是「设计是不是过于简化了」—— 这一屏是那句话最直白的地方。
+
+   它现在是"一句话 + 一个动作 + 一句示范"三样，都居中、都窄
+   （560px 的列比整屏铺满好读得多）。给整块加一次 8px 的入场位移：
+   一屏内容"落下来"比直接出现更像被设计过。 */
+.welcome {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  max-width: 560px; padding: 0 var(--sp-4);
+  animation: welcome-in .5s var(--ease) both;
+}
+@keyframes welcome-in { from { opacity: 0; transform: translateY(10px) } }
+
+.welcome-mark { display: block; margin-bottom: var(--sp-4); }
+.welcome-title {
+  margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -.02em; line-height: 1.25;
+}
+.welcome-lede {
+  margin: var(--sp-3) 0 0; color: var(--muted); font-size: 14px; line-height: 1.75;
+}
+
+/* 那个虚线框。**它是整屏唯一的动作**，所以给足体量（不然一屏字配一个小框，
+   视线落不到该落的地方），并在悬停/拖入时整个变粉 —— 拖进来那一刻要有反馈，
+   否则用户松手前不知道"这里收不收"。 */
 .uploader {
-  border: 2px dashed var(--line-2); border-radius: 14px; padding: 60px 80px;
+  display: flex; flex-direction: column; align-items: center; gap: var(--sp-2);
+  width: 100%; margin-top: var(--sp-6);
+  padding: var(--sp-6) var(--sp-5) var(--sp-5);
+  border: 1.5px dashed var(--line-2); border-radius: var(--r-lg);
+  background: var(--panel);
   cursor: pointer; color: var(--muted);
+  transition: border-color var(--dur-2) ease, background-color var(--dur-2) ease,
+              color var(--dur-2) ease;
 }
 .uploader input { display: none; }
-.uploader:hover { border-color: var(--accent); color: var(--text); }
+.uploader:hover, .uploader.over {
+  border-color: var(--accent); background: var(--rose-tint); color: var(--rose-300);
+}
+.uploader-icon { display: block; color: var(--muted); transition: color var(--dur-2) ease; }
+.uploader:hover .uploader-icon, .uploader.over .uploader-icon { color: var(--accent); }
+.uploader-cta { font-size: 15px; font-weight: 600; color: var(--text); }
+.uploader-hint { font-size: 12.5px; color: var(--muted); }
+/* "拖到这里"是**桌面才成立**的一句话。触屏上没有拖放这回事，摆着只会让人
+   去找一个不存在的手势。（按 `hover: none` 判，不按宽度判 —— 触摸屏笔记本
+   两条都有，那种设备上这句话是对的。） */
+@media (hover: none) { .uploader-hint { display: none; } }
 
-.hint { color: var(--muted); }
+.welcome-eg {
+  margin: var(--sp-5) 0 0; font-size: 12.5px; color: var(--muted-2); line-height: 1.75;
+}
+
+/* 还没选图时的"正在忙"（正在解码、或者正在看这张照片）。
+   配一个转圈 —— 空舞台上就一句干字，看着像卡住了。 */
+.hint { display: flex; align-items: center; gap: var(--sp-3); color: var(--muted); font-size: 14px; }
+.hint::before {
+  content: ''; flex: none; width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--line-2); border-top-color: var(--accent);
+  animation: gallery-spin .8s linear infinite;
+}
 
 /* 面板不再自己封顶 42vh，改成"最多占 40vh，不够就滚"。
    ⚠️ 2026-09-30：从"一行一条滑块"改成**分栏**。原来八条滑块横着铺满整个
