@@ -121,12 +121,19 @@ h2 .dim{color:var(--ink-3)}
 /* 这一块**破格**：比上下的文字栏宽出去，顶到接近整幅。参考站最显眼的
    一招就是"产品界面占满屏"，文字反而窄。容器自己居中，不靠 margin 算式。 */
 .bleed{padding:0 28px}
-.prod{position:relative;max-width:1560px;margin:76px auto 0;padding-bottom:12%}
+.prod{position:relative;max-width:1560px;margin:76px auto 0;padding-bottom:17%}
 .prod-base{border-radius:var(--r);overflow:hidden;border:1px solid var(--line);
   box-shadow:0 2px 4px rgba(10,11,14,.05),0 30px 70px -28px rgba(10,11,14,.35)}
 .prod-base img{width:100%}
 /* 浮层只从**右下角**掉出来一点点。压太多会切在主窗口的画面中间，
    看着像渲染坏了，不像"分层"。 */
+/* 浮层只从**右下角**掉出来一点点。压太多会切在主窗口的画面中间，
+   看着像渲染坏了，不像"分层"。
+
+   压多少是有讲究的：产品图现在拍的是「用户说一句话 → AI 回一句」，
+   回复气泡和它的缩略图正好落在右下角 —— 压过 1168 那条线就把缩略图
+   横切成两截。所以 padding-bottom 从 12% 提到 17%：浮层往下退 70px，
+   让开那条回复。再少就跟主窗口挨不上了，"分层"就没了。 */
 .prod-float{position:absolute;right:-1%;width:72%;bottom:0;border-radius:12px;overflow:hidden;
   border:1px solid rgba(255,255,255,.09);
   box-shadow:0 60px 120px -34px rgba(5,6,8,.66),0 8px 26px -10px rgba(5,6,8,.4)}
