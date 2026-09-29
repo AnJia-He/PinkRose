@@ -1,10 +1,80 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   设计令牌（2026-09-30 立）
+
+   在这之前，这份文件里躺着三套互不相干的语言：标志是**粉玫瑰**、
+   主按钮是**蓝的**（--accent 曾经是 #4c8dff）、中性色是十几个手写的十六进制
+   （#2a2e35 / #2f343c / #3a4048 / #262b33 …，彼此的差别没人说得清）。
+   用户看完的评语是「前端的设计是不是过于简化了」。
+
+   下面这套令牌就是"一份语言"：
+     · **颜色**：强调色 = 标志那朵花自己的粉（色值从 src/assets/logo/rose.svg
+       取的），中性色是一套有层次的冷灰。**界面上的粉和标志上的粉是同一个**。
+     · **间距 / 圆角 / 投影 / 动效**：各自一条尺度，后面所有规则只许引用，
+       不许再写裸值 —— 裸值就是第四套语言的开始。
+
+   ⚠️ 改这里等于改全站。加令牌请**沿用同一套命名**，别新开一组近义词。
+   ═══════════════════════════════════════════════════════════════════════ */
 :root {
   color-scheme: dark;
-  --bg: #14161a;
-  --panel: #1d2026;
-  --text: #e8eaed;
-  --muted: #9aa0a6;
-  --accent: #4c8dff;
+
+  /* ── 品牌：粉玫瑰 ──────────────────────────────────────────────────
+     色值取自标志本身，所以"按钮的粉"和"标志的粉"不可能对不上。
+     ⚠️ 主按钮是**浅粉底 + 近黑字**（不是白字）：白字压在这档粉上只有 2.3:1，
+     读不了。近黑字是 8.4:1。落地页 v4 那套按钮也是这个路数
+     （--accent:#ffd93d 配 --accent-ink:#14161b）—— 同一个产品，同一套按钮。 */
+  --rose-100: #fbe3ec;   /* 最浅，只在浅底上出现 */
+  --rose-300: #f3aec7;   /* 深底上的**文字级**强调（链接、当前项）9.0:1 */
+  --rose-400: #e88aab;   /* 主色：按钮底、聚焦环、进度 */
+  --rose-500: #d16a90;   /* 悬停/按下 */
+  --rose-700: #bc587d;   /* 标志方框那层底色 */
+  --rose-ink: #2a0f1b;   /* 压在浅粉上的字 */
+  --rose-tint: #2b1a21;  /* 粉的极淡底（选中的行、气泡） */
+  --leaf: #7f9c79;       /* 叶子那点绿。用得极少 —— 只给"成功了" */
+
+  /* ── 中性：到底的六档 ──────────────────────────────────────────────
+     从"页面底"到"悬停"是一条连续的路，谁在哪一档是**有规定的**：
+       0 页面  1 面板  2 抬起来的面（气泡、卡片）  3 悬停/按下  4 描边  5 重描边
+     ⚠️ 别在中间插档。分不清"该用 1 还是 2"时，看它**是不是浮在别的面上**。 */
+  --bg:        #0e1014;
+  --panel:     #16191f;
+  --raised:    #1d2027;
+  --hover:     #262a33;
+  --line:      #262a32;
+  --line-2:    #363c47;
+
+  --text:      #eceef2;
+  --muted:     #9ba2ae;   /* 对 --panel 6.7:1，正文级可读，不是"灰得看不清" */
+  --muted-2:   #6f7683;   /* 再淡一档：只给真正次要的字（时间戳、计数） */
+  --danger:    #e06c75;
+  --danger-bg: #3a2126;
+
+  /* 强调色现在只有这一个名字。原来叫 --accent（蓝），沿用旧名是为了
+     让这份文件里几十处引用一次性跟上 —— 名字的含义没变，颜色换了。 */
+  --accent: var(--rose-400);
+  --accent-ink: var(--rose-ink);
+
+  /* ── 间距 ────────────────────────────────────────────────────────── */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+
+  /* ── 圆角 ────────────────────────────────────────────────────────── */
+  --r-sm: 8px;  --r-md: 12px; --r-lg: 16px; --r-pill: 999px;
+
+  /* ── 投影：深色界面上投影很弱，所以靠"更亮的面 + 一道描边"分层，
+     投影只在真的浮起来的东西上用（浮层、横幅、对话气泡）── */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .5);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, .38);
+  --shadow-3: 0 24px 64px rgba(0, 0, 0, .5);
+
+  /* ── 动效 ──────────────────────────────────────────────────────────
+     `--ease` 是那种"快起慢收"的曲线，落地页 v4 用的也是它。
+     ⚠️ 每一处动效都要能被 `prefers-reduced-motion` 关掉（见文件末尾）。 */
+  --ease: cubic-bezier(.16, 1, .3, 1);
+  --dur-1: .14s;
+  --dur-2: .26s;
+
+  --font: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui,
+          -apple-system, "Segoe UI", sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -13,8 +83,26 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+  font: 14px/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+
+/* 键盘用户走到哪都要看得见（全站统一，各组件不必再各写一遍）。
+   ⚠️ 用 :focus-visible 而不是 :focus：鼠标点一下不该在按钮上留一圈粉。 */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+
+/* 滚动条：默认那条在深色界面上是一道惨白的槽，比内容还抢眼。
+   只改颜色，不改宽度 —— 改宽度会让"面板内容宽多少"这条老账全部重算。 */
+* { scrollbar-color: var(--line-2) transparent; scrollbar-width: thin; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-2); border: 3px solid var(--bg); border-radius: var(--r-pill);
+}
+::-webkit-scrollbar-thumb:hover { background: #4a515e; }
+
+::selection { background: var(--rose-700); color: #fff; }
 
 /* 这里原来是 Task 6 临时自测页的 .app（28px、居中），已删——
    它的 align-items/justify-content/font-size 会和新布局打架。 */
@@ -35,13 +123,20 @@ body {
 
 .nav {
   flex: none;
-  display: flex; flex-direction: column; gap: 6px;
-  width: 92px; padding: 12px 10px;
-  border-right: 1px solid #2a2e35; background: var(--panel);
+  display: flex; flex-direction: column; gap: var(--sp-1);
+  width: 92px; padding: var(--sp-3) var(--sp-2);
+  border-right: 1px solid var(--line); background: var(--panel);
 }
 /* 当前在哪一屏只能有一个是亮的，所以亮的那一个用主色（和 button.primary 同一套）。
-   详情页时亮的是「作品」—— 详情页属于作品那一支，不是第三个地方。 */
-.nav-item.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+   详情页时亮的是「作品」—— 详情页属于作品那一支，不是第三个地方。
+   ⚠️ 底色是浅粉，字就必须是**近黑**（--accent-ink）：白字在这档粉上只有 2.3:1。 */
+.nav-item {
+  border-color: transparent; background: transparent;
+  color: var(--muted);
+  transition: background-color var(--dur-1) ease, color var(--dur-1) ease;
+}
+.nav-item:hover { background: var(--hover); color: var(--text); border-color: transparent; }
+.nav-item.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 
 /* 改（Task 10）：高度不再自己写 100vh —— 它现在住在 .shell 里，"一屏"由上面管。
    flex:1 吃掉左栏之外的全部；那两个 0 是"里面再宽再高，也不许把左栏挤没、
@@ -52,17 +147,22 @@ body {
 
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 20px; border-bottom: 1px solid #2a2e35;
+  flex: none; gap: var(--sp-4);
+  height: 56px; padding: 0 var(--sp-5);
+  border-bottom: 1px solid var(--line);
+  /* 顶栏是"框"，不是内容：比面板再沉半档，让下面那张照片是整屏最亮的东西。
+     （照片永远该是主角 —— 修图工具里界面比照片抢眼就是没修好的设计。） */
+  background: var(--bg);
 }
-.brand { font-weight: 600; letter-spacing: .05em;
+.brand { font-weight: 600; font-size: 15px; letter-spacing: .02em;
   /* 2026-09-29 起品牌名旁边挂了个玫瑰标志，所以这一格从"一段字"变成了"图 + 字"。
      `flex` + `gap` 让图自己占位；`align-items: center` 让图和字的中线对齐
      （按基线对齐的话，图的底边会跟字的基线齐平，整个标志会被顶高一截）。 */
-  display: flex; align-items: center; gap: 8px; }
+  display: flex; align-items: center; gap: var(--sp-2); }
 /* 图**不带 `flex: none` 的话会被压扁**：flex 项默认 `flex-shrink: 1`，
    顶栏窄的时候它会先缩，26px 的方图缩成一条竖缝。 */
 .brand-mark { display: block; flex: none; }
-.actions { display: flex; gap: 8px; }
+.actions { display: flex; align-items: center; gap: var(--sp-2); }
 
 /* ── 保存那两条路（Task 13，§3.4 / §6.6 ①）──────────────────────────
    两块都住在顶栏**下面**、修图页最上面那一行。
@@ -70,18 +170,22 @@ body {
    的一行，塞进去会把品牌名和按钮挤成一团，而 `check:layout` 量的正是
    顶栏会不会被挤爆。它们按"一整条横幅"排：一句话 + 几个按钮，窄屏自己换行。 */
 .ask, .save-fail {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3);
   flex: none;
-  padding: 10px 20px;
-  border-bottom: 1px solid #2a2e35;
-  background: var(--panel);
+  padding: var(--sp-3) var(--sp-5);
+  border-bottom: 1px solid var(--line);
+  background: var(--raised);
+  box-shadow: var(--shadow-1);
+  animation: banner-in var(--dur-2) var(--ease);
 }
+/* 横幅是"从顶栏下面掉下来"的，不是凭空出现 —— 它接的是用户刚按的那一下。 */
+@keyframes banner-in { from { transform: translateY(-6px); opacity: 0 } }
 .ask p, .save-fail p { margin: 0; font-size: 13px; }
 
-/* 失败那条挂一道红边（本文件里"给字用的红"就是 #e06c75，见 .login-error）——
+/* 失败那条挂一道红边（"给字用的红"就是 var(--danger)）——
    不是装饰：§6.6 ② 要的是「明确告诉他，不含糊」，而这一条得在用户刚按完
    「保存」的那一眼里被看见。 */
-.save-fail { border-left: 3px solid #e06c75; }
+.save-fail { border-left: 3px solid var(--danger); background: var(--danger-bg); }
 /* 那半句"为什么"（服务端给的原话）比主句淡一档 —— 主句回答"图还在不在"，
    它回答"那到底是怎么了"。 */
 .save-fail-why { color: var(--muted); }
@@ -89,15 +193,22 @@ body {
    所以它是主按钮。⚠️ `.download` 这个类名同时是测试按**结构**找它的锚点
    （`.save-fail button.download`）—— 文案只留给文案断言，别改回按文字找。 */
 .save-fail button.download {
-  background: var(--accent); border-color: var(--accent); color: #fff;
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600;
 }
 
 button {
-  background: var(--panel); color: var(--text); border: 1px solid #2f343c;
-  border-radius: 8px; padding: 6px 14px; cursor: pointer; font: inherit;
+  background: var(--raised); color: var(--text); border: 1px solid var(--line-2);
+  border-radius: var(--r-sm); padding: 7px 14px; cursor: pointer; font: inherit;
+  transition: background-color var(--dur-1) ease, border-color var(--dur-1) ease,
+              color var(--dur-1) ease, transform var(--dur-1) var(--ease);
 }
-button:hover { border-color: #4a515b; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:hover:not(:disabled) { background: var(--hover); border-color: #4a515e; }
+button:active:not(:disabled) { transform: scale(.97); }
+/* 禁用要**看得见**：原来只有部分按钮自己有 :disabled 规则，别的按下去没反应
+   却长得和能点的一模一样 —— 用户会以为是自己没点准。全站统一一档。 */
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+button.primary:hover:not(:disabled) { background: var(--rose-500); border-color: var(--rose-500); }
 
 .stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
 
@@ -160,7 +271,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 }
 
 .uploader {
-  border: 2px dashed #3a4048; border-radius: 14px; padding: 60px 80px;
+  border: 2px dashed var(--line-2); border-radius: 14px; padding: 60px 80px;
   cursor: pointer; color: var(--muted);
 }
 .uploader input { display: none; }
@@ -170,7 +281,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 
 /* 改：面板不再自己封顶 42vh，改成"最多占 40vh，不够就滚" */
 .panel {
-  border-top: 1px solid #2a2e35; background: var(--panel);
+  border-top: 1px solid var(--line); background: var(--panel);
   padding: 14px 20px; max-height: 40vh; overflow-y: auto;
   flex: none;
 }
@@ -190,7 +301,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 
 .chat {
   width: 340px; flex: none; display: flex; flex-direction: column; min-height: 0;
-  border-left: 1px solid #2a2e35; background: var(--panel);
+  border-left: 1px solid var(--line); background: var(--panel);
 }
 .chat-log {
   flex: 1; overflow-y: auto; padding: 14px;
@@ -198,14 +309,14 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 }
 .bubble { max-width: 88%; border-radius: 12px; padding: 8px 12px; font-size: 13px; }
 .bubble.user {
-  align-self: flex-end; background: var(--accent); color: #fff;
-  border-bottom-right-radius: 4px;
+  align-self: flex-end; background: var(--accent); color: var(--accent-ink);
+  border-bottom-right-radius: var(--sp-1);
 }
-.bubble.assistant { align-self: flex-start; background: #262b33; border-bottom-left-radius: 4px; }
+.bubble.assistant { align-self: flex-start; background: var(--raised); border-bottom-left-radius: var(--sp-1); }
 .bubble.pending { color: var(--muted); font-style: italic; }
 .bubble-jump {
   margin-top: 6px; padding: 2px 8px; font-size: 12px;
-  background: transparent; border-color: #3a4048; color: var(--muted);
+  background: transparent; border-color: var(--line-2); color: var(--muted);
 }
 .bubble-jump:hover { color: var(--text); border-color: var(--accent); }
 
@@ -213,10 +324,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .card { font-size: 13px; padding: 6px 12px; border-radius: 999px; }
 .card:disabled { opacity: .5; cursor: default; }
 
-.chat-input { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid #2a2e35; }
+.chat-input { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); }
 .chat-input input {
-  flex: 1; background: #14161a; color: var(--text); font: inherit;
-  border: 1px solid #2f343c; border-radius: 8px; padding: 8px 12px;
+  flex: 1; background: var(--bg); color: var(--text); font: inherit;
+  border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 12px;
 }
 .chat-input input:focus { outline: none; border-color: var(--accent); }
 
@@ -240,7 +351,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     flex-direction: row;
     width: auto;
     border-right: none;
-    border-bottom: 1px solid #2a2e35;
+    border-bottom: 1px solid var(--line);
     padding: 8px 10px;
   }
 
@@ -251,7 +362,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     flex: none;
     height: 38vh;
     border-left: none;
-    border-top: 1px solid #2a2e35;
+    border-top: 1px solid var(--line);
   }
 
   /* 微调面板打开时，对话让位。
@@ -272,7 +383,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   border-radius: 8px;
   margin-bottom: 6px;
   cursor: pointer;
-  border: 1px solid #3a4048;
+  border: 1px solid var(--line-2);
 }
 .bubble-thumb:hover { border-color: var(--accent); }
 
@@ -283,7 +394,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
    在 auto 高度的父元素上等于没写，登录框会贴着屏幕顶，居中就白写了）。
 
    色值全部取自本文件已有的那套：输入框照 `.chat-input input`（底色
-   #14161a、边框 #2f343c），主按钮照 `button.primary`（--accent）。
+   var(--bg)、边框 var(--line-2)），主按钮照 `button.primary`（--accent）。
    错误文案那个红是这份文件里唯一一处"文字用的红"—— 画布上那个 #ff3b30
    是画在照片上的圈，不是给字用的。 */
 .login { display: flex; align-items: center; justify-content: center; height: 100vh; }
@@ -303,7 +414,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
    ⚠️ `.login-hint` 那个 `margin-top: -6px`（拿来抵消 `.login-box` 那条 14px 的
    gap 用的）也随它一起走了 —— 将来谁要往标题下面再加一行小字，别照抄那个负 margin。 */
 /* `.login-field` 里那个必填的星号。
-   颜色走 `--accent` 而**不是**本文件里那个红（#e06c75）：那个红是**错误**的颜色
+   颜色走 `--accent` 而**不是**本文件里那个红（var(--danger)）：那个红是**错误**的颜色
    （见下面 `.login-error` 那段"本文件里唯一一处给字用的红"）—— 而一个空着的
    必填格此刻并没有错，只是还没填；拿错误的颜色去标它，用户会先去找哪儿出事了。
    `--accent` 也正是主按钮和焦点框的颜色，"这里要你动手"在整屏上是同一套语言。 */
@@ -317,7 +428,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .login-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .login-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
-.login-field input { padding: 10px 12px; border-radius: 8px; border: 1px solid #2f343c; background: #14161a; color: inherit; font-size: 15px; }
+.login-field input { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--bg); color: inherit; font-size: 15px; }
 .login-field input:focus { outline: none; border-color: var(--accent); }
 /* 密码那一格：输入框占满，那颗小眼睛**坐在输入框里面**靠右
    （2026-09-25 第二轮：原来是一颗框外右边的文字按钮，用户要的是框里一个眼睛图标）。
@@ -354,8 +465,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
    用 `:focus-visible` 而不是 `:focus`：鼠标点一下不该在框里留一圈蓝。
    写法照同文件里的 `.gallery-cell:focus-visible`。 */
 .login-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.login-error { margin: 0; font-size: 13px; color: #e06c75; }
-.login-submit { padding: 11px; border-radius: 8px; border: 0; background: var(--accent); color: #fff; font-size: 15px; cursor: pointer; }
+.login-error { margin: 0; font-size: 13px; color: var(--danger); }
+.login-submit { padding: 11px; border-radius: var(--r-sm); border: 0; background: var(--accent); color: var(--accent-ink); font-size: 15px; font-weight: 600; cursor: pointer; transition: background-color var(--dur-1) ease; }
+.login-submit:hover:not(:disabled) { background: var(--rose-500); }
 .login-submit:disabled { opacity: .5; cursor: default; }
 .login-switch { border: 0; background: none; color: inherit; opacity: .7; font-size: 13px; cursor: pointer; }
 /* ★ 忙的时候那颗切换按钮也**看得见地**挡住（2026-09-26 加，和 `disabled={busy}` 是一对）。
@@ -390,15 +502,15 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
   padding: 16px 0 12px;
   background: var(--bg);
-  border-bottom: 1px solid #2a2e35;
+  border-bottom: 1px solid var(--line);
 }
 .gallery-title { margin: 0; font-size: 20px; }
-/* 输入框照 .chat-input input 那套（底色 #14161a、边框 #2f343c），
+/* 输入框照 .chat-input input 那套（底色 var(--bg)、边框 var(--line-2)），
    主色只在聚焦时出现 —— 这一页的重点是那些图，不是搜索框。 */
 .gallery-search {
   flex: 1; min-width: 200px;
-  background: #14161a; color: var(--text); font: inherit;
-  border: 1px solid #2f343c; border-radius: 8px; padding: 8px 12px;
+  background: var(--bg); color: var(--text); font: inherit;
+  border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 12px;
 }
 .gallery-search:focus { outline: none; border-color: var(--accent); }
 
@@ -422,7 +534,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .gallery-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .gallery-thumb {
   display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: cover;
-  border: 1px solid #2f343c; border-radius: 8px; background: #262b33;
+  border: 1px solid var(--line-2); border-radius: 8px; background: var(--raised);
 }
 .gallery-cell:hover .gallery-thumb { border-color: var(--accent); }
 /* 名字可能是用户起的长名字：撑歪格子会把整行挤变形，所以一行截断。 */
@@ -440,7 +552,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 }
 .gallery-more::before {
   content: ''; width: 14px; height: 14px; border-radius: 50%;
-  border: 2px solid #3a4048; border-top-color: var(--accent);
+  border: 2px solid var(--line-2); border-top-color: var(--accent);
   animation: gallery-spin .8s linear infinite;
 }
 @keyframes gallery-spin { to { transform: rotate(360deg); } }
@@ -453,7 +565,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .gallery-loading, .gallery-none { margin: 24px 0 0; color: var(--muted); }
 .gallery-empty { margin-top: 48px; text-align: center; color: var(--muted); }
 .gallery-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
-.gallery-error { margin: 24px 0 0; color: #e06c75; }
+.gallery-error { margin: 24px 0 0; color: var(--danger); }
 
 /* ── 作品详情页（Task 12）：这张图怎么来的 ──────────────────────────
    ⚠️ **`.detail` 必须自己滚**（下面那条 overflow-y: auto），和 `.gallery` 同一条规矩：
@@ -471,7 +583,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .detail-head {
   display: flex; align-items: center; gap: 12px;
   padding: 16px 0 12px; margin-bottom: 16px;
-  border-bottom: 1px solid #2a2e35;
+  border-bottom: 1px solid var(--line);
 }
 /* 名字可能是用户起的长名字，也可能长到把「改名」挤出屏幕 —— 一行截断。 */
 .detail-name {
@@ -479,10 +591,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .detail-rename { flex: none; }
-/* 改名输入框照 `.chat-input input` 那套（底色 #14161a、边框 #2f343c）。 */
+/* 改名输入框照 `.chat-input input` 那套（底色 var(--bg)、边框 var(--line-2)）。 */
 .rename-input {
   flex: 1; min-width: 0;
-  background: #14161a; color: var(--text); font: inherit; font-size: 18px;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 18px;
   border: 1px solid var(--accent); border-radius: 8px; padding: 6px 12px;
 }
 .rename-input:focus { outline: none; }
@@ -490,7 +602,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 /* 大图。**不写死尺寸**：真照片是什么比例都有，宽高两条都封顶、由 object-fit 兜底。 */
 .detail-image {
   display: block; margin: 0 auto; max-width: 100%; max-height: 60vh;
-  border-radius: 8px; background: #262b33;
+  border-radius: 8px; background: var(--raised);
 }
 
 .detail-actions {
@@ -501,7 +613,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
    所以按 button.primary 的样子手工上一套主色。 */
 .detail-download {
   display: inline-block; text-decoration: none;
-  background: var(--accent); color: #fff; border-radius: 8px; padding: 7px 14px;
+  background: var(--accent); color: var(--accent-ink); border-radius: var(--r-sm); padding: 7px 14px;
 }
 /* 删除确认**就地说**，不弹窗：一句"删了就找不回来了" + 两个按钮。
    ⚠️ 里面**不许**出现"你电脑上那份还在"这类安慰 —— 服务器不可能知道
@@ -511,7 +623,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 }
 .detail-delete, .detail-confirm button { padding: 6px 12px; }
 .detail-loading { margin: 24px 0 0; color: var(--muted); }
-.detail-error { margin: 24px 0 0; color: #e06c75; }
+.detail-error { margin: 24px 0 0; color: var(--danger); }
 /* §3.7 的"那怎么办"那句话 —— 和 `.gallery-hint` 同一套观感：同一句话在两个页面上
    （作品页「取列表失败」、详情页「打不开这一张」），不该长得像两件事。
    自己带颜色，别指望从 `.detail-error` 继承。 */
@@ -523,7 +635,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .how-title { grid-column: 1 / -1; margin: 0; font-size: 20px; }
 
 .recipe-box {
-  border: 1px solid #2f343c; border-radius: 10px;
+  border: 1px solid var(--line-2); border-radius: 10px;
   background: var(--panel); padding: 14px 16px;
   min-width: 0;
 }
