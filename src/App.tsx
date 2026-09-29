@@ -7,6 +7,7 @@ import { LoginPage } from './ui/LoginPage'
 import { GalleryPage } from './ui/GalleryPage'
 import { WorkDetailPage } from './ui/WorkDetailPage'
 import { Nav } from './ui/Nav'
+import logoMark from './assets/logo/rose.svg'
 import { pathOf, viewFromPath, type View } from './ui/view'
 import { me, type AccountUser } from './api/account'
 import { createWork, replaceWork } from './api/works'
@@ -780,7 +781,17 @@ export default function App() {
       {view.kind === 'edit' && (
         <div className="app">
           <header className="topbar">
-            <span className="brand">RuiXing</span>
+            {/* 玫瑰标志 + 名字。**`alt=""` 是有意的** —— 旁边就是 "RuiXing" 这行字，
+                读屏的人听一遍名字就够了，图片再报一次等于同一个名字念两遍。
+                （图片本身是 2026-09-29 用户拍板的粉玫瑰，源文件在 src/assets/logo/。）
+
+                ⚠️ 用的是**彩色版**，不是单色版：顶栏是深底，单色深版（墨色）在上面
+                根本看不见，而单色浅版（白色）会把品牌唯一的颜色丢掉。
+                26px 是试出来的 —— 再小粉色就糊成一个点。 */}
+            <span className="brand">
+              <img className="brand-mark" src={logoMark} alt="" width={26} height={26} />
+              RuiXing
+            </span>
             {image && (
               <div className="actions">
                 <button onClick={() => setShowPanel(v => !v)}>微调</button>

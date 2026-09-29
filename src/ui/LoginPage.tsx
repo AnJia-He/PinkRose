@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { login, signup } from '../api/account'
+import logoMark from '../assets/logo/rose.svg'
 import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../../shared/account.ts'
 
 /** `onDone` **不带参数**，但要 **await 它** —— 它交出去的是"App 去问一次
@@ -206,6 +207,13 @@ export function LoginPage({ onDone }: Props) {
             两处永远是同一个词。`App.test.tsx` 里「标题就说这一步是干什么的」那条
             钉着两个模式各该显示什么 —— 谁把这里写死成两选一（或写死回「随心」），
             它另一半当场红。 */}
+        {/* 玫瑰标志。**放在标题上面，不替掉标题** —— 标题是要说"现在在登录还是在注册"的
+            （上面那一大段讲的就是这件事），换成图片那句话就没了。
+            图片 `alt=""`：它旁边就是标题和按钮，读屏的人不需要再听一遍"玫瑰"。
+
+            ⚠️ 2026-09-25 用户把标题下面那两行字都删了，所以这一屏现在很素。
+            加个标志是把那块空白用掉，不是又塞一句话回来 —— **别顺手再加副标题。** */}
+        <img className="login-mark" src={logoMark} alt="" width={64} height={64} />
         <h1 className="login-title">{mode === 'login' ? '登录' : '注册'}</h1>
         {/* ⚠️ 标题下面原来有两行字，2026-09-25 用户看过页面之后**都要去掉**：
               · 副标题 `.login-sub`（登录那句「登录一下，你的图都在这儿」/ 注册那句

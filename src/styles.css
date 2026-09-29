@@ -54,7 +54,14 @@ body {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 20px; border-bottom: 1px solid #2a2e35;
 }
-.brand { font-weight: 600; letter-spacing: .05em; }
+.brand { font-weight: 600; letter-spacing: .05em;
+  /* 2026-09-29 起品牌名旁边挂了个玫瑰标志，所以这一格从"一段字"变成了"图 + 字"。
+     `flex` + `gap` 让图自己占位；`align-items: center` 让图和字的中线对齐
+     （按基线对齐的话，图的底边会跟字的基线齐平，整个标志会被顶高一截）。 */
+  display: flex; align-items: center; gap: 8px; }
+/* 图**不带 `flex: none` 的话会被压扁**：flex 项默认 `flex-shrink: 1`，
+   顶栏窄的时候它会先缩，26px 的方图缩成一条竖缝。 */
+.brand-mark { display: block; flex: none; }
 .actions { display: flex; gap: 8px; }
 
 /* ── 保存那两条路（Task 13，§3.4 / §6.6 ①）──────────────────────────
@@ -282,6 +289,12 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .login { display: flex; align-items: center; justify-content: center; height: 100vh; }
 .login-box { display: flex; flex-direction: column; gap: 14px; width: 320px; }
 .login-title { margin: 0; font-size: 28px; }
+/* 登录页顶上那朵玫瑰。
+   **左对齐，不居中** —— 这一栏其它东西（标题、字段名、输入框、按钮）全都是左对齐的，
+   单把标志居中会看着像摆歪了。`align-self: flex-start` 是必须的：`.login-box` 是
+   `flex-direction: column`，子项默认 `stretch` —— 不给的话这张方图会被拉成整行宽。
+   （`.login-box` 那条 14px 的 gap 顺带给图和标题之间留出距离，不用再加 margin。） */
+.login-mark { align-self: flex-start; display: block; }
 /* `.login-sub`（副标题）和 `.login-hint`（"打 * 的都得填"）两条规则在
    **2026-09-25 被一起删掉**了：用户看过页面之后说这两句都不要，两个元素整个
    不渲染了（见 `LoginPage.tsx` 标题下面那处注释 —— 那里记着这件事的代价）。
