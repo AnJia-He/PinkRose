@@ -177,16 +177,37 @@ export default function App() {
    *  屏幕上根本不存在的按钮）。 */
   const [saveFail, setSaveFail] =
     useState<{ blob: Blob | null; name: string; why: string } | null>(null)
-  /** 顶上那条**通报**：这件事没成，把话说给用户，说完可以收走（2026-09-30）。
+  /** 顶上那条**通报**：有件事要跟你说一声，说完可以收走（2026-09-30）。
    *
    *  它取代了原来三处 `window.alert`。系统弹窗有两个毛病：它把整页冻住，
    *  而且长得**不像这个产品的一部分** —— 一个花了一整天做视觉的产品，
    *  出错时突然跳出一个灰扑扑的系统框，那一下就把"做完了"的感觉打回去了。
    *
+   *  `tone` 只有两种：`bad`（这件事没成，留着等用户看完自己点掉 ——
+   *  他可能要去别处看一眼再决定怎么办）和 `ok`（成了，几秒后自己走）。
+   *
+   *  ★ **「存好了」也走这里，不是因为它是个错误**：手机上打开微调面板时
+   *  **对话栏整个是隐藏的**（面板和对话在抢竖向空间，见 styles.css 那条 `:has`），
+   *  而那一刻正是用户拖完滑块、按「保存」的时候 —— 那句话会落进
+   *  **一个用户看不见的地方**。（2026-09-30 全链路回归在手机那趟抓到的：
+   *  桌面那一趟全绿，只有"打开面板再保存"这一串下来屏上什么都没有。）
+   *
    *  ⚠️ 它和 `saveFail` 是**两种东西，别合并**：那条横幅是"图还在，先拿到手"，
    *  自带一个下载按钮，而且**不许被关掉**（关掉用户就真的拿不到那张图了）；
    *  这条只是通报，「知道了」就该收走。 */
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'bad' } | null>(null)
+  /** 通报一句"没成"。**身份必须是稳定的** —— 它直接传给 Canvas 的 `onFail`，
+   *  而那边进了 effect 的依赖数组（理由见 Canvas.tsx 那段）。 */
+  const noticeBad = useCallback((text: string) => setNotice({ text, tone: 'bad' }), [])
+
+  // "成了"的通报自己会走：它是**回执**，不是待办。
+  // 用函数式更新加一道守卫 —— 这几秒里用户可能已经触发了别的通报，
+  // 无条件 `setNotice(null)` 会把**新的那条**一起抹掉。
+  useEffect(() => {
+    if (notice?.tone !== 'ok') return
+    const t = setTimeout(() => setNotice(n => (n?.tone === 'ok' ? null : n)), 4000)
+    return () => clearTimeout(t)
+  }, [notice])
 
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
   const originalFileRef = useRef<File | null>(null)
@@ -443,7 +464,7 @@ export default function App() {
       void loadCards(img).finally(() => { clearTimeout(timer); settle() })
     } catch (e) {
       console.error(e)
-      setNotice('这张图打不开，换一张试试')
+      noticeBad('这张图打不开，换一张试试')
     } finally {
       setBusy(null)
     }
@@ -638,7 +659,7 @@ export default function App() {
       // 走到这儿只剩一种可能：`buildExportBlob` 自己失败了（图都没做出来），
       // 那时候也没有能退回下载的东西。
       console.error(e)
-      setNotice('分享失败，再试一次')
+      noticeBad('分享失败，再试一次')
     } finally {
       setDelivering(null)
     }
@@ -669,7 +690,7 @@ export default function App() {
       // 和分享那条**说同一句话** —— 用户看到的都是"把图给我"这一件事没成，
       // 分成两种说法只会让他以为出了两种毛病。
       console.error(e)
-      setNotice('图没能导出来，再试一次')
+      noticeBad('图没能导出来，再试一次')
     } finally {
       setDelivering(null)
     }
@@ -737,16 +758,16 @@ export default function App() {
       const { id } = await createWork(body)
       setSavedId(id)
     }
-    // 说一句"存好了" —— 走现有的 `say()`（它追加的是 `role: 'assistant'`），
-    // 不新加一套提示机制，也**绝不能**用 `setMessages` 手写一条 `role: 'user'`：
+    // 说一句"存好了"。**走通报条，不走对话**（2026-09-30 改）——
+    // 理由不是"它不是对话"，是**对话栏有时候根本不在屏上**：手机上打开微调
+    // 面板时 `.chat` 是 `display: none`（面板和对话在抢竖向空间），而那一刻
+    // 正是用户拖完滑块按「保存」的时候。这句话原来落进一个用户看不见的地方，
+    // 全链路回归在手机那趟抓到的（桌面全绿）。
+    //
+    // ⚠️ 也**绝不能**改成 `setMessages` 手写一条 `role: 'user'` ——
     // 那会当场变成"用户说过的原话"，混进上面那份配方里。
-    say('存好了，在左边「作品」里。')
-    // ⚠️ 上面那句就是 `say` 必须进依赖表的原因 —— **不是为了防"闭包住旧的那一份"**：
-    //    `say` 是 `useCallback(…, [])`（见 :195 附近），身份永远不变，陈旧那一说
-    //    在这儿不可能发生。留它在表里是对的（exhaustive-deps 要求"用了就写"，
-    //    哪天有人给 `say` 加一个依赖，这张表会自己把它捞回来），但理由就是这个。
-    //    —— 原来那句话描述的是一个**不可能发生的后果**（终审 M3）。
-  }, [recipeNow, say])
+    setNotice({ text: '存好了，在左边「作品」里。', tone: 'ok' })
+  }, [recipeNow])
 
   const onSave = useCallback(async () => {
     if (!canvasElRef.current || !originalFileRef.current) return
@@ -927,8 +948,8 @@ export default function App() {
               三块都住在顶栏下面、都按"一整条横幅"排，所以它们并排出现时读起来
               是一列消息，不是三坨按钮。 */}
           {notice && (
-            <div className="notice">
-              <p>{notice}</p>
+            <div className={notice.tone === 'ok' ? 'notice ok' : 'notice'}>
+              <p>{notice.text}</p>
               <button onClick={() => setNotice(null)}>知道了</button>
             </div>
           )}
@@ -1010,7 +1031,7 @@ export default function App() {
                   picking={picking}
                   marker={marker}
                   onPickPoint={onPickPoint}
-                  onFail={setNotice}
+                  onFail={noticeBad}
                 />
               </div>
               <ChatPanel
