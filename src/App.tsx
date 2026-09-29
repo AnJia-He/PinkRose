@@ -134,9 +134,9 @@ export default function App() {
   const [showPanel, setShowPanel] = useState(false)
   /** 非 null 时既是"正在忙"的标志，也是要显示给用户的那句话 */
   const [busy, setBusy] = useState<string | null>(null)
-  /** 正在导出的是哪一个按钮（null = 没在忙）。两个按钮共用一个"忙"，
-   *  但只有被按的那个显示「准备中…」—— 两个一起变会像出了两件事。 */
-  const [delivering, setDelivering] = useState<'share' | 'save' | null>(null)
+  /** 正在导出的是哪一个按钮（null = 没在忙）。几个按钮共用一个"忙"，
+   *  但只有被按的那个显示「准备中…」—— 一起变会像出了几件事。 */
+  const [delivering, setDelivering] = useState<'share' | 'download' | 'save' | null>(null)
   /** 本设备能不能把图交给系统分享面板。只在挂载时算一次：设备能力不会中途变。
    *  用惰性初始化（传函数），免得每次 render 都去 new 一个探针 File。 */
   const [canShare] = useState(canShareImage)
@@ -606,9 +606,40 @@ export default function App() {
     }
   }, [])
 
-  // ── 「保存」= 存进作品集（Task 13，§3.4）──────────────────────────────
+  // ── 「下载」= 桌面上把图拿到手的唯一一条路（2026-09-30 补）────────────
   //
-  // ⚠️ 这条路**一个字节都不下载**。下载挪到作品集里，由用户自己决定要哪张、
+  // ⚠️ **这个按钮存在的全部理由**：2026-09-29 的产品测试量出来，桌面上
+  //    **没有任何一条路能把图拿到手** ——
+  //      · 顶栏只有「微调 / 分享 / 保存」；
+  //      · 「分享」只在 `canShare` 为真时渲染，而桌面 Chrome 的
+  //        `navigator.share` 不认图片 → **那个按钮根本不出现**；
+  //      · 「保存」只存进作品集；唯一的「下载到电脑」藏在**保存失败的横幅**里，
+  //        也就是说，图**存成功了反而拿不到**。
+  //    手机上那条路是通的（系统分享面板），所以这纯粹是桌面的缺口。
+  //    修法就是把「分享」那一格在不能分享的设备上换成「下载」——
+  //    **同一格位置，同一件事（把图给我）的两种给法**，不是多出一个按钮。
+  //    （原来那格空着，理由是"不留一个点了没用的按钮"—— 那个理由对
+  //    "点了没反应"成立，对"这是唯一一条拿图的路"不成立。）
+  const onDownload = useCallback(async () => {
+    const canvas = canvasElRef.current
+    const file = originalFileRef.current
+    if (!canvas || !file) return
+    setDelivering('download')
+    try {
+      const blob = await buildExportBlob(canvas, file, 'image/jpeg', 0.95)
+      downloadImage(blob, buildFilename(file.name, 'image/jpeg'))
+    } catch (e) {
+      // 走到这儿只剩一种可能：`buildExportBlob` 自己失败了（图都没做出来）。
+      // 和别处一样走 `say()`：用户此刻正盯着这一屏，说在对话里他看得见。
+      console.error(e)
+      say('图没能导出来，再点一次「下载」试试。')
+    } finally {
+      setDelivering(null)
+    }
+  }, [say])
+
+  // ── 「保存」= 存进作品集（Task 13，§3.4）──────────────────────────────
+  //  // ⚠️ 这条路**一个字节都不下载**。下载挪到作品集里，由用户自己决定要哪张、
   //    存到哪 —— 设一个"默认开"的开关很别扭，因为**用户一开始根本不知道有
   //    那么个开关**；顺带也不再偷偷往他的下载文件夹堆东西。
   //
@@ -827,20 +858,24 @@ export default function App() {
             {image && (
               <div className="actions">
                 <button onClick={() => setShowPanel(v => !v)}>微调</button>
-                {/* 不能分享的设备上这个按钮**干脆不出现**：桌面 Chrome 有
-                    navigator.share 但不认图片，留一个点了弹不出东西的按钮更糟。
-                    它不出现时，「保存」顶上当主按钮。 */}
-                {canShare && (
+                {/* 这一格是**"把图给我"**，只是给法分两种，按这个设备认不认
+                    图片分享来选（`canShare` 只在挂载时算一次：设备能力不会中途变）。
+                    · 认 → 「分享」：弹系统面板，手机上一步选微信，跳过翻文件管理器。
+                    · 不认 → 「下载」：桌面 Chrome 就是这一档，见 onDownload
+                      —— 在那之前**桌面上根本没有把图拿到手的路**。
+                    两条路都给同一个东西（用户修好的那张图），所以它们是**同一格
+                    的两种长相**，不是两个按钮。 */}
+                {canShare ? (
                   <button className="primary" onClick={() => onShare()} disabled={delivering !== null}>
                     {delivering === 'share' ? '准备中…' : '分享'}
                   </button>
+                ) : (
+                  <button className="primary" onClick={onDownload} disabled={delivering !== null}>
+                    {delivering === 'download' ? '准备中…' : '下载'}
+                  </button>
                 )}
                 {/* 「保存」= 存进作品集（§3.4）—— 它不再下载，所以走的是 `onSave`。 */}
-                <button
-                  className={canShare ? '' : 'primary'}
-                  onClick={onSave}
-                  disabled={delivering !== null}
-                >
+                <button onClick={onSave} disabled={delivering !== null}>
                   {delivering === 'save' ? '准备中…' : '保存'}
                 </button>
               </div>

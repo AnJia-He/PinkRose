@@ -605,12 +605,35 @@ describe('导出：分享还是存下来，用户自己选', () => {
     expect(topbarButtons()).toEqual(['微调', '分享', '保存'])
   })
 
-  it('不能分享的设备上没有「分享」—— 不留一个点了没用的按钮', async () => {
-    // 桌面 Chrome 就是这样：navigator.share 在，但不认图片。
+  it('不能分享的设备上，那一格换成「下载」', async () => {
+    // 桌面 Chrome 就是这样：`navigator.share` 在，但不认图片 —— 所以「分享」
+    // 点了弹不出任何东西，**不该出现**（这条测试前半句就是钉它的）。
+    //
+    // ⚠️ **2026-09-30 改了后半句。** 原来这里断言的是 `['微调', '保存']`：
+    //    那一格**空着**，理由是"不留一个点了没用的按钮"。可 2026-09-29 的
+    //    产品能力测试量出来：**桌面上没有任何一条路能把图拿到手** ——
+    //    「保存」只进作品集，唯一的「下载到电脑」藏在**保存失败的横幅**里，
+    //    也就是说**存成功了反而拿不到**。所以那一格不该空着，它该换成
+    //    同一个动作（"把图给我"）在桌面上的另一种给法。
+    //    两半都得守：堵上整条路不行，留一个点了没反应的按钮也不行。
     vi.mocked(saveMod.canShareImage).mockReturnValue(false)
     await renderApp()
     await uploadPhoto()
-    expect(topbarButtons()).toEqual(['微调', '保存'])
+    expect(topbarButtons()).toEqual(['微调', '下载', '保存'])
+  })
+
+  it('点「下载」→ 真的下载一份，文件名和分享那条一样', async () => {
+    vi.mocked(saveMod.canShareImage).mockReturnValue(false)
+    await renderApp()
+    await uploadPhoto()
+    await click('下载')
+
+    expect(saveMod.downloadImage).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(saveMod.downloadImage).mock.calls[0][1]).toBe('p_ruixing.jpg')
+    // ★ 它是"把图给我"，不是"存进作品集"—— 两条路不许串。
+    //   变异：把 onDownload 接成 onSave → 这里红。
+    expect(fetchMock.mock.calls.some(
+      c => c[0] === '/api/works' && c[1]?.method === 'POST')).toBe(false)
   })
 
   it('点「分享」→ 弹系统面板，**不走下载**', async () => {
