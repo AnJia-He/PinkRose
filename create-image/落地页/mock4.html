@@ -84,7 +84,7 @@ h2 .dim{color:var(--ink-3)}
   border-bottom:1px solid rgba(255,255,255,.08)}
 .nav .wrap{display:flex;align-items:center;gap:36px;height:68px}
 .brand{display:flex;align-items:center;gap:9px;color:#fff;font-weight:500;font-size:15.5px;letter-spacing:.01em}
-.brand i{width:9px;height:9px;border-radius:50%;background:var(--accent)}
+.brand img{width:20px;height:20px;display:block;flex:none}
 .nav nav{display:flex;gap:4px;margin-left:auto}
 .nav nav a{color:#a9aebb;text-decoration:none;font-size:14px;padding:9px 14px;border-radius:var(--pill);
   transition:color .3s ease}
@@ -133,15 +133,8 @@ h2 .dim{color:var(--ink-3)}
 .deep{background:var(--deep);color:var(--deep-ink);padding:150px 0}
 .deep h2{color:var(--deep-ink)}
 .deep .lede{color:var(--deep-ink-2)}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);margin-top:92px}
-.stat{padding:36px 36px 0 0;border-top:1px solid rgba(255,255,255,.18)}
-.stat b{display:block;font-size:clamp(32px,3.8vw,52px);font-weight:500;
-  letter-spacing:-.035em;line-height:1;margin-top:28px}
-.stat span{display:block;margin-top:16px;color:var(--deep-ink-2);font-size:14.5px;line-height:1.7}
 @media (max-width:900px){
   .deep{padding:92px 0}
-  .stats{grid-template-columns:repeat(2,1fr);margin-top:56px}
-  .stat{padding:26px 20px 0 0}
 }
 
 /* ── Before / After ───────────────────────────────────────────────── */
@@ -225,7 +218,7 @@ html.js .rise.in{opacity:1;transform:none}
 
 <header class="nav">
   <div class="wrap">
-    <span class="brand"><i></i>RuiXing</span>
+    <span class="brand"><img src="../../src/assets/logo/rose.svg" alt="">RuiXing</span>
     <nav>
       <a href="#product">产品</a>
       <a href="#engine">引擎</a>
@@ -273,11 +266,6 @@ html.js .rise.in{opacity:1;transform:none}
     <div class="rise">
       <h2>调色跑在你自己手机里</h2>
       <p class="lede">不联网、不排队、不花钱。改坏了随时退回去，每一步都留在对话里。</p>
-    </div>
-    <div class="stats rise">
-      <div class="stat"><b>8</b><span>条滑块，想细调再展开</span></div>
-      <div class="stat"><b>6</b><span>套一键风格预设</span></div>
-      <div class="stat"><b>0</b><span>调色不碰原图一个像素</span></div>
     </div>
   </div>
 </section>
