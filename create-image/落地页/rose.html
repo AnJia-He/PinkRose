@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>RuiXing 标志 · 粉玫瑰</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════
+   RuiXing 标志 —— 粉玫瑰
+
+   用户 2026-09-29 拍板：**「以粉玫瑰设为LOGO」**。
+
+   **画一朵玫瑰最难的地方**（试了三轮，弯路记在这儿）：
+
+     ✗ **一个螺旋** —— 读成肉桂卷 / 蜗牛壳。螺旋本身不像花。
+     ✗ **五片尖楔形花瓣 + 螺旋** —— 花瓣是尖的，整个读成风车。
+     ✗ **花瓣改圆但只有五六片** —— 读成樱花 / 五瓣小花，不是玫瑰。
+     ✅ **花瓣加密（10/7/5 三层，瓣宽略大于瓣长）+ 中心留一条螺旋。**
+        稀疏 = 小花，密集 = 玫瑰 —— 差别就在花瓣数量上。
+
+   **三层粉是同一朵花的深浅**：外圈最浅、往里一层层加深、花心最深。
+   真玫瑰就是这样的：外面的花瓣被光照着，越往里越暗。**不要反过来**。
+
+   **每片花瓣大小略有出入**（`seed` 那行）—— 真花不是每片都一样大的，
+   完全对称会立刻变回"卡通小花"。
+
+   配套的三个版本都做了，缺一个这标志就没法用：
+     · 彩色版（主标）
+     · 单色版（花瓣之间留缝，不靠颜色也认得出）—— 印黑白的、刻章、传真用
+     · 缩小版（花瓣减到三层不满、笔画加粗）—— 32px 以下用
+   ═══════════════════════════════════════════════════════════════════ */
+:root{ --ink:#0d0e11; --paper:#f7f6f4; --line:#e4e2dd; --ink2:#45494f; --ink3:#8d9198;
+       --p0:#fdeaf0; --p1:#f8cfdb; --p2:#f0a8bd; --p3:#dc7f9f; --p4:#bc587d; --leaf:#7f9c79; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  background:var(--paper);color:var(--ink);font-weight:380;font-size:16px;line-height:1.75;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:0 40px 120px}
+h1{font-size:34px;font-weight:600;letter-spacing:-.03em;margin:70px 0 8px}
+p.sub{color:var(--ink2);max-width:40em}
+h2{font-size:15px;font-weight:500;letter-spacing:.06em;color:var(--ink3);
+   margin:70px 0 0;padding-bottom:13px;border-bottom:1px solid var(--line)}
+
+.hero{margin-top:26px;border:1px solid var(--line);border-radius:18px;background:#fff;overflow:hidden}
+.hero .row{display:flex;align-items:center;justify-content:center;gap:58px;padding:54px 30px 44px}
+.hero .ondark{background:var(--ink);border-radius:16px;padding:30px 38px;display:flex;align-items:center}
+.hero .strip{display:flex;border-top:1px solid var(--line)}
+.hero .strip div{flex:1;padding:15px 20px;font-size:13.5px;color:var(--ink2)}
+.hero .strip div+div{border-left:1px solid var(--line)}
+.hero .strip b{display:block;color:var(--ink);font-weight:600;font-size:14.5px;margin-bottom:2px}
+
+.sizes{display:flex;align-items:flex-end;gap:34px;flex-wrap:wrap;margin-top:30px}
+.sizes figure{text-align:center}
+.sizes figcaption{font-size:11.5px;color:var(--ink3);margin-top:9px}
+
+.row3{display:flex;gap:18px;flex-wrap:wrap;margin-top:28px}
+.cell{flex:1 1 190px;border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden}
+.cell .box{padding:26px;display:flex;justify-content:center;align-items:center;min-height:150px}
+.cell .box.dk{background:var(--ink)}
+.cell .lb{padding:12px 16px;border-top:1px solid var(--line);font-size:13px;color:var(--ink2)}
+.cell .lb b{display:block;color:var(--ink);font-weight:600;font-size:14px}
+
+.pal{display:flex;border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-top:26px}
+.pal div{flex:1;height:88px;display:flex;align-items:flex-end;justify-content:center;
+  font-size:11.5px;padding-bottom:8px;font-family:ui-monospace,Menlo,monospace}
+
+@media (max-width:820px){
+  .hero .row{flex-direction:column;gap:30px}
+  .wrap{padding:0 22px 80px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>RuiXing 标志 · 粉玫瑰</h1>
+  <p class="sub">三层花瓣由浅入深，中心留一条螺旋。**每片花瓣大小都略有出入** —— 完全对称会立刻变回"卡通小花"。</p>
+
+  <h2>主标</h2>
+  <div class="hero">
+    <div class="row">
+      <div id="big"></div>
+      <div class="ondark" id="bigdark"></div>
+    </div>
+    <div class="strip">
+      <div><b>瓣数</b>三层 10 / 7 / 5</div>
+      <div><b>深浅</b>外圈最浅、花心最深</div>
+      <div><b>那一笔</b>中心的螺旋</div>
+    </div>
+  </div>
+
+  <h2>尺寸实测</h2>
+  <p class="sub">主标到 **32px 都还立得住**（再小粉色就只剩一个点）。**更小的地方用下面的单色版** —— 它到 18px 还认得出。</p>
+  <div class="sizes" id="sizes"></div>
+
+  <h2>单色版（必须有）</h2>
+  <p class="sub">不是所有地方都能印粉色 —— 刻章、传真、黑白印刷、单色刺绣都要这一版。
+     **外圈留一个干净的剪影，里面两层逐片留缝**：缝跟着花瓣的形状走，
+     所以看得出是一层一层瓣上去的，而不是一个黑团。缝是**透的**，换到深色底不会露馅。</p>
+  <div class="row3" id="mono"></div>
+
+  <h2>配色</h2>
+  <p class="sub">三层粉是**同一朵花的深浅**：外圈被光照着所以最浅，越往里越暗。**别反过来**，反过来花瓣看着是凹的。</p>
+  <div class="pal" id="pal"></div>
+
+  <h2>如果要保留"会说话"那层意思</h2>
+  <p class="sub">把玫瑰放进对话气泡里 —— 玫瑰还是主形，气泡只是外框。
+     **上一版"会说话的照片"那层产品含义就还在**，只是把风景换成了玫瑰。</p>
+  <div class="row3" id="alt"></div>
+
+</div>
+
+<script>
+const V = '0 0 100 100';
+const S = (inner, w) => `<svg width="${w}" height="${w}" viewBox="${V}">${inner}</svg>`;
+let uid = 0;
+
+const P0='#fdeaf0', P1='#f8cfdb', P2='#f0a8bd', P3='#dc7f9f', P4='#bc587d';
+const LEAF='#7f9c79', LEAFD='#5c7a59';
+
+/* 一片花瓣：根在原点，往外长。 */
+function petalPath(len, wid) {
+  return `M0 0 C${-wid*.52} ${-len*.28} ${-wid*.60} ${-len*.82} 0 ${-len} ` +
+         `C${wid*.60} ${-len*.82} ${wid*.52} ${-len*.28} 0 0 Z`;
+}
+function rp(cx, cy, ang, len, wid, fill) {
+  return `<path d="${petalPath(len, wid)}" fill="${fill}" transform="translate(${cx} ${cy}) rotate(${ang})"/>`;
+}
+function spiralPath(cx, cy, r0, r1, turns, steps = 80) {
+  let d = '';
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps, a = t * turns * Math.PI * 2, r = r0 + (r1 - r0) * t;
+    d += (i ? 'L' : 'M') + (cx + r * Math.cos(a)).toFixed(2) + ' ' + (cy + r * Math.sin(a)).toFixed(2);
+  }
+  return d;
+}
+function leafShape(cx, cy, ang, len, wid) {
+  return `<path d="${petalPath(len, wid)}" fill="${LEAF}" transform="translate(${cx} ${cy}) rotate(${ang})"/>` +
+         `<path d="M0 0 L0 ${-len*.84}" stroke="${LEAFD}" stroke-width="2.2" fill="none" ` +
+         `transform="translate(${cx} ${cy}) rotate(${ang})"/>`;
+}
+
+/* 花瓣清单。改 ring 里那个 n 就是改密度 —— 稀疏 = 小花，密集 = 玫瑰。 */
+const RINGS = [
+  { n: 10, len: 32, wid: 31, off: 18, fill: P1 },
+  { n: 7,  len: 25, wid: 28, off: 4,  fill: P2 },
+  { n: 5,  len: 17, wid: 21, off: 30, fill: P3 },
+];
+const JIT = (k, i) => 1 + Math.sin(k * 5.1 + i * 2.7) * 0.06;   // 每片大小略不同
+
+/* 彩色主标 */
+function rose(cx, cy, k, seed = 0, rings = RINGS, leaves = false) {
+  let out = leaves
+    ? leafShape(cx - 14 * k, cy + 33 * k, 33, 25 * k, 16 * k) +
+      leafShape(cx + 14 * k, cy + 33 * k, -33, 25 * k, 16 * k)
+    : '';
+  rings.forEach((r, ri) => {
+    for (let i = 0; i < r.n; i++)
+      out += rp(cx, cy, r.off + i * 360 / r.n, r.len * k * JIT(seed + ri, i), r.wid * k, r.fill);
+  });
+  out += `<path d="${spiralPath(cx, cy, 2.2 * k, 9 * k, 1.7)}" fill="none" stroke="${P4}"
+           stroke-width="${3.8 * k}" stroke-linecap="round"/>`;
+  return out;
+}
+
+/* 单色版：整朵填一个色，靠 mask 挖出花瓣之间的缝。
+   ⚠️ 四条路，前三条都不行（记住别回去）：
+     ① **白线画缝** → 换到深色底**露馅**。缝必须真的透，只能走 mask。
+     ② **把每一片花瓣都描一遍轮廓** → **蕾丝**。花瓣重叠太密，缝挤成一片纹理。
+     ③ **只挖两道"波浪环"**（半径绕圆周起伏，对着花瓣的朝向）→ 太规整，
+        像一枚**几何花形徽章**，不是玫瑰。
+     ④ **缝太粗** → 比花瓣还宽，整朵被吃成碎点。
+   ✅ 正解：**外圈不挖（保住一个干净的剪影，跟粉色版的形状一致），
+      里面两层"逐片缩 6%"** —— 每一片花瓣画实，再盖一片缩小版把它边缘吃掉。
+      缝跟着花瓣的形状走，所以是有机的，不是几何的。 */
+function roseMono(cx, cy, k, seed = 0, shrink = 0.94) {
+  const id = 'rm' + (++uid);
+  let cut = '';
+  RINGS.forEach((r, ri) => {
+    if (ri === 0) return;                       // ← 外圈不挖，剪影才干净
+    for (let i = 0; i < r.n; i++) {
+      const ang = r.off + i * 360 / r.n, len = r.len * k * JIT(seed + ri, i), wid = r.wid * k;
+      cut += rp(cx, cy, ang, len, wid, '#000');
+      cut += rp(cx, cy, ang, len * shrink, wid * shrink, '#fff');
+    }
+  });
+  // 花心那条螺旋：单色版里它是"这是玫瑰不是卷心菜"的唯一信号，不能省
+  cut += `<path d="${spiralPath(cx, cy, 3 * k, 10 * k, 1.8)}" fill="none" stroke="#000"
+            stroke-width="${3.2 * k}" stroke-linecap="round"/>`;
+  return `<defs><mask id="${id}">
+      <rect x="0" y="0" width="100" height="100" fill="#fff"/>${cut}
+    </mask></defs>
+    <g mask="url(#${id})">${petalsFill(cx, cy, k, seed)}</g>`;
+}
+
+/* 整朵的所有花瓣（只管形状，颜色由外面给） */
+function petalsFill(cx, cy, k, seed = 0) {
+  let out = '';
+  RINGS.forEach((r, ri) => {
+    for (let i = 0; i < r.n; i++)
+      out += rp(cx, cy, r.off + i * 360 / r.n, r.len * k * JIT(seed + ri, i), r.wid * k, 'currentColor');
+  });
+  return out;
+}
+
+/* ⚠️ 曾经还有一版"彩色缩小版"（两层花瓣 + 一个实心花心），**删掉了**。
+   它只在 20~40px 那一小段好看，一到 128px 就退化成一坨粉色圆饼 ——
+   一个"只在某个尺寸成立"的版本不值得维护。主标在 32px 以上都成立，
+   再小就用单色版（那个到 18px 还认得出）。 */
+
+document.getElementById('big').innerHTML = S(rose(50, 48, 1, 0, RINGS, true), 260);
+document.getElementById('bigdark').innerHTML = S(rose(50, 48, 0.95, 1, RINGS, true), 150);
+
+document.getElementById('sizes').innerHTML =
+  [150, 96, 64, 40, 32].map(s => `<figure>${S(rose(50, 48, 1, 0, RINGS, true), s)}<figcaption>${s}px</figcaption></figure>`).join('');
+
+document.getElementById('mono').innerHTML = `
+  <div class="cell"><div class="box">${S(roseMono(50, 50, 1, 0), 130)}</div>
+    <div class="lb"><b>单色 · 深</b>刻章、传真、黑白印刷</div></div>
+  <div class="cell"><div class="box dk"><div style="color:#fff">${S(roseMono(50, 50, 1, 1), 130)}</div></div>
+    <div class="lb"><b>单色 · 浅</b>深色底上用这个。缝是透的，不会露馅</div></div>
+  <div class="cell"><div class="box">${S(roseMono(50, 50, 1, 2, 0.86), 40)}</div>
+    <div class="lb"><b>单色 · 小</b>缩小时把缝放宽（0.94 → 0.86）。这一版到 18px 还认得出</div></div>`;
+
+document.getElementById('pal').innerHTML =
+  [['#fdeaf0', P0, '辉光'], ['#f8cfdb', P1, '外圈'], ['#f0a8bd', P2, '中圈'],
+   ['#dc7f9f', P3, '内圈'], ['#bc587d', P4, '花心'], ['#7f9c79', LEAF, '叶']]
+   .map(([c, , name]) => `<div style="background:${c};color:${c === P0 || c === P1 ? '#8a6a75' : '#fff'}">${name}<br>${c}</div>`).join('');
+
+const BUB = 'M21 15 H79 A14 14 0 0 1 93 29 V55 A14 14 0 0 1 79 69 H50 L28 87 L33 69 ' +
+            'H21 A14 14 0 0 1 7 55 V29 A14 14 0 0 1 21 15 Z';
+const inBubble = `<path d="${BUB}" fill="none" stroke="currentColor" stroke-width="7.5" stroke-linejoin="round"/>
+  <g transform="translate(50,42) scale(0.60) translate(-50,-50)">${rose(50, 48, 1, 3, RINGS, false)}</g>`;
+document.getElementById('alt').innerHTML = `
+  <div class="cell"><div class="box">${S(inBubble, 165)}</div>
+    <div class="lb"><b>玫瑰在气泡里</b>玫瑰是主形，气泡只是外框 —— "会说话"那层意思保住了</div></div>
+  <div class="cell"><div class="box dk"><div style="color:#fff">${S(inBubble, 110)}</div></div>
+    <div class="lb"><b>深色底</b>同一版</div></div>`;
+</script>
+</body>
+</html>
