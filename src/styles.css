@@ -601,9 +601,31 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
    var(--bg)、边框 var(--line-2)），主按钮照 `button.primary`（--accent）。
    错误文案那个红是这份文件里唯一一处"文字用的红"—— 画布上那个 #ff3b30
    是画在照片上的圈，不是给字用的。 */
-.login { display: flex; align-items: center; justify-content: center; height: 100vh; }
-.login-box { display: flex; flex-direction: column; gap: 14px; width: 320px; }
-.login-title { margin: 0; font-size: 28px; }
+/* ⚠️ 2026-09-30：这一屏原来是一列 320px 的裸文字**飘在一整片黑里**
+   （标志、标题、几个框、一颗按钮，左右什么都没有）。它现在坐在一张卡上，
+   底下一层很淡的品牌粉光晕 —— 不添一个字，靠版面把"这是产品，不是一张表单"
+   说出来。（用户明确删掉过标题下面那两行字，所以**不许再加副标题** ——
+   见 LoginPage.tsx 里那段注释。这一轮一个字的文案都没动。）
+   ⚠️ 高度从 `height: 100vh` 改成 `min-height: 100vh`：卡片比一屏高的时候
+   （手机竖屏 + 注册那三格）要能撑开让页面滚，写死 height 会把下面截掉。 */
+.login {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; padding: var(--sp-5);
+  background:
+    radial-gradient(58% 42% at 50% 0%, rgba(232, 138, 171, .11), transparent 72%),
+    radial-gradient(46% 34% at 8% 100%, rgba(188, 88, 125, .08), transparent 72%),
+    var(--bg);
+}
+.login-box {
+  display: flex; flex-direction: column; gap: var(--sp-4);
+  width: 100%; max-width: 380px;
+  padding: var(--sp-6);
+  background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3);
+  animation: welcome-in .45s var(--ease) both;
+}
+.login-title { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -.02em; }
 /* 登录页顶上那朵玫瑰。
    **左对齐，不居中** —— 这一栏其它东西（标题、字段名、输入框、按钮）全都是左对齐的，
    单把标志居中会看着像摆歪了。`align-self: flex-start` 是必须的：`.login-box` 是
@@ -631,9 +653,19 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
    `position: absolute` 顺带把"它在 label 里会挤动别的字"这件事也去掉了。 */
 .login-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-.login-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
-.login-field input { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--bg); color: inherit; font-size: 15px; }
-.login-field input:focus { outline: none; border-color: var(--accent); }
+.login-field { display: flex; flex-direction: column; gap: var(--sp-2); font-size: 13px; color: var(--muted); }
+.login-field input {
+  padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--line-2);
+  background: var(--bg); color: var(--text); font-size: 15px;
+  transition: border-color var(--dur-1) ease, box-shadow var(--dur-1) ease;
+}
+.login-field input:hover { border-color: #4a515e; }
+/* 和对话栏那个输入框同一套焦点观感 —— 一像素的描边在深色底上变化太小，
+   用户看不出焦点进没进这一格。 */
+.login-field input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(232, 138, 171, .16);
+}
 /* 密码那一格：输入框占满，那颗小眼睛**坐在输入框里面**靠右
    （2026-09-25 第二轮：原来是一颗框外右边的文字按钮，用户要的是框里一个眼睛图标）。
    为什么要在 `.login-field` **里面**再开一层：它是 `flex-direction: column`
@@ -670,10 +702,11 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
    写法照同文件里的 `.gallery-cell:focus-visible`。 */
 .login-eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .login-error { margin: 0; font-size: 13px; color: var(--danger); }
-.login-submit { padding: 11px; border-radius: var(--r-sm); border: 0; background: var(--accent); color: var(--accent-ink); font-size: 15px; font-weight: 600; cursor: pointer; transition: background-color var(--dur-1) ease; }
+.login-submit { padding: 12px; border-radius: var(--r-sm); border: 0; background: var(--accent); color: var(--accent-ink); font-size: 15px; font-weight: 600; cursor: pointer; transition: background-color var(--dur-1) ease; }
 .login-submit:hover:not(:disabled) { background: var(--rose-500); }
 .login-submit:disabled { opacity: .5; cursor: default; }
-.login-switch { border: 0; background: none; color: inherit; opacity: .7; font-size: 13px; cursor: pointer; }
+.login-switch { border: 0; background: none; color: inherit; opacity: .7; font-size: 13px; cursor: pointer; padding: 6px; border-radius: var(--r-sm); }
+.login-switch:hover:not(:disabled) { opacity: 1; background: var(--hover); }
 /* ★ 忙的时候那颗切换按钮也**看得见地**挡住（2026-09-26 加，和 `disabled={busy}` 是一对）。
    原来它只有上面那一条 `.7`，禁用之后连"淡一点"都没有 —— 屏上能说出"现在点不动"
    的只剩光标形状那一处，而光标只在鼠标已经挪上去之后才说话。
@@ -681,7 +714,17 @@ button.primary:where(:hover):where(:not(:disabled)) { background: var(--rose-500
    本来就该退到后面），光标也换回默认箭头 —— `cursor: pointer` 那只小手是
    **承诺"点得动"**的，禁用之后还留着它是骗人。写法照上面 `.login-submit:disabled`。 */
 .login-switch:disabled { opacity: .4; cursor: default; }
-.app-loading { display: flex; align-items: center; justify-content: center; height: 100vh; opacity: .6; }
+/* 开机那一次"我是谁"还没问完（一次网络往返）。配个转圈 ——
+   一句干字在整片空屏上看着像卡住了，而这一屏往往只有几百毫秒。 */
+.app-loading {
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-3);
+  height: 100vh; color: var(--muted); font-size: 14px;
+}
+.app-loading::before {
+  content: ''; flex: none; width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--line-2); border-top-color: var(--accent);
+  animation: gallery-spin .8s linear infinite;
+}
 
 /* ── 作品页（Task 11） ────────────────────────────────────────────
    它和修图页是**两种版面**：修图页一屏锁死（那是 .app 的 overflow: hidden 管的），
