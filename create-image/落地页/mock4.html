@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8">
 <title>RuiXing 样页 v4</title>
-<!-- 标签页图标。跟 App 的 index.html 指同一个文件 —— 用**彩色版**不是单色版：
-     16px 上粉色还认得出来，墨色的小圆点认不出；而且标签栏在浅色主题下是白的，
-     白色单色版会直接消失。（这条 App 那边也踩过，见项目记忆 `logo`） -->
-<link rel="icon" type="image/svg+xml" href="../../src/assets/logo/rose.svg">
+<!-- 标签页图标。跟 App 的 index.html 指同一个文件。
+     ⚠️ 用**带圆角方框那版**（rose-tile）不是光秃秃的 rose：花只占画布 70%、
+     四周是空白，当 16px 的图标用显得很小（用户原话「标签页的图标太小了」）。
+     rose-tile 把花放大填满方框，底色是花自己最深的那层粉。 -->
+<link rel="icon" type="image/svg+xml" href="../../src/assets/logo/rose-tile.svg">
 <style>
 /* ═══════════════════════════════════════════════════════════════════════
    RuiXing 落地页 v4

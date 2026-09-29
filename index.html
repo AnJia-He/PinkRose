@@ -5,9 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- 标签页上那朵小玫瑰（2026-09-29）。用 SVG：一个文件吃到 16px 到视网膜屏，
          不用像 ICO 那样同一个图案塞好几档尺寸。
-         ⚠️ 用**彩色版**不是单色版 —— 16px 上粉色还认得出来，单色的墨色小圆点认不出；
-         而且标签栏在浅色主题下是白的，白色的单色版会直接消失。 -->
-    <link rel="icon" type="image/svg+xml" href="/src/assets/logo/rose.svg" />
+         ⚠️ 用**带圆角方框那版**（rose-tile），不是光秃秃的 rose：
+         花本身只占画布 70%、四周 15% 是空白，当 16px 的图标用、真正有画的只有 11px，
+         用户原话「标签页的图标太小了，用圆角方框给它框起来」。
+         rose-tile 把 viewBox 收紧到「花 + 11% 的边」，花就填满了整块方框；
+         底色是这朵花自己最深的那层粉，白色花形在浅色/深色标签栏上都立得住。
+         导出脚本：.superpowers/scratch/product-test/export_logo.py -->
+    <link rel="icon" type="image/svg+xml" href="/src/assets/logo/rose-tile.svg" />
     <title>RuiXing</title>
   </head>
   <body>
