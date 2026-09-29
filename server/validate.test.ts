@@ -175,21 +175,53 @@ describe('parseDecision', () => {
     expect(d.degraded).toBe(true)   // 改过道 = 模型没守自己的声明
   })
 
-  it('route 说 params 但两半内容都有时，以内容为准走 both', () => {
-    // 同一条通用规则的**另一格**：声明 params，内容却是两半都有。
-    // 漏掉它的后果：前端只在 route 是 generate/both 时才调 runGenerate，
-    // 于是用户说的"去掉那个人"被静默丢掉，而 degraded 还是 false。
+  it('声明 params 又用 edit_prompt 把同一件事复述一遍 —— 听声明的，不要升成 both', () => {
+    // **2026-09-29 实测原样**（模型对「亮一点」的真实输出）：
+    //   {"route":"params","param_deltas":{"exposure":40},
+    //    "edit_prompt":"Increase overall brightness by raising exposure by 40, ..."}
+    // route 说得很对，deltas 也给对了 —— 它只是**啰嗦**，把同一件事用英文又写了一遍。
     //
-    // 这两条并排放着是有意的：它们各自钉住通用规则的一格，
-    // 把规则换回"只认 generate 那一格"的特例写法，只有这一条会红。
+    // 下面那条「通用规则（两半都有 → both）」判不出"啰嗦"和"第二件事"的区别，
+    // 一律升成 both。后果实测过：同一件事做两遍（本地调一次 + 云端再调一次），
+    // 一张暖调日落被压成刺眼的电光蓝，红色通道 81.8 → 50.2（掉 38%），
+    // 而且多花 18.4 秒和一次云端 —— 本地滑块做同一件事只要 423 毫秒、0 次网络。
+    const d = parseDecision({
+      route: 'params',
+      param_deltas: { exposure: 40 },
+      reply: '好的，给你调亮一些',
+      edit_prompt: 'Increase overall brightness by raising exposure by 40, keep all other elements unchanged',
+      needs_disambiguation: false,
+    })
+    expect(d.route).toBe('params')
+    expect(d.paramDeltas).toEqual({ exposure: 40 })
+    expect(d.editPrompt).toBe('')   // 不采纳的那一半，别留在响应里当雷
+    expect(d.degraded).toBe(true)   // 丢掉过模型写的东西，得留信号
+  })
+
+  it('route 说 params 但 edit_prompt 说的是另一件事 —— 还是听声明的，那半句会丢', () => {
+    // ⚠️ **这条断言 2026-09-29 被反过来过。知道代价才改的，理由如下。**
+    //
+    // 原来它断言 'both'，理由是"别把用户说的'去掉那个人'静默丢掉"。
+    // 但 reconcile **判不出"第二件事"和"同一件事说两遍"的区别**，只能一律升成 both。
+    // 而实测下来：
+    //   · 它要防的形状（声明 params + prompt 说结构改动）—— 两轮测试里**一次都没出现**
+    //   · 它误伤的形状（声明 params + prompt 是 deltas 的英文复述）—— **6 条纯调色里 4 条**
+    // 误伤的代价是量过的：同一件事做两遍，红色通道掉 38%，多花 18.4 秒和一次云端。
+    //
+    // 所以反过来选：**信模型自己写的 route**。上面那条测试钉的是常发生的那个形状，
+    // 这条钉的是我们明知而付出的代价 —— 并排放着，谁改回去都会有一条红。
+    //
+    // 丢掉的那半不是"静默"：degraded=true 会留信号（见断言），
+    // 而且 ROUTER_SYSTEM 现在明写了"走 params 时 edit_prompt 必须是空字符串"——
+    // 这个形状现在是**违约**，不是正常输出。
     const d = parseDecision({
       route: 'params',
       param_deltas: { exposure: 30 },
       edit_prompt: 'Remove the person behind the subject.',
     })
-    expect(d.route).toBe('both')
-    expect(d.editPrompt).toContain('Remove the person')
-    expect(d.degraded).toBe(true)
+    expect(d.route).toBe('params')
+    expect(d.editPrompt).toBe('')
+    expect(d.degraded).toBe(true)   // 丢掉过模型写的东西，信号不能丢
   })
 })
 

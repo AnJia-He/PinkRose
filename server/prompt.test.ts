@@ -101,6 +101,24 @@ describe('ROUTER_SYSTEM', () => {
     // 而同一段里还有别的地方会带 "params"——钉住这一句才真的钉住规则。
     expect(ROUTER_SYSTEM).toContain('一律走 params')
   })
+
+  it('明写「走 params 时 edit_prompt 必须留空」—— 实测模型把它当必填项填满', () => {
+    // 2026-09-29 实测：6 条纯调色请求里 4 条都填了 edit_prompt，
+    // 而且填的就是 param_deltas 的英文复述（"Increase overall brightness by
+    // raising exposure by 40..."），route 却也老实写了 "params"。
+    // JSON 模板里这个键有名字、有描述，唯独没说"什么时候留空"，模型就当必填。
+    // 这一句是治本的那一句。
+    expect(ROUTER_SYSTEM).toContain('edit_prompt 必须是空字符串')
+  })
+
+  it('generate 的例子不能拿"天空"当靶子 —— 实测它会把「天空再蓝一些」钓去换天', () => {
+    // 原来例子写的是「去掉人物 / 替换天空 / 抹掉杂物」。同一天实测：
+    // 「天空再蓝一些」被判成 generate，提示词是
+    // "Replace the golden sunset sky with a vivid clear blue sky."——整片天被换掉，
+    // 而用户要的只是调色。例子里的"天空"就是那个钩子。
+    expect(ROUTER_SYSTEM).not.toContain('替换天空')
+    expect(ROUTER_SYSTEM).toContain('不要换掉整片天')
+  })
 })
 
 describe('buildRouterUser', () => {

@@ -24,7 +24,19 @@ export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteR
         ],
       },
     ]), 'route')
-    return { decision: parseDecision(content, req.text) }
+    const decision = parseDecision(content, req.text)
+    // `degraded` 的意思见 validate.ts 里那段注释：**这次的结果不是模型老实给的**。
+    // 它必须打出来。2026-09-29 查"同一件事做两遍"那个 bug 时，`/api/route` 的响应里
+    // 明明每条都带 degraded:true，但服务端一个字都不留、前端也不消费 ——
+    // 于是这个信号等于不存在，那个 bug 一直没人发现。
+    //
+    // 连着**原始输出**一起打：只写"降级了"查不出模型到底吐了什么。
+    // 有原文，"声明了 params 却又写一遍 edit_prompt"这个形状一眼就看得出来。
+    if (decision.degraded) {
+      console.warn('[route] degraded=true（模型没老实给） route=' +
+        decision.route + ' 原始输出=' + content.slice(0, 700))
+    }
+    return { decision }
   } catch (e) {
     // spec §4.7：路由失败不能让用户看见报错，降级成"原文当 prompt 走生成"。
     // 重试已经由队列做过了，走到这儿就是真的不行了。

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { handleRoute } from './route.ts'
 import { SenseNovaClient } from './sn.ts'
 import { SerialQueue } from './queue.ts'
@@ -52,6 +52,31 @@ describe('handleRoute', () => {
     // ROUTER_SYSTEM 和 SUGGEST_SYSTEM——后者也含这个词（实测：把系统提示
     // 换成 SUGGEST_SYSTEM，弱断言照样绿）。
     expect(sent.messages[0].content).toBe(ROUTER_SYSTEM)
+  })
+
+  it('degraded 时把模型的原始输出打出来 —— 这个信号原来算完就扔，bug 就是这么藏住的', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      // 2026-09-29 实测原样：声明 params、deltas 也给对了，只是啰嗦地又写了一遍 edit_prompt。
+      const { client } = clientReplying(JSON.stringify({
+        route: 'params',
+        param_deltas: { exposure: 40 },
+        reply: '好的，给你调亮一些',
+        edit_prompt: 'Increase overall brightness by raising exposure by 40',
+        needs_disambiguation: false,
+      }))
+      const res = await handleRoute(body, deps(client))
+      expect(res.decision.degraded).toBe(true)
+
+      const said = warn.mock.calls.map(c => c.map(String).join(' ')).join('\n')
+      expect(said).toContain('degraded')
+      // **原始输出必须留下来。** 只写"降级了"等于没写：这个 bug 之所以藏了几天，
+      // 就是因为 `degraded` 算完就扔，谁也不知道模型到底吐了什么。
+      // 有了原文，"声明 params 却又写 edit_prompt"这个形状一眼看得出来。
+      expect(said).toContain('Increase overall brightness')
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('LLM 抛错时返回降级决策，不是 500', async () => {

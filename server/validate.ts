@@ -84,9 +84,12 @@ export function parseDecision(raw: unknown, userText = ''): RouteDecision {
   // degraded 的语义是"这次的结果不是模型老实给的"：
   //   - route 不在枚举里（实测出现过 "ask"），说明它没守格式
   //   - 或者根本没有可用的 edit_prompt 却要生成（那是在硬凑）
+  //   - 声明 params 却又写了 edit_prompt：那半我们**不采纳**（见 reconcile），
+  //     丢掉过模型写的东西就得留信号，否则这类啰嗦会一直看不见
   const degraded = !routeIsValid ||
     ((route === 'generate' || route === 'both') && !hasEdit) ||
-    (route === 'params' && !hasParams)
+    (route === 'params' && !hasParams) ||
+    (route === 'params' && hasEdit)
 
   // 声明的路由和实际内容对不上时，以**内容**为准：
   // 说 params 却给了 edit_prompt 却没有 deltas，那就是一次生成。
@@ -96,7 +99,11 @@ export function parseDecision(raw: unknown, userText = ''): RouteDecision {
     route: effectiveRoute,
     paramDeltas,
     reply,
-    editPrompt,
+    // 走 params 时前端**根本不会读** editPrompt（App.tsx 只在 generate/both 时调
+    // runGenerate）。留着它是个雷：下一个人看到响应里有个非空 prompt，会以为
+    // "有半句没被用上"，然后把它接回去 —— 那正是今天修掉的那个 bug。
+    // 不采纳就清空，让"route=params ⟹ editPrompt 是空的"成为一条读得出来的规矩。
+    editPrompt: effectiveRoute === 'generate' || effectiveRoute === 'both' ? editPrompt : '',
     needsDisambiguation: obj.needs_disambiguation === true || obj.needsDisambiguation === true,
     degraded: degraded || effectiveRoute !== route,
   }
@@ -110,6 +117,24 @@ function reconcile(route: Route, hasParams: boolean, hasEdit: boolean): Route {
   // 留在 'both' 会让前端去跑一次空的生成（runGenerate 第一行就 return），
   // 等于决策声称"要生成"却什么都没发生。degraded 已经为 true，不丢信号。
   if (route === 'both' && !hasEdit && hasParams) return 'params'
+  // ⚠️ **声明 params 且真给了 deltas → 就听它的，别因为多出一个 edit_prompt 升成 both。**
+  //
+  // 2026-09-29 实测：模型对纯调色请求给的是
+  //   {"route":"params","param_deltas":{"exposure":40},
+  //    "edit_prompt":"Increase overall brightness by raising exposure by 40, ..."}
+  // —— route 说得很对，deltas 也给对了，它只是**啰嗦**，把同一件事用英文又写了一遍。
+  // 而下面那条「两半都有 → both」的通用规则判不出"啰嗦"和"第二件事"的区别，一律升成 both。
+  //
+  // 后果是量过的：同一件事做两遍（本地调一次 + 云端再调一次），一张暖调日落被压成
+  // 刺眼的电光蓝，红色通道 81.8 → 50.2（掉 38%），还多花 18.4 秒和一次云端调用 ——
+  // 而本地滑块做同一件事只要 423 毫秒、0 次网络。6 条纯调色里 4 条踩这个。
+  //
+  // 代价（**明知而选**）：万一模型声明 params 却在 edit_prompt 里说了另一件事
+  // （比如"去掉后面那个人"），那半句会被丢掉。这个形状实测两轮一次都没出现过 ——
+  // 模型真要结构性改动时，route 写的就是 generate。两害相权，选实测常发生的那个。
+  // 丢的时候 degraded=true 会留信号，而且 ROUTER_SYSTEM 里现在明写了
+  // "走 params 时 edit_prompt 必须是空字符串"。
+  if (route === 'params' && hasParams) return 'params'
   // 通用规则：**内容两半都有，那就是 both**，不管模型声明的是哪个。
   //
   // 这一条原来被写成了两条特例分支，于是分两次各漏一条：
