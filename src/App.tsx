@@ -27,12 +27,18 @@ import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
 import type { Recipe } from '../shared/works.ts'
 
 /**
- * 建议卡片最多等这么久。
+ * 建议卡片最多等这么久。**它只决定那个"正在看…"的提示挂多久，不再拦人。**
  *
  * `/api/suggest` 最坏会占住后端串行队列约 4 分钟（上游挂掉时队列重试 4 次、
- * 每次超时上限 60 秒），而拉卡片是上传后用户盯着看的第一个动作。跨任务裁定：
- * **不在后端特例化**（那会削弱队列统一的重试契约），改由前端不阻塞——
- * 超过这个时间就把用户放进对话，卡片晚到就晚到、不来就算了。
+ * 每次超时上限 60 秒）。跨任务裁定：**不在后端特例化**（那会削弱队列统一的
+ * 重试契约），改由前端不阻塞。
+ *
+ * ⚠️ 2026-09-30 改了这条的用法。原来这里是 `Promise.race` 的一道超时闸：
+ * 10 秒一到才把用户"放出来"，之前发送键是 **disabled** 的、屏幕上写着
+ * 「正在看你的照片…」。而实测卡片要 11~15 秒才回来 —— 也就是说，**30 秒
+ * 预算里有整整 10 秒是纯干等**（用户上传完到能开口之间什么都做不了），
+ * 而卡片本来只是个可选件、晚到就晚到。现在改成：用户**立刻**能说话，
+ * 那个提示自己在那儿转，卡片回来了就换成卡片，超时就把提示收掉。
  */
 const SUGGEST_WAIT_MS = 10_000
 
@@ -136,6 +142,10 @@ export default function App() {
   const [canShare] = useState(canShareImage)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [cards, setCards] = useState<SuggestCard[]>([])
+  /** 正在等建议卡片。**它不拦任何人** —— 发送键照常能按、话照常能说，
+   *  它只负责在卡片那一格上挂一句"正在看这张照片能改什么…"。
+   *  （`busy` 是"现在什么都做不了"，这个不是。两件事，别合并。） */
+  const [suggesting, setSuggesting] = useState(false)
   const [history, setHistory] = useState<Snapshot[]>([])
   /** 「按住看原图」用的预览图（data URL）。没照片时是 null。 */
   const [originalPreview, setOriginalPreview] = useState<string | null>(null)
@@ -173,6 +183,10 @@ export default function App() {
   const idRef = useRef(0)
   /** 每次选图 +1。晚到的卡片结果靠它对号，免得贴到下一张照片上。 */
   const pickIdRef = useRef(0)
+  /** **底图**换过几次。上传 +1、每一次生成式编辑 +1。
+   *  它是"卡片是不是还算数"的那道闸门（见 loadCards）—— 和 pickIdRef 判的
+   *  是两件事：那张说的是"还是同一张照片吗"，这张说的是"还是同一版底图吗"。 */
+  const baseSeqRef = useRef(0)
   /** 用户**这一趟说过的原话**（send / 卡片各写各的）。
    *  模型说拿不准时要把它留到用户点完图 —— 届时"原来那句话"是**那一刻**的那句，
    *  不是某个 state 里可能已经翻篇的那句。 */
@@ -245,6 +259,8 @@ export default function App() {
           `实际 ${bitmap.width}x${bitmap.height}（以实际为准，不拉伸）`)
       }
       const nextBase: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
+      // 底图换了一版 —— 上传时那批建议卡片从这一刻起作废（见 loadCards）。
+      baseSeqRef.current++
 
       setHistory(prev => {
         const next = pushSnapshot(prev, {
@@ -319,15 +335,29 @@ export default function App() {
    *
    * **失败和超时都不影响任何主功能**，所以它自己不抛、只记日志：抛出去会被
    * `onPick` 的 catch 当成"这张图打不开"，而那根本不是事实。
+   *
+   * ⚠️ 两道闸门，判的是**两件不同的事**，缺一不可：
+   *   · `pickIdRef` —— 说的是"还在看同一张照片吗"。少了它，看第一张时发出的
+   *     请求回来时会**贴到第二张照片上**（卡片说的是一张屏幕上已经没有的图）。
+   *   · `baseSeqRef` —— 说的是"这张照片**还是原来那张吗**"。上传和每一次
+   *     生成式编辑都会换掉底图，而卡片是**照着换之前那张算的**：
+   *     "把后面的人去掉"（生成路，一次约 12,900 tokens）在人已经被去掉之后
+   *     还挂在屏上，点一下就是**白花一次钱去改一件已经做完的事**。
+   *
+   *   为什么不是"用户一说话就作废"：参数类的话（"亮一点"）**不换底图**，
+   *   卡片说的仍然成立（后面那两个人还在那儿）。作废的判据必须是**底图变了**，
+   *   不是"用户开口了"。`App.test.tsx` 里那条「卡片落进点选流程」正是这个形状
+   *   —— 用户说过一句拿不准的话，但底图没换，卡片照旧该落地。
    */
   const loadCards = useCallback(async (img: DecodedImage, pickId: number) => {
+    const baseSeq = baseSeqRef.current
     try {
       const preview = await prepareForRouting(img.bitmap)
       const s = await postSuggest({ imageDataUrl: preview.dataUrl })
-      // 晚到的那份属于上一张照片就丢掉——否则看第一张时发出的请求回来时
-      // 会贴到第二张照片上。用原图而不是画布：此刻 params 还是全零，
-      // 两者本就一样，直接用原图省掉一次"画布到底挂上了没"的竞态。
-      if (pickIdRef.current === pickId) setCards(s.cards)
+      // 晚到的那份属于上一张照片（或上一版底图）就丢掉。
+      // 用原图而不是画布：此刻 params 还是全零，两者本就一样，
+      // 直接用原图省掉一次"画布到底挂上了没"的竞态。
+      if (pickIdRef.current === pickId && baseSeqRef.current === baseSeq) setCards(s.cards)
     } catch (e) {
       console.error(e)
     }
@@ -380,15 +410,17 @@ export default function App() {
         { id: welcomeId, label: '原图', base: img, params: ZERO, isOriginal: true, thumb: '' },
       ])
 
-      // 卡片是**可选件，绝不能让用户等它**：最多等 10 秒（见 SUGGEST_WAIT_MS），
-      // 超时就走人。竞速的另一半不会抛（loadCards 自己吞掉错），
-      // 所以超时之后它还在后台跑，回来了照样把卡片贴上。
-      setBusy('正在看你的照片…')
+      // 卡片是**可选件，绝不能让用户等它**：这里只把它挂到后台去跑，
+      // 发送键立刻就是可用的（见 SUGGEST_WAIT_MS 那段）。
+      // ⚠️ **不 await**：await 了就等于又把用户挡回门外了，只是这次挡在
+      //    另一行代码上。超时那条只负责收掉"正在看…"那句提示。
       const myPick = ++pickIdRef.current
-      await Promise.race([
-        loadCards(img, myPick),
-        new Promise(resolve => setTimeout(resolve, SUGGEST_WAIT_MS)),
-      ])
+      baseSeqRef.current++
+      setSuggesting(true)
+      const settle = () => { if (pickIdRef.current === myPick) setSuggesting(false) }
+      const timer = setTimeout(settle, SUGGEST_WAIT_MS)
+      // `void`：loadCards 自己吞掉所有错（它绝不 reject），这里也不等它。
+      void loadCards(img, myPick).finally(() => { clearTimeout(timer); settle() })
     } catch (e) {
       console.error(e)
       alert('这张图打不开，换一张试试')
@@ -898,6 +930,7 @@ export default function App() {
                 messages={messages}
                 cards={cards}
                 busy={busy}
+                suggesting={suggesting}
                 onSend={send}
                 onCard={onCard}
                 onJump={onJump}

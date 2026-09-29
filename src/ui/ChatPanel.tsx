@@ -11,6 +11,9 @@ type Props = {
   cards: SuggestCard[]
   /** 非 null 时显示"正在…"气泡，并禁用发送和卡片 */
   busy: string | null
+  /** 正在等建议卡片。**它不拦人** —— 只是在这一格上挂一句"正在看…"，
+   *  发送键照常能按（见 App.tsx 的 SUGGEST_WAIT_MS 那段）。 */
+  suggesting: boolean
   onSend: (text: string) => void
   onCard: (card: SuggestCard) => void
   /** 点「回到这一步」。只在 jumpableIds 里的消息上出现。 */
@@ -27,7 +30,7 @@ type Props = {
 }
 
 export default function ChatPanel({
-  messages, cards, busy, onSend, onCard, onJump, jumpableIds, thumbs,
+  messages, cards, busy, suggesting, onSend, onCard, onJump, jumpableIds, thumbs,
   marking, canConfirmMark, onConfirmMark, onCancelMark,
 }: Props) {
   return (
@@ -81,6 +84,17 @@ export default function ChatPanel({
               {c.label}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* 卡片还在路上。**这一句不拦人**：发送键是亮的、话随时可以说，
+          它只是把"我在看"这件事说出来 —— 不说的话，上传完到卡片出现之间
+          这一格是空的，用户不知道是在等还是坏了。
+          ⚠️ 卡片一到就"换成"卡片（不是并存）：两句话说的是同一件事，
+          一起出现会像两个东西。 */}
+      {suggesting && cards.length === 0 && !marking && (
+        <div className="cards">
+          <span className="cards-now">正在看这张照片能改什么…</span>
         </div>
       )}
 

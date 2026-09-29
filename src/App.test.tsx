@@ -963,6 +963,51 @@ describe('图上点选消歧', () => {
     expect(canvasProps.props.at(-1)?.picking).toBe(false)
   })
 
+  it('★ 底图换过之后，晚到的卡片必须丢掉 —— 否则点一下就是白花一次钱', async () => {
+    // 卡片是照着**上传那一刻那张照片**算的，实测要 11~15 秒才回来
+    // （而用户从 2026-09-30 起不用再等它了，发送键当场就是亮的）。
+    // 这十几秒里他完全可能已经改过一版 —— 一次生成式编辑就会换掉底图。
+    // 「把后面的人去掉」（生成路，一次约 12,900 tokens）在人已经被去掉之后
+    // 还挂在屏上，点一下就是**花钱去改一件已经做完的事**。
+    //
+    // ⚠️ 判据是**底图变没变**，不是"用户开没开口"：参数类的话（"亮一点"）
+    //   不换底图，卡片说的仍然成立（后面那两个人还在），照旧该落地 ——
+    //   上面那条「卡片落进点选流程」钉的正是另一半。
+    let deliver!: (v: SuggestResponse) => void
+    vi.mocked(api.postSuggest).mockReturnValueOnce(new Promise(res => { deliver = res }))
+
+    await renderApp()
+    await uploadPhoto()
+    // 先钉住"这时候确实在等卡片" —— 少了它，下面那条"没有卡片"可能只是因为
+    // 卡片压根没在等（把 SUGGEST_WAIT_MS 那段整个删掉，这条测试会静默地绿）。
+    expect(container.textContent).toContain('正在看这张照片能改什么')
+
+    // 换掉底图：一句结构性的改动 → 走生成路 → setImage(新底图)
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉后面那些人' }))
+    await say('把后面那些人去掉')
+
+    // 卡片**在这之后**才落地
+    await act(async () => {
+      deliver({
+        cards: [{
+          label: '把后面的人去掉', route: 'generate',
+          paramDeltas: {}, editPrompt: '去掉后面那些人',
+        }],
+        degraded: false,
+      })
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    const labels = [...container.querySelectorAll('.card')].map(c => c.textContent ?? '')
+    expect(labels).not.toContain('把后面的人去掉')
+    // 那句"正在看…"也该收了（卡片回来了，不管收没收下，等待都结束了）
+    expect(container.textContent).not.toContain('正在看这张照片能改什么')
+  })
+
   it('⚠️ 点选期间跳回某一步 —— 那条「就改这里」必须跟着作废', async () => {
     // 「回到这一步」和缩略图是**全仓唯二没有 busy 闸门**的控件，而点选期间
     // busy 恰好是空的（模型说完"拿不准"就收工了）—— 所以这条路径**一个竞态都

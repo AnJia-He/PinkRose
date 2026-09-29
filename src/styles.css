@@ -425,37 +425,103 @@ button.primary:hover:not(:disabled) { background: var(--rose-500); border-color:
   background: var(--accent); box-shadow: var(--shadow-1);
 }
 
+/* ── 对话栏 ──────────────────────────────────────────────────────────
+   这是整个产品的心脏（卖点是"对话式修图"，不是"更多滤镜"），
+   而它原来只是**一列灰气泡 + 一个输入框**。
+
+   ⚠️ 宽度 340px 是量出来的，不是挑的：再宽，手机以外的窄屏上画布会被挤
+   （历史上真出过"画布只剩 10px 宽、用户说没有照片"）。改它之前先跑
+   `node scripts/check-mobile-layout.mjs`。 */
 .chat {
   width: 340px; flex: none; display: flex; flex-direction: column; min-height: 0;
   border-left: 1px solid var(--line); background: var(--panel);
 }
 .chat-log {
-  flex: 1; overflow-y: auto; padding: 14px;
-  display: flex; flex-direction: column; gap: 10px;
+  flex: 1; overflow-y: auto; padding: var(--sp-4);
+  display: flex; flex-direction: column; gap: var(--sp-3);
 }
-.bubble { max-width: 88%; border-radius: 12px; padding: 8px 12px; font-size: 13px; }
+.bubble {
+  max-width: 88%; border-radius: var(--r-md); padding: 9px 13px;
+  font-size: 13.5px; line-height: 1.65;
+}
 .bubble.user {
   align-self: flex-end; background: var(--accent); color: var(--accent-ink);
   border-bottom-right-radius: var(--sp-1);
 }
-.bubble.assistant { align-self: flex-start; background: var(--raised); border-bottom-left-radius: var(--sp-1); }
-.bubble.pending { color: var(--muted); font-style: italic; }
+/* 助手气泡比用户气泡多一道极淡的描边：两种气泡底色本来就接近
+   （--raised 和 --hover 只差一档），不给描边时**连成一片**看不出谁说的。 */
+.bubble.assistant {
+  align-self: flex-start; background: var(--raised); border: 1px solid var(--line);
+  border-bottom-left-radius: var(--sp-1);
+}
+/* 「正在…」那一条。**不用斜体** —— 中文字体没有真斜体，浏览器会把它掰成
+   一个歪掉的仿斜体，比不斜还难看。改成一个转圈的沙漏：它一边说明
+   "还在做事"，一边让这一格有动静（一动不动的一行字看着像卡住了）。 */
+.bubble.pending {
+  display: flex; align-items: center; gap: var(--sp-2);
+  color: var(--muted); background: transparent; border-style: dashed;
+}
+.bubble.pending::before {
+  content: ''; flex: none; width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid var(--line-2); border-top-color: var(--accent);
+  animation: gallery-spin .8s linear infinite;
+}
+/* 「回到这一步」= 撤销。**它是这一栏里第二重要的东西**（spec §2.4：不设撤销
+   按钮，翻聊天记录就是撤销），原来却是一颗 78×24 的小钮 —— 手机上够不着，
+   正好是这个项目最在意的那种"点不到"。撑到 32px 高（触屏的最小可点尺寸），
+   悬停时整颗变粉。 */
 .bubble-jump {
-  margin-top: 6px; padding: 2px 8px; font-size: 12px;
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-top: var(--sp-2); padding: 6px 12px; font-size: 12px;
+  border-radius: var(--r-pill);
   background: transparent; border-color: var(--line-2); color: var(--muted);
 }
-.bubble-jump:hover { color: var(--text); border-color: var(--accent); }
+.bubble-jump::before { content: '↶'; font-size: 13px; line-height: 1; }
+.bubble-jump:hover { color: var(--rose-300); border-color: var(--accent); background: var(--rose-tint); }
 
-.cards { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 14px 10px; }
-.card { font-size: 13px; padding: 6px 12px; border-radius: 999px; }
-.card:disabled { opacity: .5; cursor: default; }
-
-.chat-input { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); }
-.chat-input input {
-  flex: 1; background: var(--bg); color: var(--text); font: inherit;
-  border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 12px;
+/* 卡片那一格：点一下就能改的几条，还有"正在看…"那句提示。 */
+.cards { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: 0 var(--sp-4) var(--sp-3); }
+/* 建议卡片是**这个产品最高频的动作**（上传后第一件事多半就是点它），
+   所以给它按钮的体量，而不是一排小药丸。悬停变粉，点起来有底。 */
+.card {
+  font-size: 13px; padding: 8px 14px; border-radius: var(--r-pill);
+  background: var(--raised); border-color: var(--line-2);
+  animation: card-in var(--dur-2) var(--ease) both;
 }
-.chat-input input:focus { outline: none; border-color: var(--accent); }
+@keyframes card-in { from { opacity: 0; transform: translateY(4px) } }
+.card:hover:not(:disabled) { border-color: var(--accent); color: var(--rose-300); background: var(--rose-tint); }
+.card:disabled { opacity: .5; cursor: default; }
+/* 一排卡片的入场错开一点（第 5 张往后不再延后 —— 不然最后一张要等半秒）。 */
+.card:nth-child(2) { animation-delay: .04s }
+.card:nth-child(3) { animation-delay: .08s }
+.card:nth-child(4) { animation-delay: .12s }
+.card:nth-child(5) { animation-delay: .16s }
+
+/* "正在看这张照片能改什么…"。和卡片占同一格 —— 卡片到了就换成卡片。 */
+.cards-now {
+  display: flex; align-items: center; gap: var(--sp-2);
+  font-size: 12.5px; color: var(--muted-2);
+}
+.cards-now::before {
+  content: ''; flex: none; width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid var(--line-2); border-top-color: var(--accent);
+  animation: gallery-spin .8s linear infinite;
+}
+
+.chat-input { display: flex; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); }
+.chat-input input {
+  flex: 1; min-width: 0;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 14px;
+  border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 9px 12px;
+  transition: border-color var(--dur-1) ease, box-shadow var(--dur-1) ease;
+}
+/* 聚焦时给一道很淡的外圈，而不是只把边框染粉 —— 一像素的描边在深色底上
+   变化太小，用户看不出焦点进没进这一格。 */
+.chat-input input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(232, 138, 171, .16);
+}
+.chat-input input::placeholder { color: var(--muted-2); }
 
 /* ── 窄屏（手机）：照片在上，对话在下 ──────────────────────────────
    上面那套「左画布右对话」是给宽屏写的，`.chat` 写死了 340px 且不参与伸缩
@@ -506,12 +572,13 @@ button.primary:hover:not(:disabled) { background: var(--rose-500); border-color:
   display: block;
   width: 120px;
   max-width: 100%;
-  border-radius: 8px;
-  margin-bottom: 6px;
+  border-radius: var(--r-sm);
+  margin-bottom: var(--sp-2);
   cursor: pointer;
   border: 1px solid var(--line-2);
+  transition: border-color var(--dur-1) ease, transform var(--dur-2) var(--ease);
 }
-.bubble-thumb:hover { border-color: var(--accent); }
+.bubble-thumb:hover { border-color: var(--accent); transform: scale(1.02); }
 
 /* ── 登录 / 注册（Task 7） ────────────────────────────────────────
    这是打开产品看到的第一屏。它和别的组件有一点不同：`.login` 和
@@ -788,4 +855,19 @@ button.primary:hover:not(:disabled) { background: var(--rose-500); border-color:
   /* 窄屏：两栏上下堆（**还是两个盒子**，见上面 .how 那段）。 */
   .how { grid-template-columns: 1fr; }
   .detail { padding: 0 14px 20px; }
+}
+
+/* ── 动效总闸 ────────────────────────────────────────────────────────
+   这一版加了好几处动效（入场位移、悬停放大、卡片错开出现、沙漏转圈）。
+   系统里开了"减少动态效果"的人**不是在挑剔审美** —— 前庭功能、偏头痛、
+   注意力障碍都会因为这些动静真的难受。这一条是硬要求，不是可选项。
+   ⚠️ 新增动效时不必再写一遍这个查询：**所有动画都走 var(--dur-*) 和
+   var(--ease)**，这一条在这里一次性关掉它们。
+   （`animation: none` 而不是 `duration: 0s`：后者会让 `animation-fill-mode`
+   停在第一帧 —— 用 `both` 写的入场动画会**卡在 opacity: 0**，整块内容消失。） */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
