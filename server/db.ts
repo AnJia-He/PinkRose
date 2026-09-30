@@ -63,6 +63,36 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX works_user_updated ON works(user_id, updated_at);
   `,
+  // 3 —— model_configs + users 上两个指针（spec §4.1 / §7.4）
+  //
+  // ★ 两件事值得写在这儿：
+  //
+  //   ① `kind` 上的 CHECK 是**结构**，不是纪律。「chat 和 image 彻底分开」
+  //      这条要是靠代码记得判，就一定会有人忘；写进表里就忘不掉。
+  //
+  //   ② 两个指针用 **REFERENCES … ON DELETE SET NULL** —— 删掉正在用的那一套时，
+  //      指针**自己就指空了**，于是"回默认"是结构上的必然，
+  //      不是"记得写一句 if"。这和 §6.5 那个"改密码 = 所有设备下线"
+  //      是同一个套路：把不会错做成结构。
+  //
+  // ⚠️ 必须先建表再改 users：两条语句在同一个事务里，但 SQLite 建表时会检查
+  //    被引用的表存在（外键在 node:sqlite 里默认是开的）。
+  `
+  CREATE TABLE model_configs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind         TEXT    NOT NULL CHECK (kind IN ('chat', 'image')),
+    provider     TEXT    NOT NULL,
+    base_url     TEXT,
+    api_key_enc  TEXT    NOT NULL,
+    model_id     TEXT    NOT NULL,
+    alias        TEXT    NOT NULL,
+    created_at   INTEGER NOT NULL
+  );
+  CREATE INDEX model_configs_user ON model_configs(user_id, kind);
+  ALTER TABLE users ADD COLUMN active_chat_config_id  INTEGER REFERENCES model_configs(id) ON DELETE SET NULL;
+  ALTER TABLE users ADD COLUMN active_image_config_id INTEGER REFERENCES model_configs(id) ON DELETE SET NULL;
+  `,
 ]
 
 /**

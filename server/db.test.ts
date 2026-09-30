@@ -75,6 +75,8 @@ describe('openDb', () => {
     '8a9a1a445d01f8ff0e9e242fc398e653048af972c4102686d3688c9758bff38a',
     // 2 —— works
     'd3e6d1ea45be136378599f2752dd8ad81e6f263687801de6e19fd9ecdc634bbb',
+    // 3 —— model_configs
+    'c909062124bcb7ae24c36e2252e49bb1997bb4eff7132edd2662f6fc3b1f5a37',
   ]
 
   it('★ 已发布的迁移一个字都不许改 —— 指纹对不上 = "老库和新库从此是两个形状"', () => {
@@ -274,6 +276,70 @@ describe('openDb', () => {
       `INSERT INTO works (user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias, recipe)
        VALUES (1, 'a.jpg', null, 1, 1, 1, null, '{}')`).run()
     expect(() => db.raw.prepare('DELETE FROM users WHERE id = 1').run()).toThrow(/FOREIGN KEY constraint failed/)
+    db.close()
+  })
+})
+
+describe('迁移 3 —— model_configs', () => {
+  it('建出了表，且字段齐全', () => {
+    const db = openDb(':memory:')
+    const cols = (db.raw.prepare('PRAGMA table_info(model_configs)').all() as { name: string }[])
+      .map(c => c.name)
+    expect(cols).toEqual([
+      'id', 'user_id', 'kind', 'provider', 'base_url', 'api_key_enc', 'model_id', 'alias', 'created_at',
+    ])
+    db.close()
+  })
+
+  it('users 上多了两个指针，默认是 NULL（= 用默认）', () => {
+    const db = openDb(':memory:')
+    db.raw.prepare('INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)')
+      .run('a', 'a@b.c', 'h', 1)
+    const u = db.raw.prepare('SELECT active_chat_config_id, active_image_config_id FROM users WHERE id = 1')
+      .get() as { active_chat_config_id: number | null; active_image_config_id: number | null }
+    expect(u.active_chat_config_id).toBeNull()
+    expect(u.active_image_config_id).toBeNull()
+    db.close()
+  })
+
+  it('★ kind 只认 chat / image —— 写别的必须被数据库拒掉', () => {
+    // 「两套 key 彻底分开」如果靠代码记得判，就一定会有人忘。
+    // 做成表上的约束 = 结构上的必然（§4.1 那句"把不会错做成结构"）。
+    const db = openDb(':memory:')
+    db.raw.prepare('INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)')
+      .run('a', 'a@b.c', 'h', 1)
+    expect(() => db.raw.prepare(
+      'INSERT INTO model_configs (user_id, kind, provider, base_url, api_key_enc, model_id, alias, created_at) VALUES (1,?,?,?,?,?,?,1)',
+    ).run('video', 'custom', 'http://x', 'enc', 'm', '别名')).toThrow()
+    db.close()
+  })
+
+  it('★ 删用户时，他的模型配置跟着删（不留孤儿）', () => {
+    const db = openDb(':memory:')
+    db.raw.prepare('INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)')
+      .run('a', 'a@b.c', 'h', 1)
+    db.raw.prepare('INSERT INTO model_configs (user_id, kind, provider, base_url, api_key_enc, model_id, alias, created_at) VALUES (1,?,?,?,?,?,?,1)')
+      .run('chat', 'custom', 'http://x', 'enc', 'm', '别名')
+    db.raw.prepare('DELETE FROM users WHERE id = 1').run()
+    const n = db.raw.prepare('SELECT COUNT(*) AS n FROM model_configs').get() as { n: number }
+    expect(n.n).toBe(0)
+    db.close()
+  })
+
+  it('★ 删掉「正在用的那一套」，指针自己就指空了 —— 回默认是结构上的必然', () => {
+    // 这是 §4.1 那段注释的落地：不给每条配置加"是不是在用"的开关，
+    // 而用 users 上的指针。指针指着的行没了 → SQLite 把指针置 NULL。
+    const db = openDb(':memory:')
+    db.raw.prepare('INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)')
+      .run('a', 'a@b.c', 'h', 1)
+    const r = db.raw.prepare('INSERT INTO model_configs (user_id, kind, provider, base_url, api_key_enc, model_id, alias, created_at) VALUES (1,?,?,?,?,?,?,1)')
+      .run('chat', 'custom', 'http://x', 'enc', 'm', '别名')
+    const id = Number(r.lastInsertRowid)
+    db.raw.prepare('UPDATE users SET active_chat_config_id = ? WHERE id = 1').run(id)
+    db.raw.prepare('DELETE FROM model_configs WHERE id = ?').run(id)
+    const u = db.raw.prepare('SELECT active_chat_config_id FROM users WHERE id = 1')
+      .get() as { active_chat_config_id: number | null }
+    expect(u.active_chat_config_id).toBeNull()
     db.close()
   })
 })
