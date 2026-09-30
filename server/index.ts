@@ -5,7 +5,6 @@ import { describeConfig, loadConfig } from './config.ts'
 import { openDb } from './db.ts'
 import { createVault } from './keyvault.ts'
 import { SerialQueue } from './queue.ts'
-import { SenseNovaClient } from './sn.ts'
 import { createStorage } from './storage.ts'
 
 const ENV_PATH = resolve(process.cwd(), '.env')
@@ -33,27 +32,31 @@ const queue = new SerialQueue({
   onRetry: ({ label, attempt, delayMs, error }) =>
     console.warn(`[queue] ${label} 第 ${attempt} 次失败，${delayMs}ms 后重试：${(error as Error).message}`),
 })
-// ⚠️ 临时形状：Task 7 会把这一格换成 clients（chat / image 各一个）。
-// 现在只求编译过、行为不变 —— 模型名取 vlm，因为这条路的三个接口里
-// route / suggest 是主力，而 edit 的模型名 Task 7 才接得上。
-const client = new SenseNovaClient({
-  apiKey: config.apiKey, baseUrl: config.baseUrl, modelId: config.vlmModel,
-})
+// ★ 保险箱的主钥匙**从 SESSION_SECRET 派生**（带用途分隔符，见 keyvault.ts）。
+//   不为它多加一个环境变量：多一个变量就多一处"忘了配"，
+//   而这里少配的后果是"服务起不来"，那正是 config.ts 对 SESSION_SECRET
+//   已经做过的事（没配就拒绝启动）。
+//
+//   同一个 vault 给下面两个用途：`clients` 开用户那把钥匙、`models` 存用户那把钥匙。
+//   两处必须是同一把主钥匙 —— 各 createVault 一次虽然值一样，但"全进程只有一把
+//   主钥匙"这件事应当看得出来。
+const vault = createVault(config.sessionSecret)
 
 const server = createApp({
   config,
   staticDir: resolve(process.cwd(), 'dist'),
-  client,
+  // ★ 三个 AI 接口要的**默认那一套**（§7）。客户端**不在这里造** ——
+  //   每一次请求由 clientFor.ts 的 `resolveClients` 按登录用户现取：
+  //   用户刚在设置里换过的那一套，下一个请求就得生效（所以不缓存）。
+  //   用户没配（或配了但用不了）时，回落到这里的 `config`：chat 取 vlmModel、
+  //   image 取 imageModel —— 两条路各拿自己那个模型名，不再共用一条连接。
+  clients: { db, vault, config },
   queue,
   // 签票的钥匙来自 .env（SESSION_SECRET）。config.ts 里少了它就拒绝启动 ——
   // 这里拿到的必然是配置好的那一把，没有"默认值"这条退路。
   auth: { db, secret: config.sessionSecret },
   storage,
-  // ★ 保险箱的主钥匙**从 SESSION_SECRET 派生**（带用途分隔符，见 keyvault.ts）。
-  //   不为它多加一个环境变量：多一个变量就多一处"忘了配"，
-  //   而这里少配的后果是"服务起不来"，那正是 config.ts 对 SESSION_SECRET
-  //   已经做过的事（没配就拒绝启动）。
-  models: { db, vault: createVault(config.sessionSecret) },
+  models: { db, vault },
 })
 
 // ⚠️ 只听本机（127.0.0.1）。手机走 vite 的代理（代理跑在这台电脑上），

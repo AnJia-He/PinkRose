@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { handleSignup, type AccountDeps } from './account.ts'
 import { createApp, type AppDeps } from './app.ts'
+import type { ClientDeps } from './clientFor.ts'
 import type { Config } from './config.ts'
 import { openDb, type Db } from './db.ts'
 import { createVault } from './keyvault.ts'
@@ -53,9 +54,8 @@ const cfg: Config = {
 }
 
 // sn.ts 收窄之后，客户端吃的是「一条连接 + 一个模型名」，不再是整份 Config（Task 6）。
-// cfg 本身不动 —— 它还要当 Config 传给 createApp；这里的桩客户端只用在
-// route / suggest 那两条路上，模型名取 vlm。
-const conn = { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, modelId: cfg.vlmModel }
+// Task 7 起连接是**按登录用户现拼**的（clientFor.ts），所以这个文件里已经没有
+// "手搓一条连接"的地方了 —— 要造的客户端一律走下面的 `stubClients`。
 
 let server: Server | undefined
 /** 这个文件开出来的内存库。谁开谁关，跟 db.test.ts 一样。 */
@@ -164,6 +164,24 @@ const editBody = {
 }
 
 /**
+ * 一套「用户接了自己模型」时三个 AI 接口要的依赖（Task 7）：**真实的**
+ * SenseNovaClient，只把最后一跳的网络换成假 fetch。
+ *
+ * ⚠️ 注入点必须在 `clientFactory` 上，不能是"换掉最终那个客户端"——
+ * 要验的是"它拿的是哪一套连接"，假客户端只有站在**拼连接的下游**才看得见
+ * 出站请求头里到底是哪把钥匙（clientFor.ts 上那段注释说的同一件事）。
+ *
+ * `db` 特意新开一个空内存库：里面一条模型配置都没有，`resolveClients`
+ * 于是永远回默认那一套 —— 这正是下面那些老用例要的"用户没配"。
+ */
+function stubClients(fetchImpl: typeof fetch): ClientDeps {
+  return {
+    db: newAuth().db, vault: createVault(cfg.sessionSecret), config: cfg,
+    clientFactory: c => new SenseNovaClient(c, fetchImpl),
+  }
+}
+
+/**
  * 桩上游：记下每次请求体，**不真出网**。`status !== 200` 时回一个带独特
  * 哨兵串的错误体——用来验证"上游原文不会漏进给用户的响应"。
  */
@@ -177,7 +195,7 @@ function stubUpstream(status = 200) {
   }) as unknown as typeof fetch
   return {
     calls,
-    deps: { client: new SenseNovaClient(conn, impl), queue: new SerialQueue({ sleep: async () => {} }) },
+    deps: { clients: stubClients(impl), queue: new SerialQueue({ sleep: async () => {} }) },
   }
 }
 
@@ -261,10 +279,10 @@ describe('createApp', () => {
   it('POST /api/route 的请求体超限时不把内存吃光', async () => {
     // **必须注入 deps**：否则 503 守卫会先于 readJsonBody 触发，
     // 这条测试永远拿不到 413（brief 原稿的缺陷，已由控制方裁定）。
-    // 这里不需要 client 真的能工作——只要守卫放行。
+    // 这里不需要那个客户端真的能工作——只要 `clients` 在、守卫放行。
     // 同理**必须带着 cookie**：鉴权守卫排在 413 那道之前。
     const { base, cookie } = await appWithUser({
-      client: new SenseNovaClient(conn, (async () => new Response('{}')) as unknown as typeof fetch),
+      clients: stubClients((async () => new Response('{}')) as unknown as typeof fetch),
       queue: new SerialQueue({ sleep: async () => {} }),
     })
     const r = await fetch(`${base}/api/route`, {
@@ -976,5 +994,148 @@ describe('/api/models', () => {
       // 用例之间不共享这个替换（这个文件里别的用例要发真请求）
       globalThis.fetch = realFetch
     }
+  })
+})
+
+/**
+ * ★ §7.4 ——「用户带自己的钥匙」这件事到底生效没有，只有下面这四条说了算。
+ *
+ * 断言看的是**真发出去的那条请求**（URL + Authorization 头）：那才是
+ * 「用了谁的钥匙」的唯一证据。断言"调了哪个 mock"是自欺欺人 —— 假客户端
+ * 可以被塞对，而请求头里的钥匙仍然是错的。所以这里注入的是一条**真实的
+ * SenseNovaClient**（真的拼 URL、真的带请求头），只有最后一跳的网络是假的。
+ */
+describe('★ 两套 key 彻底分开（§7.4，用户点名要的四条）', () => {
+  // 这一份测试里的"默认那一套"就是 cfg（生产上 baseUrl 指向 token.sensenova.cn）。
+  // 下面凡说"走默认"的断言比的都是它，不写死域名 —— 默认换地址时测试跟着走。
+  const CHAT = { kind: 'chat', provider: 'custom', baseUrl: 'https://chat.example.com/v1', apiKey: 'sk-chat', modelId: 'vlm', alias: '甲' }
+  const IMAGE = { kind: 'image', provider: 'custom', baseUrl: 'https://img.example.com/v1', apiKey: 'sk-img', modelId: 'edit', alias: '乙' }
+  /** ④ 里那把"填错了"的图片钥匙：上游见到它就回 401。 */
+  const TYPO = 'sk-img-typo'
+
+  /** 演示用的 /api/route 请求体（上一个 describe 里的 routeBody 在别的作用域，不共用）。 */
+  const askBody = { imageDataUrl: 'data:image/jpeg;base64,AA', text: '亮一点' }
+
+  type Outbound = { url: string; auth: string | undefined }
+
+  /**
+   * 记下每一次真被发出去的上游请求，并按 URL 回一个**形状对得上**的最小响应：
+   * route 那条要 `choices[0].message.content`，edit 那条要 `data[0].b64_json`。
+   * 形状给错会让 handler 走降级那条路（状态码也许还是 200）—— 那是另一回事，
+   * 不该混进这四条里。
+   *
+   * `reject` = 上游"不认这把钥匙"（401）。④ 用它模拟"图片那把 key 填错了"。
+   */
+  function recordingFetch(calls: Outbound[],
+                          reject?: (auth: string | undefined) => boolean): typeof fetch {
+    return (async (url: string, init: RequestInit) => {
+      const auth = (init.headers as Record<string, string> | undefined)?.authorization
+      calls.push({ url: String(url), auth })
+      if (reject?.(auth)) {
+        return new Response('{"error":{"message":"invalid api key"}}', { status: 401 })
+      }
+      return String(url).endsWith('/images/edits')
+        ? new Response('{"data":[{"b64_json":"AAAA"}]}', { status: 200 })
+        : new Response(
+          '{"choices":[{"message":{"content":"{\\"route\\":\\"params\\",\\"param_deltas\\":{\\"exposure\\":10},\\"reply\\":\\"好\\"}"}}]}',
+          { status: 200 })
+    }) as unknown as typeof fetch
+  }
+
+  /**
+   * 起一个 app。`clients.db` 和 `models.db` 是**同一个库**（`boot` 的默认行为）——
+   * 否则"设置里存的那一套"和"取钥匙时看到的那个库"是两回事，测试就假了。
+   */
+  async function appWithRecording(opts: { reject?: (auth: string | undefined) => boolean } = {}) {
+    const calls: Outbound[] = []
+    const auth = newAuth()
+    const base = await boot({
+      auth,
+      queue: new SerialQueue({ sleep: async () => {} }),
+      clients: {
+        db: auth.db, vault: createVault(cfg.sessionSecret), config: cfg,
+        clientFactory: c => new SenseNovaClient(c, recordingFetch(calls, opts.reject)),
+      },
+    })
+    const r = handleSignup({ username: '测试用户', email: 't@t.com', password: 'password123' }, auth)
+    const cookie = `${SESSION_COOKIE}=${r.token}`
+    /** 走真接口建一套配置并激活 —— 用户就是这么做的（不是直接往库里塞）。 */
+    const addAndActivate = async (body: typeof CHAT | typeof IMAGE): Promise<void> => {
+      const made = await call(base, 'POST', '/api/models', body, cookie)
+      expect(made.status).toBe(200)
+      expect((await call(base, 'POST', '/api/models/activate',
+        { kind: body.kind, id: (made.body as { id: number }).id }, cookie)).status).toBe(200)
+    }
+    return { base, cookie, calls, addAndActivate }
+  }
+
+  it('① 只配了图片 → 对话照常能用（走默认那一套）', async () => {
+    const { base, cookie, calls, addAndActivate } = await appWithRecording()
+    await addAndActivate(IMAGE)   // 用户只配了图片那一套
+
+    expect((await post(base, '/api/route', askBody, cookie)).status).toBe(200)
+
+    // ★ 上游 URL 是**默认那个**、Authorization 是**默认那把钥匙**。
+    //   一个"顺手拿用户配的那一套去打对话"的实现，这里出现的是
+    //   img.example.com / sk-img，当场红。
+    expect(calls).toEqual([{ url: `${cfg.baseUrl}/chat/completions`, auth: `Bearer ${cfg.apiKey}` }])
+  })
+
+  it('② 只配了对话 → 图片照常能用（走默认那一套）', async () => {
+    const { base, cookie, calls, addAndActivate } = await appWithRecording()
+    await addAndActivate(CHAT)
+
+    expect((await post(base, '/api/edit', editBody, cookie)).status).toBe(200)
+
+    expect(calls).toEqual([{ url: `${cfg.baseUrl}/images/edits`, auth: `Bearer ${cfg.apiKey}` }])
+  })
+
+  it('③ 两边都配了 → 各走各的，绝不串', async () => {
+    const { base, cookie, calls, addAndActivate } = await appWithRecording()
+    await addAndActivate(CHAT)
+    await addAndActivate(IMAGE)
+
+    expect((await post(base, '/api/route', askBody, cookie)).status).toBe(200)
+    expect((await post(base, '/api/edit', editBody, cookie)).status).toBe(200)
+
+    // ★ 两条请求各自打到自己那一套的地址、带自己那一把钥匙。
+    //   把 chat / image 写反（route 拿了 image 的连接、或者反过来），
+    //   或者两处共用一个客户端，这两行必红。
+    expect(calls).toEqual([
+      { url: 'https://chat.example.com/v1/chat/completions', auth: 'Bearer sk-chat' },
+      { url: 'https://img.example.com/v1/images/edits', auth: 'Bearer sk-img' },
+    ])
+  })
+
+  it('★ ④ 图片的 key 填错了 → 对话完全不受影响', async () => {
+    // 上游只守一条规矩：见到那把填错的图片钥匙就 401。
+    const { base, cookie, calls, addAndActivate } =
+      await appWithRecording({ reject: a => a === `Bearer ${TYPO}` })
+    await addAndActivate(CHAT)
+    await addAndActivate({ ...IMAGE, apiKey: TYPO })
+
+    // 第一次：改图。它走的是图片那一套 → 上游 401 → 这次请求失败
+    // （http.ts 那张表把上游 401 映射成 400 BAD_REQUEST —— 不是 503，也不是 200）。
+    // ⚠️ 这个状态码本身**分不清**"上游拒了图片那把钥匙"和"本地校验挂了"——
+    //    两者都是 400 BAD_REQUEST。钉住前者的，是下面那条看 `calls` 的断言。
+    const edit = await post(base, '/api/edit', editBody, cookie)
+    expect(edit.status).toBe(400)
+    expect(edit.body.error!.code).toBe('BAD_REQUEST')
+
+    // ★ 第二次：对话。**必须照常成功**，而且出站用的仍然是 chat 那把钥匙。
+    const route = await post(base, '/api/route', askBody, cookie)
+    expect(route.status).toBe(200)
+    // ⚠️ 光看状态码不够：handleRoute 会把上游失败吞成 degraded 降级、照样回 200 ——
+    //    一个"route 也拿了图片客户端"的实现在上一句上也是绿的。
+    //    degraded=false 钉的是"这次结果是模型老实给的"，也就是那条对话真的走通了。
+    expect((route.body as unknown as { decision: { degraded: boolean } }).decision.degraded).toBe(false)
+
+    expect(calls).toEqual([
+      // 那次失败确实是**图片那一套**造成的：URL 和坏钥匙都在里面。
+      { url: 'https://img.example.com/v1/images/edits', auth: `Bearer ${TYPO}` },
+      // ★ 紧接着这条对话：打的是 chat 那一套、带的是那把好钥匙。
+      //   两条路各自独立 —— 这就是"图片的 key 填错了，对话完全不受影响"。
+      { url: 'https://chat.example.com/v1/chat/completions', auth: 'Bearer sk-chat' },
+    ])
   })
 })

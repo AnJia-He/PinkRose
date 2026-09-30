@@ -5,6 +5,7 @@ import {
   findUserByCookie, handleChangePassword, handleLogin, handleSignup,
   type AccountDeps, type PublicUser,
 } from './account.ts'
+import { resolveClients, type ClientDeps } from './clientFor.ts'
 import type { Config } from './config.ts'
 import { handleEdit } from './edit.ts'
 import { HttpError, asObject, readJsonBody, sendBytes, sendError, sendJson, str } from './http.ts'
@@ -19,7 +20,6 @@ import {
   clearSessionCookie, daysLeft, expiryOf, parseCookies, RENEW_WITHIN_DAYS,
   sessionCookie, sessionExpiry, signSession, SESSION_COOKIE,
 } from './session.ts'
-import type { SenseNovaClient } from './sn.ts'
 import type { Storage } from './storage.ts'
 import { handleSuggest } from './suggest.ts'
 import {
@@ -31,8 +31,15 @@ export type AppDeps = {
   config: Config
   /** 静态资源目录（npm run build 的产物）。测试里不传。 */
   staticDir?: string
-  /** 不传时 /api/route、/api/suggest、/api/edit 都会返回 503 —— 让"没接线"可见，而不是静默失败。 */
-  client?: SenseNovaClient
+  /**
+   * 三个 AI 接口要的那一套（§7）：**每个请求按登录用户现取**（见 clientFor.ts）——
+   * 用户接了自己的模型就走用户的，没配（或用不了）就回落到 `config` 里我们自己的那一份。
+   *
+   * ⚠️ **不传时 /api/route、/api/suggest、/api/edit 都返回 503** —— 让"没接线"
+   * 可见，而不是静默失败。（这是原来 `client` 那条注释的原话，现在它管的是
+   * "默认那一套"从哪来；具体用哪一条连接由 `resolveClients` 每请求现算。）
+   */
+  clients?: ClientDeps
   queue?: SerialQueue
   /**
    * 账号这一块要的东西（库 + 签名钥匙）。
@@ -356,26 +363,35 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
       //
       // 鉴权排在更前面（requireUser 里那一条），理由同源：没登录的人
       // 更不该有资格让服务器缓冲 12 MB。**这两行的先后也别对调。**
-      requireUser(deps, req, res)
-      if (!deps.client || !deps.queue) {
+      //
+      // ★ 返回值要接住：下面取客户端要的就是**这个用户**。
+      //   丢着不接的话，取客户端时只能再 requireUser 一遍 —— 同一个请求
+      //   认两次人，多花一次验签加查库，也让"是谁"有了两个来处。
+      const user = requireUser(deps, req, res)
+      if (!deps.clients || !deps.queue) {
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
       const body = await readJsonBody(req)
-      sendJson(res, 200, await handleRoute(body, { client: deps.client, queue: deps.queue }))
+      // ★ 取客户端放在**读完请求体之后**：读一具 12 MB 的 body 要花时间，
+      //   而"该用谁的钥匙"在那一刻之前就已经定了。顺序反过来只是白等。
+      //   路由/建议这一路要用**聊天**那一套（§7.4：chat 管 route/suggest）。
+      const { chat } = resolveClients(user, deps.clients)
+      sendJson(res, 200, await handleRoute(body, { client: chat, queue: deps.queue }))
       return
     }
     if (req.method === 'POST' && path === '/api/suggest') {
-      requireUser(deps, req, res)
-      if (!deps.client || !deps.queue) {
+      const user = requireUser(deps, req, res)
+      if (!deps.clients || !deps.queue) {
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
       const body = await readJsonBody(req)
-      sendJson(res, 200, await handleSuggest(body, { client: deps.client, queue: deps.queue }))
+      const { chat } = resolveClients(user, deps.clients)
+      sendJson(res, 200, await handleSuggest(body, { client: chat, queue: deps.queue }))
       return
     }
     if (req.method === 'POST' && path === '/api/edit') {
-      requireUser(deps, req, res)
-      if (!deps.client || !deps.queue) {
+      const user = requireUser(deps, req, res)
+      if (!deps.clients || !deps.queue) {
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
       const body = await readJsonBody(req)
@@ -396,8 +412,12 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
       //   撤了）。别凭直觉再补一条，先看这里。
       const ac = new AbortController()
       res.on('close', () => { if (!res.writableEnded) ac.abort() })
+      // ★ 改图这一路要用**图片**那一套（§7.4）—— 和上面两条是两条独立的路，
+      //   所以图片的钥匙填错了，对话完全不受影响。取客户端放在读完请求体之后，
+      //   理由同 /api/route（别让读 12 MB 的每一毫秒都白等一次解密 + 查询）。
+      const { image } = resolveClients(user, deps.clients)
       sendJson(res, 200, await handleEdit(body, {
-        client: deps.client, queue: deps.queue, signal: ac.signal,
+        client: image, queue: deps.queue, signal: ac.signal,
       }))
       return
     }
