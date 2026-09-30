@@ -12,6 +12,12 @@ const cfg: Config = {
   photoDir: 'unused',
   sessionSecret: 'test-secret',
 }
+
+// sn.ts 收窄之后，客户端吃的是「一条连接 + 一个模型名」，不再是整份 Config（Task 6）。
+// cfg 本身照旧按 Config 用，这里只是把这一条连接显式拼出来 —— 这个文件走的是改图那一路，
+// 模型名取 imageModel，和收窄之前它实际发出去的那个名字一模一样。
+const conn = { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, modelId: cfg.imageModel }
+
 const IMG = 'data:image/jpeg;base64,AAAA'
 const deps = (c: SenseNovaClient) => ({ client: c, queue: new SerialQueue({ sleep: async () => {} }) })
 const body = { imageDataUrl: IMG, editPrompt: 'Remove the person behind the subject.', width: 1024, height: 768 }
@@ -25,7 +31,7 @@ function replying(b64: string | undefined, status = 200) {
       : new Response(JSON.stringify({ data: b64 === undefined ? [{}] : [{ b64_json: b64 }] }),
           { status: 200, headers: { 'content-type': 'application/json' } })
   }) as unknown as typeof fetch
-  return { client: new SenseNovaClient(cfg, impl), calls }
+  return { client: new SenseNovaClient(conn, impl), calls }
 }
 
 describe('handleEdit', () => {

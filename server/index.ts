@@ -33,7 +33,12 @@ const queue = new SerialQueue({
   onRetry: ({ label, attempt, delayMs, error }) =>
     console.warn(`[queue] ${label} 第 ${attempt} 次失败，${delayMs}ms 后重试：${(error as Error).message}`),
 })
-const client = new SenseNovaClient(config)
+// ⚠️ 临时形状：Task 7 会把这一格换成 clients（chat / image 各一个）。
+// 现在只求编译过、行为不变 —— 模型名取 vlm，因为这条路的三个接口里
+// route / suggest 是主力，而 edit 的模型名 Task 7 才接得上。
+const client = new SenseNovaClient({
+  apiKey: config.apiKey, baseUrl: config.baseUrl, modelId: config.vlmModel,
+})
 
 const server = createApp({
   config,

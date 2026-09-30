@@ -15,6 +15,10 @@ const cfg: Config = {
   sessionSecret: 'test-secret',
 }
 
+// sn.ts 收窄之后，客户端吃的是「一条连接 + 一个模型名」，不再是整份 Config（Task 6）。
+// cfg 本身照旧按 Config 用，这里只是把这一条连接显式拼出来 —— 走的是 chat 那一路。
+const conn = { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, modelId: cfg.vlmModel }
+
 const IMG = 'data:image/jpeg;base64,AAAA'
 const body = { imageDataUrl: IMG, text: '天太灰了', params: ZERO }
 
@@ -26,7 +30,7 @@ function clientReplying(content: string | null, status = 200) {
     return new Response(JSON.stringify({ choices: [{ message: { content } }] }),
       { status: 200, headers: { 'content-type': 'application/json' } })
   }) as unknown as typeof fetch
-  return { client: new SenseNovaClient(cfg, impl), calls }
+  return { client: new SenseNovaClient(conn, impl), calls }
 }
 
 const deps = (client: SenseNovaClient) => ({ client, queue: new SerialQueue({ sleep: async () => {} }) })

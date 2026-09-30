@@ -1,14 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { SenseNovaClient, SnError } from './sn.ts'
-import type { Config } from './config.ts'
+import { SenseNovaClient, SnError, type ModelConnection } from './sn.ts'
 
-const cfg: Config = {
+// sn.ts 收窄之后，客户端吃的是「一条连接 + 一个模型名」，不再是整份 Config（Task 6）。
+// 模型名取的是原来 `imageModel` 那个值，不是随便挑的：本文件钉得最细的是 edit 那一组
+// （size / response_format / b64_json 全都会跟着模型走），原样保留等于它们的覆盖一分没少；
+// chat 那组断言的是 max_tokens / 不传 temperature / 错误分类 —— 都跟模型名无关。
+const cfg: ModelConnection = {
   apiKey: 'sk-test', baseUrl: 'https://x.cn/v1',
-  imageModel: 'sensenova-u1.5-fast', vlmModel: 'sensenova-6.8-flash-lite', port: 0,
-  dbPath: ':memory:',
-  // 这两个是 Config 上的必填字段（起服务要它），这个文件既不碰账号也不碰图
-  photoDir: 'unused',
-  sessionSecret: 'test-secret',
+  modelId: 'sensenova-u1.5-fast',
 }
 
 /** 造一个假 fetch，记录请求体，返回给定响应。 */
@@ -190,5 +189,29 @@ describe('★ 用户按了停止：抛不可重试的错', () => {
     await expect(new SenseNovaClient(cfg, impl)
       .edit({ imageDataUrl: 'data:image/jpeg;base64,AA', prompt: 'p', size: { width: 1024, height: 768 } }))
       .rejects.toMatchObject({ code: 'UPSTREAM_FAILED', retryable: true })
+  })
+})
+
+/**
+ * ★ 2026-09-30 加（构造参数收窄成 `ModelConnection` 的那一次）。
+ *
+ * 收窄之后"发出去的模型名"只剩 `cfg.modelId` 一个来源，而上面 18 条钉的全是
+ * 请求体**其它**的字段（max_tokens / size / response_format / 错误分类）——
+ * 一条都不看 `body.model`。于是把两条路里的 `this.cfg.modelId` 换成任何一个
+ * 写死的名字，上面全绿：模型名填错了上游会直接 400，而测试一句话都不说。
+ * 这一条就把那一句钉住：**两条路都必须原样带上连接里的那个字**。
+ */
+describe('★ 模型名来自连接', () => {
+  it('chatJson 的 body.model 就是连接里的 modelId', async () => {
+    const { impl, calls } = fakeFetch({ body: { choices: [{ message: { content: 'x' } }] } })
+    await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'hi' }])
+    expect(bodyOf(calls[0]).model).toBe(cfg.modelId)
+  })
+
+  it('edit 的 body.model 也是它 —— 改图走的是图片那一条连接', async () => {
+    const { impl, calls } = fakeFetch({ body: { data: [{ b64_json: 'QQ==' }] } })
+    await new SenseNovaClient(cfg, impl)
+      .edit({ imageDataUrl: 'data:image/jpeg;base64,AA', prompt: 'p', size: { width: 1024, height: 768 } })
+    expect(bodyOf(calls[0]).model).toBe(cfg.modelId)
   })
 })

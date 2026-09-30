@@ -52,6 +52,11 @@ const cfg: Config = {
   sessionSecret: 'test-session-secret',
 }
 
+// sn.ts 收窄之后，客户端吃的是「一条连接 + 一个模型名」，不再是整份 Config（Task 6）。
+// cfg 本身不动 —— 它还要当 Config 传给 createApp；这里的桩客户端只用在
+// route / suggest 那两条路上，模型名取 vlm。
+const conn = { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, modelId: cfg.vlmModel }
+
 let server: Server | undefined
 /** 这个文件开出来的内存库。谁开谁关，跟 db.test.ts 一样。 */
 const openedDbs: Db[] = []
@@ -172,7 +177,7 @@ function stubUpstream(status = 200) {
   }) as unknown as typeof fetch
   return {
     calls,
-    deps: { client: new SenseNovaClient(cfg, impl), queue: new SerialQueue({ sleep: async () => {} }) },
+    deps: { client: new SenseNovaClient(conn, impl), queue: new SerialQueue({ sleep: async () => {} }) },
   }
 }
 
@@ -259,7 +264,7 @@ describe('createApp', () => {
     // 这里不需要 client 真的能工作——只要守卫放行。
     // 同理**必须带着 cookie**：鉴权守卫排在 413 那道之前。
     const { base, cookie } = await appWithUser({
-      client: new SenseNovaClient(cfg, (async () => new Response('{}')) as unknown as typeof fetch),
+      client: new SenseNovaClient(conn, (async () => new Response('{}')) as unknown as typeof fetch),
       queue: new SerialQueue({ sleep: async () => {} }),
     })
     const r = await fetch(`${base}/api/route`, {

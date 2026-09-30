@@ -1,4 +1,3 @@
-import type { Config } from './config.ts'
 import type { AppErrorCode } from '../shared/protocol.ts'
 import type { Size } from '../shared/size.ts'
 
@@ -35,18 +34,46 @@ const MIN_CHAT_TOKENS = 1200
 const CHAT_TIMEOUT_MS = 60_000
 const EDIT_TIMEOUT_MS = 180_000
 
+/**
+ * 一个模型客户端需要的最小信息。
+ *
+ * ★ 原来是直接吃整个 `Config` —— 那意味着"客户端"和"进程级的配置"绑死了，
+ * 一个进程只能有一个客户端。用户接自己的模型要求**按人、按类别**各造一个，
+ * 所以这里收窄成"一条连接 + 一个模型名"。
+ *
+ * ⚠️ 收窄之后 `Config` **不再**满足它（`Config` 带的是 `vlmModel` / `imageModel`
+ * 两个字段，没有 `modelId`）—— 于是 `new SenseNovaClient(config)` 那种写法
+ * 编译不过了，得改成显式拼一条连接；**我们自己的那一份默认连接**由
+ * `clientFor.ts` 里的 `resolveClients` 拼出来（chat 取 vlm、image 取 image model）。
+ */
+export type ModelConnection = {
+  apiKey: string
+  baseUrl: string
+  /** 这一条的模型名。chat 客户端只用得上 vlmModel，image 客户端只用 imageModel */
+  modelId: string
+}
+
 export class SenseNovaClient {
-  private readonly cfg: Config
+  private readonly cfg: ModelConnection
   private readonly fetchImpl: typeof fetch
   // 不用构造函数参数属性——Node 24 剥离模式不支持（见 http.ts 的说明）
-  constructor(cfg: Config, fetchImpl: typeof fetch = fetch) {
+  constructor(cfg: ModelConnection, fetchImpl: typeof fetch = fetch) {
     this.cfg = cfg
     this.fetchImpl = fetchImpl
   }
 
+  /** 这一条连接指向哪。测试和"按用户造客户端"要靠它断言 */
+  get baseUrl(): string { return this.cfg.baseUrl }
+  get apiKey(): string { return this.cfg.apiKey }
+  // ⚠️ 两个名字都指回同一个 `modelId`，不是笔误：一个客户端现在只管一件事，
+  //    "chat 的模型名"和"image 的模型名"对它来说是同一个字段。留着这两个访问器
+  //    是为了让调用方（和测试）照原来的说法取值，不用先知道自己是哪一类。
+  get vlmModel(): string { return this.cfg.modelId }
+  get imageModel(): string { return this.cfg.modelId }
+
   async chatJson(messages: ChatMessage[], maxTokens = MIN_CHAT_TOKENS): Promise<string> {
     const body = {
-      model: this.cfg.vlmModel,
+      model: this.cfg.modelId,
       messages,
       max_tokens: Math.max(MIN_CHAT_TOKENS, maxTokens),
       response_format: { type: 'json_object' },
@@ -80,7 +107,7 @@ export class SenseNovaClient {
   async edit(o: { imageDataUrl: string; prompt: string; size: Size },
              signal?: AbortSignal): Promise<string> {
     const body = {
-      model: this.cfg.imageModel,
+      model: this.cfg.modelId,
       images: [{ image_url: o.imageDataUrl }],
       prompt: o.prompt,
       n: 1,
