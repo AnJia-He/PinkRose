@@ -29,8 +29,10 @@ const storage = createStorage(config.photoDir)
 // ⚠️ 全仓库**只有这一处**构造队列实例 —— 三个端点都只从 deps 拿这个注入的对象。
 // 谁自己 new 一个，全局串行就静默失效：RPM/TPM 限流保护与对话的因果顺序同时没了。
 // onRetry 只打 label / 次数 / 延迟 / error.message，**绝不打印请求头或 key** ——
-// 而 error.message 里可能混着上游 401 正文回显的凭据，所以过一遍 `redactSecrets`
-// （和 http.ts / route.ts / suggest.ts 那三个日志出口共用同一个函数）。
+// 而有些 error.message 里内嵌着上游响应正文（能重试到的那些：429/5xx、还有
+// "上游返回的不是 JSON"；401/403 不可重试，来不了这条路），网关回显凭据的毛病
+// 不挑状态码：也过一遍 `redactSecrets`（和 http.ts / route.ts / suggest.ts
+// 那三个日志出口共用同一个函数）。
 const queue = new SerialQueue({
   onRetry: ({ label, attempt, delayMs, error }) =>
     console.warn(`[queue] ${label} 第 ${attempt} 次失败，${delayMs}ms 后重试：${redactSecrets((error as Error).message)}`),
