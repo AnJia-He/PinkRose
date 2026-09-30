@@ -5,23 +5,42 @@
  * 中文名还会被转义成一长串 `%E4%B8%AD%...`。页面上显示的**仍然是名字**，
  * 只是地址栏里是 id。
  *
- * 认不出来的路径**退回修图页** —— 用户可能手打错地址、或者用了一个旧书签，
- * 白屏是最差的答案。
+ * ★ 2026-09-30 起分了两层：
+ *   · **`/` 是落地页**（门面，访客先看到它）；
+ *   · **App 住在 `/app` 底下**（修图 / 作品 / 详情）。
+ *   已经登录的人打开 `/` 会被送去 `/app`（见 App.tsx 里那个 replace 跳转）——
+ *   营销页是给访客看的，自己人每次打开都撞上它是打扰。
+ *
+ * ⚠️ **老网址照旧认**：`/works`、`/works/7` 是分家之前那一版的形态，
+ * 用户手里可能有旧书签。它们只是"认得出来"——真走过去之后，`App` 的 `go()`
+ * 会把地址栏改写成 `/app/...` 那一套（一次导航就搬过去了）。
+ *
+ * 认不出来的路径**退回落地页**（= `/`）—— 首页是那种情况下的标准答案，
+ * 而白屏是最差的答案。**登录着的人不会因此被关在营销页上**：
+ * 落地页那一条会立刻把他们送去 `/app`。
  */
 export type View =
+  | { kind: 'landing' }
   | { kind: 'edit' }
   | { kind: 'gallery' }
   | { kind: 'work'; id: number }
 
+/** App 的地盘。写在这儿是为了让"它挪过窝"这件事只有一处要说。 */
+const APP = '/app'
+
 export function viewFromPath(path: string): View {
-  const m = /^\/works\/(\d+)$/.exec(path)
+  // 详情页：新老两种形态都认
+  const m = /^\/works\/(\d+)$/.exec(path) ?? /^\/app\/works\/(\d+)$/.exec(path)
   if (m) return { kind: 'work', id: Number(m[1]) }
-  if (path === '/works') return { kind: 'gallery' }
-  return { kind: 'edit' }
+  if (path === '/works' || path === `${APP}/works`) return { kind: 'gallery' }
+  if (path === APP) return { kind: 'edit' }
+  if (path === '/') return { kind: 'landing' }
+  return { kind: 'landing' }
 }
 
 export function pathOf(v: View): string {
-  if (v.kind === 'gallery') return '/works'
-  if (v.kind === 'work') return `/works/${v.id}`
-  return '/'
+  if (v.kind === 'landing') return '/'
+  if (v.kind === 'gallery') return `${APP}/works`
+  if (v.kind === 'work') return `${APP}/works/${v.id}`
+  return APP
 }

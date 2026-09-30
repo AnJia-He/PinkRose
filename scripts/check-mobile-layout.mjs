@@ -78,6 +78,11 @@ import { GALLERY_THUMB_MAX_SIDE } from '../src/core/thumbnail.ts'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
 const URL = process.env.DEV_BASE ?? 'http://localhost:5173'
+/** ★ 这个脚本量的是 **App**，而 App 从 2026-09-30 起住在 `/app` 底下
+ *  （`/` 让给了落地页）。所以下面每一处导航都写死 `/app/...` ——
+ *  漏改一处的表现是"等一个永远不出现的 `.login-box` 等到超时"，
+ *  报错信息里看不出"只是走错门了"，所以在这儿说一句。 */
+const APP = `${URL}/app`
 /** 仓库里已有的样片，不必另存一张大图。比例是横的（1200×800），
  *  而真机是竖的 —— 两种都要能过，所以判据用的是长边/短边。 */
 const PHOTO = join(ROOT, 'test-photos', 'e2e_first_use.jpg')
@@ -834,7 +839,7 @@ try {
       })
 
       try {
-        await page.goto(URL, { waitUntil: 'load' })
+        await page.goto(APP, { waitUntil: 'load' })
       } catch {
         console.log(`❌ 连不上 ${URL} —— dev 服务器开着吗？（npm run dev）`)
         process.exitCode = 1
@@ -998,7 +1003,7 @@ try {
           '后面那条懒加载的判据就没有能信的数据了')
       }
 
-      await page.goto(`${URL}/works`, { waitUntil: 'load' })
+      await page.goto(`${APP}/works`, { waitUntil: 'load' })
       await page.waitForSelector('.gallery-cell', { timeout: 15_000 })
       // 缩略图是**一张张取**的（§3.5 的"图片柜"）：等它们都落地再判
       await page.waitForFunction(
@@ -1069,7 +1074,7 @@ try {
           })
         : r.continue()))
 
-      await page.goto(`${URL}/works`, { waitUntil: 'load' })
+      await page.goto(`${APP}/works`, { waitUntil: 'load' })
       await page.waitForSelector('.gallery-cell', { timeout: 15_000 })
       const first = await measureGallery(page)
       judgeGallery(`${view.name} · 作品页（${GALLERY_FAKE} 条，刚打开）`, first, view)
@@ -1118,6 +1123,73 @@ try {
       await page.close()
     }
   }
+
+  // ══ 落地页（2026-09-30 从样页合并进来）—— **它现在是门口，所以也得量** ══
+  //
+  // 为什么单开一块、而且**必须是不带登录态的新 page**：上面那些都走登录态、
+  // 都要夹具，而落地页是给**没登录的访客**看的那一页 —— 拿着 cookies 去量，
+  // 量到的根本不是访客看到的东西（App 里那条 replace 跳转会把登录着的人
+  // 直接送去 `/app`，于是量到的是修图页，而检查照样绿）。
+  // 这一块从头到尾**没有夹具、没有登录**，就是"陌生人第一次打开这个网址"。
+  //
+  // 判四件事，每一件都能说出错了会怎样：
+  //   ① 站的是门口、不是白屏也不是 App —— 门口站错了人，后面全白搭；
+  //   ② 每张图都**真的解出来了** —— 图挂了页面上就是一块空白，而**浏览器
+  //      不会报任何错**（搬迁时改了文件名、少 import 一张，长的就是这个形状）；
+  //   ③ 不横向溢出 —— 这一页有几处 `100vw` 的破格（底部照片带），
+  //      窄屏上最容易顶出一根横向滚动条；
+  //   ④ 标题和那颗按钮**都在首屏里**（不用滚就看得见）—— 门面的第一句和
+  //      第一个动作就是它的全部，压在折线以下是白写。
+  for (const view of VIEWS) {
+    const page = await browser.newPage({
+      viewport: { width: view.width, height: view.height },
+      deviceScaleFactor: view.deviceScaleFactor, isMobile: view.isMobile, hasTouch: view.hasTouch,
+    })
+    try {
+      await page.goto(URL, { waitUntil: 'load' })
+      await page.waitForSelector('.lp', { timeout: 15_000 })
+      await page.waitForFunction(
+        () => [...document.querySelectorAll('.lp img')].every(i => i.complete),
+        null, { timeout: 15_000 }).catch(() => { /* 解不开的下面那条会报出来 */ })
+      const m = await page.evaluate(() => {
+        const box = el => {
+          if (!el) return null
+          const b = el.getBoundingClientRect()
+          return { top: Math.round(b.top), bottom: Math.round(b.bottom), w: Math.round(b.width) }
+        }
+        const imgs = [...document.querySelectorAll('.lp img')]
+        return {
+          h1: box(document.querySelector('.lp h1')),
+          cta: box(document.querySelector('.lp-hero .lp-btn')),
+          imgCount: imgs.length,
+          broken: imgs.filter(i => !i.naturalWidth).length,
+          docW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+          vh: window.innerHeight,
+        }
+      })
+      console.log(`── ${view.name} · 落地页（没登录的访客）`)
+      console.log(`     ${m.imgCount} 张图，解不出来的 ${m.broken} 张；` +
+        `大标题 ${m.h1?.w}px 宽 @${m.h1?.top}；按钮 @${m.cta?.top}~${m.cta?.bottom}（视口 ${m.vh} 高）`)
+      if (m.broken > 0) {
+        fails.push(`${view.name}：落地页有 ${m.broken} 张图解不出来 —— 那几块会是空白，` +
+          '而浏览器不会报任何错（图名对不上、少 import 一张，长的就是这个样子）')
+      }
+      if (m.docW > m.clientW + TOL) {
+        fails.push(`${view.name}：落地页横向溢出（文档 ${m.docW} > 视口 ${m.clientW}）—— ` +
+          '门口多出来一根横向滚动条')
+      }
+      if (!m.h1 || m.h1.top < 0 || m.h1.bottom > m.vh) {
+        fails.push(`${view.name}：落地页的大标题不在首屏里（@${m.h1?.top}~${m.h1?.bottom}）`)
+      }
+      if (!m.cta || m.cta.bottom > m.vh) {
+        fails.push(`${view.name}：落地页那颗「免费试用」压在折线以下` +
+          `（@${m.cta?.bottom} vs 视口 ${m.vh}）—— 门口的第一个动作得不用滚就看得见`)
+      }
+    } finally {
+      await page.close()
+    }
+  }
 } finally {
   await browser.close()
 }
@@ -1147,4 +1219,6 @@ if (fails.length) {
     '设备像素；只判桌面档，理由见 judgeGallery 那段）')
   console.log(`   外加详情页：那张大图真的是原图（自然尺寸的长边 ≥ ${SEED_IMAGE_LONG}，不是 ${SEED_THUMB_MAX}px 的缩略图）、` +
     '两栏配方都在屏内、详情页自己滚而整页不滚（左栏还钉在原地）')
+  console.log(`   外加落地页（${VIEWS.length} 档，**不带登录态的访客视角**）：13 张图全解得出、不横向溢出、` +
+    '大标题和「免费试用」都在首屏里')
 }

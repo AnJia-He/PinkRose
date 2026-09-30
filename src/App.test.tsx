@@ -226,9 +226,13 @@ function decision(over: Partial<RouteDecision> = {}): RouteDecision {
 }
 
 beforeEach(() => {
-  // ★ 地址栏是所有用例共用的一份全局状态：上一个用例切到了 /works，
+  // ★ 地址栏是所有用例共用的一份全局状态：上一个用例切到了 /app/works，
   //   不清掉的话，下一个用例一 `renderApp()` 就**已经在作品页**了。
-  history.replaceState(null, '', '/')
+  //
+  // ⚠️ 起点是 **`/app` 不是 `/`**（2026-09-30 改）：`/` 现在是**落地页**，
+  //   而这一个文件测的是 App。摆成 `/` 的话每一条用例渲染出来的都是落地页
+  //   （App 里那条 `view.kind === 'landing'` 的早返回），**76 条一起红**。
+  history.replaceState(null, '', '/app')
   vi.clearAllMocks()
   bitmapSeq = 0
   canvasProps.images.length = 0
@@ -1866,7 +1870,7 @@ describe('左栏导航：切界面不丢工作', () => {
     //   配得上「修图界面确实让位了」这句话的是**下面那条**。
     expect(container.querySelector('input[type="file"]')).toBeNull()   // 修图界面确实让位了
     expect(container.querySelector('.workspace')).toBeNull()
-    expect(location.pathname).toBe('/works')
+    expect(location.pathname).toBe('/app/works')
 
     await goNav('修图')
     // ★ 四样都还在：说过的话、那张底、那个画布、**用户拖过的滑块**
@@ -1881,7 +1885,7 @@ describe('左栏导航：切界面不丢工作', () => {
 
   it('★ 浏览器后退 / 前进 —— 界面跟着地址走，不是只跟着那两个按钮走', async () => {
     // 按钮只是**改地址的其中一条路**。用户按的是浏览器后退键时，
-    // 地址变了而 `view` 不动 —— 屏幕上是修图页、地址栏是 /works，
+    // 地址变了而 `view` 不动 —— 屏幕上是修图页、地址栏是 /app/works，
     // 再点一下就走到别的地方去了。popstate 就是接住这一半的。
     //
     // 这里手动 pushState + 派发 popstate 来演"后退"：真正的 history.back()
@@ -1891,7 +1895,7 @@ describe('左栏导航：切界面不丢工作', () => {
     await uploadPhoto()
     expect(container.querySelector('.workspace')).toBeTruthy()   // 起点：修图页
 
-    history.pushState(null, '', '/works')
+    history.pushState(null, '', '/app/works')
     await act(async () => {
       window.dispatchEvent(new PopStateEvent('popstate'))
       await new Promise(r => setTimeout(r, 0))
@@ -1902,7 +1906,7 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(container.querySelector('.workspace')).toBeNull()
 
     // 再按一次前进（或者后退），回到修图页 —— 两个方向都得跟
-    history.pushState(null, '', '/')
+    history.pushState(null, '', '/app')
     await act(async () => {
       window.dispatchEvent(new PopStateEvent('popstate'))
       await new Promise(r => setTimeout(r, 0))
@@ -1922,15 +1926,15 @@ describe('左栏导航：切界面不丢工作', () => {
 
     await goNav('作品')                 // 人还在作品页，又点了一次同一个地方
     expect(history.length).toBe(before + 1)   // 一条都不该多
-    expect(location.pathname).toBe('/works')
+    expect(location.pathname).toBe('/app/works')
   })
 
   it('★ 刷新页面 / 从网址直接进来 —— 一打开就该在原处，不是每次都回修图页', async () => {
-    // 地址栏是**可以被直接打开的**：用户收藏了 /works，或者按了 F5。
+    // 地址栏是**可以被直接打开的**：用户收藏了 /app/works，或者按了 F5。
     // 少了这条，`useState(() => viewFromPath(location.pathname))` 换成常量
     // `{ kind: 'edit' }` 全套测试照样绿 —— 而"刷新能回到原处"正是它存在的理由。
-    // （地址在 beforeEach 里已经被摆回 '/' 了，所以这一步是"用户此刻打开的是这条"。）
-    history.replaceState(null, '', '/works')
+    // （地址在 beforeEach 里已经被摆回 '/app' 了，所以这一步是"用户此刻打开的是这条"。）
+    history.replaceState(null, '', '/app/works')
     await renderApp()
     expect(container.querySelector('.gallery')).toBeTruthy()   // 落在作品页
     expect(container.querySelector('.workspace')).toBeNull()       // 不是修图页
@@ -2245,7 +2249,7 @@ describe('作品详情页：这张图怎么来的', () => {
     // 人确实回到了修图页：配方那一页整个不在了，修图界面回来了
     expect(container.querySelector('.recipe-box')).toBeNull()
     expect(container.querySelector('.workspace')).toBeTruthy()
-    expect(location.pathname).toBe('/')
+    expect(location.pathname).toBe('/app')
     // ★ 下半句才是重点：画布上真的是配方里那套。
     //   变异：App.tsx 的 `setParams(p)` → `setParams(ZERO)` → 只有这一条红
     //   （上面三句照样绿 —— 导航那半件事不受影响）。

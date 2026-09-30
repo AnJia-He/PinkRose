@@ -15,6 +15,14 @@ test-photos/
 !spike/evidence/*.jpg
 !spike/evidence/*.png
 
+# 例外：落地页的成品图要入库（2026-09-30）。
+# 它们**就是页面的内容**，不是素材也不是测试照片 —— 少一张那一屏就是空的，
+# 换台机器 clone 下来落地页就废了。所以破例，但只破这一个目录。
+# ⚠️ 入库前已经压过一道（7.6 MB → 2.3 MB，MAE 0.9/255 肉眼不可分辨）：
+#    大文件一旦进了历史就**永远留在那儿**，压缩必须发生在第一次提交之前。
+!src/assets/landing/*.jpg
+!src/assets/landing/*.webp
+
 # Python
 __pycache__/
 *.py[cod]

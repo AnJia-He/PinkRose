@@ -6,6 +6,7 @@ import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import { LoginPage } from './ui/LoginPage'
 import { GalleryPage } from './ui/GalleryPage'
 import { WorkDetailPage } from './ui/WorkDetailPage'
+import LandingPage from './ui/LandingPage'
 import { Nav } from './ui/Nav'
 import logoMark from './assets/logo/rose.svg'
 import { pathOf, viewFromPath, type View } from './ui/view'
@@ -857,7 +858,8 @@ export default function App() {
    *  于是"切导航不丢工作"是结构上的必然，不是"记得保存"（§3.2）。 */
   const [view, setView] = useState<View>(() => viewFromPath(location.pathname))
 
-  /** 点导航：改状态，顺手把地址栏换成对应的那条。
+  /**
+   * 点导航：改状态，顺手把地址栏换成对应的那条。
    *
    *  这两条语句**谁先谁后无所谓**：`pushState` 不会触发 `popstate`（规范就这么定的），
    *  `setView` 也不碰历史栈 —— 先写地址只是读起来顺，别在这儿找讲究。
@@ -867,10 +869,18 @@ export default function App() {
    *  `history` 遮住了 —— 省掉 `window.` 是个**编译期**的错
    *  （`TS2339: Property 'pushState' does not exist on type 'Snapshot[]'`）。
    *  写全是为了让下一个人一眼看见"要的是浏览器那个 history"，而不是先去读一遍
-   *  类型错误才知道。 */
-  const go = useCallback((v: View) => {
+   *  类型错误才知道。
+   *
+   *  ⚠️ `replace`：**不往历史栈里压新条目**，只把当前这条换掉。
+   *  只有一处用它 —— 登录着的人打开落地页时那个自动跳转。用 push 的话历史栈里
+   *  会留下一条 `/`，用户按后退 → 又跳回来 → **按几次都出不去**。
+   */
+  const go = useCallback((v: View, opts?: { replace?: boolean }) => {
     const p = pathOf(v)
-    if (location.pathname !== p) window.history.pushState(null, '', p)
+    if (location.pathname !== p) {
+      if (opts?.replace) window.history.replaceState(null, '', p)
+      else window.history.pushState(null, '', p)
+    }
     setView(v)
   }, [])
 
@@ -881,9 +891,39 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPop)
   }, [])
 
+  /**
+   * 已经登录的人打开 `/`（落地页）→ **直接送去 App**。
+   *
+   * ⚠️ 用 `replace`，不能 push：营销页是给访客看的，自己人每次打开都撞上它是
+   * 打扰；而 push 会在历史栈里留下一条 `/`，用户一按后退又跳回来 —— 出不去。
+   *
+   * ⚠️ 它**只认自己人**：没登录的访客停在落地页上（那正是这一页存在的意义）。
+   * `checking` 那一段要等 —— 还没问出"我是谁"就跳，会把每个登录着的人
+   * 先闪一下落地页再走。
+   */
+  useEffect(() => {
+    if (!checking && user && view.kind === 'landing') go({ kind: 'edit' }, { replace: true })
+  }, [checking, user, view, go])
+
   // 还没问出"我是谁"之前什么都别显示 —— 认出没登录的访客是**一次网络往返**，
   // 直接按 user === null 渲染的话，每个登录着的用户回访时都会先看到登录页闪一下。
-  if (checking) return <div className="app-loading">正在打开…</div>
+  //
+  // ⚠️ 这一屏**要跟着门面换色**：落地页是浅色的，而 App 这套"正在打开…"是深色的，
+  // 直接用它会在浅色页面前先闪一块深色。地址栏在这一刻**已经**能看出是落地页了
+  // （`view` 是从 `location.pathname` 来的，不用等网络），所以这儿分辨得出来。
+  if (checking) {
+    return (
+      <div className={`app-loading${view.kind === 'landing' ? ' lp-loading' : ''}`}>正在打开…</div>
+    )
+  }
+
+  // ★ **落地页在这一步之前就返回**（2026-09-30 加）。
+  //   它必须排在 `!user` 那条**前面**：落地页是给**没登录的访客**看的，
+  //   排到后面就永远轮不到它 —— 访客会直接撞上登录页，而门口那一页白做了。
+  //   （登录着的人到不了这一条：上面那个 effect 已经把他们送去 `/app` 了。
+  //    真到得了也只是多看一眼门面，不会坏。）
+  if (view.kind === 'landing') return <LandingPage onEnter={() => go({ kind: 'edit' })} />
+
   // 没登录就只有登录页。底下那些修图的东西一样都不挂载：三个 AI 接口现在
   // 都只认登录过的人（否则 401），挂上去也只是让用户先挑好照片再被拒。
   //

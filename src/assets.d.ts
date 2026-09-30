@@ -17,3 +17,20 @@ declare module '*.svg' {
   const url: string
   export default url
 }
+
+/**
+ * 同上，位图。**落地页（2026-09-30 搬进仓库）是第一个 import 照片的地方** ——
+ * 在它之前，界面上的图只有那个 SVG 标志，其余全是运行时生成的（画布、缩略图、
+ * 服务端回图的 data URL），一条 `import ... from './x.jpg'` 都不需要。
+ *
+ * ⚠️ 和 `.svg` 一样，Vite 给的是一个**网址字符串**（构建时按内容哈希改名、
+ * 放进 `assets/`），所以只能 `<img src={x}>`。
+ */
+declare module '*.jpg' {
+  const url: string
+  export default url
+}
+declare module '*.webp' {
+  const url: string
+  export default url
+}

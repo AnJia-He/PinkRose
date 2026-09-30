@@ -1,0 +1,282 @@
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+// ⚠️ 样式表**不在这儿 import** —— 它在 `src/main.tsx` 里、排在 `styles.css` 后面。
+// 这一页有几条规则要盖掉全局的（body 底色、文档滚动条、color-scheme），
+// 而那份顺序是有讲究的，理由写在那边的导入语句上。
+import logo from '../assets/logo/rose.svg'
+import seaRoad from '../assets/landing/sea-road.jpg'
+import nightView from '../assets/landing/night-view.jpg'
+import oldTown from '../assets/landing/old-town.jpg'
+import seasideBack from '../assets/landing/seaside-back.jpg'
+import nightMarket from '../assets/landing/night-market.jpg'
+import highway from '../assets/landing/highway.jpg'
+import beforeShot from '../assets/landing/before.jpg'
+import afterShot from '../assets/landing/after.jpg'
+import appWindow from '../assets/landing/app-window.webp'
+import appPanel from '../assets/landing/app-panel.webp'
+
+/**
+ * 落地页 —— **打开网站看到的第一眼**（2026-09-30 从
+ * `create-image/落地页/mock4.html` 那份 v4 样页搬进来的）。
+ *
+ * ⚠️ **版面和文案一个字都没改**，改的只有三件工程上的事：
+ *   ① 那份 `<style>` 收进 `src/landing.css` 的 `.lp` 作用域，类名和 CSS 变量
+ *      全加 `lp-` 前缀（App 里也有 `.nav`/`.brand`，同名会打架）；
+ *   ② 那段内联 `<script>`（进场 / 回顶部 / 对开滑块）改成 React；
+ *   ③ 图片从 `create-image/落地页/` 搬进 `src/assets/landing/` 并**入了库**
+ *      —— 它们就是页面的内容，不入库的话换台机器 clone 下来这一页是空的。
+ *
+ * ⚠️ **这一页的配色和 App 不是一套，这是有意的**：落地页是门面（浅色、
+ * 黄点缀、大留白），App 是干活的工具（深色、粉点缀、密）。两种语境两套语言；
+ * 分家之前 App **自己内部**有过三套语言，那种才是病。
+ *
+ * 交互只有三处，都不引依赖：
+ *   · `.lp-rise` 进场（IntersectionObserver，滚到眼前才升起来）；
+ *   · 右下角回顶部（滚过一屏才出现）；
+ *   · 对开滑块（一个 range 输入 + 一个 CSS 变量）。
+ */
+type Props = {
+  /** 「免费试用」和「登录」都走它 —— 交出去的是"去 App"这个意图，
+   *  往哪个网址放是上层的事（规则只有 `ui/view.ts` 那一份）。 */
+  onEnter: () => void
+}
+
+/**
+ * 进场：滚到眼前才轻轻升起来。
+ *
+ * ⚠️ 它是**每个元素自己的一个小状态**，不是"进页面时 querySelectorAll('.lp-rise')
+ * 挨个手动加 class"。后者是原版样页的写法（静态 HTML 里没有别的办法），
+ * 搬到 React 里就有个隐患：手动加的 class **不在 React 的账上**，只要这个节点
+ * 因为别的原因重渲染一次，就可能被打回原形、永远停在看不见的状态。
+ * 十几行换掉一个"偶尔会失灵"的形状，值。
+ */
+function Reveal({ children, className = '', style }: {
+  children: ReactNode; className?: string; style?: CSSProperties
+}) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [shown, setShown] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    // 没有 IntersectionObserver、或者用户关掉了动效 → **直接亮出来**。
+    // 少了这一条，那种环境下整页内容会永远停在 `opacity: 0`（白屏）。
+    if (!el || !('IntersectionObserver' in window) ||
+        matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setShown(true)
+      return
+    }
+    const io = new IntersectionObserver(es => {
+      if (es.some(e => e.isIntersecting)) { setShown(true); io.disconnect() }
+    }, { rootMargin: '0px 0px -10% 0px', threshold: 0.05 })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+
+  return (
+    <div ref={ref} style={style}
+         className={`lp-rise${shown ? ' lp-in' : ''}${className ? ` ${className}` : ''}`}>
+      {children}
+    </div>
+  )
+}
+
+/** 右下角那个浮标。**它是能用的，不是装饰** —— 这一页很长。 */
+function BackToTop() {
+  const [show, setShow] = useState(false)
+
+  useEffect(() => {
+    // 滚过一屏才出现。监听是 passive 的（不阻塞滚动），而且
+    // `setShow` 收到同一个值时 React 自己会 bail out，不必再手写去重。
+    const onScroll = () => setShow(window.scrollY > window.innerHeight)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+
+  return (
+    <div className="lp-dock">
+      <button
+        className={show ? 'lp-show' : ''}
+        aria-label="回到顶部"
+        title="回到顶部"
+        onClick={() => window.scrollTo({
+          top: 0,
+          behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+        })}
+      >↑</button>
+    </div>
+  )
+}
+
+/** 「同一张照片，一句话的差别」那个对开滑块。拖它 = 改一个 CSS 变量。 */
+function BeforeAfter() {
+  const [pos, setPos] = useState(52)
+  return (
+    <>
+      {/* ⚠️ 自定义属性得走内联 style，而且 TS 不认 `--lp-p` 这种名字，
+          所以要断言一次类型（`CSSProperties` 里根本没有这种键）。 */}
+      <Reveal className="lp-ba" style={{ '--lp-p': `${pos}%` } as CSSProperties}>
+        <img src={beforeShot} alt="手机直出的原图" />
+        <img className="lp-after" src={afterShot} alt="调色之后的同一张照片" />
+        <div className="lp-handle" />
+        <input
+          type="range" min={0} max={100} value={pos}
+          aria-label="拖动对比原图和调色后"
+          onChange={e => setPos(Number(e.target.value))}
+        />
+      </Reveal>
+      <Reveal className="lp-ba-legend">
+        <div><b>原图</b><span>手机拍完直接存下来的样子，平、灰、偏冷。</span></div>
+        <div><b>调色后</b><span>暖一点、天更透、阴影抬起来。脸还是原来那张脸。</span></div>
+      </Reveal>
+    </>
+  )
+}
+
+export default function LandingPage({ onEnter }: Props) {
+  /** 点 CTA。**保留 `<a href>` 那半边**：中键、右键"在新标签打开"照旧能用，
+   *  只是左键点的时候不让浏览器真的走一趟整页加载（那是 SPA 里的倒退）。 */
+  const enter = (e: React.MouseEvent) => { e.preventDefault(); onEnter() }
+
+  useEffect(() => {
+    // `body` 的底色、`color-scheme`、**文档滚动条**这三样是文档级的，
+    // 写在 `.lp` 里面管不到它们 —— 所以挂一个类到 `<html>` 上，
+    // 那几条规则在 landing.css 末尾。
+    const root = document.documentElement
+    root.classList.add('lp-on')
+    const prevTitle = document.title
+    document.title = 'RuiXing —— 说句话，照片就修好了'
+
+    return () => {
+      root.classList.remove('lp-on')
+      document.title = prevTitle
+      // ★ **离开这一页必须把文档滚回顶上。**
+      //   App 那边是"锁在一屏内、自己内部滚"（`.shell{height:100vh}`），
+      //   文档要是还停在这一页滚下去的位置，整个 App 会被顶上去一截 ——
+      //   用户点完「免费试用」看到的会是一个缺了上半截的界面。
+      window.scrollTo(0, 0)
+    }
+  }, [])
+
+  return (
+    <div className="lp">
+      <div className="lp-grain" aria-hidden="true" />
+
+      <BackToTop />
+
+      <header className="lp-nav">
+        <div className="lp-wrap">
+          <span className="lp-brand"><img src={logo} alt="" />RuiXing</span>
+          <nav>
+            <a href="#product">怎么用</a>
+            <a href="#compare">效果</a>
+            <a href="#how">不必担心</a>
+          </nav>
+          <a className="lp-login" href="/app" onClick={enter}>登录</a>
+        </div>
+      </header>
+
+      {/* ══ 开场 ═════════════════════════════════════════════════════ */}
+      <section className="lp-hero">
+        <img className="lp-hero-bg" src={seaRoad}
+             alt="傍晚的海边公路上，一个人举着手机对着海面拍照" />
+        <div className="lp-hero-inner">
+          <div className="lp-wrap">
+            <h1>说句话，<br />照片就修好了</h1>
+            <p>拍的时候顾不上。回来一看，光不对，天太灰，身后还站着不认识的人。不用重拍。</p>
+            <a className="lp-btn lp-btn-accent" href="/app" onClick={enter}>免费试用</a>
+          </div>
+        </div>
+      </section>
+
+      {/* ══ 产品 ═════════════════════════════════════════════════════ */}
+      <section id="product">
+        <div className="lp-wrap">
+          <Reveal>
+            <h2>你想怎么改，说一声</h2>
+            <p className="lp-lede">「天空再蓝一点」「后面那个人去掉」「脸太暗了」。你平时怎么跟朋友形容，就怎么说。想自己调，也可以拖滑块。</p>
+          </Reveal>
+        </div>
+        <div className="lp-bleed">
+          <Reveal className="lp-prod">
+            <div className="lp-prod-base">
+              <img src={appWindow} alt="RuiXing 修图界面，左边是照片，右边是对话和建议卡片" />
+            </div>
+            <div className="lp-prod-float">
+              <img src={appPanel} alt="展开的微调面板，六套风格预设和八条调整滑块" />
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ══ 引擎 ═════════════════════════════════════════════════════ */}
+      <section className="lp-deep" id="engine">
+        <div className="lp-wrap">
+          <Reveal>
+            <h2>不用等，也不用找信号</h2>
+            <p className="lp-lede">说完就变。不用上传，不用排队，不用等进度条。山里没信号也照样改，下山路上就能发出去。</p>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ══ 效果 ═════════════════════════════════════════════════════ */}
+      <section id="compare">
+        <div className="lp-wrap">
+          <Reveal>
+            <h2>同一张照片，<span className="dim">一句话的差别</span></h2>
+            <p className="lp-lede">左边是手机直出，右边是调完之后。中间那条线可以拖。</p>
+          </Reveal>
+          <BeforeAfter />
+        </div>
+      </section>
+
+      {/* ══ 怎么用 ═══════════════════════════════════════════════════ */}
+      <section id="how">
+        <div className="lp-wrap">
+          <Reveal><h2>改错了，回得来</h2></Reveal>
+          <Reveal className="lp-bento">
+            <div className="lp-cell lp-photo">
+              <img src={nightMarket} alt="夜市小吃街，摊子上的锅冒着热气" />
+              <div className="lp-cap">
+                <h3>每一步都退得回去</h3>
+                <p>每一步都挂在对话里，点哪一句，就回到哪一句。调色不伤原图，照片随时能回到刚上传的样子。</p>
+              </div>
+            </div>
+            <div className="lp-cell">
+              <h3>说不清，就拖滑块</h3>
+              <p>「亮一点」「暖一点」「天再蓝一点」，说什么都行。说不出来，拖一下滑块也可以。</p>
+            </div>
+            <div className="lp-cell">
+              <h3>发出去的，还是你拍的那张</h3>
+              <p>尺寸一点没缩。拍摄时间和地点，也原样留在文件里。</p>
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ══ 收尾 ═════════════════════════════════════════════════════ */}
+      <section className="lp-final">
+        <div className="lp-wrap lp-lead-wrap">
+          <Reveal>
+            <h2>下一张朋友圈</h2>
+            <p className="lp-lede">不用装软件，不用先学。打开就能用。</p>
+            <a className="lp-btn lp-btn-ink" href="/app" onClick={enter}>免费试用</a>
+          </Reveal>
+        </div>
+        <Reveal className="lp-rail">
+          <figure><img src={highway} alt="高原公路和远处的雪山" /></figure>
+          <figure><img src={oldTown} alt="古镇巷子里回头笑的女生" /></figure>
+          <figure><img src={nightMarket} alt="夜市小吃街" /></figure>
+          <figure><img src={nightView} alt="山顶看城市夜景" /></figure>
+          <figure><img src={seasideBack} alt="海边沙滩上牵手往前走的两个人" /></figure>
+          <figure><img src={seaRoad} alt="傍晚的海边公路" /></figure>
+        </Reveal>
+        <footer className="lp-footer">
+          <div className="lp-wrap">
+            <span>RuiXing</span>
+            <span>一句话，把旅途中的照片修好</span>
+          </div>
+        </footer>
+      </section>
+    </div>
+  )
+}
