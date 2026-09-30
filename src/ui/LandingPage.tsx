@@ -166,10 +166,22 @@ export default function LandingPage({ onEnter }: Props) {
       <header className="lp-nav">
         <div className="lp-wrap">
           <span className="lp-brand"><img src={logo} alt="" />RuiXing</span>
+          {/* 导航那三个词（2026-09-30 用户改过一轮）。
+              原来写的是「怎么用 / 效果 / 不必担心」—— 用户的原话是
+              **「换个专业的说法，现在太口语化了」**，跟着补了一句
+              **「也不要太专业」**（我先给的「产品功能 / 使用保障」那一组被否了）。
+
+              所以尺度落在中间：**三个都是完整的短语、长度接近**（原来看起来像
+              聊天里截出来的半句），但**一个行业词都没引进来**，也**不再对着读者
+              说话**（「不必担心」那种是劝，指路牌不该劝）。
+              换的三个词各自贴着它指向的那一节：
+                · `怎么改`     ← h2「你想怎么改，说一声」
+                · `效果对比`   ← h2「同一张照片，一句话的差别」（就是那个对开滑块）
+                · `不怕改错`   ← h2「改错了，回得来」 */}
           <nav>
-            <a href="#product">怎么用</a>
-            <a href="#compare">效果</a>
-            <a href="#how">不必担心</a>
+            <a href="#product">怎么改</a>
+            <a href="#compare">效果对比</a>
+            <a href="#how">不怕改错</a>
           </nav>
           <a className="lp-login" href="/app" onClick={enter}>登录</a>
         </div>

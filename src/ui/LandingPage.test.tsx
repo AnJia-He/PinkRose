@@ -47,6 +47,22 @@ describe('落地页', () => {
     }
   })
 
+  it('★ 导航那三个链接都真的指向存在的小节 —— 死锚点不报错，只会点了没反应', async () => {
+    // 导航文案是**会变的**（2026-09-30 用户就改过一轮：要「专业一点」但
+    // 「也不要太专业」），所以这里**不钉那三个词**，钉的是它们的**契约** ——
+    // 每一个都指向一个真的存在的小节 id。
+    // 少了这一条：谁改文案时顺手把 href 敲错，页面照样渲染、控制台一声不吭，
+    // 只是用户点了那个链接**什么都不发生**（浏览器对不存在的锚点就是不动）。
+    await render()
+    const links = [...container.querySelectorAll<HTMLAnchorElement>('.lp-nav nav a')]
+    expect(links.length).toBe(3)
+    for (const a of links) {
+      const href = a.getAttribute('href') ?? ''
+      expect(href.startsWith('#'), `「${a.textContent}」不是个页内锚点`).toBe(true)
+      expect(container.querySelector(href), `「${a.textContent}」指向的 ${href} 不存在`).toBeTruthy()
+    }
+  })
+
   it('★ 十张图一张都不能少 —— 少一张那一块就是空的，而浏览器不会报错', async () => {
     // 变异：把任意一行 `import xx from '../assets/landing/...'` 删掉 → 那条红。
     // 这条守的正是搬迁里最容易静默出错的一步：图是**新的文件名**（压过一道、
