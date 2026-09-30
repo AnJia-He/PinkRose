@@ -314,6 +314,12 @@ export default function App() {
       setHistory(prev => {
         const next = pushSnapshot(prev, {
           id: messageId, label: '生成式编辑',
+          // ★ 记住用户当初那句话 —— 「再来一版」靠它重跑（见 onRerun）。
+          //   存的是**模型给的那句英文 editPrompt**（`applyDecision` 从决策里
+          //   传下来的），不是用户的中文原话：重跑要的是"当初送去生成的那一份"，
+          //   中文那句还得再过一遍模型才能变成它，而重跑不该再花一次路由的钱。
+          //   （"保留人脸"那半句是服务端 buildEditPrompt 补的，重跑同样会补。）
+          prompt: editPrompt,
           base: nextBase, params: paramsAtStep, isOriginal: false, thumb: '',
         })
         // 被挤出去的位图要释放；原图永远不关（"回到原图"还要用它）。
@@ -652,6 +658,37 @@ export default function App() {
     // 用户看到的和面板里显示的是两回事。
     setParams(target.params)
   }, [history, cancelPick])
+
+  /**
+   * 「再来一版」—— 同一句话，重掷一次。
+   *
+   * ★ 2026-09-30 加。这是 AI 产品里"每条回复下面那一排操作"里我们真正缺的那个
+   * （组件库那边叫 Actions）。为什么对我们尤其有用：**模型是不确定的** ——
+   * 同一个 prompt 连打三次，天空的蓝色分别是 (12,133,248) / (0,163,236) /
+   * (1,151,237)（09-21 实测）。"这版差一点"本来就该能再掷一次，
+   * 而不是让用户把同一句话再打一遍（那样他还会怀疑是自己没说清楚）。
+   *
+   * 语义 = **回到那一步 + 用它当初那句话重跑**。和「回到这一步」并排出现，
+   * 靠 ↶ / ↻ 区分：一个是回去，一个是回去**并且立刻重来**。
+   *
+   * ⚠️ 它**花一次生成的钱**（约 13,000 tokens），和用户自己再说一遍一样多。
+   * 没有做二次确认：这是创作里最正常的一个动作，每次都要多点一下反而烦人。
+   * 但**做额度的时候这一下必须算进配额**（设计文档 §6.6 那张表还没实现）。
+   *
+   * ⚠️ 这里是**唯一**真正拦住它的地方（按钮上那个 disabled 只是反馈）：
+   * 忙的时候再掷一次 = 两次生成同时在跑，队列串行也救不回来，钱是两倍。
+   */
+  const onRerun = useCallback((id: number) => {
+    if (busy) return
+    const target = history.find(s => s.id === id)
+    // 没有 prompt 的步骤（原图那一类）不该出现这颗按钮；真被点到了也什么都不做 ——
+    // 不留一个"点了没反应"的按钮。
+    if (!target?.prompt) return
+    // 先回到那一步（base / 参数 / 缩略图 / 点选清理，全都走同一条路）
+    onJump(id)
+    const mid = say('好，又出了一版。')
+    void runGenerate(target.prompt, mid, target.params, target.base.bitmap)
+  }, [busy, history, onJump, say, runGenerate])
 
   /**
    * **把此刻画布上这张图导出来**：一个 blob + 一个文件名。
@@ -1127,6 +1164,10 @@ export default function App() {
                 onStop={stopGeneration}
                 onCard={onCard}
                 onJump={onJump}
+                onRerun={onRerun}
+                // 只有"记着当初那句话"的步骤才给「再来一版」——
+                // 原图没有那句话（`prompt` 缺席），所以它那颗按钮不会出现。
+                rerunnable={history.filter(s => s.prompt).map(s => s.id)}
                 jumpableIds={history.map(s => s.id)}
                 thumbs={Object.fromEntries(history.map(s => [s.id, s.thumb]))}
                 // marker 非空必然 picking 为真（两者出自同一个对象），所以这里

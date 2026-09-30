@@ -21,6 +21,10 @@ type Props = {
   onCard: (card: SuggestCard) => void
   /** 点「回到这一步」。只在 jumpableIds 里的消息上出现。 */
   onJump: (id: number) => void
+  /** 点「再来一版」—— 同一句话重掷一次（见 App.tsx 的 onRerun）。 */
+  onRerun: (id: number) => void
+  /** 哪几步**记着当初那句话**（= 能重掷的那些）。原图不在里面。 */
+  rerunnable: number[]
   jumpableIds: number[]
   /** 每一步的缩略图，键是消息 id。空串 = 还没生成。 */
   thumbs: Record<number, string>
@@ -33,8 +37,8 @@ type Props = {
 }
 
 export default function ChatPanel({
-  messages, cards, busy, suggesting, onSend, onStop, onCard, onJump, jumpableIds, thumbs,
-  marking, canConfirmMark, onConfirmMark, onCancelMark,
+  messages, cards, busy, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
+  jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark,
 }: Props) {
   return (
     <aside className="chat">
@@ -50,10 +54,24 @@ export default function ChatPanel({
                 onClick={() => jumpableIds.includes(m.id) && onJump(m.id)}
               />
             )}
-            {m.role === 'assistant' && jumpableIds.includes(m.id) && (
-              <button className="bubble-jump" onClick={() => onJump(m.id)}>
-                回到这一步
-              </button>
+            {m.role === 'assistant' && (jumpableIds.includes(m.id) || rerunnable.includes(m.id)) && (
+              <div className="bubble-actions">
+                {jumpableIds.includes(m.id) && (
+                  <button className="bubble-jump" onClick={() => onJump(m.id)}>
+                    回到这一步
+                  </button>
+                )}
+                {/* 「再来一版」= 同一句话重掷一次。**和「回到这一步」并排但不同**：
+                    一个是回去，一个是回去**并且立刻重来**（靠 ↶ / ↻ 区分）。
+                    ⚠️ 它是这两颗里**唯一**要禁用的那颗 —— 忙的时候再掷一次
+                    就是两次生成同时在跑，钱是两倍（「回到这一步」不禁用是有意的，
+                    见 App.tsx 的 onJump 那段）。 */}
+                {rerunnable.includes(m.id) && (
+                  <button className="bubble-rerun" disabled={!!busy} onClick={() => onRerun(m.id)}>
+                    再来一版
+                  </button>
+                )}
+              </div>
             )}
           </div>
         ))}

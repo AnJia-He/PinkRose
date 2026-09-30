@@ -576,6 +576,90 @@ describe('对话式修图：钱花在对的地方', () => {
 })
 
 /**
+ * ★ 2026-09-30 加。AI 产品每条回复下面那排操作里，我们真正缺的那一颗
+ * （组件库那边叫 Actions）。
+ *
+ * 为什么对我们格外有用：**模型是不确定的** —— 同一个 prompt 连打三次，
+ * 天空的蓝色分别是 (12,133,248) / (0,163,236) / (1,151,237)（09-21 实测）。
+ * "这版差一点"本来就该能再掷一次，而不是让用户把同一句话再打一遍
+ * （那样他还会怀疑是自己没说清楚）。
+ */
+describe('★ 再来一版：同一句话重掷一次', () => {
+  const P1 = 'Remove the person in the background.'
+  const P2 = 'Change the sky to dusk.'
+
+  /** 上传 → 说两句话，各生成一版。 */
+  async function twoVersions() {
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: P1, reply: '好，这就去掉。' }))
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: P2, reply: '好，换成黄昏。' }))
+    await say('天空换成黄昏')
+  }
+
+  const OK = { imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800 }
+
+  it('★ 重跑的是**当初那句话**，而且从**那一版的底图**跑 —— 且不再过一遍路由', async () => {
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await twoVersions()
+
+    // 两条生成出来的回复，各挂一颗（原图那条没有，见下一条）
+    const btns = container.querySelectorAll('.bubble-rerun')
+    expect(btns.length).toBe(2)
+
+    await act(async () => {
+      (btns[0] as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    const calls = vi.mocked(api.postEdit).mock.calls
+    expect(calls.length).toBe(3)
+    const last = calls[2][0] as { imageDataUrl: string; editPrompt: string }
+    expect(last.editPrompt).toBe(P1)                          // 当初那句话，不是第二句
+    expect(last.imageDataUrl).toContain('MODEL:decoded-1')    // 第一版的底，不是第二版
+    // ★ 重掷**不过路由**：同样的意思不必再让模型读一遍照片 —— 那是一次白花的钱
+    expect(vi.mocked(api.postRoute).mock.calls.length).toBe(2)
+    expect(lastReply()).toContain('又出了一版')
+  })
+
+  it('⚠️ 原图那一条没有「再来一版」—— 它没有"当初那句话"', async () => {
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+
+    // 还没改过：历史里只有原图那一步
+    expect(container.querySelectorAll('.bubble-jump').length).toBe(1)
+    expect(container.querySelectorAll('.bubble-rerun').length).toBe(0)
+  })
+
+  it('⚠️ 忙的时候那颗是禁用的 —— 再掷一次就是两次生成同时在跑，钱是两倍', async () => {
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await twoVersions()
+
+    // 再发一句，让这次生成挂在半路（busy 非空）
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: 'x', reply: '好。' }))
+    vi.mocked(api.postEdit).mockImplementation((_o, signal) => new Promise((_res, rej) => {
+      signal?.addEventListener('abort', () => {
+        const e = new Error('aborted'); e.name = 'AbortError'; rej(e)
+      })
+    }))
+    await say('再改一处')
+
+    expect((container.querySelector('.bubble-rerun') as HTMLButtonElement).disabled).toBe(true)
+
+    // 收尾：把这次生成停掉，免得留下一个挂着的 Promise
+    await act(async () => {
+      (container.querySelector('.chat-input button.stop') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+  })
+})
+
+/**
  * 2026-09-23 加：**手机拍的照片，手机自己画不动**。
  *
  * 用户那台手机上实测撞到的：照片 4928×6560（32.3 MP），而那台机器自报的单边
