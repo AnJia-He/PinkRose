@@ -20,7 +20,7 @@ import {
   blobToDataUrl, buildExportBlob, buildFilename, canShareImage, downloadImage, shareImage,
 } from './export/save'
 import { prepareForModel, prepareForRouting, type Sizable } from './image/prepare'
-import { ApiError, postEdit, postRoute, postSuggest } from './api/client'
+import { ApiError, isAbort, postEdit, postRoute, postSuggest } from './api/client'
 import { bitmapsToClose, attachThumb, jumpTo, pushSnapshot, type Snapshot } from './core/history'
 import { GALLERY_THUMB_MAX_SIDE, makeThumbnail } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
@@ -135,6 +135,16 @@ export default function App() {
   const [showPanel, setShowPanel] = useState(false)
   /** 非 null 时既是"正在忙"的标志，也是要显示给用户的那句话 */
   const [busy, setBusy] = useState<string | null>(null)
+  /**
+   * 正在跑的那一次**生成**的取消开关（null = 现在没有生成在跑）。
+   *
+   * ★ 2026-09-30 加，为「停止」按钮。⚠️ 用 ref 不用 state：它只在
+   * "按下停止"和"这一次跑完"两个时刻被读，**从来不需要触发重渲染** ——
+   * 放进 state 只会让每次生成多两次没用的 render。
+   * 而且它必须**按次**清（`if (editAbortRef.current === ac)`），
+   * 不能跑完就无脑置 null：那样后一次的 controller 会被前一次的收尾抹掉。
+   */
+  const editAbortRef = useRef<AbortController | null>(null)
   /** 正在导出的是哪一个按钮（null = 没在忙）。几个按钮共用一个"忙"，
    *  但只有被按的那个显示「准备中…」—— 一起变会像出了几件事。 */
   const [delivering, setDelivering] = useState<'share' | 'download' | 'save' | null>(null)
@@ -274,6 +284,9 @@ export default function App() {
     source: Sizable,
   ) => {
     if (!editPrompt) return
+    // ★ 一次生成 = 一个 controller。「停止」按的就是它（见 stopGeneration）。
+    const ac = new AbortController()
+    editAbortRef.current = ac
     setBusy('正在改…大约 10 秒')
     try {
       // source 直接就是能 drawImage 的东西（位图或画布），不用再拆一层
@@ -283,7 +296,7 @@ export default function App() {
         editPrompt,
         width: prepared.width,
         height: prepared.height,
-      })
+      }, ac.signal)
       const blob = await (await fetch(out.imageDataUrl)).blob()
       const bitmap = await createImageBitmap(blob)
       // 尺寸以**实际拿到的像素**为准，绝不按 out.width/height 拉伸：
@@ -313,6 +326,12 @@ export default function App() {
       setImage(nextBase)
       // ↑ 只换 base。params 原封不动继续生效 —— 整个数据模型的基石。
     } catch (e) {
+      // ★ 用户按了「停止」——**这不是失败**。
+      //   三件事都不能做：不能说"这次没改成功"（他主动叫停的，说那句像在怪他）、
+      //   不能动 params（铁律照旧）、更不能把票失效那套跑一遍。
+      //   只说一句"停了"，让这一轮有个收尾 —— 什么都不说的话，那个"正在改…"
+      //   气泡直接消失，用户会怀疑到底停没停。
+      if (isAbort(e)) { say('停了。'); return }
       // 失败时用户的参数一点都不丢（spec §4.7 的铁律）。
       // 只加一句提示，绝不去动 params。
       console.error(e)
@@ -321,9 +340,29 @@ export default function App() {
       if (isUnauthorized(e)) { setUser(null); return }
       say(e instanceof ApiError ? e.message : '这次没改成功，再试一次？')
     } finally {
+      // 只有"还是我这一次"才清 —— 别把后一次的 controller 抹掉
+      if (editAbortRef.current === ac) editAbortRef.current = null
       setBusy(null)
     }
   }, [say])
+
+  /**
+   * 「停止」—— 把这一次生成掐掉。
+   *
+   * ★ 2026-09-30 加。为什么值得一个专门的按钮：AI 产品里这个位置**本来就该
+   * 是它** —— 生成中那颗按钮在 ChatGPT / Claude / Gemini 上是「停止」，
+   * 在组件库（Ant Design X 的 Sender）里是一个 `loading` 态。我们原来那十几秒
+   * 里发送键只是 `disabled`，用户**没有任何出口**，只能盯着"正在改…大约 10 秒"。
+   *
+   * ⚠️ **它救的不是钱。** 请求发出去之后，上游那一次多半已经在算了，
+   *    tokens 该花还是花。它救的是两件事：① 用户不用干等；② **服务端跟着停**
+   *    —— 不跟的话那个串行队列被占满，用户停完马上说的下一句话要白等十几秒，
+   *    比没有这个按钮还糟（前端 abort 会让浏览器掐断连接，服务端在
+   *    app.ts 的 /api/edit 里挂在 `res` 的 close 上跟着 abort 上游）。
+   */
+  const stopGeneration = useCallback(() => {
+    editAbortRef.current?.abort()
+  }, [])
 
   /** 应用一个决策：参数走本地立刻生效，生成式走云端。 */
   const applyDecision = useCallback(async (d: RouteDecision) => {
@@ -1085,6 +1124,7 @@ export default function App() {
                 busy={busy}
                 suggesting={suggesting}
                 onSend={send}
+                onStop={stopGeneration}
                 onCard={onCard}
                 onJump={onJump}
                 jumpableIds={history.map(s => s.id)}

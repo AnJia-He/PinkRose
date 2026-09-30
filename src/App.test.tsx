@@ -489,6 +489,90 @@ describe('对话式修图：钱花在对的地方', () => {
     const second = vi.mocked(api.postRoute).mock.calls[1][0] as { params: { exposure: number } }
     expect(second.params.exposure).toBe(20)
   })
+
+  /**
+   * ★ 2026-09-30 加（「停止」按钮）。
+   *
+   * 为什么值得一条：生成要十几秒，而在这之前用户**没有任何出口** ——
+   * 那一格只有一个 `disabled` 的「发送」和一句"正在改…大约 10 秒"。
+   * AI 产品在这个位置放的都是「停止」（ChatGPT / Claude / Gemini，
+   * 组件库那边是 Ant Design X 的 Sender `loading` 态），我们没有。
+   *
+   * 这一条钉三件事，少一件这个按钮就只做了一半：
+   *   ① 生成中那一格**是「停止」**（不是按不动的「发送」）；
+   *   ② 按下去真的把这次请求**掐断**（signal 真的 abort 了）；
+   *   ③ 收尾说一句「停了。」——而且**不能说"没改成功"**：
+   *      是用户主动叫停的，说那句像在怪他。
+   */
+  it('★ 生成中可以停 —— 真的掐断，而且说「停了」不说"没改成功"', async () => {
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '去掉后面的路人' }))
+
+    // 这一次生成**永远不返回**，除非被 abort —— 就是那十几秒的样子。
+    // 假实现必须照着真 fetch 的规矩来：signal 一 abort 就抛 AbortError。
+    // 少了这一半，"点了停止"之后 Promise 还挂着，界面永远停在忙。
+    let seen: AbortSignal | undefined
+    vi.mocked(api.postEdit).mockImplementation((_o, signal) => {
+      seen = signal
+      return new Promise((_res, rej) => {
+        signal?.addEventListener('abort', () => {
+          const e = new Error('aborted'); e.name = 'AbortError'; rej(e)
+        })
+      })
+    })
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+
+    const before = container.querySelector('.chat-input button') as HTMLButtonElement
+    expect(before.textContent).toBe('停止')
+    expect(seen?.aborted).toBe(false)
+
+    await act(async () => {
+      before.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(seen?.aborted).toBe(true)     // ② 请求真的被掐断了
+    expect(lastReply()).toBe('停了。')     // ③ 有收尾 —— 不是一片安静
+    // ③ 的后半句：不能把用户自己的决定说成一次失败
+    expect(container.textContent ?? '').not.toContain('没改成功')
+    expect(container.textContent ?? '').not.toContain('再试一次')
+    // ① 停完那一格回到「发送」，用户马上能说下一句
+    const after = container.querySelector('.chat-input button') as HTMLButtonElement
+    expect(after.textContent).toBe('发送')
+    expect((container.querySelector('.bubble.pending'))).toBeNull()
+  })
+
+  it('⚠️ 停的是**这一次** —— 停了之后下一句话照常能发出去', async () => {
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '去掉路人' }))
+    vi.mocked(api.postEdit).mockImplementation((_o, signal) => {
+      return new Promise((_res, rej) => {
+        signal?.addEventListener('abort', () => {
+          const e = new Error('aborted'); e.name = 'AbortError'; rej(e)
+        })
+      })
+    })
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+    await act(async () => {
+      (container.querySelector('.chat-input button') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // 第二次照常走完 —— 那个 abort 只属于第一次
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+    await say('换成黄昏')
+
+    expect(api.postEdit).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(api.postEdit).mock.calls[1][1]?.aborted).toBe(false)
+  })
 })
 
 /**

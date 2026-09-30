@@ -608,6 +608,24 @@ button.primary:where(:hover):where(:not(:disabled)),
 }
 .chat-input input::placeholder { color: var(--muted-2); }
 
+/* 「停止」—— 生成中顶替「发送」的那一颗（★ 2026-09-30）。
+   ⚠️ 它**不能长得像主按钮**：主按钮的那档粉在这个产品里是"按这里就对了"，
+   而停止是个**退路**，不是前进。所以走描边 + 次要字色，只有悬停才亮起来。
+   ⚠️ 前面那个小方块是**画的**，不是一个 ◼ 字符：中文字体里那个字形的
+   大小和基线各平台都不一样（本项目已经因为中文字体踩过斜体那一次）。
+   它是"停止"这个词在全世界播放器上的通用形状 —— 一眼认得出，不用读字。 */
+.chat-input button.stop {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border-color: var(--line-3); color: var(--muted);
+}
+.chat-input button.stop::before {
+  content: ''; width: 8px; height: 8px; border-radius: 2px; background: currentColor;
+}
+/* 这两条必须自己写：通用那两条的 `:where()` 把特异性压到 0-0-1，
+   而这条是 0-2-1 —— 它赢了，也就意味着**悬停/按下的样子也得由它说了算**。 */
+.chat-input button.stop:where(:hover) { background: var(--hover); border-color: var(--line-3); color: var(--text); }
+.chat-input button.stop:where(:active) { transform: scale(.97); }
+
 /* ── 窄屏（手机）：照片在上，对话在下 ──────────────────────────────
    上面那套「左画布右对话」是给宽屏写的，`.chat` 写死了 340px 且不参与伸缩
    （`flex: none`）。390px 的手机减掉 340，再减掉 .stage 左右各 20px 内边距，

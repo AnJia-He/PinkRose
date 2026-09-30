@@ -306,7 +306,26 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
       const body = await readJsonBody(req)
-      sendJson(res, 200, await handleEdit(body, { client: deps.client, queue: deps.queue }))
+      // ★ 2026-09-30（「停止」按钮）：**用户走了，我们也要停。**
+      //
+      //   前端按停止 → 浏览器掐断这次连接 → 这里拿到 close。
+      //   不跟着停会怎样：上游照跑到底（钱照花），而那一次还占着**全局串行
+      //   队列**十几秒 —— 用户停完马上说的下一句话得排在它后面白等，
+      //   也就是说"停了反而更慢"，比没有这个按钮还糟。
+      //
+      //   ⚠️ `close` 在**正常结束**时也会触发，用 writableEnded 区分：
+      //   已经写完的响应当然不用（也不能）abort。
+      //
+      //   ⚠️ 顺带量过一件本来担心的事：这次生成随后会失败，统一异常出口
+      //   （sendError → sendJson）还想把一句 JSON 写回那个**已经销毁的**响应。
+      //   实测（Node 24）那是**静默丢掉**的，不抛也不崩 —— 所以 http.ts 里
+      //   **没有**加"res.destroyed 就别写"那类守卫（加过，变异验不出任何差别，
+      //   撤了）。别凭直觉再补一条，先看这里。
+      const ac = new AbortController()
+      res.on('close', () => { if (!res.writableEnded) ac.abort() })
+      sendJson(res, 200, await handleEdit(body, {
+        client: deps.client, queue: deps.queue, signal: ac.signal,
+      }))
       return
     }
     throw new HttpError('BAD_REQUEST', `没有这个接口：${path}`, 404)

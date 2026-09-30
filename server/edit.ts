@@ -3,19 +3,38 @@ import { MAX_DIMENSION, checkModelSize } from '../shared/size.ts'
 import { HttpError } from './http.ts'
 import { buildEditPrompt } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
-import type { SenseNovaClient } from './sn.ts'
+import { SnError, type SenseNovaClient } from './sn.ts'
 
-export type EditDeps = { client: SenseNovaClient; queue: SerialQueue }
+export type EditDeps = {
+  client: SenseNovaClient
+  queue: SerialQueue
+  /**
+   * 用户按了「停止」时会被 abort（★ 2026-09-30）。
+   * 挂在 app.ts 的 `/api/edit` 那一支上、监听 `res` 的 close —— 浏览器掐断
+   * 连接就是这里收到信号的时刻。**不传 = 老行为**（没有取消这一说）。
+   */
+  signal?: AbortSignal
+}
 
 export async function handleEdit(raw: unknown, deps: EditDeps): Promise<EditResponse> {
   const req = parseRequest(raw)
   const prompt = buildEditPrompt(req.editPrompt)
 
-  const b64 = await deps.queue.run(() => deps.client.edit({
-    imageDataUrl: req.imageDataUrl,
-    prompt,
-    size: { width: req.width, height: req.height },
-  }), 'edit')
+  const b64 = await deps.queue.run(() => {
+    // ★ 还在排队的时候用户就按了停止 —— **一次上游都不打**。
+    //   这是"停止"真能省下钱的那一格：队列是串行的，前面有人时这次请求
+    //   可能干等十几秒，而用户在这十几秒里反悔是常事。
+    //   （已经在跑的那种救不回来 —— 上游早收下了那张图，钱已经花了。
+    //     前端那句"停了"也因此不承诺省钱，只说停了。）
+    if (deps.signal?.aborted) {
+      throw new SnError('UPSTREAM_FAILED', '用户取消了这次生成', false)
+    }
+    return deps.client.edit({
+      imageDataUrl: req.imageDataUrl,
+      prompt,
+      size: { width: req.width, height: req.height },
+    }, deps.signal)
+  }, 'edit')
 
   return {
     imageDataUrl: `data:image/png;base64,${b64}`,

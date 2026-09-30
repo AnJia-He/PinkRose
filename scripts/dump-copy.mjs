@@ -78,6 +78,15 @@ async function mutePaidRoutes(page) {
   await page.route('**/api/edit', r => r.abort())
 }
 
+/** 假的路由决策：route 那条**用假响应 fulfill**，一次模型都不调（花钱的路）。 */
+const FAKE_DECISION = JSON.stringify({
+  decision: {
+    route: 'generate', paramDeltas: {}, reply: '好，这就去掉。',
+    editPrompt: 'Remove the person in the background.',
+    needsDisambiguation: false, degraded: false,
+  },
+})
+
 async function main() {
   const browser = await chromium.launch()
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
@@ -141,7 +150,33 @@ async function main() {
     await page.setInputFiles('input[type=file]', PHOTO)
     await page.waitForTimeout(1200)
     await grab(page, 'App · 刚传完（还在看照片）')
-    await page.waitForTimeout(3000)
+
+    // ── ★ 2026-09-30 加：「生成中」那一格 ────────────────────────────────
+    // 为什么单独走一趟：**「停止」这两个字只在忙的时候存在**（平时那一格是
+    // 「发送」），上面每一屏都看不到它 —— 而这一维的漏洞从来不是"没能力判"，
+    // 是"没人读"。生成中、按完停止之后说的话，都是最少被人读过的字。
+    //
+    // ⚠️ 仍然**一分钱不花**：route 用假决策 fulfill；edit 干脆挂住不回
+    //   （真跑一次约 12,900 tokens）。
+    await page.unroute('**/api/route')
+    await page.route('**/api/route', r => r.fulfill({
+      status: 200, contentType: 'application/json', body: FAKE_DECISION,
+    }))
+    await page.unroute('**/api/edit')
+    await page.route('**/api/edit', () => { /* 挂住不回 = 正在改…大约 10 秒 */ })
+    await page.fill('input[name="text"]', '把后面那个人去掉')
+    await page.press('input[name="text"]', 'Enter')
+    await page.waitForSelector('.chat-input button.stop', { timeout: 15_000 })
+    await page.waitForTimeout(300)
+    await grab(page, 'App · 生成中（那一格是「停止」）')
+    await page.click('.chat-input button.stop')
+    await page.waitForTimeout(800)
+    await grab(page, 'App · 按了停止之后')
+    // 把两条路由还原成"掐掉"，后面的流程照旧（不然挂着的 edit 会让应用永远忙）
+    await page.unroute('**/api/edit')
+    await page.route('**/api/edit', r => r.abort())
+
+    await page.waitForTimeout(2000)
     await page.click('.actions button:has-text("调色")')
     await page.waitForTimeout(600)
     await grab(page, 'App · 调色面板')

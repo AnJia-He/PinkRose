@@ -73,8 +73,12 @@ export class SenseNovaClient {
   /**
    * 生成式编辑。返回**纯 base64**（不带 `data:image/...;base64,` 前缀），
    * 由调用方决定怎么包。
+   *
+   * `signal` = **用户那边按了「停止」**（浏览器掐断连接 → app.ts 跟着 abort）。
+   * 全项目只有这一条路带 signal：它是唯一一条让用户干等十几秒的路。
    */
-  async edit(o: { imageDataUrl: string; prompt: string; size: Size }): Promise<string> {
+  async edit(o: { imageDataUrl: string; prompt: string; size: Size },
+             signal?: AbortSignal): Promise<string> {
     const body = {
       model: this.cfg.imageModel,
       images: [{ image_url: o.imageDataUrl }],
@@ -89,7 +93,7 @@ export class SenseNovaClient {
       // 那个域名经常连接超时——生成成功了却拿不到图。
       response_format: 'b64_json',
     }
-    const j = await this.postJson('/images/edits', body, EDIT_TIMEOUT_MS)
+    const j = await this.postJson('/images/edits', body, EDIT_TIMEOUT_MS, signal)
 
     const b64 = (j as any)?.data?.[0]?.b64_json
     if (typeof b64 !== 'string' || !b64) {
@@ -100,7 +104,8 @@ export class SenseNovaClient {
     return b64
   }
 
-  private async postJson(path: string, body: unknown, timeoutMs: number): Promise<unknown> {
+  private async postJson(path: string, body: unknown, timeoutMs: number,
+                         outer?: AbortSignal): Promise<unknown> {
     const url = `${this.cfg.baseUrl}${path}`
     let res: Response
     try {
@@ -111,9 +116,20 @@ export class SenseNovaClient {
           'content-type': 'application/json',
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
+        // 两个中断源合成一个：**超时**（一直就有）和**用户按了停止**（2026-09-30 加）。
+        // AbortSignal.any 要 Node 20.3+，这个项目钉的是 Node 24。
+        signal: outer
+          ? AbortSignal.any([AbortSignal.timeout(timeoutMs), outer])
+          : AbortSignal.timeout(timeoutMs),
       })
     } catch (e) {
+      // ★ 用户按了停止 —— **绝不能标成可重试**。
+      //   标成可重试的话，那个已经不想要的请求会再打一遍上游：钱再花一次、
+      //   串行队列再被占十几秒，正好和"停止"想要的反着来。
+      //   （超时也走 AbortError，但它**该**重试 —— 靠 outer.aborted 区分。）
+      if (outer?.aborted) {
+        throw new SnError('UPSTREAM_FAILED', '用户取消了这次生成', false)
+      }
       // 网络层异常（DNS 失败 / 超时 / 连接重置）统一归为可重试
       throw new SnError('UPSTREAM_FAILED', `连不上上游：${(e as Error).message}`, true)
     }
@@ -130,6 +146,10 @@ export class SenseNovaClient {
     try {
       text = await res.text()
     } catch (e) {
+      // 同上：停止可能发生在**读正文**这一段（生成那一路正文是几百 KB 的 base64）。
+      if (outer?.aborted) {
+        throw new SnError('UPSTREAM_FAILED', '用户取消了这次生成', false)
+      }
       throw new SnError('UPSTREAM_FAILED', `读取上游响应正文失败：${(e as Error).message}`, true)
     }
     if (!res.ok) {

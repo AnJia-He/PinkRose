@@ -15,6 +15,9 @@ type Props = {
    *  发送键照常能按（见 App.tsx 的 SUGGEST_WAIT_MS 那段）。 */
   suggesting: boolean
   onSend: (text: string) => void
+  /** 按「停止」—— 掐掉正在跑的那一次生成（见 App.tsx 的 stopGeneration）。
+   *  只在 `busy` 时会出现：那一格平时是「发送」。 */
+  onStop: () => void
   onCard: (card: SuggestCard) => void
   /** 点「回到这一步」。只在 jumpableIds 里的消息上出现。 */
   onJump: (id: number) => void
@@ -30,7 +33,7 @@ type Props = {
 }
 
 export default function ChatPanel({
-  messages, cards, busy, suggesting, onSend, onCard, onJump, jumpableIds, thumbs,
+  messages, cards, busy, suggesting, onSend, onStop, onCard, onJump, jumpableIds, thumbs,
   marking, canConfirmMark, onConfirmMark, onCancelMark,
 }: Props) {
   return (
@@ -110,7 +113,19 @@ export default function ChatPanel({
         }}
       >
         <input name="text" placeholder="说说想怎么改…" autoComplete="off" />
-        <button type="submit" disabled={!!busy}>发送</button>
+        {/* ★ 2026-09-30：这一格**平时是「发送」，生成中是「停止」**。
+            为什么值得专门做一个按钮（而不是让发送键继续 disabled 着）：
+            生成要十几秒，而在这十几秒里用户原来**没有任何出口** ——
+            屏幕上只有一个按不动的「发送」和一句"正在改…大约 10 秒"。
+            AI 产品在这个位置放的都是「停止」（ChatGPT / Claude / Gemini 全体，
+            组件库那边是 Ant Design X 的 Sender `loading` 态）。
+
+            ⚠️ 用 `type="button"`：同一个 form 里，`type="submit"` 会让它
+            在按下的同时把表单提交一遍（那就变成"停止"顺手又发了一次）。
+            ⚠️ 它**不 disabled** —— 一个按不动的"停止"比没有更让人着急。 */}
+        {busy
+          ? <button type="button" className="stop" onClick={onStop}>停止</button>
+          : <button type="submit">发送</button>}
       </form>
     </aside>
   )

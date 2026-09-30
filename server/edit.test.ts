@@ -132,4 +132,40 @@ describe('handleEdit', () => {
     // 上游返回 200 但没有 b64_json
     await expect(handleEdit(body, deps(client))).rejects.toMatchObject({ code: 'UPSTREAM_FAILED' })
   })
+
+  /**
+   * ★ 2026-09-30 加（前端的「停止」按钮）。
+   *
+   * 这是**停止唯一真能省钱的那一格**：队列是串行的，用户说这句话的时候
+   * 前面那个人可能还在生成，他得干等十几秒 —— 而在这十几秒里反悔是常事。
+   * 轮到他跑的时候先看一眼信号，按过停止就一次上游都不打。
+   *
+   * （已经在跑的那种救不回来：上游早把那张图收下了，钱已经花掉。
+   *   前端那句「停了」也因此**不承诺省钱**，只说停了。）
+   */
+  it('★ 还在排队时用户按了停止 —— 一次上游都不打', async () => {
+    const { client, calls } = replying('QUJD')
+    const queue = new SerialQueue({ sleep: async () => {} })
+
+    // 前面先塞一个不结束的任务，把队列占住（真实情况就是前一次生成还在跑）
+    let release!: () => void
+    const held = new Promise<void>(r => { release = r })
+    const first = queue.run(() => held, 'held')
+
+    const ac = new AbortController()
+    const p = handleEdit(body, { client, queue, signal: ac.signal })
+
+    ac.abort()      // ← 用户在这个位置按了停止（还排着队）
+    release()       // 前面那个跑完了，轮到这一次
+
+    await expect(p).rejects.toMatchObject({ code: 'UPSTREAM_FAILED', retryable: false })
+    expect(calls.length).toBe(0)   // ★ 一个字节都没发出去 —— 这才是省下来的
+    await first
+  })
+
+  it('⚠️ 没传 signal 时行为和以前一模一样（排到了就打）', async () => {
+    const { client, calls } = replying('QUJD')
+    await handleEdit(body, deps(client))
+    expect(calls.length).toBe(1)
+  })
 })

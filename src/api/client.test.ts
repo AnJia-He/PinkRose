@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { postEdit, postRoute, postSuggest, patch, put, del, ApiError } from './client'
+import { postEdit, postRoute, postSuggest, patch, put, del, ApiError, isAbort } from './client'
 import { ZERO } from '../../shared/adjustments.ts'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -124,5 +124,55 @@ describe('patch / put / del', () => {
     expect(calls[0].init.method).toBe('DELETE')
     expect(calls[0].init.body).toBeUndefined()
     expect(calls[0].init.headers).toBeUndefined()
+  })
+})
+
+/**
+ * ★ 2026-09-30 加（跟「停止」按钮一起）。
+ *
+ * `request()` 里那两层 catch 本来的职责是"**别让用户看见原始异常**"，
+ * 所以任何抛出来的东西都会被翻成「连不上服务器，检查一下网络？」。
+ * 而 abort 走的正是同一条路 —— 用户明明是自己按了停止，屏幕上却冒出一句
+ * 让他去查网络的话。这三条钉的就是这个区别。
+ */
+describe('★ 停止：abort 不能和"连不上"混为一谈', () => {
+  /** 真的 abort 掉一个 fetch 的样子：抛的异常 name 就是 AbortError。 */
+  function abortingFetch() {
+    const calls: { url: string; init: RequestInit }[] = []
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      calls.push({ url, init })
+      if (init.signal?.aborted) {
+        const e = new Error('aborted'); e.name = 'AbortError'; throw e
+      }
+      return new Response(JSON.stringify({ imageDataUrl: 'x', width: 1, height: 1 }),
+        { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    return calls
+  }
+
+  const EDIT = { imageDataUrl: REQ.imageDataUrl, editPrompt: '去掉路人', width: 1024, height: 768 }
+
+  it('被 abort → 原样抛 AbortError，**不是** ApiError（也就不是那句"检查网络"）', async () => {
+    abortingFetch()
+    const ac = new AbortController()
+    ac.abort()
+    const err = await postEdit(EDIT, ac.signal).catch(e => e)
+    expect(isAbort(err)).toBe(true)
+    expect(err).not.toBeInstanceOf(ApiError)
+  })
+
+  it('signal 真的传给了 fetch —— 不传的话「停止」什么都停不了', async () => {
+    const calls = abortingFetch()
+    const ac = new AbortController()
+    await postEdit(EDIT, ac.signal)
+    expect(calls[0].init.signal).toBe(ac.signal)
+  })
+
+  it('不传 signal 时和以前一模一样 —— 不给 fetch 塞一个空的 signal', async () => {
+    // 塞 `signal: undefined` 看着无害，但那会让 init 的形状随调用点漂；
+    // 这条钉住"这条路一个字节都没变"。
+    const calls = abortingFetch()
+    await postEdit(EDIT)
+    expect(calls[0].init.signal).toBeUndefined()
   })
 })

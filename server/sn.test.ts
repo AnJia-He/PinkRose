@@ -153,3 +153,42 @@ describe('edit', () => {
       .rejects.toMatchObject({ code: 'UPSTREAM_FAILED' })
   })
 })
+
+/**
+ * ★ 2026-09-30 加（跟着前端的「停止」按钮）。
+ *
+ * 这一组钉的是**分类**，不是行为：客户端中途不要了，和"网线掉了"在异常形状上
+ * 一模一样（都是一个 AbortError），但**处理方式必须相反** ——
+ * 网线掉了该重试，用户叫停的不该。
+ */
+describe('★ 用户按了停止：抛不可重试的错', () => {
+  /** 一个"发出去就挂着、abort 才抛"的假 fetch —— 就是真的等上游那十几秒。 */
+  function hangUntilAbort() {
+    const impl = (async (_u: unknown, init: RequestInit) => {
+      const sig = init.signal as AbortSignal
+      return new Promise((_res, rej) => {
+        sig.addEventListener('abort', () => {
+          const e = new Error('aborted'); e.name = 'AbortError'; rej(e)
+        })
+      })
+    }) as unknown as typeof fetch
+    return impl
+  }
+
+  it('抛 retryable: false —— 重试等于把用户叫停的那次再花一遍钱、再占一遍队列', async () => {
+    const ac = new AbortController()
+    const p = new SenseNovaClient(cfg, hangUntilAbort())
+      .edit({ imageDataUrl: 'data:image/jpeg;base64,AA', prompt: 'p', size: { width: 1024, height: 768 } }, ac.signal)
+    ac.abort()
+    await expect(p).rejects.toMatchObject({ code: 'UPSTREAM_FAILED', retryable: false })
+  })
+
+  it('⚠️ 别连坐：不传 signal 时，连不上仍然是**可重试**的', async () => {
+    // 这条是防"一刀切"：上面那条一加，很容易顺手把 catch 里所有情况都改成
+    // 不可重试 —— 那等于把网络抖动变成用户可见的硬错误。
+    const impl = (async () => { throw new TypeError('fetch failed') }) as unknown as typeof fetch
+    await expect(new SenseNovaClient(cfg, impl)
+      .edit({ imageDataUrl: 'data:image/jpeg;base64,AA', prompt: 'p', size: { width: 1024, height: 768 } }))
+      .rejects.toMatchObject({ code: 'UPSTREAM_FAILED', retryable: true })
+  })
+})
