@@ -109,6 +109,20 @@ describe('parseDecision', () => {
     expect(parseDecision({ ...GOOD, needs_disambiguation: true }).needsDisambiguation).toBe(true)
   })
 
+  it('★ 模型说「我不确定你指哪个」、而参数又是空的时候 —— 不许偷偷换成一次生成', () => {
+    // 2026-09-30 补。这一段（`validate.ts` 那道新闸里的 `!needsDisambiguation`）
+    // **删掉它原来没有任何测试变红**，后果是静默的：重新引入"**一边问一边花钱**"——
+    // 模型说"我不确定你指的是哪一个"，我们却拿用户原话直接走一次付费生成，
+    // 而 App.tsx 那边同时还在问用户"在图上点一下？"（那一支是**先问再做**）。
+    //
+    // 变异：把 `validate.ts` 里那个 `!needsDisambiguation` 去掉 → 这条红
+    //      （route 变成 generate、needsDisambiguation 变成 false）。
+    const d = parseDecision({ needs_disambiguation: true, param_deltas: {} }, '把那个去掉')
+    expect(d.route).toBe('params')   // 零成本、可逆的那条路（inferRoute 的原话）
+    expect(d.needsDisambiguation).toBe(true)
+    expect(d.editPrompt).toBe('')    // 没有可生成的东西 —— 一个生成的钱都不该花
+  })
+
   it('完全解析不了时走降级', () => {
     const d = parseDecision('这不是 JSON')
     expect(d.degraded).toBe(true)
