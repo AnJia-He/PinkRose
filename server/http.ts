@@ -119,7 +119,8 @@ export function sendBytes(res: ServerResponse, status: number, bytes: Uint8Array
  * 这里，必须是编译错误，而不是运行时一个 undefined 状态码。
  */
 const STATUS_BY_CODE: Record<AppErrorCode, number> = {
-  BAD_REQUEST: 400, UNAUTHORIZED: 401, UPSTREAM_LIMIT: 503, UPSTREAM_FAILED: 502, INTERNAL: 500,
+  BAD_REQUEST: 400, UNAUTHORIZED: 401, UPSTREAM_AUTH: 502, UPSTREAM_LIMIT: 503,
+  UPSTREAM_FAILED: 502, INTERNAL: 500,
 }
 
 /**
@@ -132,6 +133,13 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
 const USER_MESSAGE: Record<AppErrorCode, string> = {
   BAD_REQUEST: '这次请求有点问题，换个说法试试',
   UNAUTHORIZED: '先登录一下',
+  // ★ 这一句必须**不知道这把钥匙是谁的**也说真话。
+  //
+  // 归属（用户自己填的 / 我们自己的）没有被传到这个位置 —— 那要给三个 deps 类型
+  // 和三个调用点各加一个字段，为的只是把一句话分两种口吻。
+  // 所以写成"谁填的都对号入座"的一句：填过的人去设置里查，没填过的人知道是我们这边的问题。
+  // ⚠️ 别改成"你的钥匙填错了"——没填过钥匙的人看到那句话会去找一个根本不存在的东西。
+  UPSTREAM_AUTH: '服务商不认这把钥匙。如果你在「设置 › 模型」里填过自己的钥匙，去那儿检查一下；没填过的话，那就是我们这边的问题，过一会儿再试。',
   UPSTREAM_LIMIT: '排队的人有点多，稍等一下再试',
   UPSTREAM_FAILED: 'AI 服务暂时没响应，再试一次',
   INTERNAL: '出了点问题，再试一次',

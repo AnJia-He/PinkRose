@@ -101,4 +101,28 @@ describe('sendError', () => {
     expect(r.text).not.toContain('SENTINEL-INTERNAL-9b1c')
     expect(String(spy.mock.calls.flat().join(' '))).toContain('SENTINEL-INTERNAL-9b1c')
   })
+
+  /**
+   * ★ 2026-09-30 加：服务商**不认这把钥匙**时，用户读到的那一句话。
+   *
+   * 这一格原来不存在 —— 上游 401/403 归 BAD_REQUEST，于是用户读到
+   * 「这次请求有点问题，换个说法试试」：把"钥匙不对"说成了"你说的话不对"。
+   * 他改一百遍措辞也没用（文案规范：不许写产品做不到的事）。
+   */
+  it('★ SnError(UPSTREAM_AUTH) -> 502，文案让人去查钥匙，**不是**「换个说法试试」', async () => {
+    // 这句话**故意不区分"这把钥匙是谁的"**：归属要一路传进三个 handler 才拿得到，
+    // 为一句更精确的话不值得（见 http.ts 那段注释）。所以写成谁看都对号入座的一句 ——
+    // 填过钥匙的人知道去哪儿查，没填过的人知道是我们这边的问题。
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const r = await withServer((_q, s) =>
+      sendError(s, new SnError('UPSTREAM_AUTH', '上游 HTTP 401：SENTINEL-UPSTREAM-TEXT-a11a', false)), '')
+    expect(r.status).toBe(502)
+    const body = JSON.parse(r.text) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe('UPSTREAM_AUTH')
+    expect(body.error.message).toContain('钥匙')
+    expect(body.error.message).not.toContain('换个说法')
+    // 上游原文只进日志，和上面那条同一个规矩（那是英文运维口径，会原样弹给用户）
+    expect(r.text).not.toContain('SENTINEL-UPSTREAM-TEXT-a11a')
+    expect(String(spy.mock.calls.flat().join(' '))).toContain('SENTINEL-UPSTREAM-TEXT-a11a')
+  })
 })

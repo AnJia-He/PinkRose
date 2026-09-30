@@ -60,6 +60,11 @@ export type EditResponse = { imageDataUrl: string; width: number; height: number
 export type AppErrorCode =
   | 'BAD_REQUEST'      // 请求体不合法，改请求也没用，400
   | 'UNAUTHORIZED'     // 没登录、或票过期了 —— 先登录，401
+  // ★ 服务商**不认这把钥匙**（上游 401/403）。和"上游拒了这次请求"（提示词/图片不合规）
+  //   是两回事，文案也完全不同：这里要让人去查钥匙，那里才是"换个说法试试"。
+  //   归进 BAD_REQUEST 的话，用户会收到一句"换个说法试试"——而真正的问题是钥匙，
+  //   他改一百遍措辞也没用（2026-09-30 加）。
+  | 'UPSTREAM_AUTH'
   | 'UPSTREAM_LIMIT'   // 429 限流，稍后重试可能成功，503
   | 'UPSTREAM_FAILED'  // 上游挂了或超时，502
   | 'INTERNAL'

@@ -194,7 +194,20 @@ export class SenseNovaClient {
 function codeForStatus(status: number): AppErrorCode {
   if (status === 429) return 'UPSTREAM_LIMIT'
   if (status >= 500) return 'UPSTREAM_FAILED'
-  // 其余 4xx：上游**拒了**这次请求（提示词/图片不合规、鉴权被拒……）。
+  // ★ 401 / 403：**服务商不认这把钥匙**（用户自己接的那一把，或我们自己那把）。
+  //
+  // 这和"上游拒了这次请求"（提示词/图片不合规）长得很像，但是两回事，文案也完全不同：
+  //   · 钥匙不对 → 让人去「设置 › 模型」检查（UPSTREAM_AUTH）
+  //   · 请求不合规 → "换个说法试试"（BAD_REQUEST）
+  // 原来两者都归 BAD_REQUEST，于是用户自己的钥匙填错时，他收到的是一句
+  // **「这次请求有点问题，换个说法试试」** —— 让一个钥匙填错的人去改措辞。
+  // 那是句假话，而且他改一百遍也没用（文案规范：不许写产品做不到的事）。
+  //
+  // ⚠️ 仍然**不可重试**（和上面那条注释同一个道理）：见 postJson 里那个
+  // `res.status === 429 || res.status >= 500`——401/403 落不进可重试那一支，
+  // 队列不会拿着一把被拒的钥匙再打一遍。
+  if (status === 401 || status === 403) return 'UPSTREAM_AUTH'
+  // 其余 4xx：上游**拒了**这次请求（提示词/图片不合规……）。
   // 这类错误重试永远不会成功，所以绝不能报成可重试的 UPSTREAM_FAILED——
   // 那会给用户一句"AI 服务暂时没响应，再试一次"的假话（而且每一次都白等一个来回）。
   return 'BAD_REQUEST'

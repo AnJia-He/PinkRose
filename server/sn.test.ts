@@ -93,6 +93,39 @@ describe('chatJson', () => {
     expect(bad.retryable).toBe(false)
   })
 
+  /**
+   * ★ 2026-09-30 加（用户接自己的模型、钥匙填错时该说什么）。
+   *
+   * 401/403 原来和别的 4xx 一起归 BAD_REQUEST，于是他的钥匙被服务商拒掉时，
+   * 我们给的是**「这次请求有点问题，换个说法试试」** —— 让一个钥匙填错的人去改措辞。
+   * 那是句假话：他改一百遍措辞，钥匙还是那把错的（文案规范：不许写做不到的事）。
+   *
+   * 这张表一行一条，**每一格都要单独钉**：写串一行，就会有某个用户看到一句
+   * 和他处境无关的话。
+   */
+  it('★ 401 / 403 归 UPSTREAM_AUTH（钥匙被拒）；429 与其余 4xx 的归类一格不动', async () => {
+    const codeOf = (status: number) =>
+      new SenseNovaClient(cfg, fakeFetch({ status, body: { error: { message: 'x' } } }).impl)
+        .chatJson([{ role: 'user', content: 'h' }]).catch(e => e)
+
+    expect((await codeOf(401)).code).toBe('UPSTREAM_AUTH')
+    expect((await codeOf(403)).code).toBe('UPSTREAM_AUTH')
+    // ★ 新分支不许把 429 吞掉：限流是"稍后再试"，钥匙被拒是"去改设置"，两句话完全不同
+    expect((await codeOf(429)).code).toBe('UPSTREAM_LIMIT')
+    // 这条路（提示词/图片不合规）照旧是 BAD_REQUEST —— 别顺手一起挪走
+    expect((await codeOf(400)).code).toBe('BAD_REQUEST')
+    expect((await codeOf(500)).code).toBe('UPSTREAM_FAILED')
+  })
+
+  it('★ 被拒的钥匙**不可重试** —— 队列不许拿着它再打一遍', async () => {
+    // 钥匙被拒是永久失败。标成可重试的话，同一个请求会再打一遍上游：
+    // 钱再花一次、还占着全局串行队列十几秒（排在他后面的人跟着白等）。
+    const e = await new SenseNovaClient(cfg, fakeFetch({ status: 403, body: {} }).impl)
+      .chatJson([{ role: 'user', content: 'h' }]).catch(e => e)
+    expect(e.code).toBe('UPSTREAM_AUTH')
+    expect(e.retryable).toBe(false)
+  })
+
   it('网络异常归一化成可重试的 SnError', async () => {
     const impl = (async () => { throw new TypeError('fetch failed') }) as unknown as typeof fetch
     const e = await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'h' }]).catch(e => e)

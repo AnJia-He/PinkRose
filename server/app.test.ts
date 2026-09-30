@@ -340,6 +340,43 @@ describe('createApp', () => {
     expect(calls.length).toBeGreaterThan(0)   // 是上游真的挂了，不是本地拒的
   })
 
+  /**
+   * ★ 2026-09-30 加：**上游不认这把钥匙**时的出口（用户点名的场景 ——
+   * "用户自己接入模型接不通给他提示不就好了"）。
+   *
+   * 原来 401/403 和别的 4xx 一起归 BAD_REQUEST，于是用户自己的钥匙填错时，
+   * 屏幕上出现的是 **「这次请求有点问题，换个说法试试」** ——
+   * 一句话把"钥匙不对"说成了"你说的话不对"。他改一百遍措辞也没用。
+   */
+  it('★ POST /api/edit 上游 401（钥匙被拒）-> 502 UPSTREAM_AUTH，文案指去设置，**不叫**用户换说法', async () => {
+    // 上游原文（那句 invalid api key）会被打进服务端日志，测试里静音掉，别糊住输出
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const { deps, calls } = stubUpstream(401)
+      const { base, cookie } = await appWithUser(deps)
+      const r = await fetch(`${base}/api/edit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify(editBody),
+      })
+      // 502：**不是**我们自己的 401（那是"先登录一下"），失败发生在上游那一段
+      expect(r.status).toBe(502)
+      const text = await r.text()
+      const body = JSON.parse(text) as { error: { code: string; message: string } }
+      expect(body.error.code).toBe('UPSTREAM_AUTH')
+      expect(body.error.message).toContain('钥匙')
+      // ★ 这条用例存在的理由：钥匙不对的人不该被告知"换个说法试试"
+      expect(body.error.message).not.toContain('换个说法')
+      // 上游原文只进服务端日志（http.ts 那段注释：那是英文运维口径，不能弹给用户）
+      expect(text).not.toContain('SENTINEL-UPSTREAM-BODY-c4d1')
+      // ★ 恰好一次：被拒的钥匙**不能重试**。队列默认 4 次尝试 ——
+      //   哪天它被标成可重试，这里会变成 4，用户白等 3 个来回还多花 3 次钱。
+      expect(calls).toHaveLength(1)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('静态文件读流出错时只毁掉那一个响应，进程还活着', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ruixing-static-'))
     try {
@@ -1115,12 +1152,14 @@ describe('★ 两套 key 彻底分开（§7.4，用户点名要的四条）', ()
     await addAndActivate({ ...IMAGE, apiKey: TYPO })
 
     // 第一次：改图。它走的是图片那一套 → 上游 401 → 这次请求失败
-    // （http.ts 那张表把上游 401 映射成 400 BAD_REQUEST —— 不是 503，也不是 200）。
-    // ⚠️ 这个状态码本身**分不清**"上游拒了图片那把钥匙"和"本地校验挂了"——
-    //    两者都是 400 BAD_REQUEST。钉住前者的，是下面那条看 `calls` 的断言。
+    // （http.ts 那张表把上游 401/403 映射成 502 UPSTREAM_AUTH —— 不是 503，也不是 200）。
+    // ⚠️ 2026-09-30 改过：原来是 400 BAD_REQUEST。两者长得像（都是"这次请求没成"），
+    //    但文案完全不同 —— BAD_REQUEST 会说「这次请求有点问题，换个说法试试」，
+    //    而这里是**钥匙被拒**，让用户去改措辞是句假话（见上面那条新用例）。
+    //    这条断言在这里还多管一件事：**分得清**是"上游拒了钥匙"还是"本地校验挂了"。
     const edit = await post(base, '/api/edit', editBody, cookie)
-    expect(edit.status).toBe(400)
-    expect(edit.body.error!.code).toBe('BAD_REQUEST')
+    expect(edit.status).toBe(502)
+    expect(edit.body.error!.code).toBe('UPSTREAM_AUTH')
 
     // ★ 第二次：对话。**必须照常成功**，而且出站用的仍然是 chat 那把钥匙。
     const route = await post(base, '/api/route', askBody, cookie)
