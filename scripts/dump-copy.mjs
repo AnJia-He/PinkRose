@@ -140,9 +140,15 @@ async function main() {
     await page.waitForSelector('.nav', { timeout: 20_000 })
     await grab(page, 'App · 上传前')
 
-    // 故意传一个不是图的东西 —— 那一条通报平时碰不到
-    const bad = join(HERE, '..', 'scratch', 'audit', 'bad.txt')
-    await page.setInputFiles('input[type=file]', bad).catch(() => {})
+    // 故意传一个不是图的东西 —— 那一条通报平时碰不到。
+    // ⚠️ **别改成"读 scratch/ 里的一个坏文件"**（2026-10-01 修）：那个文件没人会去建，
+    //    `setInputFiles` 抛错又被 `.catch(() => {})` 吞掉，于是这一屏**什么都没发生**，
+    //    抓下来的是上一屏的复制品 —— 而边界状态的文案正是最少被人读过的字，
+    //    静默跳过等于这一维根本没量（"绿了，其实没测到"，这个仓库最贵的一类坑）。
+    //    用内存里的 buffer：脚本自给自足，也不可能再静默变成空操作。
+    await page.setInputFiles('input[type=file]', {
+      name: '这不是照片.txt', mimeType: 'text/plain', buffer: Buffer.from('这不是一张照片'),
+    })
     await page.waitForTimeout(1500)
     await grab(page, 'App · 传了一张打不开的文件之后')
 
