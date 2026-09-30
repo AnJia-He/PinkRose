@@ -1157,6 +1157,11 @@ button.primary:where(:hover):where(:not(:disabled)),
 
 /* 「添加一套」是这一栏的**唯一出路**，别做成一条不起眼的小链接。 */
 .models-add { margin-top: var(--sp-3); }
+/* 那颗按钮前面的 +（§7.4 那张图上是 `+ 添加一套`）。
+   走 CSS 装饰、不写进文案 —— 和 `.bubble-jump::before` 那个 ↶ 同一个道理：
+   进了 textContent 的话，读屏软件会念一个加号，按文字找这颗按钮的地方
+   也得跟着认一个字面上不存在的符号。 */
+.models-add::before { content: '+'; margin-right: var(--sp-2); }
 /* 「当前：……」。它回答的是"我现在到底在用哪套" —— 目录里那句话的落点。 */
 .models-now { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-4) 0 0; font-size: 13px; color: var(--muted); }
 
