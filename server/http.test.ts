@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createServer } from 'node:http'
 import { readJsonBody, sendJson, sendError, HttpError } from './http.ts'
-import { SnError } from './sn.ts'
+import { SenseNovaClient, SnError } from './sn.ts'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -124,5 +124,38 @@ describe('sendError', () => {
     // 上游原文只进日志，和上面那条同一个规矩（那是英文运维口径，会原样弹给用户）
     expect(r.text).not.toContain('SENTINEL-UPSTREAM-TEXT-a11a')
     expect(String(spy.mock.calls.flat().join(' '))).toContain('SENTINEL-UPSTREAM-TEXT-a11a')
+  })
+
+  /**
+   * ★ 2026-10-01 加（最终审查 Important ③）：「上游原文只进日志」有个死角 ——
+   * **第三方网关会在 401 正文里回显收到的凭据**（"invalid api key: sk-…"，
+   * 或者把整条 authorization 头贴回来）。于是"上游说的话"里混着用户的钥匙，
+   * 而这句话会被原样打进日志。§7.7 说「绝不进日志」—— 我们自己的请求头从来不
+   * 打印，这是唯一一条"第三方回显经我们之手"的路。
+   *
+   * 这条用例走的是**真链路**：真客户端 → 真 401 回显 → 真 SnError → 真日志出口。
+   */
+  it('★ 上游 401 正文里回显的钥匙 —— 进日志前抹掉，但 message 原文留着', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const echo = '{"error":{"message":"invalid api key: sk-live-9f2a7c41","sent":"Bearer sk-live-9f2a7c41"}}'
+    const client = new SenseNovaClient(
+      { apiKey: 'sk-live-9f2a7c41', baseUrl: 'https://x.cn/v1', modelId: 'm' },
+      (async () => new Response(echo, { status: 401 })) as unknown as typeof fetch,
+    )
+    // `.then(_, _)` 而不是 `.catch(e => e as Error)`：后者让结果类型变成
+    // `string | Error`（catch 的返回值进了联合），`.message` 当场编译不过。
+    const err = await client.chatJson([{ role: 'user', content: 'h' }])
+      .then(() => { throw new Error('401 应该抛错，它却成功了') }, (e: Error) => e)
+    // 前提：正文真的被拼进了 message（少了这一条，下面测的就是空气）
+    expect(err.message).toContain('sk-live-9f2a7c41')
+
+    const r = await withServer((_q, s) => sendError(s, err), '')
+    expect(r.status).toBe(502)
+    const logged = spy.mock.calls.flat().map(String).join(' ')
+    expect(logged).not.toContain('sk-live-9f2a7c41')
+    expect(logged).toContain('[已隐藏]')
+    // 用户那一侧照旧：上游原文（含钥匙）一个字都不许出去
+    expect(r.text).not.toContain('sk-live-9f2a7c41')
+    // 变异：把 console.error 那一行的 redactSecrets 拿掉 → logged 里带着整把钥匙 → 这一条红
   })
 })

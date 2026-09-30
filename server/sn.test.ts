@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { SenseNovaClient, SnError, type ModelConnection } from './sn.ts'
+import { SenseNovaClient, SnError, redactSecrets, type ModelConnection } from './sn.ts'
 
 // sn.ts 收窄之后，客户端吃的是「一条连接 + 一个模型名」，不再是整份 Config（Task 6）。
 // 模型名取的是原来 `imageModel` 那个值，不是随便挑的：本文件钉得最细的是 edit 那一组
@@ -151,6 +151,45 @@ describe('chatJson', () => {
     const { impl, calls } = fakeFetch({ body: { choices: [{ message: { content: 'x' } }] } })
     await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'hi' }])
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe('Bearer sk-test')
+  })
+})
+
+/**
+ * ★ 2026-10-01 加（最终审查 Important ③）。
+ *
+ * `postJson` 会把上游 401/403 的**响应正文**前 300 字拼进 `SnError.message` ——
+ * 那是排查线索，原文必须留着。可很多第三方网关 / 自建代理会把收到的凭据**原样
+ * 回显**在 401 正文里（"invalid api key: sk-…"），而这句话会被四个地方打进日志 ——
+ * §7.7 的规矩是「绝不进日志」。
+ *
+ * 分工（两组断言各钉一头）：
+ *   · 这一组钉 **`SnError.message` 一个字不动**（原文要走排查，上面那条用例正钉着它）；
+ *   · `http.test.ts` 那一组钉**日志那一份**被抹干净。
+ */
+describe('★ 上游正文里的凭据：message 留原文，只是不许这样进日志', () => {
+  const ECHO = '{"error":{"message":"invalid api key: sk-live-9f2a7c41","received":"Bearer sk-live-9f2a7c41"}}'
+
+  it('401 正文回显的钥匙留在 message 里（排查要看的就是它）', async () => {
+    const { impl } = fakeFetch({ status: 401, text: ECHO })
+    const e = await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'h' }]).catch(e => e)
+    expect(e.message).toContain('sk-live-9f2a7c41')
+    expect(e.message).toContain('Bearer sk-live-9f2a7c41')
+  })
+
+  it('redactSecrets：Bearer 令牌和 sk- 串都抹掉，前缀留着（看得出这里原本是凭据）', () => {
+    const out = redactSecrets(`上游 HTTP 401：${ECHO}`)
+    expect(out).not.toContain('sk-live-9f2a7c41')
+    expect(out).toContain('[已隐藏]')
+    // 前缀留着：日志读者要能看出"这里原本是一条凭据"，只是值不该在里面
+    expect(out).toContain('Bearer ')
+    // ⚠️ 幂等：日志管道里万一过了两遍，第二遍不许把 `[已隐藏]` 再咬掉一块
+    expect(redactSecrets(out)).toBe(out)
+  })
+
+  it('不像凭据的东西一个字不动 —— 词中间的 sk- 不许误伤（task-management）', () => {
+    const line = '上游 HTTP 429：inference exceeds tpm/rpm limit；task-management 里没有钥匙'
+    expect(redactSecrets(line)).toBe(line)
+    // 变异：去掉 sk- 规则里"前一字符不是单词字符"那个约束 → task-management 被咬 → 这一条红
   })
 })
 

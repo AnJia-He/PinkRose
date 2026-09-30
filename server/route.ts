@@ -3,7 +3,7 @@ import type { RouteRequest, RouteResponse } from '../shared/protocol.ts'
 import { HttpError, CHECK_YOUR_KEY_TIP } from './http.ts'
 import { ROUTER_SYSTEM, buildRouterUser } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
-import { SnError, type SenseNovaClient } from './sn.ts'
+import { SnError, redactSecrets, type SenseNovaClient } from './sn.ts'
 import { fallbackDecision, parseDecision } from './validate.ts'
 
 export type RouteDeps = { client: SenseNovaClient; queue: SerialQueue }
@@ -61,7 +61,9 @@ export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteR
   } catch (e) {
     // spec §4.7：路由失败不能让用户看见报错，降级成"原文当 prompt 走生成"。
     // 重试已经由队列做过了，走到这儿就是真的不行了。
-    console.warn('[route] 路由失败，走降级路径：', (e as Error).message)
+    // ⚠️ 消息过一遍 `redactSecrets`：这一条路的错误可能是**用户自己那把钥匙**
+    // 被上游拒（401 正文里常带有回显的凭据），而它是要进日志的（见 sn.ts 那段）。
+    console.warn('[route] 路由失败，走降级路径：', redactSecrets((e as Error).message))
     const decision = fallbackDecision(req.text)
     // ★ 唯一的例外，也是**范围的全部**：钥匙被上游拒时，回复说出真话。
     //   理由和边界都写在上面 AUTH_REPLY 那段里。

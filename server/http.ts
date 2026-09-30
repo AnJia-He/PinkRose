@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { UNEXPECTED_FAILURE } from '../shared/copy.ts'
 import type { AppErrorCode } from '../shared/protocol.ts'
-import { SnError } from './sn.ts'
+import { SnError, redactSecrets } from './sn.ts'
 
 /** 路由处理里唯一该抛的错误类型。带上 HTTP 状态码和给用户看的文案。 */
 export class HttpError extends Error {
@@ -177,7 +177,9 @@ export function sendError(res: ServerResponse, e: unknown): void {
   }
   if (e instanceof SnError) {
     const status = STATUS_BY_CODE[e.code]
-    console.error('[upstream]', e.message)   // 上游原文只进服务端日志
+    // 上游原文只进服务端日志；而且过一遍 `redactSecrets` ——
+    // 第三方网关会在 401 正文里回显收到的钥匙（§7.7「绝不进日志」，见 sn.ts 那段）
+    console.error('[upstream]', redactSecrets(e.message))
     sendJson(res, status, new HttpError(e.code, USER_MESSAGE[e.code], status))
     return
   }

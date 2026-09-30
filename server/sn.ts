@@ -15,6 +15,42 @@ export class SnError extends Error {
   }
 }
 
+/**
+ * 进日志之前，把**看起来像凭据**的片段抹掉。
+ *
+ * ★ 为什么需要它（2026-10-01 最终审查 Important ③）：
+ * 下面 `postJson` 会把上游 401/403 的**响应正文**前 300 字拼进 `SnError.message`——
+ * 那是排查线索，原文要留着。可**很多第三方网关和自建代理会把收到的凭据原样
+ * 回显在 401 正文里**（"invalid api key: sk-…"，或者把整条 authorization 头贴回来），
+ * 于是"上游说的话"里混进了用户的钥匙，而这句话会被四处日志原样打出去
+ * （`http.ts` 的 `[upstream]`、`index.ts` 队列的 `onRetry`、`route.ts` / `suggest.ts`
+ * 的降级告警）。§7.7 的规矩是「**绝不进日志**」——我们自己的请求头从来不打印，
+ * 这是唯一一条"第三方回显经我们之手"的路。
+ *
+ * ⚠️ **只抹"要进日志的那一份"**：`SnError.message` 本身一个字不动——
+ *    排查要看原文；测试也正冲着"两头"断（sn.test.ts 钉 message 留原文，
+ *    http.test.ts 钉日志被抹干净）。
+ *
+ * ⚠️ **四个日志出口全走这一个函数**，不许各自抄一段正则：这里漂一点，
+ *    就有一处的钥匙照漏（同一个毛病两份实现，这个仓库已经吃过太多次亏）。
+ *
+ * 认两种形状（覆盖主流的回显方式）：
+ *   · `Bearer <token>` —— 网关回显里最常见的样子，大小写不敏感；
+ *   · `sk-…` —— OpenAI 兼容系（DeepSeek / Moonshot / …）的钥匙前缀。
+ *     它前面那一位必须不是字母、数字、下划线或连字符（`task-management` 这类
+ *     词里的 "sk-" 不许被误伤）；这一条用零宽断言表达，`\b` 表达不了
+ *     （`\b` 把连字符也当边界）。
+ * 抹完前缀留着（`Bearer` / `sk-`）：日志读者该看得出"这里原本是凭据"，
+ * 只是值不在里面；替换文本里没有能再次命中的字符，重复过一遍也不会再变。
+ */
+export function redactSecrets(text: string): string {
+  return text
+    // `[` / `]` 也在排除里：替换文本 `[已隐藏]` 自己带方括号，不排掉的话
+    // 第二遍会把结尾的 `]` 留在外面（幂等性就是这个用例先抓出来的）
+    .replace(/\bBearer\s+[^\s"',}\][]+/gi, 'Bearer [已隐藏]')
+    .replace(/(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{4,}/gi, 'sk-[已隐藏]')
+}
+
 export type ChatContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } }

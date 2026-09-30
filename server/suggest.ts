@@ -2,7 +2,7 @@ import type { Route, SuggestCard, SuggestRequest, SuggestResponse } from '../sha
 import { HttpError } from './http.ts'
 import { CARD_LABEL_MAX, SUGGEST_SYSTEM } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
-import type { SenseNovaClient } from './sn.ts'
+import { redactSecrets, type SenseNovaClient } from './sn.ts'
 import { ROUTES, coerceToObject, inferRoute, normalizeDeltas } from './validate.ts'
 
 export type SuggestDeps = { client: SenseNovaClient; queue: SerialQueue }
@@ -22,7 +22,9 @@ export async function handleSuggest(raw: unknown, deps: SuggestDeps): Promise<Su
   } catch (e) {
     // 卡片只是锦上添花。它挂了不能让用户连照片都上传不了——
     // 所以这里返回空数组 + degraded，前端照常进对话，只是没有卡片。
-    console.warn('[suggest] 卡片生成失败：', (e as Error).message)
+    // ⚠️ 消息过一遍 `redactSecrets`：这条路的错误来自**用户自己那把对话钥匙**
+    // 那一侧的上游，401 正文里可能带着回显的凭据，而它是要进日志的（见 sn.ts 那段）。
+    console.warn('[suggest] 卡片生成失败：', redactSecrets((e as Error).message))
     return { cards: [], degraded: true }
   }
 }
