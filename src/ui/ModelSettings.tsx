@@ -9,7 +9,8 @@ import {
 
 /**
  * 模型设置（§7.4）。**这一页是"限制"那件事的门面**，不是能力展示 ——
- * 顶上那句话说完就完了：不配就用我们准备的，配了的那一类花的是他自己的额度（§7.3）。
+ * 顶上那两句话说完就完了：不配就用我们准备的、正在用的那一类花的是他自己的额度；
+ * 以及**照片和你说的话会出设备**（§7.3 那句「但隐私那一句照说」，三条见 §7.8）。
  *
  * 三条贯穿全页的规矩，动这一页之前先读一遍：
  *
@@ -131,13 +132,24 @@ export function ModelSettings() {
   return (
     <section className="models">
       <h1 className="models-title">模型设置</h1>
-      {/* 顶上这句话是全页的**前提**：不说清"不配会怎样、配了花谁的"，用户
-          连该不该往下看都判断不了。
-          ⚠️ 措辞是"**配了的那一类**"，不是计划里原来那句"配了之后，改图花的是
-          你自己的额度"（2026-10-01 通读文案时改）—— 后者对**只配了对话**的人
-          是句假话：他那一栏配上了，可"图片生成"那一栏还在用我们准备的，
-          改图花的仍然不是他的额度（§7.4：两类互相独立；《文案规范》第三条）。 */}
-      <p className="models-lede">不配就用我们准备的；配了的那一类，花的是你自己的额度。</p>
+      {/* 顶上这句话是全页的**前提**：不说清"不配会怎样、在用谁的花谁的钱"，
+          用户连该不该往下看都判断不了。
+          ⚠️ 措辞是"**正在用的那一类**"，改过两回：
+          · 计划里原来是"配了之后，改图花的是你自己的额度" —— 对**只配了对话**
+            的人是句假话：他那一栏配上了，可"图片生成"那一栏还在用我们准备的
+            （§7.4：两类互相独立），于是 2026-10-01 通读时改成"配了的那一类"。
+          · 而"配了的那一类"在**存了但没启用**时照样不真 —— `clientFor` 会安静地
+            回默认，同一栏两行之下的「当前：」正写着"用默认（本服务提供）"，
+            页面自己跟自己打架。最终审查（2026-10-01）指出，改成如今这句：
+            **每种配置状态下都真**（《文案规范》第三条）。 */}
+      <p className="models-lede">不配就用我们准备的；正在用的那一类，花的是你自己的额度。</p>
+      {/* 隐私那一句（§7.3 明写「但隐私那一句照说」，三条见 §7.8）：
+          发给谁 / 经不经过我们（**经过** —— 所以不许说"我们看不见"）/ 我们拿它干嘛。
+          ⚠️ 两个措辞上的讲究，动它之前先看明白：
+          · **不点名具体哪家**（§7.3）：写"第三方模型服务商"，不写我们用的是谁；
+          · **不能带"你配的模型……"这种前提** —— 什么都没配的人（走的是我们准备的
+            那一家）也要读到同一句真话，所以主语只能是"照片和你说的话"。 */}
+      <p className="models-privacy">照片和你说的话会经过我们的服务器转给第三方模型服务商；我们只转发，不拿去训练。</p>
 
       {/* ★ 拉不到名单：说出来 + 给下一步。**不许**画成空名单（见文件头那段）。 */}
       {loadError && (
@@ -231,7 +243,15 @@ export function ModelSettings() {
 type Probe =
   | { state: 'idle' }
   | { state: 'busy' }
-  | { state: 'done'; result: ProbeResult }
+  /**
+   * ⚠️ `done` 里**连"测的是哪一份表单值"一起记下来**（2026-10-01 最终审查 ①）。
+   * 原来是只记结果 —— 测通 A 家之后把地址改成 B 家，屏幕上照样写着
+   * 「通了，地址和钥匙都对。」，而 B 家从没被验过；下拉里那份型号名单也还是
+   * A 家的。这正是这一版反复抓的那类假话：**拿"过去某一刻为真"的一句话，
+   * 对着现在这一刻说**（而且它正落在本功能最核心的断言上，§7.3）。
+   * 渲染前拿这三个值和当前表单对一遍，对不上就当没测过。
+   */
+  | { state: 'done'; result: ProbeResult; url: string; key: string; name: string }
 
 /**
  * 一套模型的新建 / 编辑表单。
@@ -273,6 +293,7 @@ function ModelForm({
 
   const url = baseUrl.trim()
   const key = apiKey.trim()
+  const name = modelId.trim()
   /**
    * 地址**动了没有**，基准是库里存着的那一份（服务端归一化之后就是它）。
    *
@@ -282,8 +303,18 @@ function ModelForm({
   const urlChanged = url !== (config?.baseUrl ?? '')
   const badKeyHint = config?.keyHint === UNREADABLE_KEY_HINT
 
+  /**
+   * 这次结果还是不是**当下这一份**表单的（地址 / 钥匙 / 模型名，任一和测的那一刻
+   * 不同就不算 —— 见 `Probe` 的注释）。
+   *
+   * ★ 用"记下测的是哪一份 + 渲染时比对"，而不是"在 onChange 里把它清掉"：
+   *   后者挡不住**在探测途中**改字的那种情况（请求还在路上，回来时照样落一个
+   *   对不上的结果），比对是**唯一一个没有时间窗的写法**。
+   */
+  const probeFresh =
+    probe.state === 'done' && probe.url === url && probe.key === key && probe.name === name
   /** 测通了之后，上游报回来的型号名单（填下拉用；也可能一个都没有）。 */
-  const options = probe.state === 'done' && probe.result.ok ? probe.result.models : []
+  const options = probeFresh && probe.result.ok ? probe.result.models : []
 
   async function runProbe() {
     if (probe.state === 'busy') return
@@ -307,7 +338,11 @@ function ModelForm({
     try {
       // 探不通也是 200（那是"这次探活的结果"）—— 会走到 catch 的只有
       // "这个请求本身没成"（没登录 / 服务端挂了）。
-      setProbe({ state: 'done', result: await testModel(target) })
+      const result = await testModel(target)
+      // 连"测的这份值"一起存（`url` / `key` / `name` 是**点按钮那一刻**闭包里的
+      // 值）：用户在等结果时改过任何一格的话，渲染那一步自然对不上 ——
+      // 结果不会落在一个已经变了的表单上。
+      setProbe({ state: 'done', result, url, key, name })
     } catch (e) {
       setProbe({ state: 'idle' })
       setError(e instanceof Error ? e.message : '没能试成，再试一次')
@@ -435,7 +470,7 @@ function ModelForm({
             理直气壮地拿它当"配好了"的凭证。 */}
         <span className="models-hint">只验地址和钥匙通不通，不代表那个模型一定能用。</span>
       </div>
-      {probe.state === 'done' && (probe.result.ok
+      {probeFresh && (probe.result.ok
         ? <p className="models-probe-ok">通了，地址和钥匙都对。</p>
         // 上游那句话原样显示（服务端特意把上游原文挡在外面，翻译成中文再给）。
         // 我们不替它再总结一遍 —— 排查的线索全在那句话里。

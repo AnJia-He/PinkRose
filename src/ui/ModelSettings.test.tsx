@@ -189,6 +189,30 @@ describe('模型设置', () => {
     // 变异：空状态只画一栏 / 那句话改成「没配置」 → 这一条红
   })
 
+  it('★ 顶上那句在"存了但没启用"时也是真话 —— 「正在用的那一类」', async () => {
+    // 这句原来写「配了的那一类」；而配置**存了但没激活**时（`server/models.ts` 是
+    // 有意让新建的默认不激活的："用户可能只是想先存着"），`clientFor` 会安静地
+    // 回默认 —— 同一栏两行之下的「当前：」正写着「用默认（本服务提供）」，
+    // 页面自己跟自己打架。这句以前**没有任何测试断字面量**，所以它漂到了这儿。
+    store = [CHAT(1, { active: false })]
+    await show()
+    expect(container.querySelector('.models-lede')?.textContent)
+      .toBe('不配就用我们准备的；正在用的那一类，花的是你自己的额度。')
+    // 变异：把这句改回「配了的那一类」→ 这一条红
+  })
+
+  it('★ 隐私那一句：照片和你说的话会出设备、经我们的手（§7.3「照说」/ §7.8）', async () => {
+    // spec §7.3 明写「但隐私那一句照说」：照片会发给第三方模型服务商 ——
+    // 不点名哪家，但**不瞒着"会发出去"这件事**。§7.8 三条都要在里面：
+    // 发给谁 / 经不经过我们（**经过** —— 不许说"我们看不见"）/ 我们拿它干嘛（只转发）。
+    // ⚠️ 什么都没配时这句也必须真（那会儿走的是我们准备的那家）—— 所以它
+    //    不能写成"你配的模型……"。下面这个状态正是"什么都没配"。
+    await show()
+    expect(container.querySelector('.models-privacy')?.textContent)
+      .toBe('照片和你说的话会经过我们的服务器转给第三方模型服务商；我们只转发，不拿去训练。')
+    // 变异：把这一句删掉 → 上面这条红（null）
+  })
+
   it('★ 页面上不出现任何型号名或我们的地址（§7.3 那条变异测试）', async () => {
     store = [
       CHAT(1, { alias: '我的便宜货', modelId: 'deepseek-chat', active: true }),
@@ -476,6 +500,48 @@ describe('模型设置', () => {
     expect(container.querySelector('.models-probe')?.textContent)
       .toContain('只验地址和钥匙通不通，不代表那个模型一定能用。')
     // 变异：删掉那行说明 → 这一条红
+  })
+
+  it('★ 探活结果只对"刚测的那一份表单"有效 —— 改了任一格就必须撤下', async () => {
+    // 测通 A 家之后把地址改成 B 家，屏幕上**仍写着**「通了，地址和钥匙都对。」——
+    // 而 B 家从没被验过；下拉里那份型号名单也还是 A 家的。这正是这一版反复抓的
+    // 那类假话：拿"过去某一刻为真"的一句话，对着现在这一刻说 —— 而且它正落在
+    // 本功能最核心的那句断言上（§7.3「地址通、钥匙认」）。
+    await show()
+    await openAdd('对话与理解')
+    await type(field('url'), 'api.deepseek.com')
+    await type(field('key'), 'sk-abc123')
+
+    // ★ 每测一次都先确认"这一下真的测出来了"，不然下面的撤下断言会因为
+    //   "从来就没出现过"而白白通过（否定断言最典型的假绿）。
+    const probeOnce = async () => {
+      vi.mocked(api.testModel).mockResolvedValueOnce({ ok: true, models: ['deepseek-chat'] })
+      await click(inPart(form()!, '测一下'))
+      expect(container.querySelector('.models-probe-ok')?.textContent).toBe('通了，地址和钥匙都对。')
+    }
+
+    await probeOnce()
+    expect(container.querySelectorAll('datalist option')).toHaveLength(1)
+
+    // ① 地址换成另一家 —— 那句"地址和钥匙都对"不再是对此刻这份表单说的话
+    await type(field('url'), 'api.other-vendor.com')
+    expect(container.querySelector('.models-probe-ok')).toBeNull()
+    expect(container.querySelector('.models-probe-bad')).toBeNull()
+    // 名单也得跟着撤 —— 那是"上一家"看得见的型号，照着它填只会让用户存进一个
+    // 这一家根本不认的模型名
+    expect(container.querySelectorAll('datalist option')).toHaveLength(0)
+
+    // ② 钥匙换了 —— 新粘的这把没验过
+    await probeOnce()
+    await type(field('key'), 'sk-someone-else')
+    expect(container.querySelector('.models-probe-ok')).toBeNull()
+
+    // ③ 模型名也动过 —— 那句话说的是"刚测的那一份"，表单动过就不算数
+    await probeOnce()
+    await type(field('name'), 'qwen-max')
+    expect(container.querySelector('.models-probe-ok')).toBeNull()
+    // 变异：渲染条件退回只认 `probe.state === 'done'`（不比对测的是哪一份）→
+    //      上面三处"撤下"断言各红一次；只撤结果不撤名单 → 名单那条红
   })
 
   it('测通了：把上游的模型名单放进下拉里，而且**还能手打**（商汤的列表不全）', async () => {
