@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { UNREADABLE_KEY_HINT } from '../shared/copy.ts'
 import { openDb, type Db } from './db.ts'
 import { createVault } from './keyvault.ts'
 import {
@@ -102,6 +103,27 @@ describe('增删改查', () => {
     createConfig({ ...BODY, alias: '他的' }, OTHER, d)
     const mine = listConfigs(USER, d)
     expect(mine.configs.map(c => c.alias)).toEqual(['我的便宜货'])
+  })
+
+  /**
+   * ★ 密文读不出来时，名单里那一行必须**正好是那个占位**（Task 11 补）。
+   *
+   * 为什么这条值得单独钉：界面那一行是靠 `keyHint === UNREADABLE_KEY_HINT`
+   * 这个**字符串相等**认出"这把钥匙废了"的（`src/ui/ModelSettings.tsx`）——
+   * 认不出来不会报错，只会让一把坏钥匙长得和正常的一模一样，用户看到的是
+   * "保存了却不能用"。而两边的**字面量**收进 `shared/copy.ts` 之后不可能再走岔，
+   * 剩下唯一会坏的就是**服务端这个分支本身**（`toPublic` 里那句三目）。
+   *
+   * 变异：把 `server/models.ts` 的 `opened.authentic ? maskKey(...) : UNREADABLE_KEY_HINT`
+   *      改成永远 `maskKey(...)` → 这条红（前端那边先看不出来：它喂的是自己造的
+   *      keyHint，正是这条测试补上的那个洞）。
+   */
+  it('★ 密文读不出来（换了主钥匙）→ 名单里给「读不出来」那个占位，不是一段乱码', () => {
+    const d = fresh()
+    createConfig(BODY, USER, d)
+    // 模拟"SESSION_SECRET 被人换过"：老密文从此打不开（keyvault 的 open 永不抛）
+    const broken: ModelConfigDeps = { ...d, vault: createVault('another-secret') }
+    expect(listConfigs(USER, broken).configs[0].keyHint).toBe(UNREADABLE_KEY_HINT)
   })
 
   it('★ 两个 kind 互不串场', () => {
