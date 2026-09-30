@@ -38,9 +38,12 @@ function deriveKey(masterSecret: string): Buffer {
   )
 }
 
+/** 密文，形如 `v1:<iv>:<tag>:<data>`（全 hex）。 */
+export type Sealed = string
+
 export type Vault = {
   /** 把明文钥匙封成能进库的字符串 */
-  seal(plaintext: string): string
+  seal(plaintext: string): Sealed
   /**
    * 打开。**永不抛** —— 畸形输入、被改过的密文、换了主钥匙，
    * 一律回 `{ plaintext: '', authentic: false }`。
@@ -82,7 +85,10 @@ export function createVault(masterSecret: string): Vault {
 
       const iv = hexOf(ivHex, IV_BYTES)
       const tag = hexOf(tagHex, TAG_BYTES)
-      const data = hexOf(dataHex, -1)
+      // 空明文的密文 data 段就是空串（空 Buffer 的 hex 是 ''），这是合法状态。
+      // 不能交给 hexOf —— 它那个 `length === 0` 守卫是给 iv/tag 挡空串用的，
+      // 会顺手把这种合法空 data 也当畸形挡掉。这里先接住，再走下面的解密。
+      const data = dataHex === '' ? Buffer.alloc(0) : hexOf(dataHex, -1)
       if (!iv || !tag || !data) return fail
 
       try {

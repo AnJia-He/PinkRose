@@ -55,7 +55,7 @@ describe('keyvault', () => {
 
   it('空串也能封能开（钥匙理论上不该是空串，但工具本身不该有特例）', () => {
     const v = createVault(SECRET)
-    expect(v.open(v.seal('')).plaintext).toBe('')
+    expect(v.open(v.seal(''))).toEqual({ plaintext: '', authentic: true })
   })
 
   it('中文 / 长串 / emoji 都过得去', () => {
