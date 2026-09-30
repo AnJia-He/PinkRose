@@ -1,9 +1,19 @@
 import { del, get, patch, post } from './client'
+import type { ProbeFail, ProbeResult } from '../../shared/protocol.ts'
 
 /**
  * 模型设置的接口（§7）。**这一份里没有一条路能把明文钥匙拿回来** ——
  * 服务端回的只有 `keyHint`（`sk-…4f2`），界面永不回显（§7.7）。
  */
+
+// 「测一下」的结果形状（`ProbeFail` / `ProbeResult`）定义在 `shared/protocol.ts`，
+// 和 `/api/route` 那几个类型一样是**前后端一份**。这里再导出一次，让"这一层是
+// 完整的那张协议面"读起来仍然成立，调用方只认这一个 import 位。
+//
+// ⚠️ 它原来是**在这一层又抄了一遍**的，还带着一句"服务端 `modeltest.ts` 的
+//    `ProbeFail`，一字不差"—— 那种注释恰恰是两边迟早要岔的证据（联合类型在运行时
+//    不存在，岔了编译器一个字都不说）。2026-09-30 收掉的。
+export type { ProbeFail, ProbeResult }
 
 /** 两个类别，各自独立（§7.4）：`chat` 管看照片、听懂话；`image` 管真的把照片改掉。 */
 export type ModelKind = 'chat' | 'image'
@@ -25,28 +35,16 @@ export type PublicConfig = {
   active: boolean
 }
 
-/** 「测一下」的四种失败（服务端 `modeltest.ts` 的 `ProbeFail`，一字不差）。 */
-export type ProbeFail = 'unauthorized' | 'unreachable' | 'no_endpoint' | 'bad_response'
-
-/**
- * 「测一下」的结果。
- *
- * ⚠️ **探不通也是 200** —— 那是"这次探活的结果"，不是"这次请求失败了"。
- *    `message` 是**给用户看的那句话**（上游原文被服务端挡在外面），原样显示。
- */
-export type ProbeResult =
-  | { ok: true; models: string[] }
-  | { ok: false; reason: ProbeFail; message: string }
-
 /**
  * 密文读不出来时服务端给的占位（`server/models.ts` 的 `toPublic`，一字不差）。
  *
- * ⚠️ **这个字符串在服务端也写了一遍，两边必须一样** —— 界面靠它认出
- *    "这把钥匙已经读不出来了，得重填"，认不出来时那一行就不会显眼。
- *    它有意的写死（而不是从服务端 import —— `server/` 不 import `src/`）：
- *    它属于**协议面**，和 `ProbeFail` 那四个词是同一种东西。
+ * ⚠️ **界面靠字符串相等认出它** —— "这把钥匙已经读不出来了，得重填"，
+ *    认不出来时那一行就不会显眼（那个 bug **没有任何报错**）。
+ *    所以它 2026-09-30 收到了 `shared/copy.ts`：前后端**同一份**，
+ *    再也不可能走岔。这里再导出一次，让"这一层是完整的那张协议面"读起来仍然
+ *    成立，调用方只认这一个 import 位。
  */
-export const UNREADABLE_KEY_HINT = '（读不出来，请重填）'
+export { UNREADABLE_KEY_HINT } from '../../shared/copy.ts'
 
 /** 列全部。两栏（对话 / 图片）都从这一条来 —— 别按 kind 分两次请求。 */
 export const listModels = () => get<{ configs: PublicConfig[] }>('/api/models')

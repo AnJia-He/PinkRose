@@ -36,6 +36,43 @@ describe('probeConnection', () => {
     expect(r.ok === false && r.reason === 'no_endpoint').toBe(true)
   })
 
+  /**
+   * ★ 其余 4xx 那条兜底（2026-09-30 补：删掉 `if (res.status >= 400 && res.status < 500)`
+   * 那一行，原来整套测试**一条都不红**）。
+   *
+   * 挑 400 来钉是有讲究的：它是这四条分支里**唯一**和别的类"长得像"的
+   * （有些服务商的 400 是"模型名不对"）。归到钥匙那一类是这次刻意选的
+   * （`server/modeltest.ts` 里那段注释写了理由），而且**不许挪进 `no_endpoint`**：
+   * 那会让用户去改一个没错的地址。
+   *
+   * 变异：加一行 `if (res.status === 400) return fail('no_endpoint')` → 这条红。
+   */
+  it('★ 其余 4xx（400）→ 归到「钥匙不认」那一类，不是 no_endpoint', async () => {
+    const r = await probeConnection(INPUT, okFetch({}, 400))
+    expect(r.ok === false && r.reason === 'unauthorized').toBe(true)
+    if (r.ok) return
+    // 文案得是钥匙那一句 —— 只断 reason 的话，"挪进 no_endpoint 但 reason 名没改"
+    // 那种改法看不出来（今天不会发生，但这句话的成本是零）
+    expect(r.message).toContain('钥匙')
+  })
+
+  /**
+   * ★ >= 500 那条兜底（同样是 2026-09-30 补的零覆盖分支）。
+   *
+   * 5xx 原来和"连不上"共用 `unreachable` 和它那句话 —— 而 5xx 意味着
+   * **地址是通的**，是服务商那边自己出错了。说成"连不上这个接口地址"是句假话，
+   * 而且下一步动作给错了（用户会去改一个没错的地址）。
+   *
+   * 变异：把 `fail('server_error')` 改回 `fail('unreachable')` → 这条红。
+   */
+  it('★ 5xx → 自己一类（server_error），文案不说"连不上"、给的下一步是"等一会儿"', async () => {
+    const r = await probeConnection(INPUT, okFetch({}, 500))
+    expect(r.ok === false && r.reason === 'server_error').toBe(true)
+    if (r.ok) return
+    expect(r.message).not.toContain('连不上')
+    expect(r.message).toContain('过一会儿再试')
+  })
+
   it('★ 连不上（DNS/超时/拒连）→ unreachable，而且**不把异常原文给用户**', async () => {
     const boom = (async () => { throw new Error('getaddrinfo ENOTFOUND api.example.com') }) as unknown as typeof fetch
     const r = await probeConnection(INPUT, boom)

@@ -46,6 +46,29 @@ export type RouteResponse = { decision: RouteDecision }
 export type SuggestRequest = { imageDataUrl: string }
 export type SuggestResponse = { cards: SuggestCard[]; degraded: boolean }
 
+/**
+ * 「测一下」（`POST /api/models/test`）的结果形状。
+ *
+ * ★ 2026-09-30 从两边收进来的：`server/modeltest.ts` 和 `src/api/models.ts`
+ * 原来各写了一遍（当时注释还写着"一字不差"）。**这种重复是静默的** ——
+ * 联合类型在运行时不存在，服务端多一个成员、前端少一个，编译器一个字都不说，
+ * 而界面按 `reason` 分流的那天就会漏掉一格。今天正好要给这个联合加一个成员
+ * （5xx → `server_error`），所以先收成一份。
+ *
+ * ⚠️ **探不通也是 200** —— 那是"这次探活的结果"，不是"这次请求失败了"。
+ *    `message` 是**给用户看的那句话**（上游原文被服务端挡在外面），界面原样显示。
+ */
+export type ProbeFail =
+  | 'unauthorized'   // 401 / 403，以及其余 4xx：服务商不认这把钥匙
+  | 'unreachable'    // DNS 失败 / 超时 / 拒连：地址到不了
+  | 'no_endpoint'    // 404 / 405：地址上没有这个接口
+  | 'server_error'   // >= 500：地址通、钥匙认，是服务商那边自己出错了
+  | 'bad_response'   // 200 但不是 JSON：多半填的不是 AI 服务商的接口地址
+
+export type ProbeResult =
+  | { ok: true; models: string[] }
+  | { ok: false; reason: ProbeFail; message: string }
+
 export type EditRequest = {
   /** 已由前端备好：sRGB、长边 <= 2048、宽高均为 32 的倍数、不含当前调色参数。 */
   imageDataUrl: string
