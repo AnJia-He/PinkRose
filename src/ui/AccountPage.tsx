@@ -1,20 +1,20 @@
 import { useEffect, useState } from 'react'
 import { logout, type AccountUser } from '../api/account.ts'
+import { listModels, type PublicConfig } from '../api/models.ts'
 import { listWorks } from '../api/works.ts'
+import type { View } from './view.ts'
 
 /**
  * 用户管理（§3.6）。**先只做骨架**，它是 §12 的第三段。
  *
- * 现在有：用户名 / 使用情况 / 退出登录，三个都真能用。
+ * 现在有：用户名 / 使用情况 / 模型 / 退出登录，四个都真能用。
  * 还差（各自等依赖到位）：默认导出尺寸、默认风格、本地文件夹、深色浅色 ——
  * 正合 §12 自己那句「每段做完都能单独用、单独验收」。
  *
- * ⚠️ **「模型」那一行故意不在这儿**：`{ kind: 'models' }` 这个视图今天还不存在
- * （Task 9 才立起来），先挂上去就是一颗"点了哪都不去"的按钮 —— 这个项目不留
- * 那种按钮。等 Task 9 把那一页做出来，再把这一行加上（连同 `onGo` 一起）。
- *
  * ⚠️ 页面上**不许出现我们自己用的模型名或接口地址**（§7.3）。
  * 用户看到的只有「默认」和别名 —— 型号名对他没意义，限制才有意义。
+ * 这条在「模型」那一行上也是硬约束：那格里写的是**别名**（或者「默认」），
+ * 绝不是型号名。
  */
 
 /**
@@ -35,13 +35,19 @@ type Usage =
   | { state: 'unavailable' }
 
 export function AccountPage({
-  user, onSignedOut,
+  user, onGo, onSignedOut,
 }: {
   user: AccountUser
+  onGo: (v: View) => void
   onSignedOut: () => void
 }) {
   const [leaving, setLeaving] = useState(false)
   const [usage, setUsage] = useState<Usage>({ state: 'loading' })
+  /**
+   * 模型清单（§3.6 那一行右边要写「别名」还是「默认」得看它）。
+   * `null` = 还没拿到 / 拿不到 —— 两种情况**都整格不出现**，见下面对应的注释。
+   */
+  const [models, setModels] = useState<PublicConfig[] | null>(null)
 
   useEffect(() => {
     // 拉一次「全部作品的元数据」。这个接口**一张图都不带**（§3.5 把"名单本"和
@@ -64,6 +70,22 @@ export function AccountPage({
         })
       },
       () => { if (alive) setUsage({ state: 'unavailable' }) },
+    )
+    return () => { alive = false }
+  }, [])
+
+  useEffect(() => {
+    // 「模型」那一行右边写什么得知道他在用哪一套 —— 别名从 `/api/models` 来。
+    // 这一条和上面那条一样是"看一眼就走"的，所以一样要 `alive`。
+    //
+    // ⚠️ 拿不到就**什么都不说**（`models` 留在 null，那一格整个不出现）：
+    //    退回「默认」等于替用户声明"你没接自己的模型"，而他可能接了 ——
+    //    又是一句假话（和「0 张作品」同一个毛病）。
+    //    这一行本身照常点得进去，所以少一格不挡他任何事。
+    let alive = true
+    listModels().then(
+      (r) => { if (alive) setModels(r.configs) },
+      () => { /* 拿不到就什么都不说 —— 见上 */ },
     )
     return () => { alive = false }
   }, [])
@@ -92,6 +114,20 @@ export function AccountPage({
         </div>
       )}
 
+      <div className="account-rows">
+        {/* 模型那一行（§3.6）。显示的是**别名或者「默认」**，绝不是型号（§7.3）——
+            点进去是模型设置那一页（`{ kind: 'models' }`）。
+            ⚠️ 那一格写别名：用户一眼认出"就是我起的那套"；写型号名不只是难读，
+               还等于把他用的是谁家摊在屏幕上。 */}
+        <button className="account-row" onClick={() => onGo({ kind: 'models' })}>
+          <span className="account-row-label">模型</span>
+          {/* 拿不到名单时这一格整个不出现（见上面那个 effect 的注释）——
+              「默认」两个字在那种情况下是一句没根据的话。 */}
+          {models !== null && <span className="account-row-value">{modelValue(models)}</span>}
+          <span className="account-row-go" aria-hidden="true">›</span>
+        </button>
+      </div>
+
       <button
         className="account-signout"
         disabled={leaving}
@@ -109,6 +145,21 @@ export function AccountPage({
           而"删了什么、能不能后悔"还没有定案（§11）。不留一个点了会出事的按钮。 */}
     </div>
   )
+}
+
+/**
+ * 「模型」那一行右边那几个字：**在用那几套的别名**，一套都没接时写「默认」。
+ *
+ * 两个类别各自独立（§7.4），所以他可能"对话接了、图片没接" —— 那种情况写一个
+ * 别名就够了，写「默认」是错的（有一半不是默认）。两边都接了就把两个别名都写上，
+ * 用顿号分开：这一格回答的是"我现在用的是哪几套"，少写一套他就要点进去核对。
+ *
+ * 同一个别名只写一次（两栏各存一套同名的是常事，写两遍像出了错）。
+ * 导出只是为了单测能直接钉这三档。
+ */
+export function modelValue(configs: PublicConfig[]): string {
+  const aliases = [...new Set(configs.filter((c) => c.active).map((c) => c.alias))]
+  return aliases.length > 0 ? aliases.join('、') : '默认'
 }
 
 /**

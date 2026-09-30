@@ -26,6 +26,9 @@ export type View =
   | { kind: 'work'; id: number }
   // 用户管理（§3.6）。收在右上角那颗 👤 后面（§3.2）—— 一辈子点几次，不占一级导航
   | { kind: 'account' }
+  // 模型设置（§7.4）。**挂在用户管理底下**：从那一页的「模型」那一行进去，
+  // 和 §3.6 那张图长的一样 —— 它不是一级导航，是设置里的一格。
+  | { kind: 'models' }
 
 /** App 的地盘。写在这儿是为了让"它挪过窝"这件事只有一处要说。 */
 const APP = '/app'
@@ -36,6 +39,9 @@ export function viewFromPath(path: string): View {
   if (m) return { kind: 'work', id: Number(m[1]) }
   if (path === '/works' || path === `${APP}/works`) return { kind: 'gallery' }
   if (path === `${APP}/account`) return { kind: 'account' }
+  // 模型设置也可以直接打开（F5、收藏、别人发来的一条链接）——
+  // 少认这一行，用户按 F5 就被扔回修图页，而他明明还在这页上。
+  if (path === `${APP}/models`) return { kind: 'models' }
   if (path === APP) return { kind: 'edit' }
   if (path === '/') return { kind: 'landing' }
   return { kind: 'landing' }
@@ -46,5 +52,6 @@ export function pathOf(v: View): string {
   if (v.kind === 'gallery') return `${APP}/works`
   if (v.kind === 'work') return `${APP}/works/${v.id}`
   if (v.kind === 'account') return `${APP}/account`
+  if (v.kind === 'models') return `${APP}/models`
   return APP
 }

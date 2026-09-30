@@ -783,16 +783,24 @@ button.primary:where(:hover):where(:not(:disabled)),
    `position: absolute` 顺带把"它在 label 里会挤动别的字"这件事也去掉了。 */
 .login-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-.login-field { display: flex; flex-direction: column; gap: var(--sp-2); font-size: 13px; color: var(--muted); }
-.login-field input {
+/* ⚠️ `.login-field` 和 `.models-field` 是**同一套东西**（2026-09-30 Task 9）：
+   都是一栏表单里的一格 —— 上面一行标签、下面一个输入框、再下面一句注解。
+   模型设置那一页的字段跟登录那几格长得一样，是因为它们本来就是同一件事；
+   分成两份写，改一处忘一处那天两页就开始不一样了（这一条是那个"别忘了"的锚）。 */
+.login-field,
+.models-field { display: flex; flex-direction: column; gap: var(--sp-2); font-size: 13px; color: var(--muted); }
+.login-field input,
+.models-field input {
   padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--line-2);
   background: var(--bg); color: var(--text); font-size: 15px;
   transition: border-color var(--dur-1) ease, box-shadow var(--dur-1) ease;
 }
-.login-field input:hover { border-color: var(--line-3); }
+.login-field input:hover,
+.models-field input:hover { border-color: var(--line-3); }
 /* 和对话栏那个输入框同一套焦点观感 —— 一像素的描边在深色底上变化太小，
    用户看不出焦点进没进这一格。 */
-.login-field input:focus {
+.login-field input:focus,
+.models-field input:focus {
   outline: none; border-color: var(--accent);
   box-shadow: var(--ring);
 }
@@ -1102,9 +1110,95 @@ button.primary:where(:hover):where(:not(:disabled)),
 .stat b { font-size: 22px; font-variant-numeric: tabular-nums; }
 .stat span { font-size: 13px; color: var(--muted); }
 
+/* 设置那几行（今天是「模型」一行，§12 还排着默认导出尺寸 / 默认风格 / 本地文件夹 /
+   深色浅色）。**一行就是一颗按钮** —— 点它去哪儿是这一行唯一的行为，
+   所以整行都是可点的，别只让右边那个 › 能点。
+   `text-align: left` 是必须的：按钮里的字默认居中，不写的话「模型」会飘到中间，
+   看着像不是同一栏里的东西。 */
+.account-rows { display: flex; flex-direction: column; margin-top: var(--sp-5); }
+.account-row { display: flex; align-items: center; gap: var(--sp-3); width: 100%;
+  padding: var(--sp-3) var(--sp-4); text-align: left; }
+.account-row-label { flex: 1; }
+/* 右边那个值（别名，或者「默认」）—— 它是**注解**，不是这一行的主句：
+   压成 muted，扫一眼先看到「模型」，想看细节再看右边。 */
+.account-row-value { font-size: 13px; color: var(--muted); }
+.account-row-go { color: var(--muted-2); }
+
 /* 退出登录**不穿主色**：主色在这套语言里是"这件正事"（分享 / 下载 / 保存），
    而退出是"我要走了"。它是这一页唯一的动作，但不该比别处的正事更响。 */
 .account-signout { margin-top: var(--sp-6); }
+
+/* ── 模型设置页（Task 9，§7.3 / §7.4） ────────────────────────────────
+   和用户管理页同一个待遇：`.shell` 的直接子元素，所以必须自己滚 ——
+   不自己滚的症状见上面 `.account` 那段（滚的是整个文档，左栏跟着一起划走）。
+   这一页比那一页长得多（两栏名单 + 一张表单），这条不是"留着将来用"。 */
+.models { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 0 20px 24px; }
+.models-title { margin: var(--sp-6) 0 0; font-size: 26px; font-weight: 600; letter-spacing: -.01em; }
+/* 顶上那句话是这一页的**前提**（不配会怎样、配了花谁的额度）—— 用正文色，
+   不压成注解灰：它是必读的，灰字就成了"可以不看"的样子。 */
+.models-lede { margin: var(--sp-3) 0 0; font-size: 14px; color: var(--text); }
+
+/* 两栏之间一条横线。为什么用线而不是"标题大一号"：这两个类别是**互相独立**的
+   （§7.4，一边挂了另一边照用），这是这一页最上面一层的切分。 */
+.models-group { margin-top: var(--sp-6); padding-top: var(--sp-5); border-top: 1px solid var(--line); }
+.models-group-title { display: flex; align-items: baseline; gap: var(--sp-3); margin: 0; font-size: 17px; font-weight: 600; }
+/* 「看照片、听懂你的话」那半句：它是这一栏的**用处**，也是用户唯一的挑选依据
+   （§7.3：给他看限制，不给他看型号）—— 所以它得在，但比标题轻。 */
+.models-group-what { font-size: 13px; font-weight: 400; color: var(--muted); }
+
+.models-list { list-style: none; margin: var(--sp-3) 0 0; padding: 0; }
+/* 别名占满中间、按钮靠右：名字长短不一时按钮才不跟着左右抖。 */
+.models-row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 0; }
+/* ⚠️ ✓ 那一格**永远占着宽度**（没在用的那行里面是空的）：不占的话两行的别名
+   会差一个字符、左边缘对不齐 —— 而这一页最要紧的信息就是"哪个在用"，
+   对齐比省这几像素重要。 */
+.models-mark { width: 1em; color: var(--rose-300); }
+.models-alias { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+
+/* 「添加一套」是这一栏的**唯一出路**，别做成一条不起眼的小链接。 */
+.models-add { margin-top: var(--sp-3); }
+/* 「当前：……」。它回答的是"我现在到底在用哪套" —— 目录里那句话的落点。 */
+.models-now { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-4) 0 0; font-size: 13px; color: var(--muted); }
+
+/* 删掉"正在用的那一套"之后那条提示（§7.4）。它得是这段流里**最响的东西**：
+   用户刚做了一个不可逆的动作，而且现在用的已经不是他原来那套了。
+   ⚠️ 底色用 --danger-bg 而不是普通的 --raised：这不是一条普通通知。
+   用的是 `.detail-confirm` 那套（危险提示 = 红底 + 红框），不是新发明一种。 */
+.models-warn { margin-top: var(--sp-3); padding: var(--sp-4); border-radius: var(--r-md);
+  border: 1px solid var(--danger); background: var(--danger-bg); }
+.models-warn p { margin: 0; font-size: 14px; color: var(--text); }
+.models-warn-mark { color: var(--danger); }
+/* 提示里的两颗按钮：左「换成其他的」（正经出路）右「知道了」（走开）。 */
+.models-warn-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-3); }
+
+/* 表单。给一张自己的面（--panel）：它是"翻开来"的东西（§7.4 那句
+   "型号名只在设置里翻开来才露"），和名单在视觉上就不该是一层。 */
+.models-form { display: flex; flex-direction: column; gap: var(--sp-4); margin-top: var(--sp-4);
+  padding: var(--sp-4); border-radius: var(--r-md); border: 1px solid var(--line); background: var(--panel); }
+.models-form-title { margin: 0; font-size: 15px; font-weight: 600; }
+/* 字段下面那行小字、还有「测一下」旁边那句。和 `.gallery-hint` / `.detail-hint`
+   同一套观感 —— 同一类话在两个页面上不该长得像两件事。
+   ⚠️ `margin: 0`：这几处都坐在 flex 列里，间距由 gap 给。 */
+.models-hint { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+/* 钥匙那一行（收起状态）：hint + 一颗「换一把」。 */
+.models-keyrow { display: flex; align-items: center; gap: var(--sp-3); }
+.models-keyrow b { font-size: 15px; letter-spacing: .04em; }
+/* ★ 「（读不出来，请重填）」那把钥匙必须**一眼看出不对**（§7.4 的"那一行要显眼"）。
+   它长得和"钥匙好好的"一样的话，用户会拿一套用不了的配置去跑生成，
+   然后收到一句他根本看不懂的失败。红字 + 下面那句"重填一次"是一对。 */
+.models-keybad { color: var(--danger); }
+
+/* 「测一下」：按钮 + 那句固定说明。说明**和按钮并排站着**，不折进别的小字里 ——
+   它是这个按钮能存在的前提（§7.3），不是注解。窄屏放不止一行就让它换行。 */
+.models-probe { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+/* 「通了」用文字级强调色（--rose-300 就是干这个的那一档），不是主按钮的 --accent：
+   这句话是**一个结果**，不是一件能点的正事。 */
+.models-probe-ok { margin: 0; font-size: 13px; color: var(--rose-300); }
+.models-probe-bad { margin: 0; font-size: 13px; color: var(--danger); }
+
+.models-error { margin: 0; font-size: 13px; color: var(--danger); }
+.models-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
 
 @media (max-width: 640px) {
   /* 窄屏：两栏上下堆（**还是两个盒子**，见上面 .how 那段）。 */
@@ -1113,6 +1207,7 @@ button.primary:where(:hover):where(:not(:disabled)),
   /* 和 .detail 同一个收法：窄屏上那 20px 的外边距是留给宽屏读起来松快的，
      手机上它直接吃掉照片/文字的宽度。 */
   .account { padding: 0 14px 20px; }
+  .models { padding: 0 14px 20px; }
 }
 
 /* ── 动效总闸 ────────────────────────────────────────────────────────

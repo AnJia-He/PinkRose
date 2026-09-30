@@ -35,12 +35,24 @@ describe('网址 ↔ 界面', () => {
     expect(viewFromPath('/nope')).toEqual({ kind: 'landing' })
   })
 
+  it('★ 用户管理 / 模型设置也能**直接打开**（F5、收藏、别人发来的链接）', () => {
+    // 这两页都收在右上角那颗 👤 后面（§3.2 / §3.6 / §7.4），但地址栏里的路径照样
+    // 是能直接打开的：`viewFromPath` 少认一行，按 F5 的人就被扔回修图页了 ——
+    // 而他明明还在这一页上（那种"刷新一下回到别处"最让人以为是自己点错了）。
+    expect(viewFromPath('/app/account')).toEqual({ kind: 'account' })
+    expect(viewFromPath('/app/models')).toEqual({ kind: 'models' })
+    expect(pathOf({ kind: 'account' })).toBe('/app/account')
+    expect(pathOf({ kind: 'models' })).toBe('/app/models')
+  })
+
   it('来回一趟是原样 —— 不然前进/后退会越走越偏', () => {
     for (const v of [
       { kind: 'landing' } as const,
       { kind: 'edit' } as const,
       { kind: 'gallery' } as const,
       { kind: 'work', id: 7 } as const,
+      { kind: 'account' } as const,
+      { kind: 'models' } as const,
     ]) {
       expect(viewFromPath(pathOf(v))).toEqual(v)
     }

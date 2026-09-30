@@ -121,7 +121,8 @@ vi.mock('./api/client', async (importOriginal) => {
 })
 
 import App from './App'
-import { formatSize } from './ui/AccountPage'
+import { formatSize, modelValue } from './ui/AccountPage'
+import type { PublicConfig } from './api/models'
 import * as decodeMod from './image/decode'
 import * as prepareMod from './image/prepare'
 import * as api from './api/client'
@@ -237,8 +238,7 @@ function withWorksError(message: string) {
 }
 
 /** 挂住"取作品列表"这一条（演"请求还在半路"）。返回放行开关。 */
-function withWorksGate() {
-  const inner = fetchMock.getMockImplementation()!
+function withWorksGate() {  const inner = fetchMock.getMockImplementation()!
   let open: () => void = () => {}
   const promise = new Promise<void>((r) => { open = r })
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
@@ -249,6 +249,37 @@ function withWorksGate() {
     return inner(url, init)
   })
   return { open }
+}
+
+/** 一套模型配置的**公共形状**（Task 9，§7.4）。
+ *  ⚠️ 这里**没有 `apiKey`**，也不许有 —— 服务端只回 `keyHint`（头尾两位），
+ *  明文钥匙连界面都拿不到（§7.7）。这个形状和 `src/api/models.ts` 的
+ *  `PublicConfig` 是同一个，所以直接用它当类型：接口多一个字段时两边一起红。 */
+const MODEL = (id: number, o: Partial<PublicConfig> = {}): PublicConfig => ({
+  id, kind: 'chat', provider: 'openai-compatible',
+  baseUrl: 'https://api.deepseek.com/v1', modelId: 'deepseek-chat',
+  alias: '我的便宜货', keyHint: 'sk-…4f2', active: false, ...o,
+})
+
+/** 给 fetch 加上"取模型清单"这一条路（`GET /api/models`）。
+ *  用户管理页的「模型」那一行要拿它算右边那格写什么，模型设置页整页都要它。 */
+function withModels(configs: PublicConfig[]) {
+  const inner = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === '/api/models' && (init?.method ?? 'GET') === 'GET') return jsonResponse({ configs })
+    return inner(url, init)
+  })
+}
+
+/** 盖上"取模型清单失败"这一条 —— 500 + 一句服务端的话（用 sentinel 认领它）。 */
+function withModelsError(message: string) {
+  const inner = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === '/api/models' && (init?.method ?? 'GET') === 'GET') {
+      return jsonResponse({ error: { code: 'INTERNAL', message } }, 500)
+    }
+    return inner(url, init)
+  })
 }
 
 function decision(over: Partial<RouteDecision> = {}): RouteDecision {
@@ -342,6 +373,12 @@ beforeEach(() => {
     // 要测有作品的样子，各用例自己用 withWorks 盖上一条真的。
     if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') {
       return jsonResponse({ works: [] })
+    }
+    // 模型清单（Task 9）：用户管理页的「模型」那一行要拿它算右边那格。
+    // 默认**一套都没有**（右边写「默认」，那是事实）—— 要测"接了模型"的样子，
+    // 各用例自己用 withModels 盖上一条真的。
+    if (url === '/api/models' && (init?.method ?? 'GET') === 'GET') {
+      return jsonResponse({ configs: [] })
     }
     // 退出登录（Task 8）：清 cookie 那一步在服务端，这里就用"后端从此不认这个人"
     // 代替。**必须真的接住这一条** —— 让它掉进下面那个兜底的 blob 形状的话，
@@ -2838,11 +2875,12 @@ describe('保存 = 存进作品集（Task 13）', () => {
  * 用户管理页（Task 8，spec §3.6 / §3.2）。
  *
  * 它**不占一个一级导航位置**：收在右上角那颗 👤 后面（§3.2）—— 一辈子点几次。
- * 这一版只立**最小骨架**：用户名 / 作品数 / 退出登录，三个都真能用。
+ * 用户名 / 使用情况 / 模型 / 退出登录，四个都真能用。
  *
- * ⚠️ **模型那一行故意不在这儿**，它归 Task 9：`{ kind: 'models' }` 这个视图
- * 今天还不存在，先把它挂上去就是一颗"点了哪都不去"的按钮 —— 这个项目不许有
- * 那种按钮（见 `.nav-item` / 保存横幅那几处的注释）。
+ * ⚠️ **「模型」那一行是 Task 9 补上的**（2026-09-30）：`{ kind: 'models' }` 那一页
+ * 立起来之后才挂得上 —— 先挂上去就是一颗"点了哪都不去"的按钮，这个项目不许有
+ * 那种按钮（见 `.nav-item` / 保存横幅那几处的注释）。它右边那格写的是**别名**
+ * （或者「默认」），绝不是型号名（§7.3）。
  *
  * ⚠️ 这一页有一条**否定**断言（不许出现型号名 / 我们的地址，§7.3）。否定断言
  * 最容易变成假绿 —— 页面压根没渲染时它照样通过 —— 所以它前面先钉一句
@@ -3019,6 +3057,67 @@ describe('用户管理页', () => {
       await new Promise(r => setTimeout(r, 0))
     })
     expect(statsText()).toMatch(/^0\s*张作品/)
+  })
+
+  it('★ 有「模型」这一项，点了进模型设置（Task 8 挪过来的那一条）', async () => {
+    // 从 Task 8 手里接过来的：那一轮这一页只立了骨架，「模型」这一行**故意**
+    // 没挂（视图还不存在）。现在那一页立起来了，这一条跟着搬过来。
+    withModels([
+      MODEL(1, { alias: '我的便宜货', modelId: 'deepseek-chat', active: true }),
+      MODEL(2, { alias: '那个快的' }),
+    ])
+    await renderApp()
+    await openAccount()
+
+    const row = container.querySelector('.account-row') as HTMLButtonElement | null
+    expect(row?.querySelector('.account-row-label')?.textContent).toBe('模型')
+    // ★ 右边那格写的是**别名**（§7.3 / §7.4）—— 型号名只在设置里翻开来才露。
+    //   写型号名不只是难读，还等于把他用的是谁家摊在这一页上。
+    expect(row?.querySelector('.account-row-value')?.textContent).toBe('我的便宜货')
+    expect(container.textContent).not.toContain('deepseek-chat')
+
+    await act(async () => {
+      row?.click()
+      await new Promise(r => setTimeout(r, 0))   // 切页那一次渲染
+      await new Promise(r => setTimeout(r, 0))   // 新页挂载时那一次"拉清单"
+    })
+    // 前提：那一页**真的开着**（少了这一句，下面那条地址断言会因为"什么都没渲染"假绿）
+    expect(container.querySelector('.models')).toBeTruthy()
+    expect(container.querySelector('.models-title')?.textContent).toBe('模型设置')
+    // 地址栏也得跟着走 —— 这一页可以直接发链接、也可以 F5（`pathOf` 少一行就断）
+    expect(location.pathname).toBe('/app/models')
+  })
+
+  it('★ 模型清单拿不到时，那一行右边那格**不出现**（不许替他写「默认」）', async () => {
+    // 和「0 张作品」一模一样的毛病（§3.6 + 《文案规范》§3）：写「默认」等于
+    // 替一个**接了自己模型**的人声明"你没接"。宁可少说一句，不说一句假的。
+    // 变异：拿不到时画「默认」（= 第一版那种"给个看起来正常的默认值"）→ 这一条红。
+    withModelsError('SENTINEL-模型清单拉不回来')
+    await renderApp()
+    await openAccount()
+
+    const row = container.querySelector('.account-row') as HTMLButtonElement
+    expect(row.querySelector('.account-row-label')?.textContent).toBe('模型')
+    expect(row.querySelector('.account-row-value')).toBeNull()
+    // 少一格不挡路：这一行照样点得进去
+    expect(row.disabled).toBe(false)
+  })
+
+  it('modelValue：说得出"在用哪几套"，一套都没接才叫「默认」（§7.4）', () => {
+    // 两个类别各自独立 —— 所以他可能"对话接了、图片没接"，
+    // 那时候写「默认」是错的（有一半不是默认）。
+    expect(modelValue([])).toBe('默认')
+    expect(modelValue([MODEL(1, { active: true, alias: '我的便宜货' }), MODEL(2)])).toBe('我的便宜货')
+    expect(modelValue([
+      MODEL(1, { kind: 'chat', active: true, alias: '我的便宜货' }),
+      MODEL(2, { kind: 'image', active: true, alias: '那个贵的' }),
+    ])).toBe('我的便宜货、那个贵的')
+    // 两栏各存一套同名的很常见 —— 写两遍像出了错
+    expect(modelValue([
+      MODEL(1, { kind: 'chat', active: true, alias: '出差那套' }),
+      MODEL(2, { kind: 'image', active: true, alias: '出差那套' }),
+    ])).toBe('出差那套')
+    // 变异：只看第一套 / 不去重 / 一套都没有时也写个别名 → 这一条红
   })
 
   it('formatSize：三档各说一句话（§3.6 那张图只画了 MB 那一档）', () => {

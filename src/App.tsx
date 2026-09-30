@@ -7,6 +7,7 @@ import { LoginPage } from './ui/LoginPage'
 import { GalleryPage } from './ui/GalleryPage'
 import { WorkDetailPage } from './ui/WorkDetailPage'
 import { AccountPage } from './ui/AccountPage'
+import { ModelSettings } from './ui/ModelSettings'
 import LandingPage from './ui/LandingPage'
 import { Nav } from './ui/Nav'
 import logoMark from './assets/logo/rose.svg'
@@ -1234,9 +1235,16 @@ export default function App() {
       {view.kind === 'account' && (
         <AccountPage
           user={user}
+          // 「模型」那一行从这儿出发（§3.6）。**只传 go，不传网址** ——
+          // "哪一页对应哪个网址"只有 ui/view.ts 说了算（和上面作品页同一条规矩）。
+          onGo={go}
           onSignedOut={() => setUser(null)}
         />
       )}
+      {/* 模型设置（§7.4，Task 9）。*它自己不拉名单之外的东西* ——
+          这一页要用的清单（几套配置、哪套在用）全从 `/api/models` 来，
+          不进 App 这层状态：那是"设置"，不是修图现场，别让两处各存一份。 */}
+      {view.kind === 'models' && <ModelSettings />}
     </div>
   )
 }
