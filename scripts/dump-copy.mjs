@@ -123,7 +123,7 @@ async function main() {
     await page.close()
   }
 
-  // ── App：上传前 / 坏图 / 有图 / 微调 / 保存 ───────────────────────
+  // ── App：上传前 / 坏图 / 有图 / 调色 / 保存 ───────────────────────
   {
     const page = await ctx.newPage()
     await mutePaidRoutes(page)
@@ -137,14 +137,14 @@ async function main() {
     await page.waitForTimeout(1500)
     await grab(page, 'App · 传了一张打不开的文件之后')
 
-    // 真照片：先抓"还在看照片"那一瞬间，再抓微调面板
+    // 真照片：先抓"还在看照片"那一瞬间，再抓调色面板
     await page.setInputFiles('input[type=file]', PHOTO)
     await page.waitForTimeout(1200)
     await grab(page, 'App · 刚传完（还在看照片）')
     await page.waitForTimeout(3000)
-    await page.click('.actions button:has-text("微调")')
+    await page.click('.actions button:has-text("调色")')
     await page.waitForTimeout(600)
-    await grab(page, 'App · 微调面板')
+    await grab(page, 'App · 调色面板')
 
     // 存一张，好让作品页/详情页有东西可看
     await page.click('.actions button:has-text("保存")')

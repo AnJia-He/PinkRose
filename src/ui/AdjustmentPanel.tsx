@@ -13,7 +13,7 @@ export default function AdjustmentPanel({ value, onChange, onReset }: Props) {
   return (
     <aside className="panel">
       <div className="panel-head">
-        <span>微调</span>
+        <span>调色</span>
         <button onClick={onReset}>重置</button>
       </div>
 

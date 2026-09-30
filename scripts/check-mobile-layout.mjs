@@ -14,7 +14,7 @@
  *
  *   1. `.chat` 写死 340px（`flex: none`），390px 的手机上画布只剩 **10×13** ——
  *      用户的原话是"没有照片"。
- *   2. 打开「微调」后，照片 / 对话 / 面板三样抢竖向空间，照片被压到 **64×86**——
+ *   2. 打开「调色」后，照片 / 对话 / 面板三样抢竖向空间，照片被压到 **64×86**——
  *      "图片小到看不见"。
  *
  * 所以这条检查量的是**画布在屏幕上占多大**（getBoundingClientRect），
@@ -297,7 +297,7 @@ async function measurePick(page) {
  * 判红圈的三件事。
  *
  * `expected` 传了就是"用户刚点的那个屏幕坐标"（量它的时候版面还没变）；
- * 不传就按它在**照片里的归一化位置**（PICK_AT）重新算 —— 版面变了（开合微调
+ * 不传就按它在**照片里的归一化位置**（PICK_AT）重新算 —— 版面变了（开合调色
  * 面板会把画布缩放）之后，圈必须还钉在照片上的同一个点，跑掉就是错的。
  */
 function judgeMarker(label, m, expected) {
@@ -906,13 +906,13 @@ try {
       judgeMarker(`${view.name} · 在图上点了一下`, await measurePick(page),
         { x: clickX, y: clickY })
 
-      // 开微调面板之后版面会变（画布被缩放）—— 圈必须还钉在**照片上的同一个点**。
+      // 开调色面板之后版面会变（画布被缩放）—— 圈必须还钉在**照片上的同一个点**。
       // 窄屏这一档更狠：面板一开，对话栏整个 `display: none`（所以点选只能在这
       // 之前发起），而画布要跟着缩放，圈不能跟着飘。
-      await page.getByRole('button', { name: '微调' }).click()
+      await page.getByRole('button', { name: '调色' }).click()
       await page.waitForTimeout(500)
-      judgeMarker(`${view.name} · 开着微调面板，圈还得钉在照片上`, await measurePick(page), null)
-      judge(`${view.name} · 打开微调面板后`, await measure(page), view)
+      judgeMarker(`${view.name} · 开着调色面板，圈还得钉在照片上`, await measurePick(page), null)
+      judge(`${view.name} · 打开调色面板后`, await measure(page), view)
 
       // 一路走下来，花钱的那条路一次都不该被碰过。
       if (editCalls.length > 0) {
@@ -933,7 +933,7 @@ try {
       //   量的会是"面板开着的那一屏"，而那多半是最宽松的一档；
       //   ③ **必须在作品页那一段之前** —— 那一段也要 POST /api/works（放作品），
       //   两条路是同一个地址，靠 `saveFails` 这个开关分开。
-      await page.getByRole('button', { name: '微调' }).click()   // 收掉面板
+      await page.getByRole('button', { name: '调色' }).click()   // 收掉面板
       await page.waitForTimeout(300)
       saveFails = true
       await page.getByRole('button', { name: '保存' }).click()
@@ -1246,7 +1246,7 @@ if (fails.length) {
   console.log('窄屏上换不换行那一句）；那个按钮在 src/App.tsx 的 `.save-fail` 那一段里。')
   process.exitCode = 1
 } else {
-  console.log(`✅ ${VIEWS.length} 档 × 3 种状态都过（刚传完照片 / 打开微调面板 / 存失败之后）：` +
+  console.log(`✅ ${VIEWS.length} 档 × 3 种状态都过（刚传完照片 / 打开调色面板 / 存失败之后）：` +
     `照片 ≥ ${MIN_LONG}x${MIN_SHORT}、画布完整在视口内、输入框在屏内、不用左右滑、`)
   console.log('   外加：红圈圆心落在点的地方、直径按画布长边算、小图真的解得出像素（全程零付费调用）')
   console.log('   外加存失败（§6.6 ①）：横幅和那个「下载到电脑」都完整在视口里、不用滚动、' +

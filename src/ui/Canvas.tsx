@@ -152,7 +152,7 @@ export default function Canvas({
       })
     }
     measure()
-    // 画布尺寸随时会变：换图、屏幕转过来、开合微调面板、手机键盘弹起。
+    // 画布尺寸随时会变：换图、屏幕转过来、开合调色面板、手机键盘弹起。
     // 只量一次的话红圈会在这些时候飘走 —— 所以还要盯住它。
     const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
     ro?.observe(canvas)

@@ -35,7 +35,7 @@ import appPanel from '../assets/landing/app-panel.webp'
  *   · 对开滑块（一个 range 输入 + 一个 CSS 变量）。
  */
 type Props = {
-  /** 「免费试用」和「登录」都走它 —— 交出去的是"去 App"这个意图，
+  /** 「免费开始」和「登录」都走它 —— 交出去的是"去 App"这个意图，
    *  往哪个网址放是上层的事（规则只有 `ui/view.ts` 那一份）。 */
   onEnter: () => void
 }
@@ -152,7 +152,7 @@ export default function LandingPage({ onEnter }: Props) {
       // ★ **离开这一页必须把文档滚回顶上。**
       //   App 那边是"锁在一屏内、自己内部滚"（`.shell{height:100vh}`），
       //   文档要是还停在这一页滚下去的位置，整个 App 会被顶上去一截 ——
-      //   用户点完「免费试用」看到的会是一个缺了上半截的界面。
+      //   用户点完「免费开始」看到的会是一个缺了上半截的界面。
       window.scrollTo(0, 0)
     }
   }, [])
@@ -195,7 +195,14 @@ export default function LandingPage({ onEnter }: Props) {
           <div className="lp-wrap">
             <h1>说句话，<br />照片就修好了</h1>
             <p>拍的时候顾不上。回来一看，光不对，天太灰，身后还站着不认识的人。不用重拍。</p>
-            <a className="lp-btn lp-btn-accent" href="/app" onClick={enter}>免费试用</a>
+            {/* ★ 2026-09-30：「免费试用」→「**免费开始**」。
+                理由不是"免费"有问题（今天确实不要钱），是**"试用"蕴含了一个
+                还没发生的承诺** —— 它暗示"试完之后要付费"，而"免费额度怎么定"
+                这件事在产品里**还没定案**（设计缺口里躺着："一次生成约 1.3 万
+                tokens，白送烧不起"）。
+                「免费开始」只承诺"开始这一步不要钱" —— 无论以后额度怎么定，
+                这句话都是真的。等额度定了，该写在**定价/额度那一页**，不是按钮上。 */}
+            <a className="lp-btn lp-btn-accent" href="/app" onClick={enter}>免费开始</a>
           </div>
         </div>
       </section>
@@ -214,18 +221,35 @@ export default function LandingPage({ onEnter }: Props) {
               <img src={appWindow} alt="RuiXing 修图界面，左边是照片，右边是对话和建议卡片" />
             </div>
             <div className="lp-prod-float">
-              <img src={appPanel} alt="展开的微调面板，六套风格预设和八条调整滑块" />
+              <img src={appPanel} alt="展开的调色面板，六套风格预设和八条调整滑块" />
             </div>
           </Reveal>
         </div>
       </section>
 
-      {/* ══ 引擎 ═════════════════════════════════════════════════════ */}
+      {/* ══ 引擎 ═════════════════════════════════════════════════════
+          ★ 2026-09-30 改过一段 —— **这一段原来有两句是假话**：
+            「不用上传」「山里没信号也照样改」。
+
+          事实是：拖滑块 / 套预设走的是本地 WebGL，确实不出设备；
+          但**说一句话就会把一张 1024 的预览送到服务器**让模型看，
+          而「把后面那个人去掉」那类要把整张图送云端 —— **必须联网**。
+
+          改法是行业里被认可的那一套（Apple 讲「私密云计算」就是这么讲的）：
+          **不声称"不联网"，而是说清哪半在设备上、哪半要发出去。**
+          把本地那半说成优点（"在你自己手机里算的"），比笼统喊"不上传"可信得多 ——
+          而且"不用上传"这种话**已经被读者警惕了**（搜"端侧AI 本地处理"能看到
+          一整批"别被这四个字骗了"的文章），说它是两头输。
+
+          ⚠️ 底下那句「免费试用」也改成了「免费开始」：见页面最下面那处注释。 */}
       <section className="lp-deep" id="engine">
         <div className="lp-wrap">
           <Reveal>
-            <h2>不用等，也不用找信号</h2>
-            <p className="lp-lede">说完就变。不用上传，不用排队，不用等进度条。山里没信号也照样改，下山路上就能发出去。</p>
+            <h2>当场就变，山里也能改</h2>
+            {/* ⚠️ 两句话**写在同一个字符串里**，不能像别处那样换行写：
+                JSX 会把换行折成一个空格，于是中文句号后面会多出一个空格 ——
+                中文排版里句号后面不留空格，那一个空格在页面上看得见。 */}
+            <p className="lp-lede">{'拖滑块、换预设是在你自己手机里算的，不联网也照样用。要「把后面那个人去掉」这种本事，得让云上的模型看一眼这张照片，那一步需要联网。'}</p>
           </Reveal>
         </div>
       </section>
@@ -259,7 +283,12 @@ export default function LandingPage({ onEnter }: Props) {
             </div>
             <div className="lp-cell">
               <h3>发出去的，还是你拍的那张</h3>
-              <p>尺寸一点没缩。拍摄时间和地点，也原样留在文件里。</p>
+              {/* ★ 2026-09-30 改。原来写的是「尺寸一点没缩」—— 绝对话，而它在
+                  **浏览器扛不动超大图**那一档是假的（那种情况 App 会先缩一档，
+                  而且它自己老实说了"导出的图会比原图小一点"，落地页却说得斩钉截铁）。
+                  改成**把例外说出来**：敢说"例外也会告诉你"比声称"没有例外"更可信 ——
+                  和上面那段同一个道理。 */}
+              <p>尺寸、拍摄时间、地点，都原样留在文件里。唯一的例外是手机扛不动的超大图 —— 那种情况我们会当场跟你说清楚。</p>
             </div>
           </Reveal>
         </div>
@@ -271,7 +300,7 @@ export default function LandingPage({ onEnter }: Props) {
           <Reveal>
             <h2>下一张朋友圈</h2>
             <p className="lp-lede">不用装软件，不用先学。打开就能用。</p>
-            <a className="lp-btn lp-btn-ink" href="/app" onClick={enter}>免费试用</a>
+            <a className="lp-btn lp-btn-ink" href="/app" onClick={enter}>免费开始</a>
           </Reveal>
         </div>
         <Reveal className="lp-rail">

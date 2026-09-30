@@ -125,7 +125,7 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
    *  六个「—」夹着两个数字，读的人得自己从噪音里挑。
    *  （`PARAM_KEYS` 的顺序保留 —— 让"改过的"按调色面板那个固定顺序出现，
    *   而不是按用户点的先后乱跳。）
-   *  ⚠️ "动过没有"走 `isChanged` —— 微调面板点亮滑块问的是同一件事，
+   *  ⚠️ "动过没有"走 `isChanged` —— 调色面板点亮滑块问的是同一件事，
    *  两处各判一次的话，哪天判据变了会出现**两个屏幕对同一张图说法不一致**。 */
   const changed = PARAM_KEYS.filter(k => isChanged(params, k))
 

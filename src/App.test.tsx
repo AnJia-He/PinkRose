@@ -251,7 +251,7 @@ beforeEach(() => {
 
   // 默认：设备很宽裕，什么都能画。要测"缩"的那几条自己把这个改小。
   vi.mocked(limitsMod.probeLimit).mockReturnValue({ maxSide: 8192, maxArea: null })
-  // 默认：**不能分享**（和桌面浏览器一样），顶栏只有「微调 / 保存」。
+  // 默认：**不能分享**（和桌面浏览器一样），顶栏只有「调色 / 保存」。
   // 要测分享的那几条自己打开。
   vi.mocked(saveMod.canShareImage).mockReturnValue(false)
   vi.mocked(saveMod.buildExportBlob).mockResolvedValue(new Blob(['x'], { type: 'image/jpeg' }))
@@ -613,14 +613,14 @@ describe('导出：分享还是存下来，用户自己选', () => {
     vi.mocked(saveMod.canShareImage).mockReturnValue(true)
     await renderApp()
     await uploadPhoto()
-    expect(topbarButtons()).toEqual(['微调', '分享', '保存'])
+    expect(topbarButtons()).toEqual(['调色', '分享', '保存'])
   })
 
   it('不能分享的设备上，那一格换成「下载」', async () => {
     // 桌面 Chrome 就是这样：`navigator.share` 在，但不认图片 —— 所以「分享」
     // 点了弹不出任何东西，**不该出现**（这条测试前半句就是钉它的）。
     //
-    // ⚠️ **2026-09-30 改了后半句。** 原来这里断言的是 `['微调', '保存']`：
+    // ⚠️ **2026-09-30 改了后半句。** 原来这里断言的是 `['调色', '保存']`：
     //    那一格**空着**，理由是"不留一个点了没用的按钮"。可 2026-09-29 的
     //    产品能力测试量出来：**桌面上没有任何一条路能把图拿到手** ——
     //    「保存」只进作品集，唯一的「下载到电脑」藏在**保存失败的横幅**里，
@@ -630,7 +630,7 @@ describe('导出：分享还是存下来，用户自己选', () => {
     vi.mocked(saveMod.canShareImage).mockReturnValue(false)
     await renderApp()
     await uploadPhoto()
-    expect(topbarButtons()).toEqual(['微调', '下载', '保存'])
+    expect(topbarButtons()).toEqual(['调色', '下载', '保存'])
   })
 
   it('点「下载」→ 真的下载一份，文件名和分享那条一样', async () => {
