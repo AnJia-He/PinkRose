@@ -136,6 +136,63 @@ describe('handleRoute', () => {
     expect(text).not.toContain('啊'.repeat(501))
   })
 
+  /**
+   * ★ §7.2「骨架必须接得住零件抖」。
+   *
+   * 用户可能接一个很便宜、很笨的模型。真模型今天听话，
+   * **不代表用户接的那个听话** —— 而产品不能因为换个模型就崩。
+   *
+   * 每一条断言的是三件事：
+   *   一、不抛（handleRoute 照样回一个决策）；
+   *   二、★ **明说是降级**（degraded）—— 不能假装那是模型的本意（§4.7 那次教训）；
+   *   三、降级之后仍然是一条**走得通的路**：原文当 prompt 走生成，不是"什么也没发生"。
+   */
+  describe('★ 不听话的假模型（§7.2）', () => {
+    const CASES = [
+      ['回垃圾', '嗯嗯这个照片挺好的呀，蓝天白云真好看～'],
+      ['回一半', '{"route":"params","paramDeltas":{"bright'],
+      ['回错格式', '<route>params</route><params>{"brightness":20}</params>'],
+      ['回空', ''],
+      ['回个数组', '[{"route":"generate"}]'],
+      ['字段全对但值离谱', '{"route":"params","paramDeltas":{"brightness":99999},"reply":"好"}'],
+    ] as const
+
+    for (const [name, output] of CASES) {
+      it(`${name} → 不崩，而且降级说得明明白白`, async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        try {
+          const { client } = clientReplying(output)
+          const r = await handleRoute(body, deps(client))
+          // 一、不抛
+          expect(r.decision).toBeTruthy()
+          // 二、★ 必须**明说是降级**（degraded），不能假装那是模型的本意
+          //     —— 09-29 那个"同一件事做两遍"的 bug 就是因为这个信号没人看（§4.7）
+          expect(r.decision.degraded).toBe(true)
+          // 三、降级之后仍然是一条**能走的路**：原文当 prompt 走生成
+          expect(r.decision.route).toBe('generate')
+          expect(r.decision.editPrompt).toBe('天太灰了')
+        } finally {
+          warn.mockRestore()
+        }
+      })
+    }
+
+    it('★ 降级的日志里带原始输出 —— 只写"降级了"查不出模型到底吐了什么', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const { client } = clientReplying('{"route":"params","paramDeltas":{"bright')
+        await handleRoute(body, deps(client))
+        const said = warn.mock.calls.map(c => c.map(String).join(' ')).join('\n')
+        expect(said).toContain('degraded')
+        // 原文必须留下来：只写"降级了"等于没写 —— 模型到底吐了什么，
+        // 是靠这一句查出来的（§4.7 那个 bug 藏了几天就是因为没留原文）。
+        expect(said).toContain('paramDeltas')
+      } finally {
+        warn.mockRestore()
+      }
+    })
+  })
+
   it('params 字段缺失或不是对象时按全零处理，是对象时走钳制', async () => {
     // 这条原来只有两个 `resolves.toBeTruthy()`——而 handleRoute 在任何情况下
     // 都返回对象，所以那两个断言对它们命名的事**恒真**（变异探针实测：把

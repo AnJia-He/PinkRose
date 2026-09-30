@@ -94,6 +94,29 @@ export function parseDecision(raw: unknown, userText = ''): RouteDecision {
   // 声明的路由和实际内容对不上时，以**内容**为准：
   // 说 params 却给了 edit_prompt 却没有 deltas，那就是一次生成。
   const effectiveRoute = reconcile(route, hasParams, hasEdit)
+  const needsDisambiguation = obj.needs_disambiguation === true || obj.needsDisambiguation === true
+
+  // ★ §7.2（2026-09-30）：「模型吐出来的东西**一件也用不上**」时，别停在这儿 —— 走 §4.7 的降级。
+  //
+  // 走到这一格的形状是"解出了一个对象，但里面没有一件能用的东西"：route 不在枚举里、
+  // 参数被 normalizeDeltas 全丢掉、也没有 edit_prompt。实测的两个：
+  //   `<route>params</route><params>{"brightness":20}</params>`  —— 回错格式
+  //   `{"route":"params","paramDeltas":{"brightness":99999}}`     —— 键名是它自己编的
+  // 两样都说明**我们没读懂它这次输出** —— 那和上面"根本解析不出对象"是同一种失败，
+  // 就该走同一条路（用用户的原话，而不是模型吐的那坨东西）。
+  //
+  // 不这么做会怎样（上面两条实测）：决策停在 route='params' + 空 deltas → 前端
+  // 一个滑块都不动、一次生成都不发，用户等来的是模型自己那句「好」或兜底那句
+  // 「先按你说的试了一下」—— **什么都没做，还说了句假话**。降级至少真的试了一次。
+  //
+  // ⚠️ `userText` 为空时**保持原样**（既有测试钉着的旧行为，别顺手改掉）：
+  // §4.7 的降级就是"拿用户的原话去试"，没有原话就没有可试的东西 ——
+  // `fallbackDecision('')` 给的 prompt 是空的，前端 runGenerate 第一行就 return，纯空转。
+  // 两种结局都是"什么都没发生"，那就照旧留给零成本、可逆的那条路，只把 degraded 打出来。
+  //
+  // ⚠️ 模型自己说"我不确定你指的是哪一个"时也不动：前端那一支是**先问再做**，
+  // 换成一次生成等于一边问一边花钱（理由写在 App.tsx 的 applyDecision 里）。
+  if (!hasParams && !hasEdit && !needsDisambiguation && userText) return fallbackDecision(userText)
 
   return {
     route: effectiveRoute,
@@ -104,7 +127,7 @@ export function parseDecision(raw: unknown, userText = ''): RouteDecision {
     // "有半句没被用上"，然后把它接回去 —— 那正是今天修掉的那个 bug。
     // 不采纳就清空，让"route=params ⟹ editPrompt 是空的"成为一条读得出来的规矩。
     editPrompt: effectiveRoute === 'generate' || effectiveRoute === 'both' ? editPrompt : '',
-    needsDisambiguation: obj.needs_disambiguation === true || obj.needsDisambiguation === true,
+    needsDisambiguation,
     degraded: degraded || effectiveRoute !== route,
   }
 }
