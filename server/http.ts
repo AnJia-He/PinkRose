@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { UNEXPECTED_FAILURE } from '../shared/copy.ts'
 import type { AppErrorCode } from '../shared/protocol.ts'
 import { SnError } from './sn.ts'
 
@@ -124,6 +125,21 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
 }
 
 /**
+ * 「钥匙不对」那句里**两个出口必须逐字相同**的那半句。
+ *
+ * ★ 为什么抽出来：这句话有两个出口 —— 这张表里的 `UPSTREAM_AUTH`（`/api/edit`
+ * 这一路：请求没做成，用户只剩"去查钥匙"）和 `server/route.ts` 的 `AUTH_REPLY`
+ * （对话那一路：这次**还是照他说的改完了**，只是顺便告诉钥匙的事）。
+ * 两个出口"接下来会发生什么"确实不同，措辞也该不同；**但"去哪查钥匙"必须一样** ——
+ * 它今天指的是一条真实走得通的路径（右上角 👤 → 「模型」），改一处漏一处的话，
+ * 用户照着另一句去找一个不存在的地方（《文案规范》第三条：不许写产品做不到的事）。
+ *
+ * ⚠️ 改这半句之前先确认那个路径真的还在（`src/ui/AccountPage.tsx` 里那一行）。
+ */
+export const CHECK_YOUR_KEY_TIP =
+  '如果你填过自己的钥匙，去右上角头像里的「模型」那一页检查一下；没填过的话，那就是我们这边的问题'
+
+/**
  * 给用户看的文案，与上游原文**无关**。
  *
  * ⚠️ 绝不要用 `e.message` 当这里的文案：那是 `上游 HTTP 429：inference
@@ -139,10 +155,17 @@ const USER_MESSAGE: Record<AppErrorCode, string> = {
   // 和三个调用点各加一个字段，为的只是把一句话分两种口吻。
   // 所以写成"谁填的都对号入座"的一句：填过的人去设置里查，没填过的人知道是我们这边的问题。
   // ⚠️ 别改成"你的钥匙填错了"——没填过钥匙的人看到那句话会去找一个根本不存在的东西。
-  UPSTREAM_AUTH: '服务商不认这把钥匙。如果你在「设置 › 模型」里填过自己的钥匙，去那儿检查一下；没填过的话，那就是我们这边的问题，过一会儿再试。',
+  //
+  // ⚠️ 路径**必须写成用户真走得通的那一条**（2026-09-30 改）：原来是
+  // 「设置 › 模型」，而界面上**没有**叫「设置」的入口 —— 入口是右上角那颗 👤
+  // （用户管理）里的「模型」一行，那个页面自己的标题是「模型设置」。
+  // 让用户去找一个不存在的地方，和骗他没两样（《文案规范》第三条）。
+  // 后半句和 `server/route.ts` 共用 `CHECK_YOUR_KEY_TIP` —— 别再各写一遍。
+  UPSTREAM_AUTH: '服务商不认这把钥匙。' + CHECK_YOUR_KEY_TIP + '，过一会儿再试。',
   UPSTREAM_LIMIT: '排队的人有点多，稍等一下再试',
   UPSTREAM_FAILED: 'AI 服务暂时没响应，再试一次',
-  INTERNAL: '出了点问题，再试一次',
+  // 和登录页那条兜底同一句（`shared/copy.ts` 里那句注释写了为什么要一份）
+  INTERNAL: UNEXPECTED_FAILURE,
 }
 
 /** 统一异常出口：HttpError 按原样回；SnError 按 code 映射；其它一律 500 且**不回显内部信息**。 */

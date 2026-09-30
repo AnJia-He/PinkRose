@@ -1,15 +1,36 @@
 import { ZERO, clampAdjustments, type Adjustments } from '../shared/adjustments.ts'
 import type { RouteRequest, RouteResponse } from '../shared/protocol.ts'
-import { HttpError } from './http.ts'
+import { HttpError, CHECK_YOUR_KEY_TIP } from './http.ts'
 import { ROUTER_SYSTEM, buildRouterUser } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
-import type { SenseNovaClient } from './sn.ts'
+import { SnError, type SenseNovaClient } from './sn.ts'
 import { fallbackDecision, parseDecision } from './validate.ts'
 
 export type RouteDeps = { client: SenseNovaClient; queue: SerialQueue }
 
 /** 用户输入的字符上限。超过就截断——prompt 长度也是钱。 */
 export const MAX_USER_TEXT = 500
+
+/**
+ * ★ 对话的钥匙被上游拒（401/403）时，降级回复换这一句真话。
+ *
+ * 为什么需要它：catch 把所有 SnError 都吞进 §4.7 的降级（那条规矩是对的 ——
+ * 路由失败不能停在报错上）。但**钥匙不对**是这里唯一一种"用户自己能修、
+ * 而且不修就一直花钱"的失败：用户说一句话 → 路由静默失败 →
+ * 原文直接走一次**付费生成** → 他不知道钥匙是坏的，**每说一句白花一次**。
+ *
+ * ⚠️ **只给 UPSTREAM_AUTH 用**（下面的 if 就是范围）。超时 / 限流 / 格式烂
+ * 仍然用 `fallbackDecision` 原来那句 —— 那些失败里上游根本没机会说
+ * 「你这把钥匙不对」，而 §4.7 要求它们对用户保持"什么都没发生"的样子。
+ *
+ * ⚠️ 和 `http.ts` 的 `USER_MESSAGE.UPSTREAM_AUTH` 是**同一套措辞**，而且
+ * **同样不区分归属**（不知道这把钥匙是用户自己填的还是我们自己的）：
+ * 填过的人去设置里查，没填过的人知道那是我们这边的问题。
+ * 开头那句说的是"接下来会发生什么"（这里**还是照他说的改完了**，那边是"这次没做成"），
+ * 所以两条各写；**"去哪查钥匙"那半句两边共用 `CHECK_YOUR_KEY_TIP`** —— 同一个毛病
+ * 在屏幕上两种说法、或者指向两个不一样的地方，用户会以为是两件事。
+ */
+const AUTH_REPLY = '模型服务商不认这把钥匙，这次先直接按你说的改了。' + CHECK_YOUR_KEY_TIP + '。'
 
 export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteResponse> {
   const req = parseRequest(raw)
@@ -41,7 +62,15 @@ export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteR
     // spec §4.7：路由失败不能让用户看见报错，降级成"原文当 prompt 走生成"。
     // 重试已经由队列做过了，走到这儿就是真的不行了。
     console.warn('[route] 路由失败，走降级路径：', (e as Error).message)
-    return { decision: fallbackDecision(req.text) }
+    const decision = fallbackDecision(req.text)
+    // ★ 唯一的例外，也是**范围的全部**：钥匙被上游拒时，回复说出真话。
+    //   理由和边界都写在上面 AUTH_REPLY 那段里。
+    //   判据是 `code === 'UPSTREAM_AUTH'`（不是 status、也不是 message）——
+    //   错误码是 sn.ts 那张表给的，措辞换了它也不变。
+    if (e instanceof SnError && e.code === 'UPSTREAM_AUTH') {
+      decision.reply = AUTH_REPLY
+    }
+    return { decision }
   }
 }
 

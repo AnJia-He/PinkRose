@@ -3,6 +3,7 @@ import { handleRoute } from './route.ts'
 import { SenseNovaClient } from './sn.ts'
 import { SerialQueue } from './queue.ts'
 import { ROUTER_SYSTEM } from './prompt.ts'
+import { fallbackDecision } from './validate.ts'
 import { ZERO } from '../shared/adjustments.ts'
 import type { Config } from './config.ts'
 
@@ -101,6 +102,63 @@ describe('handleRoute', () => {
   // 降级时一律用用户原话当 prompt，两条路径收敛到同一个结果才是对的。
   // 旧实现把模型吐出来的那坨东西（实测是一段被截断的 JSON）当编辑指令送进
   // 图像模型，把背景里的人换成了一个写实的陌生男人——用户看到莫名其妙的改动。
+  /**
+   * ★ 用户原话那条需求的另一半（「用户自己接入模型接不通给他提示不就好了」）。
+   *
+   * Task 10 让 `/api/edit` 那条路会说了；这条路原来还闷着 —— catch 把**所有**
+   * SnError 都吞进降级，于是**对话的钥匙填错了**：用户说一句话 → 路由静默失败 →
+   * 原文直接走一次付费生成 → 用户永远不知道自己的钥匙是坏的，**每说一句白花一次**。
+   *
+   * §4.7 那条规矩不变（路由失败不能让用户看见报错），只是"钥匙根本不对"这件事
+   * 不该再瞒着：`reply` 本来就会显示给用户，改的是**它说的话**。
+   */
+  it('★ 对话键被上游拒（401）→ 回复说出真话（钥匙），不再是那句与原因无关的兜底', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { client } = clientReplying(null, 401)
+      const res = await handleRoute(body, deps(client))
+
+      // 真话：说的就是这次失败的真正原因
+      expect(res.decision.reply).toContain('钥匙')
+      expect(res.decision.reply).toContain('检查一下')
+      // ⚠️ 这句是**唯一**该换掉的一句：绝不能把"我没看明白"当成原因 ——
+      //   它根本没机会看（请求被上游挡在门外了）。
+      expect(res.decision.reply).not.toBe(fallbackDecision(body.text).reply)
+
+      // 降级本身一个字都没变（§4.7）：照样是"原文当 prompt 走生成"
+      expect(res.decision.route).toBe('generate')
+      expect(res.decision.editPrompt).toBe('天太灰了')
+      expect(res.decision.degraded).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  /**
+   * ★ 上一条的**反面**，也是"范围守住了"的证据。
+   *
+   * 只改钥匙被拒这一种。超时 / 限流 / 格式烂仍然是原来那句 ——
+   * 那些失败里"我们没读懂"或者"上游没空"才是真的，而且 §4.7 明说
+   * **路由失败不能让用户看见报错**，别顺手把这条规矩拆了。
+   *
+   * 变异：把 route.ts 里那个 `e.code === 'UPSTREAM_AUTH'` 的判据去掉
+   * （变成"凡是 SnError 都说钥匙"）→ 这条红。
+   */
+  it('★ 限流（429）时仍然是原来那句降级文案 —— 只认钥匙被拒，别的一律不碰', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { client } = clientReplying(null, 429)
+      const res = await handleRoute(body, deps(client))
+
+      expect(res.decision.reply).toBe('我直接按你说的试了一下。')
+      // 降级那三件照旧，一个字都没动
+      expect(res.decision.route).toBe('generate')
+      expect(res.decision.editPrompt).toBe('天太灰了')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('模型吐垃圾时，走的是降级且 prompt 是用户原话（不是模型吐的垃圾）', async () => {
     // 这条在**旧代码下必红**：旧实现把模型的原始输出当 prompt 送进了图像模型。
     const { client } = clientReplying('这不是 JSON')
@@ -154,7 +212,11 @@ describe('handleRoute', () => {
       ['回错格式', '<route>params</route><params>{"brightness":20}</params>'],
       ['回空', ''],
       ['回个数组', '[{"route":"generate"}]'],
-      ['字段全对但值离谱', '{"route":"params","paramDeltas":{"brightness":99999},"reply":"好"}'],
+      // ⚠️ 这条原来叫「字段全对但值离谱」——**名不副实**（Task 10 审查发现）。
+      // `brightness` **不是**那八个合法键之一，它变红靠的是"整块 delta 被
+      // normalizeDeltas 丢掉"，**不是**"值被钳制"。真·钳制见下面那条单独用例。
+      // 名字要描述它真正在测的东西：模型自己编了一个键名。
+      ['键名是它自己编的', '{"route":"params","paramDeltas":{"brightness":99999},"reply":"好"}'],
     ] as const
 
     for (const [name, output] of CASES) {
@@ -176,6 +238,29 @@ describe('handleRoute', () => {
         }
       })
     }
+
+    /**
+     * ★ 真·值钳制的那一条（上面「键名是它自己编的」的对偶）。
+     *
+     * 上面那条变红靠的是"整块 delta 被丢"，跟钳制**没有关系**；这条才是
+     * "模型给的键都对、只是值离谱"那个形状的**端到端**证据。
+     * 钳制本身钉在 `server/validate.test.ts`（normalizeDeltas 那一组），
+     * 这里要的是它一路穿过 handleRoute 之后**真的到了上游**。
+     *
+     * 变异：把 `normalizeDeltas` 里那个 `Math.max(PARAM_MIN, Math.min(PARAM_MAX, ...))`
+     * 去掉 → 这里看到的是 99999，红。
+     */
+    it('★ 值离谱（exposure:99999）→ 钳到 100，而且是模型老实答的（degraded=false）', async () => {
+      const { client } = clientReplying(
+        '{"route":"params","paramDeltas":{"exposure":99999},"reply":"好"}')
+      const r = await handleRoute(body, deps(client))
+
+      expect(r.decision.route).toBe('params')
+      expect(r.decision.paramDeltas.exposure).toBe(100)
+      // 这条**必须**是 false：钳制是我们规整模型的输出，不是"没读懂它" ——
+      // 把这一格混成降级的话，前端会走生成那条花钱的路（§7.2 的整个意义）。
+      expect(r.decision.degraded).toBe(false)
+    })
 
     it('★ 降级的日志里带原始输出 —— 只写"降级了"查不出模型到底吐了什么', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
