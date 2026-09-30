@@ -24,6 +24,8 @@ export type View =
   | { kind: 'edit' }
   | { kind: 'gallery' }
   | { kind: 'work'; id: number }
+  // 用户管理（§3.6）。收在右上角那颗 👤 后面（§3.2）—— 一辈子点几次，不占一级导航
+  | { kind: 'account' }
 
 /** App 的地盘。写在这儿是为了让"它挪过窝"这件事只有一处要说。 */
 const APP = '/app'
@@ -33,6 +35,7 @@ export function viewFromPath(path: string): View {
   const m = /^\/works\/(\d+)$/.exec(path) ?? /^\/app\/works\/(\d+)$/.exec(path)
   if (m) return { kind: 'work', id: Number(m[1]) }
   if (path === '/works' || path === `${APP}/works`) return { kind: 'gallery' }
+  if (path === `${APP}/account`) return { kind: 'account' }
   if (path === APP) return { kind: 'edit' }
   if (path === '/') return { kind: 'landing' }
   return { kind: 'landing' }
@@ -42,5 +45,6 @@ export function pathOf(v: View): string {
   if (v.kind === 'landing') return '/'
   if (v.kind === 'gallery') return `${APP}/works`
   if (v.kind === 'work') return `${APP}/works/${v.id}`
+  if (v.kind === 'account') return `${APP}/account`
   return APP
 }

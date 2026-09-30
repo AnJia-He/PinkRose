@@ -6,6 +6,7 @@ import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import { LoginPage } from './ui/LoginPage'
 import { GalleryPage } from './ui/GalleryPage'
 import { WorkDetailPage } from './ui/WorkDetailPage'
+import { AccountPage } from './ui/AccountPage'
 import LandingPage from './ui/LandingPage'
 import { Nav } from './ui/Nav'
 import logoMark from './assets/logo/rose.svg'
@@ -1061,6 +1062,22 @@ export default function App() {
                 </button>
               </div>
             )}
+            {/* 用户管理收在右上角（§3.2）—— 它一辈子点几次，不配占一个一级位置。
+                ⚠️ aria-label 是**必须**的，不是装饰：按钮里只有一颗 emoji，
+                读屏软件要么念不出来、要么念成一串莫名其妙的外文名，用户
+                根本不知道这个按钮是干什么的。（品牌名那边的 `alt=""` 是同一件
+                事的另一面：旁边已经有字，就不必让读屏的人听两遍。）
+
+                ⚠️ 它**是 `.actions` 的兄弟，不在 `.actions` 里**。两条理由：
+                · `.actions` 是"这张图能拿去哪儿"（分享/下载/保存），只在**有图**
+                  的时候出现；用户管理没有图也在，混在一起会让它跟着一起消失；
+                · 有两条测试按结构钉着 `.actions button` 恰好是那三颗
+                  （见 App.test.tsx 的 topbarButtons），混进去等于改了一个没人
+                  说要改的界面。
+                放**最后一个**子节点是为了让它钉住右上角：`.topbar` 是
+                space-between，第三个孩子会被排到正中间去。 */}
+            <button className="user-btn" onClick={() => go({ kind: 'account' })}
+                    aria-label="用户管理">👤</button>
           </header>
 
           {/* 通报条（取代了原来的 window.alert）。它和下面那两条横幅是**三种东西**：
@@ -1205,6 +1222,18 @@ export default function App() {
             setParams(p)
             go({ kind: 'edit' })
           }}
+        />
+      )}
+      {/* 用户管理（§3.6）。⚠️ `workCount` 暂时写 0：App 这一层现在**拿不到作品数**
+          （作品列表住在 GalleryPage 自己肚子里，App 从没取过它）。骨架先立着，
+          等作品列表在 App 层可用时接上 —— **不许**为了让这个数字好看多发一次请求。
+          退出登录照 App 里那一贯的做法把人送回 LoginPage（`setUser(null)`）：
+          和"票过期了"（见 isUnauthorized 那一段）走的是同一条路。 */}
+      {view.kind === 'account' && (
+        <AccountPage
+          user={user}
+          workCount={0}
+          onSignedOut={() => setUser(null)}
         />
       )}
     </div>

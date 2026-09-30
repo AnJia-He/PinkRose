@@ -305,6 +305,15 @@ beforeEach(() => {
     if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') {
       return jsonResponse({ works: [] })
     }
+    // 退出登录（Task 8）：清 cookie 那一步在服务端，这里就用"后端从此不认这个人"
+    // 代替。**必须真的接住这一条** —— 让它掉进下面那个兜底的 blob 形状的话，
+    // `post()` 会在读正文那一步炸成 ApiError，而 AccountPage 那个 `.catch` 会把
+    // 它吞掉：退出**照样能成**，于是"点了退出"的测试绿在一个错误路径上。
+    // （那条兜底本身是对的：网络失败也不该把人困在页面上。）
+    if (url === '/api/logout') {
+      meUser = null
+      return jsonResponse({ ok: true })
+    }
     // 别的都是生成回来的那张图：fetch(url) -> blob -> createImageBitmap
     return { blob: async () => new Blob(['x']) }
   })
@@ -2803,5 +2812,115 @@ describe('保存 = 存进作品集（Task 13）', () => {
     // 变异：把那两句的三目压成永远走第一句 → 这一条红
     expect(container.textContent).not.toContain('图还在')
     expect(container.querySelector('.save-fail button.download')).toBeNull()
+  })
+})
+
+/**
+ * 用户管理页（Task 8，spec §3.6 / §3.2）。
+ *
+ * 它**不占一个一级导航位置**：收在右上角那颗 👤 后面（§3.2）—— 一辈子点几次。
+ * 这一版只立**最小骨架**：用户名 / 作品数 / 退出登录，三个都真能用。
+ *
+ * ⚠️ **模型那一行故意不在这儿**，它归 Task 9：`{ kind: 'models' }` 这个视图
+ * 今天还不存在，先把它挂上去就是一颗"点了哪都不去"的按钮 —— 这个项目不许有
+ * 那种按钮（见 `.nav-item` / 保存横幅那几处的注释）。
+ *
+ * ⚠️ 这一页有一条**否定**断言（不许出现型号名 / 我们的地址，§7.3）。否定断言
+ * 最容易变成假绿 —— 页面压根没渲染时它照样通过 —— 所以它前面先钉一句
+ * "这一页真的开着"，见下面那一条的注释。
+ */
+describe('用户管理页', () => {
+  /** 从右上角那颗 👤 进去 —— 用户真会走的那一条路。 */
+  async function openAccount() {
+    const btn = container.querySelector('.user-btn') as HTMLButtonElement | null
+    expect(btn).toBeTruthy()
+    await act(async () => {
+      btn?.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  it('★ /app/account 打得开，而且不是白屏', async () => {
+    // 这一条走**网址**（不是点按钮）：地址栏是可以被直接打开的 —— F5、收藏夹、
+    // 别人发来的一条链接。`viewFromPath` 少认一行，打开这里的人拿到的就是
+    // 落地页或修图页，而不是他点开的那一页；而白屏是最差的那种答案。
+    history.replaceState(null, '', '/app/account')
+    await renderApp()
+
+    expect(container.querySelector('.account')).toBeTruthy()
+    // 用户名是这一页的主句（§3.6 那张图最上面那一行）—— 它在，这一页就没白
+    expect(container.querySelector('.account-name')?.textContent).toBe(LOGGED_IN.username)
+  })
+
+  it('★ 右上角那颗 👤 点得开它，而且地址栏跟着走', async () => {
+    // 顶栏那两颗按钮（分享 / 保存）只在**有照片**的时候才在，而 👤 无论如何都在：
+    // 用户第一次进来、还没选图的时候也该找得到自己那一页。
+    await renderApp()
+    expect(container.querySelector('.welcome')).toBeTruthy()   // 起点：还没选图的修图页
+    await openAccount()
+
+    expect(container.querySelector('.account')).toBeTruthy()
+    // 地址栏也得跟着走 —— 这一页可以直接发链接、也可以 F5（`pathOf` 少一行就断）
+    expect(location.pathname).toBe('/app/account')
+  })
+
+  it('★ 页面上不许出现我们自己用的模型名或接口地址（§7.3 + §10 的变异测试）', async () => {
+    // 变异：把 `sensenova-6.8-flash-lite` / `token.sensenova.cn` 写死进这一页
+    // → 这一条必须红。用户看到的只该是「默认」和别名 —— 型号名对他没意义，
+    // 限制才有意义（§7.3）。
+    await renderApp()
+    await openAccount()
+    // ★ 前提：这一页**真的开着**。少了这一句，下面两条 `not.toContain` 会因为
+    //   "整页什么都没渲染"而白白通过 —— 否定断言最典型的假绿。（本文件在
+    //   `.save-fail` 那两条上踩过同一个坑，那边是靠"只扫横幅那一段"解决的。）
+    expect(container.querySelector('.account')).toBeTruthy()
+    expect(document.body.textContent ?? '').not.toContain('sensenova')
+    expect(document.body.textContent ?? '').not.toContain('token.sensenova.cn')
+  })
+
+  it('★ 点「退出登录」→ 真的退出去了', async () => {
+    await renderApp()
+    await openAccount()
+
+    const out = container.querySelector('.account-signout') as HTMLButtonElement | null
+    expect(out?.textContent).toBe('退出登录')
+    expect(out?.disabled).toBe(false)          // 按钮得真的能按
+    await act(async () => {
+      out?.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // ① 服务端**真的被通知了**：会话在 cookie 里，前端清不掉它 ——
+    //    只把人放走、不告诉后端，下次刷新他又"登着"回来了。
+    expect(fetchMock.mock.calls.some(c => c[0] === '/api/logout' && c[1]?.method === 'POST'))
+      .toBe(true)
+    // ② 人已经不在这一页上了。回到登录页 —— App 里每一处"票不管用了"都回那儿
+    //    （见 isUnauthorized 那段注释），"退出登录"是同一件事的用户主动版。
+    expect(container.querySelector('.account')).toBeNull()
+    expect(container.querySelector('.login-box')).toBeTruthy()
+  })
+
+  it('★ 退出的请求失败也要放人走 —— 不能因为网络不好就把人困在页面上', async () => {
+    // 服务端那条路是幂等的、只清一个 cookie（连请求体都不读），而用户要的是"离开"。
+    // 困住他的形状是：点了退出、屏幕上什么都没变 —— 他只会以为自己没点着，
+    // 然后再点一次、再点一次。
+    // 变异：把 AccountPage 里那个 `.catch(() => {})` 删掉 → 这一条红
+    //      （`.then(onSignedOut)` 挂在一条已经 reject 的链上，永远不会执行）。
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === '/api/logout'
+        ? jsonResponse({ error: { code: 'INTERNAL', message: '没清干净' } }, 500)
+        : inner(url, init))
+
+    await renderApp()
+    await openAccount()
+    const out = container.querySelector('.account-signout') as HTMLButtonElement
+    await act(async () => {
+      out.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(container.querySelector('.account')).toBeNull()
+    expect(container.querySelector('.login-box')).toBeTruthy()
   })
 })
