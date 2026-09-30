@@ -122,6 +122,34 @@ describe('增删改查', () => {
     expect(listConfigs(USER, d).configs[0]!.alias).toBe('我的便宜货')
   })
 
+  it('★ 激活别人的一套 → 404，而且我的指针一点没动', () => {
+    const d = fresh()
+    const mine = createConfig({ ...BODY, alias: '我的' }, USER, d)
+    activateConfig({ kind: 'chat', id: mine.id }, USER, d)
+    // 他那一套也得是**真的在用**的 —— 被偷 id 的正是这样一套活着的配置
+    const otherCfg = createConfig({ ...BODY, alias: '他的' }, OTHER, d)
+    activateConfig({ kind: 'chat', id: otherCfg.id }, OTHER, d)
+
+    expect(() => activateConfig({ kind: 'chat', id: otherCfg.id }, USER, d)).toThrow(/没有/)
+    // ★ 光断言抛错是不够的 —— 那句话和"我的指针有没有被换掉"是两件事
+    //   （UPDATE 一旦排在 ownRow 前面，错就落不到"抛没抛"上）。
+    //   ⚠️ 也别只断言 `resolveSecret(...)` 回 null：那是**空的** ——
+    //   就算别人的 id 真被写进我的指针，resolveSecret 自己那道 user_id 也会把它挡成 null。
+    expect(listConfigs(USER, d).configs.find(c => c.id === mine.id)!.active).toBe(true)
+    expect(resolveSecret('chat', USER, d)?.apiKey).toBe('sk-abcdefghijklmnop-4f2')
+  })
+
+  it('★ 删别人的一套 → 404，而且那一套还在', () => {
+    const d = fresh()
+    const otherCfg = createConfig({ ...BODY, alias: '他的' }, OTHER, d)
+    activateConfig({ kind: 'chat', id: otherCfg.id }, OTHER, d)
+
+    expect(() => deleteConfig(otherCfg.id, USER, d)).toThrow(/没有/)
+    // 还在，而且**还在用** —— 不是"没抛错就完事"
+    expect(listConfigs(OTHER, d).configs.map(c => c.alias)).toEqual(['他的'])
+    expect(resolveSecret('chat', OTHER, d)?.apiKey).toBe('sk-abcdefghijklmnop-4f2')
+  })
+
   it('★ 改的一套不给新钥匙 → 老钥匙一个字不动', () => {
     const d = fresh()
     const c = createConfig(BODY, USER, d)
