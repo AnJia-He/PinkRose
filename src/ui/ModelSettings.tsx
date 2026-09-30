@@ -92,6 +92,11 @@ export function ModelSettings() {
     setActionError(null)
     try {
       const r = await deleteModel(c.id)
+      // ★ 删掉的正好是编辑表单里开着的那一套：把表单收起来。
+      //   不收的话表单还停在原地，里面那颗「保存」打过去是 404（那一套已经没了），
+      //   用户会以为是网络抽风。**只在删成功之后收** —— 删失败时留着，
+      //   他刚敲进去的字不该被我们抹掉。
+      setForm((f) => (f?.config?.id === c.id ? null : f))
       // ★ 弹不弹提示看的是服务端回的 **wasActive**，不是我们这边猜的 ——
       //   `c.active` 是上一次拉名单时的事实，中间用户可能在别处切过。
       //   删掉不是在用的那套时**一句都不说**（§7.4："就删掉，什么都不变"），
@@ -105,6 +110,11 @@ export function ModelSettings() {
 
   const onActivate = useCallback(async (kind: ModelKind, id: number | null) => {
     setActionError(null)
+    // ★ 一动手换模型，那条"你删掉的这套正在用"的警告立刻撤掉。
+    //   它是"删除那一刻"的快照；用户删完随手点了「用这个」或「用回默认」，
+    //   警告还挂着的话，一屏上就同时有两句互相打架的现状描述（相隔两次点击）。
+    //   「用这个」和「用回默认」都走这个函数，所以清在这里 = 两条路都清。
+    setWarn(null)
     try {
       await activateModel(kind, id)
       await reload()

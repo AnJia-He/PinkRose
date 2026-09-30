@@ -238,7 +238,8 @@ function withWorksError(message: string) {
 }
 
 /** 挂住"取作品列表"这一条（演"请求还在半路"）。返回放行开关。 */
-function withWorksGate() {  const inner = fetchMock.getMockImplementation()!
+function withWorksGate() {
+  const inner = fetchMock.getMockImplementation()!
   let open: () => void = () => {}
   const promise = new Promise<void>((r) => { open = r })
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {

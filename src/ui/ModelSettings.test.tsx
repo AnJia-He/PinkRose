@@ -205,7 +205,14 @@ describe('模型设置', () => {
     expect(said).not.toContain('gpt-image-1')
     expect(said).not.toContain('sensenova')
     expect(said).not.toContain('token.sensenova.cn')
-    // 变异：把型号名画进那一行（§7.4：型号名只在设置里翻开来才露）→ 这一条红
+    // ★ 下面两条是**用户自己的**地址（就是上面两个 fixture 的主机名）。
+    //   列表上只许有名字，地址要翻进编辑表单才露（§7.4）。
+    //   少了它们这一半就红不了：fixture 里本来就没有我们自己的地址，
+    //   而 `value`/`placeholder` 根本不进 textContent ——
+    //   把地址画进那一行时，那几条断言照样绿。
+    expect(said).not.toContain('api.deepseek.com')
+    expect(said).not.toContain('api.example.com')
+    // 变异：把型号名**或地址**画进那一行或任何列表文字里 → 这一条红
   })
 
   it('★ 型号名只在编辑表单里露 —— 翻开来就看得见（§7.4）', async () => {
@@ -369,6 +376,55 @@ describe('模型设置', () => {
     expect(container.querySelector('.models-warn')).toBeNull()
     expect(container.querySelector('.models-error')).toBeNull()
     // 变异：不看 wasActive、删完一律弹提示 → 这一条红
+  })
+
+  it('★ 激活之后那条警告必须消失 —— 一屏上不许同时站着两句"现在"', async () => {
+    // 警告是"删除那一刻"的快照。用户删完随手又点了「用这个」或「用回默认」，
+    // 它还挂着的话，两句互相打架的现状描述就同时停在屏幕上（相隔两次点击）：
+    // 一句说"已经切回默认了"，另一句（✓ 和「当前：」）说正在用另一套。
+    // 「用这个」和「用回默认」是两条路，所以两条都走一遍。
+    store = [
+      CHAT(1, { alias: '我的便宜货', active: true }),
+      CHAT(2, { alias: '那个快的' }),
+      IMAGE(3, { alias: '那个贵的', active: true }),
+    ]
+    await show()
+    await click(inPart(row('我的便宜货'), '删除'))          // 删的是在用的那套
+    const chat = group('对话与理解')
+    expect(chat.querySelector('.models-warn')).toBeTruthy()
+
+    // 路一：切到另一套（「用这个」）—— 警告立刻撤掉
+    await click(inPart(row('那个快的'), '用这个'))
+    expect(chat.querySelector('.models-warn')).toBeNull()
+    expect(chat.querySelector('.models-now')?.textContent).toContain('那个快的')
+
+    // 路二：「用回默认」也要清。先把图片那栏的警告点出来 ——
+    //   这是"警告还挂着、同时又存在着可以用回默认的那一套"唯一到得了的状态，
+    //   同一栏里点了「用这个」之后警告已经被路一清掉了。
+    await click(inPart(row('那个贵的'), '删除'))
+    const image = group('图片生成')
+    expect(image.querySelector('.models-warn')).toBeTruthy()
+    await click(inPart(chat, '用回默认'))
+    expect(container.querySelector('.models-warn')).toBeNull()
+    // 变异：onActivate 开头那句 setWarn(null) 删掉 → 这一条红
+  })
+
+  it('★ 删掉的正是编辑表单里开着的那一套 → 表单跟着收起来（不然保存打过去是 404）', async () => {
+    // 表单开着、用户正在改名字，同一行的「删除」就杵在旁边。删掉之后表单还留着的话，
+    // 里面那颗「保存」发过去打的是一个已经不存在的 id —— 服务端 404，
+    // 屏幕上只说"存不上"，他会以为是网络抽风，然后照着重试。
+    store = [CHAT(1, { alias: '我的便宜货' }), IMAGE(2, { alias: '那个贵的' })]
+    await show()
+    await openEdit('我的便宜货')
+    expect(form()).toBeTruthy()
+
+    // 开着 A 的表单去删**别的**那一套：表单不许动（他正敲着字呢）
+    await click(inPart(row('那个贵的'), '删除'))
+    expect(form()).toBeTruthy()
+
+    await click(inPart(row('我的便宜货'), '删除'))
+    expect(form()).toBeNull()
+    // 变异：onDelete 里不管 form（删完表单还留着）→ 这一条红
   })
 
   it('删失败时把服务端那句话说出来（不自己编一句糊弄过去）', async () => {
