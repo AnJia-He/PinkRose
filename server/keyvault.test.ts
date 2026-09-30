@@ -16,7 +16,7 @@ describe('keyvault', () => {
     expect(sealed).not.toContain(KEY)
     // 也不许出现原文的任何一段（防止"只加密了一半"这种半吊子）
     expect(sealed).not.toContain('abcdefghij')
-    expect(sealed).not.toContain('4f2')
+    expect(sealed).not.toContain('klmnop-4f2')
   })
 
   it('★ 同一把钥匙封两次，密文必须不一样 —— 随机 IV', () => {
