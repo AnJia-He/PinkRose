@@ -1224,15 +1224,16 @@ export default function App() {
           }}
         />
       )}
-      {/* 用户管理（§3.6）。⚠️ `workCount` 暂时写 0：App 这一层现在**拿不到作品数**
-          （作品列表住在 GalleryPage 自己肚子里，App 从没取过它）。骨架先立着，
-          等作品列表在 App 层可用时接上 —— **不许**为了让这个数字好看多发一次请求。
+      {/* 用户管理（§3.6）。
+          ⚠️ **不往这一页传作品数**：App 这一层根本没有作品列表（它住在
+          GalleryPage 自己肚子里），而第一版传死了一个 `0` —— 于是它对每个
+          存过作品的人都写"0 张作品"（用户自己的数据被说成假的）。
+          现在由这一页自己拉一次（`GET /api/works` 只回元数据、不带图）。
           退出登录照 App 里那一贯的做法把人送回 LoginPage（`setUser(null)`）：
           和"票过期了"（见 isUnauthorized 那一段）走的是同一条路。 */}
       {view.kind === 'account' && (
         <AccountPage
           user={user}
-          workCount={0}
           onSignedOut={() => setUser(null)}
         />
       )}

@@ -121,6 +121,7 @@ vi.mock('./api/client', async (importOriginal) => {
 })
 
 import App from './App'
+import { formatSize } from './ui/AccountPage'
 import * as decodeMod from './image/decode'
 import * as prepareMod from './image/prepare'
 import * as api from './api/client'
@@ -212,6 +213,43 @@ function jsonResponse(body: unknown, status = 200) {
  *  只会有一份跟着改。第三个参数 `alias` 从 Task 11 起就在（默认 null = 用时间当名字）。 */
 const WORK = (id: number, updatedAt: number, alias: string | null = null) =>
   ({ id, alias, createdAt: updatedAt, updatedAt, bytes: 100, hasThumb: true })
+
+/** 给 fetch 加上"取作品列表"这一条路。**只加不改** —— 别的请求仍然走原来的实现。
+ *  （原来住在「作品页」那个 describe 里；Task 8 那一轮修使用情况时，用户管理页
+ *   也要拉同一个接口 —— 照上面 WORK 那条注释的道理，两个用例组共用的桩子就一份。） */
+function withWorks(works: unknown[]) {
+  const inner = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') return jsonResponse({ works })
+    return inner(url, init)
+  })
+}
+
+/** 盖上"取作品列表失败"这一条 —— 500 + 一句服务端的话（用 sentinel 认领它）。 */
+function withWorksError(message: string) {
+  const inner = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') {
+      return jsonResponse({ error: { code: 'INTERNAL', message } }, 500)
+    }
+    return inner(url, init)
+  })
+}
+
+/** 挂住"取作品列表"这一条（演"请求还在半路"）。返回放行开关。 */
+function withWorksGate() {
+  const inner = fetchMock.getMockImplementation()!
+  let open: () => void = () => {}
+  const promise = new Promise<void>((r) => { open = r })
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') {
+      await promise
+      return jsonResponse({ works: [] })
+    }
+    return inner(url, init)
+  })
+  return { open }
+}
 
 function decision(over: Partial<RouteDecision> = {}): RouteDecision {
   return {
@@ -2129,25 +2167,6 @@ describe('左栏导航：切界面不丢工作', () => {
  *   ③ 一张都没有时说的是一句**有出路**的话，不是白屏（§3.7）。
  */
 describe('作品页：先摆 60 张、按天分组、名字就是时间', () => {
-  /** 给 fetch 加上"取作品列表"这一条路。**只加不改** —— 别的请求仍然走原来的实现。 */
-  function withWorks(works: unknown[]) {
-    const inner = fetchMock.getMockImplementation()!
-    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') return jsonResponse({ works })
-      return inner(url, init)
-    })
-  }
-
-  /** 盖上"取作品列表失败"这一条 —— 500 + 一句服务端的话（用 sentinel 认领它）。 */
-  function withWorksError(message: string) {
-    const inner = fetchMock.getMockImplementation()!
-    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') {
-        return jsonResponse({ error: { code: 'INTERNAL', message } }, 500)
-      }
-      return inner(url, init)
-    })
-  }
 
   /**
    * 500 张作品，**一天一张**（隔两天排 —— 有夏令时的时区里差一天可能落回同一个"天"）。
@@ -2836,8 +2855,17 @@ describe('用户管理页', () => {
     expect(btn).toBeTruthy()
     await act(async () => {
       btn?.click()
+      // 这一页挂载时会自己去拉一次作品列表（使用情况）。**两个滴答**：
+      // 第一个让点击引起的渲染落定，第二个让那次请求的 `.then` 也落定 ——
+      // 只放一个的话，下面「显示的是真数」那几条看到的是"还在路上"的占位。
+      await new Promise(r => setTimeout(r, 0))
       await new Promise(r => setTimeout(r, 0))
     })
+  }
+
+  /** 使用情况那一格现在写的是什么（`.account-stats` 整格不在时回 null）。 */
+  function statsText(): string | null {
+    return container.querySelector('.account-stats')?.textContent ?? null
   }
 
   it('★ /app/account 打得开，而且不是白屏', async () => {
@@ -2922,5 +2950,82 @@ describe('用户管理页', () => {
 
     expect(container.querySelector('.account')).toBeNull()
     expect(container.querySelector('.login-box')).toBeTruthy()
+  })
+
+  it('★ 使用情况显示的是**真数** —— 不是写死的 0', async () => {
+    // 第一版是 App 传死 `workCount={0}`：这一页对**每个**存过作品的人都说
+    // 「0 张作品」。现在它自己去拉一次（只回元数据，不带图）。
+    // 变异：把那一格改回写死 `0` → 这一条红。
+    const MIB = 1024 * 1024
+    withWorks([
+      { ...WORK(1, 1_700_000_000_000), bytes: 6 * MIB },
+      { ...WORK(2, 1_700_000_000_000), bytes: 4 * MIB },
+    ])
+    await renderApp()
+    await openAccount()
+
+    expect(statsText()).toMatch(/^2\s*张作品/)
+    expect(statsText()).toContain('10 MB')       // 6 + 4，体积是加出来的，不是编的
+    expect(container.querySelectorAll('.stat')).toHaveLength(2)
+  })
+
+  it('★ 服务端没给 bytes 时只说张数，不硬凑一个体积出来', async () => {
+    // 「别硬凑」的具体形状：**缺的那几张不许当 0 算** —— 那会把总量报小，
+    // 同样是假话。算不出来就整格不说（§3.6 那两格，少一格不碍事）。
+    withWorks([{ id: 1, alias: null, createdAt: 0, updatedAt: 0, hasThumb: true }])
+    await renderApp()
+    await openAccount()
+
+    expect(statsText()).toMatch(/^1\s*张作品/)
+    expect(statsText()).not.toContain('MB')
+    expect(statsText()).not.toContain('KB')
+    expect(container.querySelectorAll('.stat')).toHaveLength(1)
+  })
+
+  it('★ 拿不到使用情况时**一个数字都不显示** —— 绝不退回 0', async () => {
+    // ★★ 这一条就是审查说的那个 bug 的形状。审查原话：
+    //   「任何有作品的人都会在自己的账号页看到『0 张作品』……这不是能力免责声明，
+    //     而是关于用户数据的一句假话」（《文案规范》§3：写之前先问"这句话在
+    //     什么情况下是假的？"）。
+    // 变异：把「拿不到就整格不出现」改成画 0（= 第一版的行为）→ 这一条必须红。
+    withWorksError('SENTINEL-数不出来')
+    await renderApp()
+    await openAccount()
+
+    // 前提：这一页**真的开着**。少了它，下面"没有数字"会因为整页没渲染而假绿。
+    expect(container.querySelector('.account')).toBeTruthy()
+    expect(container.querySelector('.account-name')?.textContent).toBe(LOGGED_IN.username)
+    expect(statsText()).toBeNull()
+    expect(container.textContent).not.toMatch(/\d+\s*张作品/)
+  })
+
+  it('★ 还没拉回来的时候显示占位「…」，也不是 0', async () => {
+    // 「0」读起来是关于用户资产的一句**断言** —— 哪怕只闪半秒也不该是假的。
+    // 变异：把占位换成写死的 `0` → 这一条红。
+    const gate = withWorksGate()
+    await renderApp()
+    // 这里**不走 openAccount()** —— 它会把那两个滴答放过去，而这一条要的就是
+    // "还在路上"的那一瞬间。
+    const btn = container.querySelector('.user-btn') as HTMLButtonElement
+    await act(async () => { btn.click() })
+
+    expect(container.querySelector('.account')).toBeTruthy()
+    expect(statsText()).toContain('…')
+    expect(container.textContent).not.toMatch(/\d+\s*张作品/)
+
+    // 放行之后回的是空列表 —— 那时候「0 张作品」就不是假话，而是事实。
+    await act(async () => {
+      gate.open()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(statsText()).toMatch(/^0\s*张作品/)
+  })
+
+  it('formatSize：三档各说一句话（§3.6 那张图只画了 MB 那一档）', () => {
+    // 变异：把 MB / GB 那两档写反，或者给 MB 也留小数 → 这一条红。
+    const MB = 1024 * 1024
+    expect(formatSize(240 * 1024)).toBe('240 KB')
+    expect(formatSize(342 * MB)).toBe('342 MB')
+    expect(formatSize(1.5 * 1024 * MB)).toBe('1.5 GB')
   })
 })
