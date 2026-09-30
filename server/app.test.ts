@@ -348,7 +348,7 @@ describe('createApp', () => {
    * 屏幕上出现的是 **「这次请求有点问题，换个说法试试」** ——
    * 一句话把"钥匙不对"说成了"你说的话不对"。他改一百遍措辞也没用。
    */
-  it('★ POST /api/edit 上游 401（钥匙被拒）-> 502 UPSTREAM_AUTH，文案指去设置，**不叫**用户换说法', async () => {
+  it('★ POST /api/edit 上游 401（钥匙被拒）-> 502 UPSTREAM_AUTH，文案指去查钥匙，**不叫**用户换说法', async () => {
     // 上游原文（那句 invalid api key）会被打进服务端日志，测试里静音掉，别糊住输出
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
@@ -410,7 +410,7 @@ describe('账号与鉴权', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(routeBody),
     })
-    // 这个 app **没有接线**（上面没传 client/queue），所以 401 这个数字本身
+    // 这个 app **没有接线**（上面没传 clients/queue），所以 401 这个数字本身
     // 还说明了一件事：鉴权排在"后端没配置模型客户端"那道 503 之前 ——
     // 顺序反了，没登录的人看到的会是 503，而"没登录"和"部署没接线"是两回事。
     expect(res.status).toBe(401)
@@ -422,7 +422,7 @@ describe('账号与鉴权', () => {
 
   it('★ 没登录的请求连"读体"这一步都不该走到：三个 AI 接口都是 401，不是 400', async () => {
     // ⚠️ brief 把"requireUser 挪到 readJsonBody 之后"列为**单线程测试抓不住**，
-    // 其实抓得住 —— 顺序会改变应答码。这条把 client/queue 都接上，就是为了让
+    // 其实抓得住 —— 顺序会改变应答码。这条把 clients/queue 都接上，就是为了让
     // 中间**只剩** readJsonBody 这一道：顺序反了，这个畸形请求体会把"没登录"
     // 这个更重要的结局盖成"你的 JSON 不对"（400）。
     // 三个接口走一遍，是因为那句守卫在这三处**各写了一遍** —— 抄漏一处，
@@ -1042,7 +1042,7 @@ describe('/api/models', () => {
  * 可以被塞对，而请求头里的钥匙仍然是错的。所以这里注入的是一条**真实的
  * SenseNovaClient**（真的拼 URL、真的带请求头），只有最后一跳的网络是假的。
  */
-describe('★ 两套 key 彻底分开（§7.4，用户点名要的四条）', () => {
+describe('★ 两套 key 彻底分开（§7.4，用户点名要的四条；⑤ 是 Task 11 补的）', () => {
   // 这一份测试里的"默认那一套"就是 cfg（生产上 baseUrl 指向 token.sensenova.cn）。
   // 下面凡说"走默认"的断言比的都是它，不写死域名 —— 默认换地址时测试跟着走。
   const CHAT = { kind: 'chat', provider: 'custom', baseUrl: 'https://chat.example.com/v1', apiKey: 'sk-chat', modelId: 'vlm', alias: '甲' }
@@ -1174,6 +1174,37 @@ describe('★ 两套 key 彻底分开（§7.4，用户点名要的四条）', ()
       { url: 'https://img.example.com/v1/images/edits', auth: `Bearer ${TYPO}` },
       // ★ 紧接着这条对话：打的是 chat 那一套、带的是那把好钥匙。
       //   两条路各自独立 —— 这就是"图片的 key 填错了，对话完全不受影响"。
+      { url: 'https://chat.example.com/v1/chat/completions', auth: 'Bearer sk-chat' },
+    ])
+  })
+
+  /**
+   * ★ ⑤ `/api/suggest` 也必须走 **chat** 那一套（Task 11 补）。
+   *
+   * 这张网原来漏着：把那一路的 `const { chat } = resolveClients(...)` 改成
+   * `image`，**整个套件一条都不红**。原因是别处验它的时候用户没配过模型，
+   * 两个 kind 那时候只有 `modelId` 不同，而没有任何断言读 `modelId`
+   * （URL 和钥匙都是我们自己的那一份，一模一样）。
+   *
+   * 所以这条和上面四条同一种做法：**两个类别都配上，各带各的地址和钥匙**，
+   * 再断言"真发出去的那一条上游请求"用的是哪一套。
+   * ⚠️ 这就是 §7.4 那四条唯一的证据形式（裁定 9）：断言**出站的 URL + Authorization**，
+   *    不是"断言调了哪个 mock"—— 后者在"拿对了连接但拼错了客户端"时照样绿。
+   *
+   * 变异：把 `server/app.ts` 里 `/api/suggest` 那一支的 `{ chat }` 换成 `{ image }`
+   *      → 出站变成 img.example.com / sk-img，这条红。
+   */
+  it('★ ⑤ /api/suggest 走的是对话那一套（和 route 同一条路，不是图片那一套）', async () => {
+    const { base, cookie, calls, addAndActivate } = await appWithRecording()
+    await addAndActivate(CHAT)
+    await addAndActivate(IMAGE)
+
+    expect((await post(base, '/api/suggest',
+      { imageDataUrl: askBody.imageDataUrl }, cookie)).status).toBe(200)
+
+    // ★ 只有一条出站请求，而且是 chat 那一套。
+    //   接错成 image 时这里是 img.example.com / sk-img，当场红。
+    expect(calls).toEqual([
       { url: 'https://chat.example.com/v1/chat/completions', auth: 'Bearer sk-chat' },
     ])
   })
