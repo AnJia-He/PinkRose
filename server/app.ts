@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { existsSync, createReadStream, statSync } from 'node:fs'
 import { extname, join, normalize, resolve, sep } from 'node:path'
+import { KEY_REQUIRED } from '../shared/copy.ts'
 import {
   findUserByCookie, handleChangePassword, handleLogin, handleSignup,
   type AccountDeps, type PublicUser,
@@ -335,7 +336,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
           baseUrl: normalizeBaseUrl(str(body.baseUrl)),
           apiKey: str(body.apiKey).trim(),
         }
-        if (!conn.apiKey) throw new HttpError('BAD_REQUEST', '钥匙不能为空')
+        if (!conn.apiKey) throw new HttpError('BAD_REQUEST', KEY_REQUIRED)
       }
       // 打的是 `GET {baseUrl}/models` —— 免费的探活，返回的形状见 modeltest.ts。
       // 探不通也回 200：那是"这次探活的结果"，不是"这次请求失败了"。

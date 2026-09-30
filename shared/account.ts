@@ -7,6 +7,8 @@
  * 都"看起来对"。所以规则只能有一个来源，就是这里。
  */
 
+import { NAME_REQUIRED } from './copy.ts'
+
 export const USERNAME_MIN = 2
 export const USERNAME_MAX = 20
 export const EMAIL_MAX = 254
@@ -68,7 +70,7 @@ export function normalizeUsername(raw: string): string {
 
 export function checkUsername(raw: string): Check {
   const v = normalizeUsername(raw)
-  if (v.length === 0) return { ok: false, message: '起个名字吧' }
+  if (v.length === 0) return { ok: false, message: NAME_REQUIRED }
   const n = charLen(v)
   // 下限是 2 不是 3：英文网站常写 3（"ab" 这种两字母看着像垃圾号），但中文里
   // **两个字的名字太常见**（小明、阿宝、李雷），按 3 个卡他们会直接注册不了。

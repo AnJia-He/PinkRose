@@ -1,3 +1,6 @@
+import {
+  ALIAS_REQUIRED, BASE_URL_REQUIRED, KEY_REQUIRED, MODEL_ID_REQUIRED, NEED_KEY, UNREADABLE_KEY_HINT,
+} from '../shared/copy.ts'
 import type { PublicUser } from './account.ts'
 import type { Db } from './db.ts'
 import { HttpError, asObject, str } from './http.ts'
@@ -67,7 +70,7 @@ export function maskKey(key: string): string {
  */
 export function normalizeBaseUrl(input: string): string {
   const raw = str(input).trim()
-  if (!raw) throw new HttpError('BAD_REQUEST', '接口地址不能为空')
+  if (!raw) throw new HttpError('BAD_REQUEST', BASE_URL_REQUIRED)
 
   // 没有协议就补 https://（用户很常只写域名）
   const withProto = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`
@@ -116,14 +119,14 @@ function readProvider(v: unknown): Provider {
 
 function readAlias(v: unknown): string {
   const a = str(v).trim()
-  if (!a) throw new HttpError('BAD_REQUEST', '给它起个名字吧')
+  if (!a) throw new HttpError('BAD_REQUEST', ALIAS_REQUIRED)
   if (a.length > MAX_ALIAS) throw new HttpError('BAD_REQUEST', `名字最多 ${MAX_ALIAS} 个字`)
   return a
 }
 
 function readModelId(v: unknown): string {
   const m = str(v).trim()
-  if (!m) throw new HttpError('BAD_REQUEST', '模型名不能为空')
+  if (!m) throw new HttpError('BAD_REQUEST', MODEL_ID_REQUIRED)
   if (m.length > MAX_MODEL_ID) throw new HttpError('BAD_REQUEST', `模型名太长（最多 ${MAX_MODEL_ID} 个字）`)
   return m
 }
@@ -167,7 +170,7 @@ function toPublic(row: Row, activeId: number | null, vault: Vault): PublicConfig
     baseUrl: row.base_url ?? '',
     modelId: row.model_id,
     alias: row.alias,
-    keyHint: opened.authentic ? maskKey(opened.plaintext) : '（读不出来，请重填）',
+    keyHint: opened.authentic ? maskKey(opened.plaintext) : UNREADABLE_KEY_HINT,
     active: activeId === row.id,
   }
 }
@@ -189,7 +192,7 @@ export function createConfig(body: unknown, user: PublicUser, deps: ModelConfigD
   const modelId = readModelId(o.modelId)
   const baseUrl = normalizeBaseUrl(str(o.baseUrl))
   const apiKey = str(o.apiKey).trim()
-  if (!apiKey) throw new HttpError('BAD_REQUEST', '钥匙不能为空')
+  if (!apiKey) throw new HttpError('BAD_REQUEST', KEY_REQUIRED)
 
   const r = deps.db.raw
     .prepare(`INSERT INTO model_configs (user_id, kind, provider, base_url, api_key_enc, model_id, alias, created_at)
@@ -226,7 +229,7 @@ export function updateConfig(id: number, body: unknown, user: PublicUser, deps: 
   const newKey = o.apiKey === undefined ? null : str(o.apiKey).trim()
   if (newKey !== null && newKey === '') throw new HttpError('BAD_REQUEST', '钥匙不能是空的（想清掉就删掉这一套）')
   if (wantsNewUrl && newKey === null) {
-    throw new HttpError('BAD_REQUEST', '换了接口地址就要把钥匙重填一遍 —— 换服务商时本来也要换一把新钥匙')
+    throw new HttpError('BAD_REQUEST', NEED_KEY)
   }
 
   const baseUrl = wantsNewUrl ? normalizeBaseUrl(str(o.baseUrl)) : (row.base_url ?? '')

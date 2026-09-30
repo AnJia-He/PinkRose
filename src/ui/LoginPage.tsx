@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { login, signup } from '../api/account'
 import logoMark from '../assets/logo/rose.svg'
 import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../../shared/account.ts'
+import { NAME_REQUIRED, UNEXPECTED_FAILURE } from '../../shared/copy.ts'
 
 /** `onDone` **不带参数**，但要 **await 它** —— 它交出去的是"App 去问一次
  *  `/api/me` 拿真身"这件事，而登录页的「稍等…」要盖住整个过程（见下面 finally）。
@@ -112,7 +113,7 @@ export function LoginPage({ onDone }: Props) {
     // 打 U+30FB 的中点得能找到半角那个。就是 shared/account.ts 里抽出来的
     // `normalizeUsername`；少了它，一个已经存在的账号用户照着打都进不去。
     const normalized = normalizeUsername(username)
-    if (normalized.length === 0) return setError('起个名字吧')
+    if (normalized.length === 0) return setError(NAME_REQUIRED)
 
     // ⚠️ **下面这一段（长度、字符类、保留名、密码至少 8 位、密码不能和名字一样）
     // 是「能不能拿这个名字开号」的规矩，只属于注册。**
@@ -167,7 +168,7 @@ export function LoginPage({ onDone }: Props) {
       // 后端说的话（"这个名字已经有人用了"）比这里能编的任何一句都准，
       // 原样显示。**不清空任何输入框** —— 最气人的一种失败是密码输错一次、
       // 表单被清空，用户得从头再打一遍。
-      setError(err instanceof Error ? err.message : '出了点问题，再试一次')
+      setError(err instanceof Error ? err.message : UNEXPECTED_FAILURE)
     } finally {
       // ⚠️ 复位在 `finally` 里，而且因为上面那句 `await`，它只发生在
       // **跟随请求真的结束之后**。两条路各有一个坑，这个形状同时避开：

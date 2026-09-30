@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  ALIAS_REQUIRED, BASE_URL_REQUIRED, KEY_REQUIRED, MODEL_ID_REQUIRED, NEED_KEY,
+} from '../../shared/copy.ts'
+import {
   UNREADABLE_KEY_HINT, activateModel, createModel, deleteModel, listModels, testModel, updateModel,
   type ModelKind, type ProbeTarget, type ProbeResult, type PublicConfig,
 } from '../api/models'
@@ -45,10 +48,12 @@ const KINDS: readonly { kind: ModelKind; title: string; what: string; noun: stri
 const PROVIDER = 'openai-compatible'
 
 /**
- * 改了地址要重填钥匙时说的话。**和服务端 (`server/models.ts`) 一个字不差** ——
- * 同一个毛病在屏幕上的说法和接口里的说法不一样的话，用户会以为这是两件事。
+ * 这一页那几句「必填 / 得重填钥匙」的话**都在 `shared/copy.ts` 里**，不在这一页。
+ *
+ * ★ 为什么：服务端为同一个毛病也要说一句，而且它才是"规矩"（请求可以伪造，
+ * 这一页只是先一步告诉他，省掉一次注定 400 的往返）。同一个毛病在两个地方
+ * 两种说法，用户会以为这是两件事 —— 2026-09-30 之前它们是**各写了一遍**的。
  */
-const NEED_KEY = '换了接口地址就要把钥匙重填一遍 —— 换服务商时本来也要换一把新钥匙'
 
 export function ModelSettings() {
   /** 名单。`null` = 还没拿到（见下面 loadError 那条注释，拿不到就不画空名单）。 */
@@ -290,7 +295,7 @@ function ModelForm({
     } else {
       // 地址改了却没有钥匙（或者新建时钥匙还空着）—— 这一下**没法测**：
       // 拿库里那把钥匙去探新地址是拿真钥匙去敲别人家的门，绝不能干。
-      setError(url === '' ? '接口地址不能为空' : NEED_KEY)
+      setError(url === '' ? BASE_URL_REQUIRED : NEED_KEY)
       return
     }
 
@@ -315,10 +320,10 @@ function ModelForm({
     // 而不是请求绕一圈回来的一句"400"。
     // 最要紧的是 NEED_KEY 那条：它挡住的是一次**注定 400** 的请求，
     // 而且那句 400 后面藏着一条安全性质（`src/api/models.ts` 的 updateModel 那段）。
-    if (a === '') return setError('给它起个名字吧')
-    if (url === '') return setError('接口地址不能为空')
-    if (config === null && key === '') return setError('钥匙不能为空')
-    if (m === '') return setError('模型名不能为空')
+    if (a === '') return setError(ALIAS_REQUIRED)
+    if (url === '') return setError(BASE_URL_REQUIRED)
+    if (config === null && key === '') return setError(KEY_REQUIRED)
+    if (m === '') return setError(MODEL_ID_REQUIRED)
     if (urlChanged && key === '') return setError(NEED_KEY)
 
     setSaving(true)
