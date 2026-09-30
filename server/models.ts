@@ -29,7 +29,7 @@ export type PublicConfig = {
   active: boolean
 }
 
-/** 只有 resolveSecret 能拿到它 —— 它唯一的去处是"造一个客户端"。 */
+/** 只有 `resolveSecret` 那一族能拿到它 —— 去处只有两个：造一个客户端、和「测一下」的那一次探活。 */
 export type SecretConfig = {
   provider: Provider
   baseUrl: string
@@ -293,6 +293,37 @@ export function activateConfig(body: unknown, user: PublicUser, deps: ModelConfi
 export function resolveSecret(kind: ModelKind, user: PublicUser, deps: ModelConfigDeps): SecretConfig | null {
   const id = activeIdOf(kind, user, deps)
   if (id === null) return null
+  const row = deps.db.raw
+    .prepare('SELECT provider, base_url, api_key_enc, model_id FROM model_configs WHERE id = ? AND user_id = ? AND kind = ?')
+    .get(id, user.id, kind) as
+    { provider: string; base_url: string | null; api_key_enc: string; model_id: string } | undefined
+  if (!row) return null
+
+  const opened = deps.vault.open(row.api_key_enc)
+  if (!opened.authentic) return null
+
+  return {
+    provider: row.provider as Provider,
+    baseUrl: row.base_url ?? '',
+    apiKey: opened.plaintext,
+    modelId: row.model_id,
+  }
+}
+
+/**
+ * 取出**指定的**那一套的钥匙 —— 「测一下」那一路上用的。
+ *
+ * 和 `resolveSecret` 是同一个问题的两种问法：那个问"现在在用的是哪一套"，
+ * 这个问"我点的那一套是哪一套"。差别的分量在这里：用户会去测一套**还没激活**
+ * 的配置（刚存下来、或者存了还没换上去的那套）—— 那种配置 resolveSecret 看不见。
+ *
+ * 三种 null 和 `resolveSecret` 一个字不差（没有 / 不是我的 / 密文读不出来），
+ * 处置也一样：**不抛**，由调用方回"没有这一套设置"。分开处理既是信息泄漏
+ * （告诉你哪些 id 是真的），也会把"我们读不出来"说成"你填错了"。
+ */
+export function resolveSecretById(
+  id: number, kind: ModelKind, user: PublicUser, deps: ModelConfigDeps,
+): SecretConfig | null {
   const row = deps.db.raw
     .prepare('SELECT provider, base_url, api_key_enc, model_id FROM model_configs WHERE id = ? AND user_id = ? AND kind = ?')
     .get(id, user.id, kind) as

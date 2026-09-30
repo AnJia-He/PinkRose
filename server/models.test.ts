@@ -3,7 +3,7 @@ import { openDb, type Db } from './db.ts'
 import { createVault } from './keyvault.ts'
 import {
   activateConfig, createConfig, deleteConfig, listConfigs, maskKey,
-  normalizeBaseUrl, resolveSecret, updateConfig, type ModelConfigDeps,
+  normalizeBaseUrl, resolveSecret, resolveSecretById, updateConfig, type ModelConfigDeps,
 } from './models.ts'
 
 const USER = { id: 1, username: 'a', email: 'a@b.c' }
@@ -250,5 +250,41 @@ describe('取密钥（给"按用户造客户端"用）', () => {
     // 模拟"SESSION_SECRET 被人换过"
     const broken: ModelConfigDeps = { ...d, vault: createVault('another-secret') }
     expect(resolveSecret('chat', USER, broken)).toBeNull()
+  })
+})
+
+describe('按 id 取密钥（给「测一下」用）', () => {
+  it('★ 没激活也能取到 —— 这正是它和 resolveSecret 的区别', () => {
+    // 「测一下」测的是**用户点的那一套**，可能还没保存成"在用的那套"。
+    // ⚠️ 少了这条，一个"直接转调 resolveSecret"的实现两条负例全绿 ——
+    //   而那种实现会让"测一下"永远报"没有这一套设置"。
+    const d = fresh()
+    const c = createConfig(BODY, USER, d)
+    expect(resolveSecret('chat', USER, d)).toBeNull()
+    expect(resolveSecretById(c.id, 'chat', USER, d)).toEqual({
+      provider: 'custom', baseUrl: 'https://api.example.com/v1',
+      apiKey: 'sk-abcdefghijklmnop-4f2', modelId: 'some-vision-model',
+    })
+  })
+
+  it('★ 别人的 id → null（不是抛错、不是 404 —— 和 resolveSecret 同一个处置）', () => {
+    const d = fresh()
+    const otherCfg = createConfig({ ...BODY, alias: '他的' }, OTHER, d)
+    expect(resolveSecretById(otherCfg.id, 'chat', USER, d)).toBeNull()
+  })
+
+  it('★ kind 对不上 → null（id 确实是我的，但那是一套图片配置）', () => {
+    const d = fresh()
+    const img = createConfig({ ...BODY, kind: 'image' }, USER, d)
+    expect(resolveSecretById(img.id, 'chat', USER, d)).toBeNull()
+  })
+
+  it('★ 密文读不出来（换了主钥匙）→ null，不抛', () => {
+    // 和 resolveSecret 同一条：安静地回 null，由调用方回"没有这一套设置"，
+    // 而不是把 SESSION_SECRET 被换过这件事变成一次 500。
+    const d = fresh()
+    const c = createConfig(BODY, USER, d)
+    const broken: ModelConfigDeps = { ...d, vault: createVault('another-secret') }
+    expect(resolveSecretById(c.id, 'chat', USER, broken)).toBeNull()
   })
 })

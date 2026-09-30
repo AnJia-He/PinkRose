@@ -7,11 +7,12 @@ import {
 } from './account.ts'
 import type { Config } from './config.ts'
 import { handleEdit } from './edit.ts'
-import { HttpError, readJsonBody, sendBytes, sendError, sendJson } from './http.ts'
+import { HttpError, asObject, readJsonBody, sendBytes, sendError, sendJson, str } from './http.ts'
 import {
-  activateConfig, createConfig, deleteConfig, listConfigs, updateConfig,
-  type ModelConfigDeps,
+  activateConfig, createConfig, deleteConfig, listConfigs, normalizeBaseUrl,
+  resolveSecretById, updateConfig, type ModelConfigDeps, type ModelKind,
 } from './models.ts'
+import { probeConnection } from './modeltest.ts'
 import type { SerialQueue } from './queue.ts'
 import { handleRoute } from './route.ts'
 import {
@@ -300,6 +301,38 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
     if (req.method === 'POST' && path === '/api/models/activate') {
       const user = requireUser(deps, req, res)
       sendJson(res, 200, activateConfig(await readJsonBody(req), user, deps.models))
+      return
+    }
+    // ★ 「测一下」：**先存后测，或者给全量参数**。
+    //
+    //   两种调用方式，因为界面里这两个时刻都存在：
+    //   · `{ id }` —— 已经存过的那一套，用库里那把钥匙测；
+    //   · `{ kind, baseUrl, apiKey, modelId, alias }` —— 表单里刚敲进去、
+    //     **还没保存**的就直接测。
+    //
+    //   ⚠️ 为什么要有第二种：LobeChat 的教训 —— 它的「检查」按钮**先自动保存
+    //     表单再测**，否则测的是"上次保存的值"。我们不用偷偷保存（那会写进去
+    //     一套用户可能不想要的配置），直接把参数带上来测，一样是"测的就是
+    //     你眼睛看到的那一份"。
+    if (req.method === 'POST' && path === '/api/models/test') {
+      const user = requireUser(deps, req, res)
+      const body = asObject(await readJsonBody(req))
+      // 库里那一套：先按 id 取，取不到就是 404（别人的 / 没有的，同一个结局）
+      let conn: { baseUrl: string; apiKey: string }
+      if (body.id !== undefined) {
+        const s = resolveSecretById(Number(body.id), str(body.kind) as ModelKind, user, deps.models)
+        if (!s) throw new HttpError('BAD_REQUEST', '没有这一套设置', 404)
+        conn = { baseUrl: s.baseUrl, apiKey: s.apiKey }
+      } else {
+        conn = {
+          baseUrl: normalizeBaseUrl(str(body.baseUrl)),
+          apiKey: str(body.apiKey).trim(),
+        }
+        if (!conn.apiKey) throw new HttpError('BAD_REQUEST', '钥匙不能为空')
+      }
+      // 打的是 `GET {baseUrl}/models` —— 免费的探活，返回的形状见 modeltest.ts。
+      // 探不通也回 200：那是"这次探活的结果"，不是"这次请求失败了"。
+      sendJson(res, 200, await probeConnection(conn))
       return
     }
     // 带路径参数的那两条。正则**必须锚定整串** —— 和 works 那三条同一个理由。

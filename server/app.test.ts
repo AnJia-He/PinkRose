@@ -796,7 +796,8 @@ describe('/api/models', () => {
     //   "没登录"这个更重要的结局就被盖掉（和三个 AI 接口那条是同一条规矩）。
     //   少了这一段，这个用例标题里"比读请求体更早"那半句一个字都没被验到。
     for (const [m, p] of [
-      ['POST', '/api/models'], ['POST', '/api/models/activate'], ['PATCH', '/api/models/1'],
+      ['POST', '/api/models'], ['POST', '/api/models/activate'],
+      ['POST', '/api/models/test'], ['PATCH', '/api/models/1'],
     ] as const) {
       const r = await fetch(`${base}${p}`, {
         method: m, headers: { 'content-type': 'application/json' }, body: '这根本不是 JSON',
@@ -891,5 +892,84 @@ describe('/api/models', () => {
 
     expect((await call(base, 'POST', '/api/models/activate', { kind: 'chat', id }, cookie)).status).toBe(404)
     expect(snapshot(auth.db)).toEqual(before)
+  })
+
+  it('★ 「测一下」：别人的 id / 不存在的 id → 404，空钥匙 → 400（都在出网之前）', async () => {
+    const { base, auth, cookie: mine } = await appWithUser()
+    const other = handleSignup(
+      { username: '对面的人', email: 'other@t.com', password: 'password123' }, auth,
+    )
+    const theirs = `${SESSION_COOKIE}=${other.token}`
+    const c = await call(base, 'POST', '/api/models', BODY, mine)
+    const id = (c.body as { id: number }).id
+
+    // ★ 别人的那一套和「没有这个 id」必须是同一个结局（§6.1）——
+    //   分开处理等于告诉人哪些 id 是真的、只是不归你。
+    //   这一条钉的是 `resolveSecretById` 的 user_id：少了它，"测一下"就成了
+    //   一个借别人的地址和钥匙去探路的接口。
+    const denied = await call(base, 'POST', '/api/models/test', { id, kind: 'chat' }, theirs)
+    expect(denied.status).toBe(404)
+    expect((denied.body as { error: { message: string } }).error.message).toContain('没有这一套设置')
+    expect((await call(base, 'POST', '/api/models/test', { id: 99999, kind: 'chat' }, mine)).status).toBe(404)
+
+    // 没保存的表单那条路上，钥匙是必填 —— 空着当场 400。放它过去只会换来一句
+    // 「钥匙不认」，把人指到"去检查钥匙"那个错的方向上。
+    expect((await call(base, 'POST', '/api/models/test',
+      { baseUrl: 'https://api.example.com/v1', apiKey: '   ' }, mine)).status).toBe(400)
+  })
+
+  it('★ 「测一下」真的走通了：打的是 /models、带的是库里那把钥匙 —— 两种调用方式', async () => {
+    // ⚠️ 这个用例必须把 `globalThis.fetch` 拦住：路由那句 `probeConnection(conn)`
+    //   用的是**全局 fetch**（没有注入口，brief 就是这么定的 —— 注入口要一路穿过
+    //   AppDeps，为一条测试不值得）。不拦的话它是真的去连 api.example.com ——
+    //   一个依赖外网的测试比没有测试更糟。只拦这一个域名，这个用例自己打向
+    //   127.0.0.1 的请求原样放行。
+    const { base, cookie } = await appWithUser()
+    const c = await call(base, 'POST', '/api/models', BODY, cookie)
+    const id = (c.body as { id: number }).id
+
+    const realFetch = globalThis.fetch
+    const seen: { url: string; auth: string | undefined }[] = []
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      if (url.startsWith('http://127.0.0.1:')) return realFetch(url, init)
+      if (!url.startsWith('https://api.example.com/')) {
+        // 宁可当场炸掉，也别让一个拼歪的地址真的出网。
+        // ⚠️ 这个 throw 会被 probeConnection 自己的 catch 吞成"连不上" ——
+        //   所以那条拼歪的地址也要**先记进 seen**：不然失败信息里根本看不见它。
+        seen.push({ url, auth: undefined })
+        throw new Error(`这条用例没拦住的请求：${url}`)
+      }
+      seen.push({ url, auth: (init.headers as Record<string, string> | undefined)?.authorization })
+      return new Response(JSON.stringify({ data: [{ id: 'm' }] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    try {
+      // ① 已经存过的那一套：只给 id，拿库里那把（解密出来的）钥匙去测
+      const byId = await call(base, 'POST', '/api/models/test', { id, kind: 'chat' }, cookie)
+      expect(byId.status).toBe(200)
+      expect(byId.body).toEqual({ ok: true, models: ['m'] })
+      // ★ 打的是 `${baseUrl}/models`，带的是**完整**钥匙 —— 不是列表里那把掩码过的
+      //   （少了后半句，一个"拿 keyHint 去请求"的实现照样绿，而它永远 401）
+      expect(seen[0]).toEqual({
+        url: 'https://api.example.com/v1/models', auth: 'Bearer sk-abcdefghijklmnop-4f2',
+      })
+
+      // ② 表单里刚敲进去、**还没保存**的那一份：参数直接带上来
+      //    （LobeChat 的教训：不偷偷"先存后测"，那样测的是上次保存的值）
+      const live = await call(base, 'POST', '/api/models/test',
+        { baseUrl: 'api.example.com', apiKey: ' sk-live ' }, cookie)
+      expect(live.status).toBe(200)
+      // 这一段顺带钉住两条"替用户擦屁股"的规矩：补 https:// 和 /v1、钥匙去空格
+      expect(seen[1]).toEqual({ url: 'https://api.example.com/v1/models', auth: 'Bearer sk-live' })
+
+      // ★ 「不偷偷保存」不是靠嘴说的：库里**还是只有一条**配置。
+      //   少了这一句，一个"先把表单存下来再测"的实现照样绿 —— 而它会往库里写进
+      //   一套用户可能根本不想要的配置。
+      const list = await call(base, 'GET', '/api/models', undefined, cookie)
+      expect((list.body as { configs: unknown[] }).configs).toHaveLength(1)
+    } finally {
+      // 用例之间不共享这个替换（这个文件里别的用例要发真请求）
+      globalThis.fetch = realFetch
+    }
   })
 })
