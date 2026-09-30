@@ -1186,6 +1186,44 @@ try {
         fails.push(`${view.name}：落地页那颗「免费试用」压在折线以下` +
           `（@${m.cta?.bottom} vs 视口 ${m.vh}）—— 门口的第一个动作得不用滚就看得见`)
       }
+
+      // ★ 键盘走一遍：**可聚焦的东西必须看得见。**
+      //
+      // 为什么加这一条（2026-09-30）：用户问「那这样的问题你做测试的时候怎么没发现」，
+      // 我回头把"机器判不了的维度"补了一遍，其中包括**走一次纯键盘** ——
+      // 一按就抓到了：右下角那个「回到顶部」在页面顶上时是 `opacity: 0`，
+      // 但它**还在 Tab 顺序里**，于是键盘用户进门第一次按 Tab，焦点落在
+      // 一个看不见、也点不动（`pointer-events: none`）的按钮上。
+      //
+      // 这一类四样检查一样都看不见：它不报错、不改版面、点了也不崩 ——
+      // 只是"按了没反应"。而它是**能机器判的**（不像文案好不好听），
+      // 所以不该靠人肉去发现。
+      const 走过 = []
+      for (let i = 0; i < 10; i++) {
+        await page.keyboard.press('Tab')
+        const f = await page.evaluate(() => {
+          const e = document.activeElement
+          if (!e || e === document.body) return null          // 焦点绕出页面了 —— 正常
+          const st = getComputedStyle(e)
+          const r = e.getBoundingClientRect()
+          return {
+            what: (e.getAttribute('aria-label') || e.innerText || e.value || '').trim().slice(0, 20),
+            see: Number(st.opacity) > 0.05 && st.visibility !== 'hidden' && st.display !== 'none',
+            onScreen: r.width > 1 && r.height > 1 && r.bottom > 0 && r.top < window.innerHeight,
+          }
+        })
+        if (!f) break
+        走过.push(f)
+      }
+      console.log(`     键盘走前 ${走过.length} 站：` + 走过.map(f => f.what || '(无名)').join(' → '))
+      for (const f of 走过) {
+        if (!f.see || !f.onScreen) {
+          fails.push(`${view.name}：键盘 Tab 到了一个**看不见**的控件（「${f.what}」）—— ` +
+            '用户按下去像"没反应"，得再按一次才知道跳过去了。' +
+            '（元凶通常是"只写了 `opacity: 0` 却没写 `visibility: hidden`"的隐藏控件：' +
+            '前者只是透明，仍然在 Tab 顺序里。）')
+        }
+      }
     } finally {
       await page.close()
     }
