@@ -785,6 +785,75 @@ function judgeSaveFail(label, m, view) {
   }
 }
 
+// ── 2026-09-30 加：上传前那一屏（`.welcome`）─────────────────────────────
+/**
+ * 为什么补这一段：**上面每一条判据都是"传完照片之后"的** —— 而这一屏是
+ * 登录之后看到的**第一张脸**，在这之前它一次都没被量过（`.welcome` 只在
+ * `!image` 时渲染，而这条检查登录完就直接 `setInputFiles` 过去了）。
+ *
+ * ★ 2026-09-30 往后它多了一句「一天大概能改二十来张照片。」（`.welcome-note`）——
+ *   而 `.app` 是 **overflow: hidden**：这一列比 `.stage` 高的话，超出去的部分
+ *   是被**静静地切掉**的（不出滚动条、不横向溢出、别的判据全绿）。上面那条
+ *   "画布必须完整落在视口里"就是同一个病在修图页的样子 —— 这里是它在首屏的样子。
+ *
+ * 判据两条，都不钉措辞：
+ *   ① 整列完整落在视口里（没被切）；
+ *   ② 那句提示真的在、真的有字、真的看得见，而且**说的是"多少张"**
+ *      （用户要的就是这个 —— 写在了一半等于没写）。
+ */
+async function measureWelcome(page) {
+  return page.evaluate(() => {
+    const box = el => {
+      if (!el) return null
+      const b = el.getBoundingClientRect()
+      return {
+        w: Math.round(b.width), h: Math.round(b.height),
+        top: Math.round(b.top), left: Math.round(b.left),
+        bottom: Math.round(b.bottom), right: Math.round(b.right),
+      }
+    }
+    const note = document.querySelector('.welcome-note')
+    const st = note ? getComputedStyle(note) : null
+    return {
+      welcome: box(document.querySelector('.welcome')),
+      note: box(note),
+      noteText: note ? note.textContent.trim() : '',
+      // 「看得见」的判据照抄键盘走查那一段，不自创一套
+      noteVisible: !!st && st.display !== 'none' && st.visibility !== 'hidden' &&
+        Number(st.opacity) > 0.05,
+    }
+  })
+}
+
+/** 「多少张」的判据：二十来张 / 20 张 / 二十张 都算。**不钉具体数字** ——
+ *  那个数会随额度策略变，钉死了以后改文案会莫名其妙地红。 */
+const SAYS_HOW_MANY = /[0-9一二三四五六七八九十百]+\s*来?\s*张/
+
+function judgeWelcome(label, m, view) {
+  console.log(`── ${label}`)
+  console.log(`     上传前那一屏 ${m.welcome ? `${m.welcome.w}x${m.welcome.h} @${m.welcome.left},${m.welcome.top}` : '不在 DOM 里'}`)
+  console.log(`     那句提示「${m.noteText}」${m.note ? ` @top ${m.note.top}~${m.note.bottom}` : ''}`)
+  if (!m.welcome) { fails.push(`${label}：找不到 .welcome —— 上传前那一屏整个不见了`); return }
+  if (m.welcome.top < -TOL || m.welcome.bottom > view.height + TOL) {
+    fails.push(`${label}：上传前那一屏没完整落在视口里（${m.welcome.h}px 高 @${m.welcome.top}，` +
+      `视口 ${view.height}）—— .app 是 overflow: hidden，超出去的是被切掉的，` +
+      '用户看到的是"少了半截"，而别的判据一条都不会红')
+  }
+  if (!m.note || !m.noteVisible || !m.noteText) {
+    fails.push(`${label}：上传前那一屏上没有那句提示（.welcome-note）—— ` +
+      '用户要的是"提示一下一天大概能做多少"，它不在就等于没写')
+    return
+  }
+  if (!SAYS_HOW_MANY.test(m.noteText)) {
+    fails.push(`${label}：那句提示里没说"多少张"（现在写的是「${m.noteText}」）—— ` +
+      '额度是用照片张数说的，不是用 tokens，别把单位丢了')
+  }
+  if (m.note.top < -TOL || m.note.bottom > view.height + TOL) {
+    fails.push(`${label}：那句提示没落在视口里（@top ${m.note.top}~${m.note.bottom}，` +
+      `视口 ${view.height}）—— 写了却看不见，等于没写`)
+  }
+}
+
 console.log(`── 量的是 ${URL}`)
 console.log(`   ${await checkServedBuild()}`)
 
@@ -881,6 +950,10 @@ try {
       // 那个 input 是**隐藏**的（`.uploader` 把它藏起来、由 label 当按钮用），
       // 所以这里要 `state: 'attached'` —— 默认的"要可见"会一直等到超时。
       await page.waitForSelector('input[type="file"]', { state: 'attached', timeout: 15_000 })
+
+      // ★ 趁照片还没传、`.welcome` 还在，先量它 —— 传完它就没了。
+      await page.waitForTimeout(400)   // 让那条进场动画走完（.welcome 是 translateY 进来的）
+      judgeWelcome(`${view.name} · 上传前那一屏`, await measureWelcome(page), view)
 
       await page.setInputFiles('input[type="file"]', PHOTO)
       await page.waitForSelector('canvas', { timeout: 15_000 })
@@ -1183,7 +1256,7 @@ try {
         fails.push(`${view.name}：落地页的大标题不在首屏里（@${m.h1?.top}~${m.h1?.bottom}）`)
       }
       if (!m.cta || m.cta.bottom > m.vh) {
-        fails.push(`${view.name}：落地页那颗「免费试用」压在折线以下` +
+        fails.push(`${view.name}：落地页那颗「免费开始」压在折线以下` +
           `（@${m.cta?.bottom} vs 视口 ${m.vh}）—— 门口的第一个动作得不用滚就看得见`)
       }
 
@@ -1244,6 +1317,8 @@ if (fails.length) {
   console.log('详情页的排版在 src/styles.css 的 .detail 那一段（同一条 overflow-y: auto）。')
   console.log('存失败横幅的排版在 src/styles.css 的 `.ask, .save-fail` 那一段（`flex-wrap` 就是')
   console.log('窄屏上换不换行那一句）；那个按钮在 src/App.tsx 的 `.save-fail` 那一段里。')
+  console.log('上传前那一屏在 src/ui/Uploader.tsx（那句"一天大概多少张"是 `.welcome-note`），')
+  console.log('它的排版在 src/styles.css 的 `.welcome` 那一段。')
   process.exitCode = 1
 } else {
   console.log(`✅ ${VIEWS.length} 档 × 3 种状态都过（刚传完照片 / 打开调色面板 / 存失败之后）：` +
@@ -1258,5 +1333,7 @@ if (fails.length) {
   console.log(`   外加详情页：那张大图真的是原图（自然尺寸的长边 ≥ ${SEED_IMAGE_LONG}，不是 ${SEED_THUMB_MAX}px 的缩略图）、` +
     '两栏配方都在屏内、详情页自己滚而整页不滚（左栏还钉在原地）')
   console.log(`   外加落地页（${VIEWS.length} 档，**不带登录态的访客视角**）：13 张图全解得出、不横向溢出、` +
-    '大标题和「免费试用」都在首屏里')
+    '大标题和「免费开始」都在首屏里')
+  console.log(`   外加上传前那一屏（${VIEWS.length} 档）：整列不被切、那句「一天大概多少张」真的看得见、` +
+    '而且单位是**张**不是 tokens')
 }
