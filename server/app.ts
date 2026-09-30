@@ -8,6 +8,10 @@ import {
 import type { Config } from './config.ts'
 import { handleEdit } from './edit.ts'
 import { HttpError, readJsonBody, sendBytes, sendError, sendJson } from './http.ts'
+import {
+  activateConfig, createConfig, deleteConfig, listConfigs, updateConfig,
+  type ModelConfigDeps,
+} from './models.ts'
 import type { SerialQueue } from './queue.ts'
 import { handleRoute } from './route.ts'
 import {
@@ -44,6 +48,12 @@ export type AppDeps = {
    * 传进来的实现换掉（比如以后换云存储），这一层以上一个字都不用动。
    */
   storage: Storage
+  /**
+   * 用户接进来的模型（§7）。**必填**，理由同 auth / storage：
+   * 少接这一根线的后果是"用户配了自己的钥匙但一次都没用上" ——
+   * 那是最难发现的一种坏（它不报错，只是安静地花我们的钱）。
+   */
+  models: ModelConfigDeps
 }
 
 const MIME: Record<string, string> = {
@@ -273,6 +283,36 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
       sendJson(res, 200, await handleDeleteWorks(await readJsonBody(req), user, {
         db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
       }))
+      return
+    }
+    // ── 模型设置（§7）────────────────────────────────────────────────────
+    // 全部需要登录，而且**顺序和别处一致**：先认人，再读体。
+    if (req.method === 'GET' && path === '/api/models') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, listConfigs(user, deps.models))
+      return
+    }
+    if (req.method === 'POST' && path === '/api/models') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, createConfig(await readJsonBody(req), user, deps.models))
+      return
+    }
+    if (req.method === 'POST' && path === '/api/models/activate') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, activateConfig(await readJsonBody(req), user, deps.models))
+      return
+    }
+    // 带路径参数的那两条。正则**必须锚定整串** —— 和 works 那三条同一个理由。
+    // 这条排在 activate 后面无所谓（`/api/models/activate` 不是数字，\d+ 匹配不到）。
+    const modelRoute = /^\/api\/models\/(\d+)$/.exec(path)
+    if (req.method === 'PATCH' && modelRoute) {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, updateConfig(Number(modelRoute[1]), await readJsonBody(req), user, deps.models))
+      return
+    }
+    if (req.method === 'DELETE' && modelRoute) {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, deleteConfig(Number(modelRoute[1]), user, deps.models))
       return
     }
     if (req.method === 'POST' && path === '/api/route') {

@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { createApp } from './app.ts'
 import { describeConfig, loadConfig } from './config.ts'
 import { openDb } from './db.ts'
+import { createVault } from './keyvault.ts'
 import { SerialQueue } from './queue.ts'
 import { SenseNovaClient } from './sn.ts'
 import { createStorage } from './storage.ts'
@@ -43,6 +44,11 @@ const server = createApp({
   // 这里拿到的必然是配置好的那一把，没有"默认值"这条退路。
   auth: { db, secret: config.sessionSecret },
   storage,
+  // ★ 保险箱的主钥匙**从 SESSION_SECRET 派生**（带用途分隔符，见 keyvault.ts）。
+  //   不为它多加一个环境变量：多一个变量就多一处"忘了配"，
+  //   而这里少配的后果是"服务起不来"，那正是 config.ts 对 SESSION_SECRET
+  //   已经做过的事（没配就拒绝启动）。
+  models: { db, vault: createVault(config.sessionSecret) },
 })
 
 // ⚠️ 只听本机（127.0.0.1）。手机走 vite 的代理（代理跑在这台电脑上），

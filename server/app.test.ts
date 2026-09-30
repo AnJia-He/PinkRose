@@ -7,6 +7,7 @@ import { handleSignup, type AccountDeps } from './account.ts'
 import { createApp, type AppDeps } from './app.ts'
 import type { Config } from './config.ts'
 import { openDb, type Db } from './db.ts'
+import { createVault } from './keyvault.ts'
 import { SerialQueue } from './queue.ts'
 import { SESSION_COOKIE } from './session.ts'
 import { SenseNovaClient } from './sn.ts'
@@ -91,8 +92,13 @@ function newStorage(): Storage {
 
 async function boot(extra: Partial<AppDeps> = {}): Promise<string> {
   // `extra.auth ?? newAuth()`：调用方自带 auth 时就不再另开一个没人用的库
+  const auth = extra.auth ?? newAuth()
   server = createApp({
-    config: cfg, auth: extra.auth ?? newAuth(), storage: extra.storage ?? newStorage(),
+    config: cfg, auth, storage: extra.storage ?? newStorage(),
+    // 模型设置那一层。**和账号共用同一个库** —— model_configs 和 users 是同一件
+    // 事的两半（两个指针就挂在 users 上），各开一个库会让"这条配置是谁的"有两个答案。
+    // 保险箱的主钥匙照生产来：从 SESSION_SECRET 派生（用途分隔符见 keyvault.ts）。
+    models: extra.models ?? { db: auth.db, vault: createVault(cfg.sessionSecret) },
     ...extra,
   })
   await new Promise<void>(r => server!.listen(0, r))
@@ -177,6 +183,27 @@ async function post(base: string, path: string, body: unknown, cookie?: string) 
     body: JSON.stringify(body),
   })
   return { status: r.status, body: await r.json() as { error?: { code: string; message: string } } }
+}
+
+/**
+ * 通用的 JSON 调用 —— `post` 的普适版。
+ *
+ * 模型那五个接口里有三种 `post` 接不住的形状：不带体的 GET、不带体的 DELETE、
+ * 以及 PATCH。`body === undefined` 时**既不送体、也不带 content-type** ——
+ * 给 GET / DELETE 塞一个请求体正是 app.ts 那几条注释里说的"没什么可送的"。
+ */
+async function call(
+  base: string, method: string, path: string, body?: unknown, cookie?: string,
+): Promise<{ status: number; body: unknown }> {
+  const r = await fetch(`${base}${path}`, {
+    method,
+    headers: {
+      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...(cookie ? { cookie } : {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  return { status: r.status, body: await r.json() }
 }
 
 describe('createApp', () => {
@@ -735,5 +762,134 @@ describe('删与替换：路由真的接上了', () => {
     // ★ 两个桶都在：删掉的按请求顺序列出来，"本来就不在"的那个**也报出来**（§3.5：不能静默）
     expect(await r.json()).toEqual({ deleted: [a, b], missing: [99999] })
     expect(await (await fetch(`${base}/api/works`, { headers: { cookie } })).json()).toEqual({ works: [] })
+  })
+})
+
+describe('/api/models', () => {
+  const BODY = {
+    kind: 'chat', provider: 'custom', baseUrl: 'https://api.example.com/v1',
+    apiKey: 'sk-abcdefghijklmnop-4f2', modelId: 'm', alias: '我的便宜货',
+  }
+
+  /**
+   * 两张表的**整表快照** —— 一行不带 `user_id` 过滤，因为要钉的是"谁的都不许动"。
+   *
+   * ⚠️ 为什么非要看库、而不是"再 GET 一次看看"：T3 用变异测试证明过一条
+   * **照样回 404** 的坏实现 —— `activateConfig` 的 UPDATE 挪到属主检查前面：
+   * 请求回 404，但指针**已经被写歪了**。抓这种实现只有一条路：请求前后对库拍照。
+   *
+   * 带上 `api_key_enc`（`SELECT *`）也不多余：顺手钉住"没有谁偷偷把它重封一遍"。
+   */
+  const snapshot = (db: Db) => ({
+    configs: db.raw.prepare('SELECT * FROM model_configs ORDER BY id').all(),
+    pointers: db.raw.prepare(
+      'SELECT id, active_chat_config_id, active_image_config_id FROM users ORDER BY id',
+    ).all(),
+  })
+
+  it('★ 没登录 → 401，而且比读请求体更早', async () => {
+    const { base } = await appWithUser()   // 只用它起服务器，不带 cookie
+    // GET / DELETE 不读体，没登录就是 401
+    expect((await call(base, 'GET', '/api/models')).status).toBe(401)
+    expect((await call(base, 'DELETE', '/api/models/1')).status).toBe(401)
+    // ★ 读体的那三条故意送**畸形**请求体：认人排在读体前面，顺序反了当场变 400、
+    //   "没登录"这个更重要的结局就被盖掉（和三个 AI 接口那条是同一条规矩）。
+    //   少了这一段，这个用例标题里"比读请求体更早"那半句一个字都没被验到。
+    for (const [m, p] of [
+      ['POST', '/api/models'], ['POST', '/api/models/activate'], ['PATCH', '/api/models/1'],
+    ] as const) {
+      const r = await fetch(`${base}${p}`, {
+        method: m, headers: { 'content-type': 'application/json' }, body: '这根本不是 JSON',
+      })
+      expect(r.status, `${m} ${p} 的请求体在鉴权之前就被读了`).toBe(401)
+    }
+  })
+
+  it('建 → 列 → 改 → 删 走一遍', async () => {
+    const { base, cookie } = await appWithUser()
+    const c = await call(base, 'POST', '/api/models', BODY, cookie)
+    expect(c.status).toBe(200)
+    const made = c.body as { id: number; keyHint: string }
+
+    const list = await call(base, 'GET', '/api/models', undefined, cookie)
+    expect(list.status).toBe(200)
+    expect((list.body as { configs: unknown[] }).configs).toHaveLength(1)
+
+    const patched = await call(base, 'PATCH', `/api/models/${made.id}`, { kind: 'chat', alias: '改名了' }, cookie)
+    expect(patched.status).toBe(200)
+    expect((patched.body as { alias: string }).alias).toBe('改名了')
+
+    const del = await call(base, 'DELETE', `/api/models/${made.id}`, undefined, cookie)
+    expect(del.status).toBe(200)
+    expect(del.body).toEqual({ wasActive: false })
+    // ★ 不只是"回了个 { wasActive: false }"：那一行**真的没了**。
+    //   少了这一句，一个"把值原样回出去、根本没删"的实现照样绿。
+    expect((await call(base, 'GET', '/api/models', undefined, cookie)).body).toEqual({ configs: [] })
+  })
+
+  it('★ 响应里不许出现完整钥匙 —— 全链路（§10）', async () => {
+    const { base, cookie } = await appWithUser()
+    const c = await call(base, 'POST', '/api/models', BODY, cookie)
+    // 三种"回配置"的响应都走一遍 —— "全链路"指的就是它们（少了 PATCH 这条，
+    // patch 路上漏钥匙的实现照样绿）。
+    const id = (c.body as { id: number }).id
+    const patched = await call(base, 'PATCH', `/api/models/${id}`, { alias: '换个名字' }, cookie)
+    const list = await call(base, 'GET', '/api/models', undefined, cookie)
+    for (const r of [c, patched, list]) {
+      expect(JSON.stringify(r.body)).not.toContain('abcdefghijklmnop')
+    }
+    // ★ 另一半：钥匙**存下来了**，只是只露前 3 后 4（`maskKey` 的规矩）。
+    //   少了这一句，一个"创建时把钥匙整个丢了、keyHint 回空串"的实现也满足上面三行 ——
+    //   而那种实现的后果是"用户配了钥匙、一次都没用上"，最安静的那种坏。
+    expect(JSON.stringify(list.body)).toContain('sk-…-4f2')
+  })
+
+  it('★ 别人的那一套：改 / 删 / 激活一律 404（不是 403），而且谁的数据都没动', async () => {
+    // 「不存在」和「不是你的」必须是同一个结局：分开处理等于告诉人
+    // 哪些 id 是真的、只是不归你（§6.1）。所以钉的是 404，不是 403。
+    const { base, auth, cookie: mine } = await appWithUser()
+    // 第二个人：**同一个 app、同一个库**，只是另一张票 ——
+    // 照 appWithUser 内部那一句写（同一个 auth 上再注册一个，就是"另一个人"）。
+    const other = handleSignup(
+      { username: '对面的人', email: 'other@t.com', password: 'password123' }, auth,
+    )
+    const theirs = `${SESSION_COOKIE}=${other.token}`
+
+    const c = await call(base, 'POST', '/api/models', BODY, mine)
+    expect(c.status).toBe(200)
+    const id = (c.body as { id: number }).id
+
+    const before = snapshot(auth.db)
+
+    expect((await call(base, 'PATCH', `/api/models/${id}`, { kind: 'chat', alias: 'x' }, theirs)).status).toBe(404)
+    expect((await call(base, 'DELETE', `/api/models/${id}`, undefined, theirs)).status).toBe(404)
+    expect((await call(base, 'POST', '/api/models/activate', { kind: 'chat', id }, theirs)).status).toBe(404)
+
+    // ★ 状态码之外的**第二半**，就是这条用例的重点：三条路各自的坏实现都会"先写后判"——
+    //   DELETE 先删再判 → 那一行没了；PATCH 先 UPDATE 再判 → alias 变了；
+    //   activate 先写指针再判 → 写歪的是**发起人自己**的 active_chat_config_id。
+    //   三种都不影响上面那三个 404，只有这张快照抓得住。
+    expect(snapshot(auth.db)).toEqual(before)
+
+    // 正面对照：同样的操作，**主人自己做**是通的 ——
+    // 少了它，上面三个 404 可能只是因为接口整个坏了（那也是一种"别人没动"）。
+    expect((await call(base, 'PATCH', `/api/models/${id}`, { alias: '我的' }, mine)).status).toBe(200)
+    expect((await call(base, 'POST', '/api/models/activate', { kind: 'chat', id }, mine)).status).toBe(200)
+  })
+
+  it('★ 激活别的 kind 的那一套 → 404（指针不许串场）', async () => {
+    const { base, auth, cookie } = await appWithUser()
+    const img = await call(base, 'POST', '/api/models', { ...BODY, kind: 'image' }, cookie)
+    expect(img.status).toBe(200)
+    const id = (img.body as { id: number }).id
+
+    // ★ 这里也必须看库：一个"先写 chat 指针、再检查 kind"的实现照样回 404，
+    //   但那张**图**配置已经被写成 chat 的当前选择了 —— 而且这条歪指针在列表上
+    //   看不出来（`listConfigs` 的 active 是 chat / image 各算各的），
+    //   它只在真正取钥匙出图的那一刻才咬人。
+    const before = snapshot(auth.db)
+
+    expect((await call(base, 'POST', '/api/models/activate', { kind: 'chat', id }, cookie)).status).toBe(404)
+    expect(snapshot(auth.db)).toEqual(before)
   })
 })
