@@ -3675,6 +3675,44 @@ describe('恢复：打开就接着上次那条', () => {
     expect(texts).not.toContain('S9-用户说的')
   })
 
+  it('★★ 在 A 里说完就切走，**不等**防抖 —— A 那句话照样落盘，不丢', async () => {
+    // 切会话（和「新的一张」）会把落盘那层的防抖计时器连根清掉 —— 计时器是挂在
+    // effect 的清理里的，`sessionId` 一变就清。所以**进 `loadSession` 的第一件事**
+    // 就是把还没到点的那一趟立刻发出去（`flushPersist`），那时候 `sessionId`
+    // 还是 A，闭包里那份 payload 也是 A 的。
+    //
+    // ⚠️ 这条用例里**故意不 waitPersist**：等了就是把 800ms 让过去，那时候
+    //   "有没有那句 flush"在断言里分不出来（正是这条用例要咬的东西）。
+    const nine = { ...makeSession(9, 1, 'S9-用户说的', 'S9'), originalName: '九号.jpg' }
+    const seven = { ...makeSession(7, 1, 'S7-用户说的', 'S7'), originalName: '七号.jpg' }
+    withSessions([seven, nine])
+    await renderApp()
+    expect(bubbleTexts()).toContain('S9-用户说的')      // A = 9（最近动过的那条）
+
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({ reply: '好。' }))
+    await say('切走之前说的这句')
+
+    // 立刻切走（几毫秒内）—— 800ms 的防抖还没到点
+    await goNav('对话')
+    const row = [...container.querySelectorAll('.session-row')].find(
+      r => (r.textContent ?? '').includes('七号'))
+    expect(row).toBeTruthy()
+    await act(async () => {
+      ;(row!.querySelector('.session-open') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await waitPersist()
+
+    // ★ A 那一趟要**真的发出去**，而且带的是切走之前那句话
+    const putsA = putCalls('/api/sessions/9')
+    expect(putsA).toHaveLength(1)
+    const textsA = bodyOf(putsA[0]!).messages.map((m: { text: string }) => m.text)
+    expect(textsA).toContain('切走之前说的这句')
+    // 切过去那条照旧（这正是 ★★ 那条用例钉的事，这里顺带再量一次）
+    expect(bubbleTexts()).toContain('S7-用户说的')
+    expect(putCalls('/api/sessions/7')).toHaveLength(1)
+  })
+
   it('★ 「新的一张」回到选照片那一屏 —— 下一张会开**新的**一条，不写回旧的那条', async () => {
     // §6.4：顶栏那颗「新的一张」= "我再改一张"。它**不删**当前这条会话
     // （那条已经在服务端上存着了），只是回到上传前那一屏。
@@ -3694,8 +3732,16 @@ describe('恢复：打开就接着上次那条', () => {
     expect(container.querySelector('.actions')).toBeNull()
     // ② 刚切走那条的位图要还回去
     for (const b of oldBitmaps) expect(vi.mocked(b.close)).toHaveBeenCalled()
+    // ★ ③ §6.4 明说的一句：**它不删**当前这条会话（那条已经在服务端上存着了，
+    //    左栏「对话」里还找得到）。少了这条断言，"顺手把旧的那条删掉"这种
+    //    改法在测试里是绿的 —— 而用户回头就找不到自己改过的东西了。
+    expect(fetchMock.mock.calls.filter(([, init]) => (init?.method ?? 'GET') === 'DELETE'))
+      .toHaveLength(0)
+    // ⚠️ 切走那一刻**已经排上队**的那趟落盘会先发出去（`flushPersist`）——
+    //    发的是上一条**自己的**内容。把此刻的条数记下来：下面要断的是**它不再长**。
+    const putsTo7 = putCalls('/api/sessions/7').length
 
-    // ③ 下一张是**新的一条会话**（`POST /api/sessions` 回的是 id 1），
+    // ④ 下一张是**新的一条会话**（`POST /api/sessions` 回的是 id 1），
     //    落盘要打在 1 上 —— 归零 `sessionId` 少一处，新照片的消息和步骤就会
     //    写进**上一条会话**（用户回头打开那条，会看到一张不是自己的照片）。
     await uploadPhoto()
@@ -3703,12 +3749,146 @@ describe('恢复：打开就接着上次那条', () => {
     vi.mocked(api.postRoute).mockResolvedValueOnce(decision({ reply: '好。' }))
     await say('新的这张改一下')
     await waitPersist()
-    expect(putCalls('/api/sessions/7')).toHaveLength(0)
+    // 旧会话一条都没多 —— 而且**说过的那几句里没有新这张的任何一个字**
+    expect(putCalls('/api/sessions/7')).toHaveLength(putsTo7)
+    for (const c of putCalls('/api/sessions/7')) {
+      const said = bodyOf(c).messages.map((m: { text: string }) => m.text)
+      expect(said).not.toContain('新的这张改一下')
+    }
     const puts = putCalls('/api/sessions/1')
     expect(puts).toHaveLength(1)
     const texts = bodyOf(puts[0]!).messages.map((m: { text: string }) => m.text)
     expect(texts).toContain('新的这张改一下')
     expect(texts).not.toContain('S7第 0 步')
+  })
+
+  it('★ 连点两条会话：被顶掉的那一趟**不许**说「没打开」 —— 它没失败，只是慢了一步', async () => {
+    // 2026-10-01 评审抓到的 Minor：`discard()` 原来只有一句 `noticeBad`。
+    // 用户点了五号、还没回来又点了七号（或者手抖连点两下）时，先出发的那一趟
+    // 回来一看自己已经被顶掉了，照样往屏上挂一句「这条对话没打开，再试一次？」——
+    // 而屏幕上跑的是**他真正要打开的那条**：那句话说的是另一条，而且什么都没失败。
+    // ★ 判据是 `gen`：**被更新的一趟顶掉不是出错** —— 位图照还（`releaseDecoded`），
+    //   但通报和日志都不该有（连点两下就会走一趟这个出口，记成 error 会把真错误淹掉）。
+    const five = { ...makeSession(5, 1, '五号那句', 'S5'), originalName: '五号.jpg' }
+    const seven = { ...makeSession(7, 1, '七号那句', 'S7'), originalName: '七号.jpg' }
+    withSessions([five, seven])
+    const gate = makeGate()
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      // 只挂住**五号那一条的详情**：七号那条照常走完 —— 于是五号这趟回来时，
+      // `loadSeqRef` 已经被七号推过一格了（就是"被顶掉"那一刻的真形状）。
+      if (url === '/api/sessions/5' && (init?.method ?? 'GET') === 'GET') await gate.promise
+      return inner(url, init)
+    })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const clickRow = async (name: string) => {
+      const row = [...container.querySelectorAll('.session-row')].find(
+        r => (r.textContent ?? '').includes(name))
+      expect(row).toBeTruthy()
+      await act(async () => {
+        ;(row!.querySelector('.session-open') as HTMLButtonElement).click()
+        await new Promise(r => setTimeout(r, 0))
+      })
+    }
+
+    await renderApp()                  // 挂载先接回最近动过的那条（id 7）
+    await goNav('对话')
+    await clickRow('五号')             // 第一趟：卡在详情上
+    await goNav('对话')                // 还没回来就又回了列表
+    await clickRow('七号')             // 第二趟：这一条才是用户要的
+    await waitPersist()                // 七号接回来了（屏幕上现在是它）
+    expect(bubbleTexts()).toContain('S7第 0 步')
+
+    // 放五号那趟进来 —— 它晚了，但它**什么都没做错**
+    await act(async () => { gate.open(); await new Promise(r => setTimeout(r, 10)) })
+
+    // ① 那句假话一个字都不许出现
+    expect(container.querySelector('.notice')?.textContent ?? '').not.toContain('没打开')
+    // ② 屏幕上还是七号：被顶掉的那趟**一个状态都不许写**
+    expect(bubbleTexts()).toContain('S7第 0 步')
+    expect(bubbleTexts()).not.toContain('S5第 0 步')
+    // ③ 也不许记成 error —— "慢了半步"不是故障
+    expect(errSpy.mock.calls.some(c => String(c[0]).includes('作废'))).toBe(false)
+    errSpy.mockRestore()
+  })
+
+  it('★ 自己那张照片还在开的时候点了条会话 —— 旧会话不许把它顶掉', async () => {
+    // 2026-10-01 评审抓到的 Minor：`loadSession('open')` 那道"用户自己动手了"的
+    // 判据（以及更早那个布尔）**看不出"有一张照片还在开"**。
+    // 窗口就摆在 `onPick` 的两趟 await 中间：进门时 `pickSeqRef` 已经 +1，而
+    // `baseSeqRef` 要等解码完才 +1 —— 这几十到几百毫秒里，用户回左栏点了一条
+    // 会话（左栏**永远点得动**，导航从来不是 disabled）。那趟会话于是把照片、
+    // 对话、步骤整段铺上来，过一会儿再被 `onPick` 盖回去（顺带把旧会话那几个
+    // 刚解码出来的位图漏在内存里 —— `onPick` 关的是它闭包里的那份旧 `history`）。
+    // ★ 判据是"**现在**有一张在飞"（`pickSeqRef > pickSettledSeqRef`），不是
+    //   "曾经选过照片"：后者单调，而"上回那张早开好了"之后用户照样该能点开会话
+    //   （★★ 那条用例走的正是这一路，别把它一起挡了）。
+    withSessions([{ ...makeSession(7, 1, '上次那句', 'S7'), originalName: '七号.jpg' }])
+    const detailGate = makeGate()
+    const decodeGate = makeGate()
+    const inner = fetchMock.getMockImplementation()!
+    // ⚠️ 闸门要有开关：挂载那条恢复取的**也是** `/api/sessions/7` —— 一直挂着的话
+    //   连页面都打不开（照片、顶栏那颗「新的一张」都不会出现）。下面要点开时才合上。
+    let holdDetail = false
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (holdDetail && url === '/api/sessions/7' && (init?.method ?? 'GET') === 'GET') {
+        await detailGate.promise
+      }
+      return inner(url, init)
+    })
+    // 选的这张卡在解码里 —— 演"正在打开照片…"那几十毫秒。
+    // ⚠️ 只有 `decodeImageFile` 会吃掉这层 mock：恢复那条路走的是 `createImageBitmap`。
+    vi.mocked(decodeMod.decodeImageFile).mockImplementationOnce(async () => {
+      await decodeGate.promise
+      return fakeDecoded('picked')
+    })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await renderApp()                  // 恢复把 7 接回来（和这趟无关，只是要有条会话）
+    // 回到"选一张照片"那一屏，然后开始选 —— 这一张就卡在解码里
+    const btn = [...container.querySelectorAll('.actions button')]
+      .find(b => (b.textContent ?? '').trim() === '新的一张') as HTMLButtonElement
+    await act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(container.querySelector('input[type="file"]')).toBeTruthy()
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    Object.defineProperty(input, 'files', {
+      value: [new File(['y'], 'q.jpg', { type: 'image/jpeg' })], configurable: true })
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // 照片还在开，用户回左栏点了「七号」那一条（左栏这时候点得动）
+    await goNav('对话')
+    const row = [...container.querySelectorAll('.session-row')].find(
+      r => (r.textContent ?? '').includes('七号'))
+    expect(row).toBeTruthy()
+    // 到这一刻为止打给七号的更新（「新的一张」会把上一条**没到点**的那趟落盘
+    // 提前发出去，那是它该做的）。下面要断的是"这趟作废的载入**一个字节都没多写**"。
+    const putsTo7 = putCalls('/api/sessions/7').length
+    holdDetail = true
+    await act(async () => {
+      ;(row!.querySelector('.session-open') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    // 放详情过去：这趟必须认出"他手上有一张还在开"，当场作废
+    await act(async () => { detailGate.open(); await new Promise(r => setTimeout(r, 10)) })
+
+    // ① 七号那条一个字都没上来：画布上没有它的照片，也没有它的话
+    //    （用户那张还在解码，屏幕上本来就该还是"选一张照片"那一屏）
+    expect(container.querySelector('canvas')).toBeNull()
+    expect(bubbleTexts()).not.toContain('S7第 0 步')
+    // ② 而且**一个字节都没多写**：作废的载入不许把老会话的整份状态推上服务端
+    expect(putCalls('/api/sessions/7')).toHaveLength(putsTo7)
+    // ③ 作废要留痕（不许静默）—— 这趟是"用户自己动手"顶掉的
+    expect(errSpy.mock.calls.some(c => String(c[0]).includes('作废'))).toBe(true)
+
+    // ④ 用户那张照常开完：画布上是它，七号的话一句都没跟过来
+    await act(async () => { decodeGate.open(); await new Promise(r => setTimeout(r, 0)) })
+    const shown = canvasProps.images.at(-1) as unknown as { bitmap: { __tag: string } }
+    expect(shown.bitmap.__tag).toBe('picked')
+    expect(bubbleTexts()).not.toContain('S7第 0 步')
+    errSpy.mockRestore()
   })
 
   it('★ 恢复还在路上时用户先传了照片 —— 上次那条不许把新的顶掉', async () => {

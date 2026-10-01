@@ -264,6 +264,34 @@ export default function App() {
   const persistSeqRef = useRef(0)
   /** 上一次**成功写进服务端**的底图是第几版。只在写成功之后才更新 —— 见下面那句注释 */
   const lastPersistedBaseSeqRef = useRef(-1)
+  /**
+   * **还没到点**的那一趟落盘：它的活儿（`run`）和那个 800ms 的闹钟。
+   *
+   * ⚠️ 为什么要单独记着它：防抖那个计时器是挂在落盘 effect 的清理里的，而清理
+   *   在依赖一变（`sessionId` 就在依赖里）就跑 —— 用户改完立刻切会话的话，
+   *   这个闹钟**连响的机会都没有**，上一条会话最后那几秒的改动就永远丢了，
+   *   而且一句话都不说（这个项目最恨的那种失败）。
+   *   所以切走那条路上要能**手动把它提前点掉**，见 `flushPersist`。
+   */
+  const pendingPersistRef = useRef<{
+    run: () => void
+    timer: ReturnType<typeof setTimeout>
+  } | null>(null)
+  /**
+   * 把**还没到点**的那趟落盘立刻发出去（防抖窗口里被打断时用）。
+   *
+   * ⚠️ 得在**改状态之前**调：它拿的是当初那个 effect 闭包里的一份 payload 和
+   *   **那一条的 `sessionId`** —— 状态一改，那份 payload 就已经是"上一条"的了，
+   *   而这时候再发正是我们要的（把它写完再走）。
+   * ⚠️ 先摘掉再发：不摘的话闹钟到点还会再发一遍，同一句话写两次。
+   */
+  const flushPersist = useCallback(() => {
+    const p = pendingPersistRef.current
+    if (!p) return
+    pendingPersistRef.current = null
+    clearTimeout(p.timer)
+    p.run()
+  }, [])
   /** 挂载时那次"把上次那条会话接回来"跑过没有。**它保证只跑一次** ——
    *  为什么不能跟着 `user` 每次变都重跑，见下面那个恢复 effect 的注释。 */
   const restoreTriedRef = useRef(false)
@@ -281,6 +309,40 @@ export default function App() {
    *   `history`。）
    */
   const pickStartedRef = useRef(false)
+  /**
+   * 用户**选照片**的次序号，`onPick` 进门第一句 +1（和上面那个布尔同一个位置）。
+   * 配套的 `pickSettledSeqRef` 在这一趟**选完**时跟上（`onPick` 的 finally）——
+   * "开始了几趟"减"选完了几趟"就是**现在有没有一张还在开**。
+   *
+   * ⚠️ 为什么除布尔还要序号：切会话那趟（`loadSession(id, 'open')`）的"作废"
+   *   判据是**相对**的（这趟期间用户动了手才算数），而那个布尔**单调** ——
+   *   用户早就选过照片的话，他在这趟里**再选一张**时布尔一动不动；同一段窗口里
+   *   `baseSeqRef` 也还没动（它要等解码完才 `++`）。两道判据都看不出来，这趟就会
+   *   照常写上去，把用户**刚选的那张**顶掉（屏幕上换成另一张照片，而且不报错）。
+   *   序号每一趟都变，看得见。
+   *
+   * ⚠️ **今天这一条窗口走不到**（2026-10-01 评审后核的）：切会话那趟一进门就
+   *   `setBusy('正在打开这条对话…')`，而 `busy` 非空时那一屏渲染的是那句提示、
+   *   **上传器整个不挂**（`{busy ? <div className="hint">{busy}</div> : <Uploader/>}`）
+   *   —— 用户没有入口在这趟里再选一张。留着是保险：哪天上传器在那期间一直挂着
+   *   （比如加一个「换一张」），它当场算数。今天真正挡得住的是下面那个"还在飞"。
+   */
+  const pickSeqRef = useRef(0)
+  /**
+   * **选完**的趟数（`onPick` 的 finally 里 +1）。`pickSeqRef > 它` = 有一张照片
+   * 还在开（`decodeImageFile` / `fitToDevice` 那几十到几百毫秒）。
+   *
+   * ⚠️ 切会话那趟要认这个：用户在等自己那张照片时点了另一条会话 —— 那一刻
+   *   `baseSeqRef` 还没动（它要等解码完），只看版本号看不出"他手上正有一张在开"，
+   *   于是那趟会照常写上去（把会话的照片、对话、步骤全铺上），过一会儿再被
+   *   `onPick` 覆盖回来。今天这条路**真的走得通**：上传器在"正在打开照片…"期间
+   *   是被 `busy` 藏起来的，但**切会话那趟之前**的那一瞬间照片就已经在飞了 ——
+   *   用户完全可以在这时候回左栏去点一条对话。
+   * ⚠️ 不能拿 `pickStartedRef` 顶替：它单调（第一次选过之后永远是 true），而
+   *   "上回那张已经开好了"之后用户照样该能点开别的会话（App.test.tsx 的 ★★
+   *   那条正是这么走的）。要的是"**现在**有没有在飞"，不是"曾经选过没有"。
+   */
+  const pickSettledSeqRef = useRef(0)
   /** 用户**这一趟说过的原话**（send / 卡片各写各的）。
    *  模型说拿不准时要把它留到用户点完图 —— 届时"原来那句话"是**那一刻**的那句，
    *  不是某个 state 里可能已经翻篇的那句。 */
@@ -303,14 +365,22 @@ export default function App() {
   /**
    * 组件还在不在（卸载之后回来的那一趟 `loadSession` 什么都不许写）。
    *
-   * ⚠️ **为什么不是每趟一个局部 `alive`**（Task 5 原来就是那种写法）：dev 是
-   *   **StrictMode**（`main.tsx`），挂载 effect 会"跑 → 清理 → 再跑"一遍。局部的
-   *   `alive` 在第一次清理里就被放倒了，而那趟恢复还在路上；第二次挂载又撞上
-   *   `restoreTriedRef` 直接 return —— 于是**恢复在 dev 里整个是死的**
-   *   （2026-10-01 在真 Chrome 里验的：传完照片刷新，照片没回来，
-   *   而服务端上那条会话明明在）。挂在 ref 上、**每次挂载都置回 true**，
-   *   StrictMode 那一下重挂载就不再误伤；真正卸载（关页面、测试里 unmount）
-   *   之后仍然是 false。
+   * ⚠️ **为什么是挂在 ref 上、而不是每趟一个局部 `alive`**：`loadSession`
+   *   有两条调用路，其中一条**根本不从 effect 里发起** —— Task 6 的"列表里点开
+   *   一条"走的是 `onOpen` 那个点击处理函数，那里没有"某一趟 effect 的局部变量"
+   *   可挂。而"树还在不在"是所有路都要问的**同一件事**，所以它必须挂在所有路
+   *   都看得见的地方。挂载时置回 true；真正卸载（关页面、测试里 unmount）
+   *   之后一直是 false。
+   *
+   * ⚠️ 它**只管"组件没了"这一件事**。另外两件"这趟不作数"各有各的判据，
+   *   别合并：**又开了一趟**看 `loadSeqRef` 那个 `gen`（后到者赢）、
+   *   **用户自己动手了**看 pick 那两道判据（都写在 `stale()` 上）。
+   *
+   * （2026-10-01 Task 6 评审：这一段原来给的理由是"dev 的 StrictMode 重挂载会
+   *  把局部 `alive` 放倒、于是恢复整个是死的"—— 那个说法**经不起推敲**：挂载
+   *  那两趟 effect 都早早在 `checking || !user` 上 return，既没起过趟、也没登记过
+   *  清理。行为是对的（`mountedRef` + `gen` 一起给出"别写死树"和"后到者赢"），
+   *  错的是那段理由，换掉留个痕。）
    */
   const mountedRef = useRef(true)
   useEffect(() => {
@@ -333,6 +403,8 @@ export default function App() {
    *      就不许盖），`'open'` 用**相对**判据（这趟期间他动了手才作废）。为什么
    *      不能一样：`pickStartedRef` 一旦置位**永不复位**，拿绝对判据去挡"用户自己
    *      点开的那一条"，等于第一次上传之后列表里点什么都**静默无反应**。
+   *      ⚠️ 而"相对判据"光看那个布尔是不够的（它单调，选过之后一动不动）——
+   *      要比的是 `pickSeqRef` 那个**序号**，理由写在 `stale()` 那两行上。
    *   ② 失败怎么办：`'restore'` 不吭声（用户本来就什么都没做，接不回来就是
    *      "这次从头开始"）；`'open'` 必须说一句，不然就是"点了没反应"。
    *   ③ 接回来时那句话：`'restore'` 要说「这是上次没做完的」（§6.2 明文要求）；
@@ -345,11 +417,18 @@ export default function App() {
    *
    * ⚠️ **写状态那一批里一次 `await` 都不许有**：中途让出的话，落盘那个 effect 会
    *   带着**旧 history + 新 sessionId** 跑一次 —— 那等于**把 A 的活儿写进 B**。
+   *
+   * ⚠️ **进门第一句就把上一条没落盘的那趟发出去**（`flushPersist`）：切走那一刻，
+   *   落盘那层的 800ms 防抖还没到点的话，计时器会被 effect 的清理连根清掉 ——
+   *   用户最后改的那几下就永远丢了，而且一句话不说。必须在**改任何状态之前**发，
+   *   那时候 `sessionId` 和那份 payload 还都是上一条的。
    */
   const loadSession = useCallback(async (id: number, why: 'restore' | 'open'): Promise<void> => {
+    // ★ 第一句，在动任何状态之前（理由见上面那段）
+    if (why === 'open') flushPersist()
     const gen = ++loadSeqRef.current
-    /** 这一趟**开始时**用户手上的状态（"他是不是在这趟里又动了手"靠它比） */
-    const pickAtStart = pickStartedRef.current
+    /** ★ 选照片的**序号**（不只是"选过没有"的布尔）。见 `pickSeqRef` 那段 */
+    const pickSeqAtStart = pickSeqRef.current
     const baseAtStart = baseSeqRef.current
     // 点开那一路要有反馈：那一刻屏幕上要么是空的（底下会露出"选一张照片"那个
     // 上传器 —— 用户会以为这条会话没了），要么还是上一条会话的照片。盖一句话，
@@ -393,11 +472,31 @@ export default function App() {
       if (!mountedRef.current || gen !== loadSeqRef.current) return true
       return why === 'restore'
         ? (pickStartedRef.current || baseSeqRef.current !== 0)
-        : (pickStartedRef.current !== pickAtStart || baseSeqRef.current !== baseAtStart)
+        // ★ 'open' 是**相对**判据（绝对的话，"上回选过照片"之后用户就再也点不开
+        //   任何会话了 —— ★★ 那条用例走的正是"先传过照片、再点开另一条"）。
+        //   三句各有各的窗口，缺一句就漏一种：
+        //   · 序号变了 = 这趟里**又选了一张**。布尔（`pickStartedRef`）单调，
+        //     看不出这个（今天走不到这条路：切会话期间上传器被 `busy` 挡着，
+        //     见 `pickSeqRef` 那段 —— 留着当保险）。
+        //   · **有一张还在飞**（`pickSeqRef > pickSettledSeqRef`）= 用户手上那张
+        //     还没开完。他那会儿 `baseSeqRef` 也还没动，版本号看不出任何变化，
+        //     这趟就会把旧会话整段铺上去，过一会儿再被 `onPick` 覆盖回来
+        //     （顺带把旧会话那几个位图漏在内存里 —— `onPick` 关的是它闭包里的
+        //     那份 `history`）。这条路**今天真的走得通**。
+        //   · 底图版本变了 = 那张照片已经开好了（`onPick` 里 `baseSeqRef++`）。
+        : (pickSeqRef.current !== pickSeqAtStart
+           || pickSeqRef.current > pickSettledSeqRef.current
+           || baseSeqRef.current !== baseAtStart)
     }
     /** 作废：位图还回去、日志留痕（**不许静默**）；点开那一路还要说一声。 */
     const discard = (note: string) => {
       releaseDecoded()
+      // ★ **被更新的一趟顶掉了不算出错**：用户连点两条会话时，屏幕上正跑着他
+      //   刚点的那一条，而这趟只是"慢了一步" —— 这时候还挂一句「这条对话没打开，
+      //   再试一次？」是**假话**（什么都没失败），而且挂的是**别人那一屏**。
+      //   ⚠️ 位图在上面先还掉了：作废不管哪一种，`steps` 里那些都得关，
+      //   早返回不能把那一句也跳过去。
+      if (gen !== loadSeqRef.current) return
       console.error(note)
       if (why === 'open') noticeBad('这条对话没打开，再试一次？')
     }
@@ -559,11 +658,13 @@ export default function App() {
       console.error(why === 'restore' ? '上次那条没接回来' : '这条会话没打开', e)
       // 挂载那一路不打扰用户：接不回来就是"这次从头开始"，而他本来就什么都还没做。
       // 点开那一路必须说 —— 不然就是点了没反应。
-      if (why === 'open') noticeBad('这条对话没打开，再试一次？')
+      // ⚠️ 但**被更新的一趟顶掉**的那一趟不在此列：屏幕上正跑着用户刚点的那条，
+      //   这句"没打开"说的是他已经不在乎的那一条，而且它没有失败（见 `discard`）。
+      if (why === 'open' && gen === loadSeqRef.current) noticeBad('这条对话没打开，再试一次？')
     } finally {
       if (why === 'open') setBusy(null)
     }
-  }, [noticeBad])
+  }, [flushPersist, noticeBad])
 
   /**
    * 打开页面之后，把"上次那条会话"接回来（spec §6.2）。
@@ -663,9 +764,14 @@ export default function App() {
       // 用户切走了（切会话 / 新的一张都会推 `baseSeqRef`）—— 这一版作废。
       // ⚠️ 位图要还回去，别漏在内存里；而且**要留痕**：钱花了、东西没给，
       //   静默扔掉是这个项目最恨的那种失败。
+      // ★ 2026-10-01（Task 6 评审）：光在控制台留痕不够 —— 用户在屏幕上**什么都
+      //   看不到**，只会觉得"我说了句话，什么都没发生"。这一刻他在另一条会话上，
+      //   所以这句通报要**说清是哪一次、怎么回事、还能怎么办**（§5：哪不对+怎么办），
+      //   而且不许许诺"钱没花"这种我们做不到的事。
       if (baseSeqRef.current !== seqAtStart) {
         bitmap.close()
         console.error('生成回来时用户已经切走了，这一版不写进去（钱已经花了，但写进别的会话更坏）')
+        noticeBad('你切走时，刚才那次生成还没回来 —— 结果没写进去。要的话，回到那条再说一遍。')
         return
       }
       const nextBase: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
@@ -711,7 +817,7 @@ export default function App() {
       if (editAbortRef.current === ac) editAbortRef.current = null
       setBusy(null)
     }
-  }, [say])
+  }, [noticeBad, say])
 
   /**
    * 「停止」—— 把这一次生成掐掉。
@@ -815,7 +921,12 @@ export default function App() {
     // ★ **进门第一件事**，在下面两趟 await 之前：从这一刻起"用户自己动手了"。
     //   恢复那道闸门看的就是它（`baseSeqRef` 要等解码完才动，等它太晚 ——
     //   理由写在 `pickStartedRef` 的注释里）。这行必须在第一句 `await` 上面。
+    //   ⚠️ 序号和布尔**在这儿一起动**，而这趟**结束**时（下面那个 finally）
+    //   `pickSettledSeqRef` 要跟上：切会话那趟的判据既看"这趟里又选了一张"
+    //   （序号），也看"**现在**有一张还在飞"（序号 > 已选完的趟数）——
+    //   两头的账都记在这儿和那儿，漏一头就等于没记。
     pickStartedRef.current = true
+    pickSeqRef.current++
     setBusy('正在打开照片…')
     try {
       const decoded = await decodeImageFile(file)
@@ -920,6 +1031,9 @@ export default function App() {
       noticeBad('这张图打不开，换一张试试')
     } finally {
       setBusy(null)
+      // ★ "这一张开完了"（折了也算 —— 用户已经知道结果了）。切会话那趟看的是
+      //   `pickSeqRef > pickSettledSeqRef`（见 `pickSettledSeqRef` 那段）。
+      pickSettledSeqRef.current++
     }
   }, [history, say, loadCards])
 
@@ -939,6 +1053,12 @@ export default function App() {
    */
   const startNew = useCallback(() => {
     if (busy) return
+    // ★ 第一句（在动状态之前）：把上一条**还没到点**的那趟落盘提前发出去。
+    //   和切会话是同一条路 —— 状态一清，那个 800ms 的闹钟就被 effect 的清理
+    //   连根清掉了，用户最后改的那几下会永远丢了（见 `flushPersist`）。
+    //   摆在 `busy` 那道守卫**下面**：被挡回去的那一次什么都没发生，
+    //   更不该去动落盘。
+    flushPersist()
     // 副作用留在状态更新外面，别塞进 updater（updater 可能被重放）。
     for (const s of bitmapsToClose(history, [])) s.bitmap.close()
     setImage(null)
@@ -958,7 +1078,7 @@ export default function App() {
     setAsking(null)
     setOriginalPreview(null)
     originalFileRef.current = null
-  }, [busy, history])
+  }, [busy, flushPersist, history])
 
   const send = useCallback(async (text: string) => {
     const canvas = canvasElRef.current
@@ -1408,7 +1528,13 @@ export default function App() {
     const paramsNow = params
 
     // ③：这里只**定一个闹钟**，不等任何网络。下一次改动会把这个闹钟重设。
-    const timer = setTimeout(() => {
+    //
+    // ★ 活儿抽成一个 `run`，并且**登记**到 `pendingPersistRef` 上：用户改完
+    //   立刻切会话（左栏「对话」里点开一条 / 按「新的一张」）时，`loadSession`
+    //   会在改状态之前把它**提前点掉**（`flushPersist`）—— 不登记的话这个闹钟
+    //   连响的机会都没有：依赖（`sessionId` 就在里面）一变，下面那句清理就把
+    //   它清掉了，上一条最后那几秒的改动永远丢了，且一句话不说。
+    const run = () => {
       const seq = ++persistSeqRef.current
       // ★ "这一趟送出去的是哪一版底图" —— 在这儿（**发出去之前**）就定死。
       //   ⚠️ 别等请求回来再读 `baseSeqRef.current`（见下面 ⑤ 那一行）：
@@ -1456,7 +1582,15 @@ export default function App() {
           }
         }
       })()
+    }
+    const timer = setTimeout(() => {
+      // 到点了：先把待办摘掉再跑 —— 跑的当中 ref 里要是还留着这一条，
+      // 一次"提前点掉"（flushPersist）就会把这趟发第二遍。
+      if (pendingPersistRef.current?.timer === timer) pendingPersistRef.current = null
+      run()
     }, 800)
+    // ★ 登记"还没到点的那一趟"（见上面 `run` 那段）
+    pendingPersistRef.current = { run, timer }
     return () => clearTimeout(timer)
     // ⚠️ `sessionId` **必须在依赖里** —— 它一到，这个副作用得再跑一遍，
     //   否则"上传之后立刻动的那一下"落不了盘（见 `sessionId` 那段长注释）。

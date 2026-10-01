@@ -914,6 +914,13 @@ async function measureSessions(page) {
       askBox: box(ask),
       dels: dels.map(b => b.textContent.trim()),
       delBoxes: dels.map(b => box(b)),
+      // ★ 确认态那两颗按钮的**颜色**（2026-10-01 评审后加）：「删掉」和「取消」
+      //   只差一个字，点错一次东西就没了 —— 颜色是它们唯一的区别。
+      //   ⚠️ 这条判据是**补一个当时没人看见的洞**：那会儿 `judgeSessions` 只量几何，
+      //   于是 "`.session-del:first-of-type` 选不中任何东西（第一个 button 兄弟是
+      //   `display:none` 的 `.session-open`）、两颗按钮一个色" 这件事，
+      //   探针全绿、测试和 typecheck 也全绿。
+      delColors: dels.map(b => getComputedStyle(b).color),
       scrollW: document.documentElement.scrollWidth,
       clientW: document.documentElement.clientWidth,
     }
@@ -936,7 +943,8 @@ function judgeSessions(label, m, view, mode) {
       `；分组标题「${m.dayTitle}」`)
     if (m.askText) {
       console.log(`     确认态「${m.askText}」 按钮 ${m.dels.join(' / ')} ` +
-        `@${m.delBoxes.map(b => (b ? `${b.left}~${b.right}` : '不在')).join(' , ')}`)
+        `@${m.delBoxes.map(b => (b ? `${b.left}~${b.right}` : '不在')).join(' , ')}` +
+        `；颜色 ${m.dels.map((t, i) => `${t} ${m.delColors[i]}`).join(' / ')}`)
     }
   }
 
@@ -1020,6 +1028,22 @@ function judgeSessions(label, m, view, mode) {
           `（${b ? `${b.left}~${b.right}` : '不在 DOM 里'}）`)
       }
     })
+    // ★ 两颗按钮**长得必须不一样**：它们只差一个字（「删掉」/「取消」），
+    //   而按错一次东西就没了 —— 颜色是唯一把危险那颗标出来的东西。
+    //   ⚠️ 这条判据是 2026-10-01 补的，补的是一个**已经发生过的洞**：
+    //   `.session-del:first-of-type` 按标签名算，第一个 `button` 兄弟是
+    //   `display:none` 的 `.session-open` —— 那条规则一次都没生效过，
+    //   「删掉」和「取消」一个色。当时探针只量几何（都在视口里 ✔）、
+    //   测试按**文字**找按钮（也 ✔）、typecheck 更是看不见 CSS 的死活，
+    //   于是它安安静静烂在那儿，直到人用眼睛看了一遍才发现。
+    //   现在选择器按类名（`.session-del.danger`），颜色也进了判据。
+    if (m.dels.length === 2 && m.delColors[0] === m.delColors[1]) {
+      fails.push(`${label}：确认态那两颗按钮**是同一个颜色**（${m.delColors[0]}）——` +
+        '「删掉」和「取消」只差一个字，颜色再一样就等于没标出哪颗是危险的那个。' +
+        '（多半是选择器又按位置挑了：`.session-open` 虽然 `display:none`，' +
+        '它的 `button` 标签还在，`:first-of-type` 之类选不中「删掉」。' +
+        '要挑它就用它自己的类 `.session-del.danger`。）')
+    }
   }
 }
 

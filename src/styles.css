@@ -1195,7 +1195,12 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   font-size: 12px; color: var(--muted);
   background: none; border-color: transparent;
 }
-.session-del:hover:not(:disabled) { color: var(--danger); border-color: var(--line-2); }
+/* 悬停才现出形状 —— 这一条**只在没进确认态的行里**：
+   确认态那两颗按钮里只有「删掉」是危险的，取消跟着一起变红就等于没区分
+   （这两颗按错一次东西就没了，颜色是唯一还分得开的地方）。 */
+.session-row:not(.confirming) .session-del:hover:not(:disabled) { color: var(--danger); border-color: var(--line-2); }
+/* 确认态里「取消」的悬停：只给形状，不给危险色 */
+.session-row.confirming .session-del:not(.danger):hover:not(:disabled) { color: var(--text); border-color: var(--line-2); }
 
 /* 就地确认（**不弹系统框**，这个产品的规矩）。
    ⚠️ 确认态是**这一行换了个问题问**：照片、名字、步数让位给那句问话和两颗按钮。
@@ -1208,8 +1213,15 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .session-row.confirming .session-open { display: none; }
 .session-ask { flex: 1; font-size: 12.5px; color: var(--text); white-space: nowrap; }
 /* 两颗按钮里**只有「删掉」是危险的**：它们文案都很短、长得又一样，点错一次
-   东西就没了 —— 颜色是这里唯一还能区分的余地。 */
-.session-row.confirming .session-del:first-of-type { color: var(--danger); }
+   东西就没了 —— 颜色是这里唯一还能区分的余地。
+   ⚠️ **按类名找，不按 `:first-of-type`**（和 `.detail-confirm .detail-delete`
+   那条同一个规矩，理由在那边写着）。`first-of-type` 按**标签名**算：这一行里
+   第一个 `button` 兄弟是 `.session-open`（确认态只是 `display:none`，DOM 位置
+   还在），两个 `.session-del` 谁都匹配不上 —— 那样写出来的会是一条**死规则**，
+   两颗按钮长得一模一样，而测试按文字找、版面探针量尺寸，**没人会红**。
+   （2026-10-01 Task 6 评审抓到；现在这条规则由版面探针盯着：它量这两颗按钮的
+   计算颜色，一样就报失败。） */
+.session-del.danger { color: var(--danger); }
 
 /* 空态照作品页那两条（"两句拉开档次"的理由在那边写着，这里一样成立）。 */
 .sessions-empty {

@@ -124,7 +124,12 @@ export function SessionsPage({ onOpen, onNew }: {
               {confirming === s.id ? (
                 <>
                   <span className="session-ask">删掉这条？</span>
-                  <button className="session-del" onClick={() => void doDelete(s.id)}>删掉</button>
+                  {/* ⚠️ 「删掉」要自己的类（`danger`），**别靠 DOM 位置选**：
+                      它上面还有个 `display:none` 的 `.session-open`（还是第一个
+                      `button` 兄弟），`:first-of-type` 之类的选择器选不中它 ——
+                      选不中的后果是**它和「取消」长得一模一样**，而文案都短、
+                      点错一次东西就没了。见 styles.css 里那条 `.session-del.danger`。 */}
+                  <button className="session-del danger" onClick={() => void doDelete(s.id)}>删掉</button>
                   <button className="session-del" onClick={() => setConfirming(null)}>取消</button>
                 </>
               ) : (
