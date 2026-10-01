@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
+import { BtnLink } from './kit/Btn.tsx'
 import { getWork, renameWork, deleteWork, fullUrl } from '../api/works'
 import { workName, type WorkMeta, type WorkDetail } from '../../shared/works.ts'
 import { buildFilename } from '../export/save'
@@ -178,7 +179,7 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
 
             `download` 带值（M2）：不带值时浏览器按 URL 末段起名 —— 现在末段是
             `file`（还带 `?v=…`），下下来是个没有扩展名的文件。 */}
-        <a className="detail-download" href={fullUrl(work)} download={downloadName(work)}>下载到我的电脑</a>
+        <BtnLink className="detail-download" href={fullUrl(work)} download={downloadName(work)}>下载到我的电脑</BtnLink>
         {confirming ? (
           <span className="detail-confirm">
             <span>删掉作品集里的这一份吗？删了就找不回来了。</span>

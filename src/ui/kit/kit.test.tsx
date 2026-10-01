@@ -18,6 +18,7 @@ import { Slider as BaseSlider } from '@base-ui-components/react/slider'
 import { User } from 'lucide-react'
 import { Field, TextInput } from './Field.tsx'
 import { Slider } from './Slider.tsx'
+import { Btn, BtnLink } from './Btn.tsx'
 import ChatPanel from '../ChatPanel.tsx'
 import { LoginPage } from '../LoginPage.tsx'
 
@@ -137,6 +138,29 @@ describe('图标（2026-10-01 统一走 lucide）', () => {
     expect(jump.querySelector('svg')).toBeTruthy()
     expect(jump.textContent?.trim()).toBe('回到这一步')
     expect(jump.textContent).not.toContain('↶')
+  })
+})
+
+describe('<Btn> / <BtnLink>：主按钮只有一份长相', () => {
+  it('`<button>` 和 `<a>` 两种载体穿的是同一套；链接那种仍然带得动 download', async () => {
+    const c = await mount(
+      <div>
+        <Btn className="x">保存</Btn>
+        <BtnLink className="y" href="/file" download="a.jpg">下载到我的电脑</BtnLink>
+      </div>,
+    )
+    expect((c.querySelector('button') as HTMLElement).className).toContain('btn-primary')
+    const a = c.querySelector('a') as HTMLAnchorElement
+    expect(a.className).toContain('btn-primary')
+    // ⚠️ 各处的老类名必须原样留着 —— 它们是测试和 CSS 的锚点
+    expect(a.className).toContain('y')
+    expect(a.getAttribute('href')).toBe('/file')
+    expect(a.getAttribute('download')).toBe('a.jpg')
+  })
+
+  it('不写 `type` 时是 `button`，不是 `submit` —— 表单里那一下会把表单交上去', async () => {
+    const c = await mount(<Btn>取消</Btn>)
+    expect((c.querySelector('button') as HTMLButtonElement).type).toBe('button')
   })
 })
 

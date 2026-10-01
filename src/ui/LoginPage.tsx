@@ -3,6 +3,7 @@ import { Eye, EyeOff } from 'lucide-react'
 import { login, signup } from '../api/account'
 import logoMark from '../assets/logo/rose.svg'
 import { Field, TextInput } from './kit/Field.tsx'
+import { Btn } from './kit/Btn.tsx'
 import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../../shared/account.ts'
 import { NAME_REQUIRED, UNEXPECTED_FAILURE } from '../../shared/copy.ts'
 
@@ -321,9 +322,9 @@ export function LoginPage({ onDone }: Props) {
 
         {error && <p className="login-error">{error}</p>}
 
-        <button type="submit" className="login-submit" disabled={busy}>
+        <Btn type="submit" className="login-submit" disabled={busy}>
           {busy ? '稍等…' : mode === 'login' ? '登录' : '注册'}
-        </button>
+        </Btn>
 
         {/* 切换模式时清掉上一条错误：那一句说的是**另一种模式**下的事
             （"这个名字已经有人用了"在登录模式下毫无意义），留着会误导。

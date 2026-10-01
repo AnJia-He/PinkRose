@@ -318,27 +318,26 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
 /* ── 主按钮：全站一份长相 ──────────────────────────────────────────────
    浅粉底 + 近黑字 + 半粗，悬停深一档。
-   ⚠️ 下面这四个**载体不同、长相必须相同**：真正的 `<button class="primary">`；
-   保存失败横幅里那个 `<button class="download">`（那条横幅的主按钮，
-   类名是测试按结构找它的锚点，不能改）；登录页那颗提交钮；详情页那个
-   `<a class="detail-download">`（`download` 属性只有真链接带得动，
-   所以它只能是个 `<a>`，于是得手工穿上这套长相 —— "手工"正是要收进这里的原因）。
-   各处的**尺寸**（内边距、字号、占不占满一行）留在各自那条规则里：那是布局，不是长相。
-   ⚠️ 这一块必须写在 `button:where(:hover)` 那几条**后面**：通用规则的特异性
-   已经被 `:where()` 压成 0，这里才盖得住它。 */
-button.primary,
-.save-fail button.download,
-.login-submit,
-.detail-download {
+
+   ★ 2026-10-01：这份长相从"四个选择器的列表"搬进了**组件**
+   （`src/ui/kit/Btn.tsx` 的 `<Btn>` / `<BtnLink>`），这里只剩一个类名。
+   搬的理由是那条老约定**不会报错**：原来是"加一种新载体，记得把新选择器加进
+   下面那个列表"—— 漏加一处，屏幕上就多出两颗不一样的按钮，而 CSS 是静默的。
+   现在新加载体 import 那个组件，长相自己跟过来。
+
+   ⚠️ 各处的类名（`.login-submit` / `.detail-download` / `.download` / `.primary`）
+   **一个都没删**：它们是测试和 CSS 的锚点，只是不再承担"长相"。
+   各处的**尺寸**（内边距、字号、占不占满一行）也照旧留在各自那条规则里 ——
+   那是版面，不是长相。
+
+   ⚠️ `:hover:not(:disabled)` 里那个 `:not` 不是多余的：禁用的主按钮悬停时
+   不该变色（"看着能点、点下去什么都没发生"是这个项目最不喜欢的一种按钮，
+   见 `.bubble-rerun:disabled` 那段）。 */
+.btn-primary {
   background: var(--accent); border-color: var(--accent);
   color: var(--accent-ink); font-weight: 600;
 }
-button.primary:where(:hover):where(:not(:disabled)),
-.save-fail button.download:where(:hover),
-.login-submit:where(:hover):where(:not(:disabled)),
-.detail-download:hover {
-  background: var(--rose-500); border-color: var(--rose-500);
-}
+.btn-primary:hover:not(:disabled) { background: var(--rose-500); border-color: var(--rose-500); }
 
 /* 画布那一格。它同时是"还没选图"时的空舞台。
    ⚠️ 底色不是纯平的 --bg：这里铺一层很淡的**白光**（照片四周于是有了层次），
@@ -1061,16 +1060,15 @@ button.primary:where(:hover):where(:not(:disabled)),
   display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
   margin-top: var(--sp-4);
 }
-/* 「下载到我的电脑」是个 <a>（`download` 属性只有真链接才带得动），
-   所以按 button.primary 的样子手工上一套主色 —— 连悬停和按下也要，
-   否则这一页上它和旁边那些 <button> 的手感是两回事。 */
+/* 「下载到我的电脑」是个 <a>（`download` 属性只有真链接才带得动）。
+   主按钮那套长相现在由**组件**带过来（`<BtnLink>` 会拼上 `btn-primary`），
+   这里只剩"它是个链接"这一件事：去掉下划线、当块级排、给尺寸。
+   （原来这里手抄了一整份底色/字色/悬停 —— 那正是"抄出来的几份会漂"的那一份。） */
 .detail-download {
-  display: inline-block; text-decoration: none; font-weight: 600;
-  background: var(--accent); color: var(--accent-ink);
+  display: inline-block; text-decoration: none;
   border-radius: var(--r-sm); padding: 8px 16px;
   transition: background-color var(--dur-1) ease;
 }
-.detail-download:hover { background: var(--rose-500); }
 /* 删除确认**就地说**，不弹窗：一句"删了就找不回来了" + 两个按钮。
    ⚠️ 里面**不许**出现"你电脑上那份还在"这类安慰 —— 服务器不可能知道
    用户本地有没有那张图（§3.5）。样式上它是一句话加两个按钮，不是一整屏。

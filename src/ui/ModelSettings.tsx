@@ -8,6 +8,7 @@ import {
   type ModelKind, type ProbeTarget, type ProbeResult, type PublicConfig,
 } from '../api/models'
 import { Field, TextInput } from './kit/Field.tsx'
+import { Btn } from './kit/Btn.tsx'
 
 /**
  * 模型设置（§7.4）。**这一页是"限制"那件事的门面**，不是能力展示 ——
@@ -479,9 +480,9 @@ function ModelForm({
       {error && <p className="models-error">{error}</p>}
 
       <div className="models-form-actions">
-        <button type="submit" className="primary" disabled={saving}>
+        <Btn type="submit" className="primary" disabled={saving}>
           {saving ? '正在存…' : '保存'}
-        </button>
+        </Btn>
         <button type="button" onClick={onCancel} disabled={saving}>取消</button>
       </div>
     </form>

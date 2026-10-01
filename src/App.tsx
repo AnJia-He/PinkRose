@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { User } from 'lucide-react'
+import { Btn } from './ui/kit/Btn.tsx'
 import Canvas from './ui/Canvas'
 import Uploader from './ui/Uploader'
 import AdjustmentPanel from './ui/AdjustmentPanel'
@@ -1050,13 +1051,13 @@ export default function App() {
                     两条路都给同一个东西（用户修好的那张图），所以它们是**同一格
                     的两种长相**，不是两个按钮。 */}
                 {canShare ? (
-                  <button className="primary" onClick={() => onShare()} disabled={delivering !== null}>
+                  <Btn className="primary" onClick={() => onShare()} disabled={delivering !== null}>
                     {delivering === 'share' ? '准备中…' : '分享'}
-                  </button>
+                  </Btn>
                 ) : (
-                  <button className="primary" onClick={onDownload} disabled={delivering !== null}>
+                  <Btn className="primary" onClick={onDownload} disabled={delivering !== null}>
                     {delivering === 'download' ? '准备中…' : '下载'}
-                  </button>
+                  </Btn>
                 )}
                 {/* 「保存」= 存进作品集（§3.4）—— 它不再下载，所以走的是 `onSave`。 */}
                 <button onClick={onSave} disabled={delivering !== null}>
@@ -1136,7 +1137,7 @@ export default function App() {
                   比「没存进去」有用得多。存了这个字段却从不显示，等于白存。 */}
               <p className="save-fail-why">{saveFail.why}</p>
               {saveFail.blob && (
-                <button
+                <Btn
                   className="download"
                   // ⚠️ 这个 `!` 是**结构上**安全的，不是"我保证"：它上面那行
                   //    `{saveFail.blob &&` 已经把 false 那一支挡掉了，能渲染到这里
@@ -1146,7 +1147,7 @@ export default function App() {
                   onClick={() => downloadImage(saveFail.blob!, saveFail.name)}
                 >
                   下载到电脑
-                </button>
+                </Btn>
               )}
               <button onClick={() => setSaveFail(null)}>知道了</button>
             </div>
