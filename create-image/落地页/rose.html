@@ -29,7 +29,7 @@
      · 缩小版（花瓣减到三层不满、笔画加粗）—— 32px 以下用
    ═══════════════════════════════════════════════════════════════════ */
 :root{ --ink:#0d0e11; --paper:#f7f6f4; --line:#e4e2dd; --ink2:#45494f; --ink3:#8d9198;
-       --p0:#fdeaf0; --p1:#f8cfdb; --p2:#f0a8bd; --p3:#dc7f9f; --p4:#bc587d; --leaf:#7f9c79; }
+       --p0:#fbe4ec; --p1:#f2b9cc; --p2:#e78ea9; --p3:#d0668a; --p4:#a8466a; --leaf:#6f8c6a; }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
   background:var(--paper);color:var(--ink);font-weight:380;font-size:16px;line-height:1.75;
@@ -114,8 +114,8 @@ const V = '0 0 100 100';
 const S = (inner, w) => `<svg width="${w}" height="${w}" viewBox="${V}">${inner}</svg>`;
 let uid = 0;
 
-const P0='#fdeaf0', P1='#f8cfdb', P2='#f0a8bd', P3='#dc7f9f', P4='#bc587d';
-const LEAF='#7f9c79', LEAFD='#5c7a59';
+const P0='#fbe4ec', P1='#f2b9cc', P2='#e78ea9', P3='#d0668a', P4='#a8466a';
+const LEAF='#6f8c6a', LEAFD='#4e6b4b';
 
 /* 一片花瓣：根在原点，往外长。 */
 function petalPath(len, wid) {
@@ -222,8 +222,8 @@ document.getElementById('mono').innerHTML = `
     <div class="lb"><b>单色 · 小</b>缩小时把缝放宽（0.94 → 0.86）。这一版到 18px 还认得出</div></div>`;
 
 document.getElementById('pal').innerHTML =
-  [['#fdeaf0', P0, '辉光'], ['#f8cfdb', P1, '外圈'], ['#f0a8bd', P2, '中圈'],
-   ['#dc7f9f', P3, '内圈'], ['#bc587d', P4, '花心'], ['#7f9c79', LEAF, '叶']]
+  [['#fbe4ec', P0, '辉光'], ['#f2b9cc', P1, '外圈'], ['#e78ea9', P2, '中圈'],
+   ['#d0668a', P3, '内圈'], ['#a8466a', P4, '花心'], ['#6f8c6a', LEAF, '叶']]
    .map(([c, , name]) => `<div style="background:${c};color:${c === P0 || c === P1 ? '#8a6a75' : '#fff'}">${name}<br>${c}</div>`).join('');
 
 const BUB = 'M21 15 H79 A14 14 0 0 1 93 29 V55 A14 14 0 0 1 79 69 H50 L28 87 L33 69 ' +
