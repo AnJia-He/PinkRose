@@ -199,6 +199,28 @@ export default function App() {
    *   而且比 ref 少一个概念（一个真值来源，不是两个）。
    */
   const [sessionId, setSessionId] = useState<number | null>(null)
+  /**
+   * `sessionId` 的**影子**（ref 版）。它存在的理由只有一个：落盘那一趟是
+   * **异步**的，它回来时要问"我**现在**还是不是当时那条会话"。state 在异步
+   * 闭包里读到的是**发出去时**的值（永远是"是"），而这件事要的是"**回来时**"
+   * 的答案（2026-10-01 评审抓到的：切会话之后上一条的应答才回来，会把
+   * `lastPersistedBaseSeqRef` 拨回去 —— 见落盘里那一行）。
+   *
+   * ⚠️ 它**不是** state 的替代：上面那段说的"必须是 state"照旧成立。它只是
+   *   一个只读给异步代码看的影子。
+   */
+  const sessionIdRef = useRef<number | null>(null)
+  /**
+   * 切会话**唯一**该走的那道门：state 和影子**在同一个函数里**一起改。
+   *
+   * ⚠️ 别改成 `useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])`
+   *   去追 —— "渲染过了、effect 还没跑"那个窗口里影子还是旧值，而落盘的应答
+   *   完全可能落在这个窗口里，那正是这个影子要堵的洞。
+   */
+  const setCurrentSession = useCallback((id: number | null) => {
+    sessionIdRef.current = id
+    setSessionId(id)
+  }, [])
   /** 非 null = 正在问"上次那张要替换掉吗"，手里攥着刚做好的那张图。
    *
    *  ⚠️ **配方是"问的那一刻"那一份，不是回答那一刻的**（终审 M4）。`blob` 是
@@ -596,7 +618,10 @@ export default function App() {
       setImage(lastStep.base)
       setParams(lastStep.params)
       setMessages(detail.messages)
-      setSessionId(detail.id)
+      // ★ 走 `setCurrentSession` 那道门（影子和 state 一起改，见它的注释）——
+      // 这行在 'open' 那趟里改的正是"现在人站在哪条会话上"，而落盘的应答
+      // 回来时要拿那个影子比对。
+      setCurrentSession(detail.id)
       // 上一条照片那些**临时**状态跟着一起清（和 `onPick` 里换图时清的是同一批，
       // 同一个道理）：点选流程、"替换上次那张"的问句。不清的话，红圈会钉在
       // **另一张照片**上，而「就改这里」会拿旧标记 + 旧那句话花掉一次生成的钱。
@@ -664,7 +689,7 @@ export default function App() {
     } finally {
       if (why === 'open') setBusy(null)
     }
-  }, [flushPersist, noticeBad])
+  }, [flushPersist, noticeBad, setCurrentSession])
 
   /**
    * 打开页面之后，把"上次那条会话"接回来（spec §6.2）。
@@ -994,11 +1019,11 @@ export default function App() {
       //   `lastPersistedBaseSeqRef`（否则第一趟落盘会重传一遍全尺寸底图）。
       //   摆在 `++` 前面的话捕到的是**上一版**，记进去等于没记。
       //
-      // ⚠️ `setSessionId(null)` 这一行是**给同一趟里再换一张照片**留的保险：
+      // ⚠️ `setCurrentSession(null)` 这一行是**给同一趟里再换一张照片**留的保险：
       //   上一张的 id 还留着的话，落盘副作用会把**这一张**的步骤和消息写进
       //   **上一条会话**里 —— 串会话，而且不报错。（今天应用里没有"换一张"的
       //   入口 —— 换图 = 重开一次，所以这一行到不了；一行保险，留着。）
-      setSessionId(null)
+      setCurrentSession(null)
       void (async () => {
         try {
           // ⚠️ **在 await 之前**捕这一版底图：服务端手里那份 `base` 就是它
@@ -1014,7 +1039,7 @@ export default function App() {
           // ⚠️ 只在**这张照片还是当前那张**时才认这个 id：
           //   用户可能在等的时候又换了一张（那会让这个 id 变成上一条会话的）
           if (originalFileRef.current === file) {
-            setSessionId(id)
+            setCurrentSession(id)
             // ★ 建会话送上去的那张图，服务端已经当 `original` + `base` 存了一份
             //   —— 记一笔，第一趟落盘就不用**再传一遍全尺寸底图**（连缩略图）。
             //   不记的话：服务端每收一个 `base` 都存成**新文件**，每条会话会白白
@@ -1035,7 +1060,7 @@ export default function App() {
       //   `pickSeqRef > pickSettledSeqRef`（见 `pickSettledSeqRef` 那段）。
       pickSettledSeqRef.current++
     }
-  }, [history, say, loadCards])
+  }, [history, say, loadCards, setCurrentSession])
 
   /**
    * 「新的一张」—— 回到"选一张照片"那一屏（§6.4，Task 6）。
@@ -1069,16 +1094,16 @@ export default function App() {
     setSavedId(null)
     // ⚠️ 归零 = "这一趟还没挂到服务端上"（下一次上传会建一条新的）。不归零的话，
     //   落盘那个 effect 会带着**新照片**的消息和步骤去写**上一条**会话。
-    //   （同一趟里再换一张照片那条路也有这道保险 —— 见 onPick 里 `setSessionId(null)`
+    //   （同一趟里再换一张照片那条路也有这道保险 —— 见 onPick 里 `setCurrentSession(null)`
     //    那一段；这里从另一头把它做成了正经入口。）
-    setSessionId(null)
+    setCurrentSession(null)
     // 上一条照片那些**临时**状态：点选流程、"上次那张要替换掉吗"、原图预览。
     // 留着的话红圈会钉在下一张照片上，而「替换」问的是上一张存过的那条作品。
     setPending(null)
     setAsking(null)
     setOriginalPreview(null)
     originalFileRef.current = null
-  }, [busy, flushPersist, history])
+  }, [busy, flushPersist, history, setCurrentSession])
 
   const send = useCallback(async (text: string) => {
     const canvas = canvasElRef.current
@@ -1572,7 +1597,20 @@ export default function App() {
           await updateSession(sessionId, patch)
           // ⑤：**写成功之后**才记下"这一版底图存过了" —— 记的是**这一趟送出去的
           //   那版**（`sending`），不是"回来时的当前版"（理由见上面 `sending`）。
-          if (changed) lastPersistedBaseSeqRef.current = sending
+          //
+          // ★ 但这句只在"**我回来时还是当时那条会话**"时才算数（`sessionId` 是
+          //   这一趟闭包里那条，`sessionIdRef` 是**回来时**人站的那条）：
+          //   切走之后才回来的应答，`loadSession` 已经替新会话把记号对齐过了
+          //   （见它那批状态写里的 `lastPersistedBaseSeqRef`）—— 这时候再按
+          //   上一条的版本号拨回去，新会话的下一次落盘就会**重传一整张服务端
+          //   手里已经有的底图**（外加一次缩略图重做、还让服务端把好好的缩略图
+          //   删了重存）。切走那趟的 `flushPersist` 让这条时序从"几乎撞不上"
+          //   变成常事（2026-10-01 评审抓到的）。
+          //   ⚠️ 用 `sessionIdRef`（回来时的）不是 `sessionId`（发出去时的）——
+          //   后者永远等于自己，这个判据就没了。
+          if (changed && sessionIdRef.current === sessionId) {
+            lastPersistedBaseSeqRef.current = sending
+          }
         } catch (e) {
           // 只认**最新**那一次失败 —— 早先那几次可能已经被后一次覆盖掉了，
           // 那时候弹"没存下来"是在说一件已经不成立的事

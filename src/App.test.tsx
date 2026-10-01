@@ -3713,6 +3713,74 @@ describe('恢复：打开就接着上次那条', () => {
     expect(putCalls('/api/sessions/7')).toHaveLength(1)
   })
 
+  it('★★ 切走之后 A 那趟落盘才回来 —— 记号不许被拨回去（B 的下一次落盘不许重传底图）', async () => {
+    // 2026-10-01 评审抓到的 Minor：`if (changed) lastPersistedBaseSeqRef.current = sending`
+    // 这句原来没有"我回来时还是不是当时那条"的判据。而**切走前 flush**（同一轮加的）
+    // 让"A 的应答在切走之后才回来"从"几乎撞不上"变成常事：A 的应答把记号拨回 A 的
+    // 版本号 → B 的下一次落盘以为底图换了 → **重传一整张服务端手里已经有的底图**
+    // （外加一次缩略图重做 + 服务端把好好的缩略图删了重存，§4.3 那条的落点）。
+    // 不丢数据、不错内容 —— 纯粹白花流量、多存一份没人引用的文件。
+    const nine = { ...makeSession(9, 1, 'S9-用户说的', 'S9'), originalName: '九号.jpg' }
+    const seven = { ...makeSession(7, 1, 'S7-用户说的', 'S7'), originalName: '七号.jpg' }
+    withSessions([seven, nine])
+
+    // 挂住**打给 A 的 PUT 应答**：请求照常发出去（服务端那边已经存了），只是不回来
+    const gateA = makeGate()
+    const inner = fetchMock.getMockImplementation()!
+    let holdA = false
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (holdA && url === '/api/sessions/9' && (init?.method ?? 'GET') === 'PUT') await gateA.promise
+      return inner(url, init)
+    })
+
+    await renderApp()
+    expect(bubbleTexts()).toContain('S9-用户说的')
+
+    // 在 A 里**换一次底图**（生成式编辑）—— 只有 `changed === true` 的那一趟
+    // 才写得到那个记号；"改一句话"那种（changed=false）根本写不到它，钉不住这个洞。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉路人' }))
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+    holdA = true
+    await say('把后面那个人去掉')
+    await waitPersist()          // 这一趟发出去的是**底图**（应答被挂住）
+    const putsA = putCalls('/api/sessions/9')
+    expect(putsA.some(c => bodyOf(c).base !== undefined)).toBe(true)
+
+    // 切到 B —— 这一趟 `loadSession` 会替 B 把记号对齐
+    await goNav('对话')
+    const row = [...container.querySelectorAll('.session-row')].find(
+      r => (r.textContent ?? '').includes('七号'))
+    expect(row).toBeTruthy()
+    await act(async () => {
+      ;(row!.querySelector('.session-open') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await waitPersist()
+    expect(bubbleTexts()).toContain('S7-用户说的')
+    const putsBSoFar = putCalls('/api/sessions/7').length
+
+    // 放 A 那趟的应答回来 —— **人已经站在 B 上了**
+    await act(async () => { gateA.open(); await new Promise(r => setTimeout(r, 10)) })
+
+    // 在 B 里说一句 → B 的下一次落盘。B 的底图**没换过**，这趟不许带 `base`
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({ reply: '好。' }))
+    await say('B 里说一句')
+    await waitPersist()
+
+    const putsB = putCalls('/api/sessions/7').slice(putsBSoFar)
+    expect(putsB.length).toBeGreaterThan(0)
+    for (const c of putsB) {
+      const body = bodyOf(c)
+      // ★ 变异：把守卫拿掉（回到 `if (changed) ...`）→ 这里红
+      //   （body.base 是一整张 data URL，body.thumb 也跟着在）。
+      expect(body.base).toBeUndefined()
+      expect(body.thumb).toBeUndefined()
+    }
+  })
+
   it('★ 「新的一张」回到选照片那一屏 —— 下一张会开**新的**一条，不写回旧的那条', async () => {
     // §6.4：顶栏那颗「新的一张」= "我再改一张"。它**不删**当前这条会话
     // （那条已经在服务端上存着了），只是回到上传前那一屏。

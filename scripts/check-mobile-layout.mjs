@@ -893,7 +893,12 @@ async function measureSessions(page) {
     const thumbs = [...document.querySelectorAll('.session-thumb')]
     const name = document.querySelector('.session-name')
     const ask = document.querySelector('.session-ask')
-    const dels = [...document.querySelectorAll('.session-row .session-del')]
+    // ★ 量的是**正在确认的那一行**里的按钮，不是整页的 `.session-del`
+    //   （2026-10-01 评审抓到的第二个洞：原来挑的是整页，页上一旦有两行，
+    //   `dels.length` 就不是 2，下面那条颜色判据会**静默跳过** ——
+    //   看起来在守，其实没守）。
+    const confirming = document.querySelector('.session-row.confirming')
+    const dels = confirming ? [...confirming.querySelectorAll('.session-del')] : []
     return {
       onPage: !!document.querySelector('.sessions'),
       nav: [...document.querySelectorAll('.nav button')].map(b => b.textContent.trim()),
@@ -914,13 +919,18 @@ async function measureSessions(page) {
       askBox: box(ask),
       dels: dels.map(b => b.textContent.trim()),
       delBoxes: dels.map(b => box(b)),
-      // ★ 确认态那两颗按钮的**颜色**（2026-10-01 评审后加）：「删掉」和「取消」
-      //   只差一个字，点错一次东西就没了 —— 颜色是它们唯一的区别。
-      //   ⚠️ 这条判据是**补一个当时没人看见的洞**：那会儿 `judgeSessions` 只量几何，
-      //   于是 "`.session-del:first-of-type` 选不中任何东西（第一个 button 兄弟是
-      //   `display:none` 的 `.session-open`）、两颗按钮一个色" 这件事，
-      //   探针全绿、测试和 typecheck 也全绿。
+      // ★ 确认态那两颗按钮的**颜色**（2026-10-01 加，同日评审后重做）：
+      //   「删掉」和「取消」只差一个字，点错一次东西就没了 —— 颜色是它们唯一的区别。
+      //   ⚠️ 第一版有**两个洞**（评审拆出来的，都补了）：
+      //     ① 量到的是**悬停态**：驱动那边刚点过「删除」，鼠标就停在原地 ——
+      //        而确认态里最右边那颗是「取消」。悬停态两颗颜色天生不同，
+      //        于是"把修复撤掉"它照样绿（对**原始那份 CSS** 跑也是绿的）。
+      //        现在驱动先 `mouse.move(0, 0)`，这里另外把"量到的按钮正被悬停"
+      //        报成失败（`delHovered`）—— 悬停态不算数。
+      //     ② 挑的是整页的 `.session-del`，页上一有两行条数就不是 2，
+      //        判据会静默跳过。现在只挑**正在确认那一行**的（见上面 `dels`）。
       delColors: dels.map(b => getComputedStyle(b).color),
+      delHovered: dels.map(b => b.matches(':hover')),
       scrollW: document.documentElement.scrollWidth,
       clientW: document.documentElement.clientWidth,
     }
@@ -1036,8 +1046,24 @@ function judgeSessions(label, m, view, mode) {
     //   「删掉」和「取消」一个色。当时探针只量几何（都在视口里 ✔）、
     //   测试按**文字**找按钮（也 ✔）、typecheck 更是看不见 CSS 的死活，
     //   于是它安安静静烂在那儿，直到人用眼睛看了一遍才发现。
-    //   现在选择器按类名（`.session-del.danger`），颜色也进了判据。
-    if (m.dels.length === 2 && m.delColors[0] === m.delColors[1]) {
+    //
+    //   ⚠️⚠️ 同一天的评审把这条判据**又拆了一遍** —— 第一版会**静默跳过**
+    //   （挑的是整页的 `.session-del`，页上多一行就不是 2 颗）、而且量到的是
+    //   **悬停态**（鼠标点完「删除」停在原位，确认态里那个位置是「取消」）——
+    //   悬停态两颗天生不同色，于是"把修复撤掉"它照样绿。所以下面先钉住
+    //   "这一行里就是那两颗、名字对得上、而且没被悬停"，再比颜色：
+    //   **每一步不成立都报失败，不跳过**。
+    const wantDels = ['删掉', '取消']
+    if (m.dels.length !== 2 || m.dels[0] !== wantDels[0] || m.dels[1] !== wantDels[1]) {
+      fails.push(`${label}：确认态那一行应该有「删掉」「取消」两颗按钮，实际读到 ` +
+        `${m.dels.length} 颗${m.dels.length ? `（${m.dels.join(' / ')}）` : ''} —— ` +
+        '挑不到它们，下面的颜色判据就是在空气上比（第一版还会**静默跳过**：' +
+        '它只比"两颗颜色一样不一样"，挑不到就什么都不说）。')
+    } else if (m.delHovered.some(Boolean)) {
+      fails.push(`${label}：量那两颗按钮颜色的时候，鼠标**还停在按钮上**（读到的是悬停态）—— ` +
+        '悬停态两颗颜色天生不同，拿它当判据等于没量。驱动按完「删除」要先 ' +
+        '`page.mouse.move(0, 0)` 把指针挪开再量。')
+    } else if (m.delColors[0] === m.delColors[1]) {
       fails.push(`${label}：确认态那两颗按钮**是同一个颜色**（${m.delColors[0]}）——` +
         '「删掉」和「取消」只差一个字，颜色再一样就等于没标出哪颗是危险的那个。' +
         '（多半是选择器又按位置挑了：`.session-open` 虽然 `display:none`，' +
@@ -1243,6 +1269,10 @@ try {
       //   而 390px 上那一行本来就已经是最挤的一处。
       await page.locator('.session-row .session-del').first().click()
       await page.waitForSelector('.session-ask', { timeout: 5_000 })
+      // ★ 量之前**把指针挪开**（2026-10-01 评审）：刚点的「删除」在常态里是最右边那颗，
+      //   而确认态里最右边变成了「取消」—— 不挪的话量到的是**悬停态**，
+      //   而悬停态两颗天生不同色，"修复被撤掉"这件事就永远量不出来（探针会绿地骗人）。
+      await page.mouse.move(0, 0)
       await page.waitForTimeout(200)
       judgeSessions(`${view.name} · 对话页（正在问"删掉这条？"）`,
         await measureSessions(page), view, 'confirm')
