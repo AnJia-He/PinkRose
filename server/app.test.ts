@@ -1300,16 +1300,23 @@ describe('会话接口', () => {
     const a1 = (await call(base, 'POST', '/api/sessions', { image: JPEG, name: '甲.jpg' }, cookieA))
     const a2 = (await call(base, 'POST', '/api/sessions', { image: JPEG, name: '乙.jpg' }, cookieA))
     await call(base, 'POST', '/api/sessions', { image: JPEG, name: '别人的.jpg' }, cookieB)
-    // 动一下先建的那条，把它顶到最前面 —— 排序才真的被断言到
-    const idA1 = (a1.body as { id: number }).id
-    await call(base, 'PUT', `/api/sessions/${idA1}`, { title: '刚改过' }, cookieA)
+    // ★ 动的是**后建**的那一条（乙），于是"时间倒序"和"编号正序"给出**相反**的答案：
+    //     id 序是 [甲, 乙]，时间序是 [乙, 甲]。原来动的是先建那条，两者恰好一致 ——
+    //     `ORDER BY id`（或者干脆没有 `ORDER BY`）的实现在那条断言上**照样绿**，
+    //     "倒序"那两个字其实没有在被问。
+    // ⚠️ 光 `await` 不保证时钟往前走（同一毫秒内两次调用是常事），所以显式等一格 ——
+    //     否则 PUT 和建会话可能落在同一个毫秒上，这条会**偶发地红**。
+    await new Promise(r => setTimeout(r, 5))
+    const idA2 = (a2.body as { id: number }).id
+    await call(base, 'PUT', `/api/sessions/${idA2}`, { title: '刚改过' }, cookieA)
 
     const list = await call(base, 'GET', '/api/sessions', undefined, cookieA)
     const rows = (list.body as { sessions: {
       id: number; title: string | null; originalName: string | null; stepCount: number
     }[] }).sessions
-    expect(rows.map(r => r.id)).toEqual([idA1, (a2.body as { id: number }).id])  // 倒序 + 只有自己的
-    expect(rows[0]!.originalName).toBe('甲.jpg')
+    // 时间倒序 = [刚动过的乙, 甲]；编号正序会是 [甲, 乙] —— 两者不同，才问得动排序
+    expect(rows.map(r => r.id)).toEqual([idA2, (a1.body as { id: number }).id])
+    expect(rows[0]!.originalName).toBe('乙.jpg')
     expect(rows.every(r => r.stepCount === 0)).toBe(true)
 
     // ⚠️ Global Constraints 那句"`stored_name` 这类硬盘上的文件名永远不许出门"。
@@ -1418,5 +1425,96 @@ describe('会话接口', () => {
     expect(del.status).toBe(200)
     expect(del.body).toEqual({ ok: true })
     expect((await call(base, 'GET', `/api/sessions/${id}`, undefined, cookieA)).status).toBe(404)
+  })
+
+  it('★★ 改一次 → updated_at 必须往前走（缩略图的缓存钥匙靠它），而且**真的落库**了', async () => {
+    // ★ 这条是 Task 2 评审后补的，形状照 `works.test.ts` 那条
+    //   「★★ 替换真的把 updated_at **写进库**了」抄 —— 同一类 bug、同一条理由：
+    //   `updated_at` 不只是"上次改的时间"，**它同时是缩略图 URL 的版本号**
+    //   （`handleUpdateSession` 上面那段注释说的就是这个）。忘了 bump 不会报错、
+    //   不会 4xx、日志里什么都没有 —— 用户只是**静默地**一直看到 `immutable`
+    //   缓存里那张旧缩略图，直到缓存过期为止。
+    //
+    // ⚠️ 和作品那条一样：`handleUpdateSession` 回给你的那个 `updatedAt` 是**内存里
+    //    拼的**（`toMeta({ ...row, updated_at: t })`），不是从库里读回来的 ——
+    //    所以**光断言响应**挡不住"UPDATE 里根本没写 updated_at"的实现（它照样绿）；
+    //    库里那一行才是 `?v=` 真正吃进去的那一份，必须单独钉。
+    const { base, auth, cookieA } = await twoUsers()
+    const made = await call(base, 'POST', '/api/sessions', { image: JPEG }, cookieA)
+    const id = (made.body as { id: number }).id
+    // 读的是**列表接口**（它每次都从库里读），不是 PUT 的返回值 —— 免得自己骗自己
+    const at = async () => {
+      const l = await call(base, 'GET', '/api/sessions', undefined, cookieA)
+      return (l.body as { sessions: { id: number; updatedAt: number }[] })
+        .sessions.find(s => s.id === id)!.updatedAt
+    }
+    const t0 = await at()
+    // ⚠️ 光 `await` 不保证时钟往前走（同一毫秒内两次调用是常事），所以显式等一格 ——
+    //    否则这条测试会**偶发地红**，比没有更糟。
+    await new Promise(r => setTimeout(r, 5))
+    const put = await call(base, 'PUT', `/api/sessions/${id}`, { title: '改过了' }, cookieA)
+    const t1 = await at()
+    expect(t1).toBeGreaterThan(t0)                                  // ★ 列表上那个数往前走了
+    // ★ 落库那一半：库里那一行必须**就是**列表给你的那个数（响应好看不算数）。
+    //   变异（实测过）：删掉 UPDATE 里的 `updated_at = ?` → 上面第一句就红（列表读的是库）；
+    //   而**只断言 PUT 响应**的那一版在这个变异下**照样绿**（works 那条「★★ 替换真的把
+    //   updated_at 写进库了」说的就是这件事）—— 所以下面这两句是必须的，不是啰嗦。
+    const row = auth.db.raw.prepare('SELECT updated_at FROM sessions WHERE id = ?')
+      .get(id) as { updated_at: number }
+    expect(row.updated_at).toBe(t1)                                 // ★ 库里的数 = 列表给的那个
+    expect((put.body as { updatedAt: number }).updatedAt).toBe(t1)  // 响应 = 库，两个方向都对上
+  })
+
+  it('★ 多一截的路径必须 404 —— 三条路由正则的**锚定**终于有人在守', async () => {
+    // ★ 和作品那条「多一截的路径必须 404（终审 I2）」同一个形状。锚定是 Global
+    //   Constraints 里的一条（`/api/works/1/file/../../etc` 那件事），而**把
+    //   app.ts 里会话这三个 `^…$` 全去掉，原来的套件一条都不会红** ——
+    //   会话这边此前没有任何用例问过"多一截会怎样"。
+    //
+    // ⚠️ 那条 `..` 路径在这里同样**不能用**：`fetch` 在发出之前就把 `/file/../../etc`
+    //   归一化掉了，请求根本走不到正则跟前（作品那边踩过这个坑）—— 真正抓锚定的
+    //   是下面这些"多一截"的路径。
+    //
+    // ⚠️ **必须先真的建一条会话、并先证明它取得回来。** 库里没有这条时，下面几条
+    //   本来也会 404（"没有这条会话"），不锚定的实现在这条用例上照样绿 ——
+    //   有会话、有步骤，才有"200 + 把图给出去"那条岔路可走。
+    const { base, cookieA } = await twoUsers()
+    const mine = await call(base, 'POST', '/api/sessions', { image: JPEG }, cookieA)
+    const id = (mine.body as { id: number }).id
+    // 放一步进去：`/file/step/1/x` 那句要咬住的是**内层** `step\/(\d+)` 的锚定，
+    // 没有第 1 步时它两种实现都 404（"没有这一步"），咬不动。
+    await call(base, 'PUT', `/api/sessions/${id}`, {
+      steps: [{ id: 1, label: '调色', params: {}, at: 1 }],
+    }, cookieA)
+
+    // 正面对照：这些路径真的通（否则下面一片 404 全是"本来就没有"）
+    expect((await call(base, 'GET', `/api/sessions/${id}`, undefined, cookieA)).status).toBe(200)
+    expect((await fetch(`${base}/api/sessions/${id}/file/base`, { headers: { cookie: cookieA } })).status)
+      .toBe(200)
+    expect((await fetch(`${base}/api/sessions/${id}/file/step/1`, { headers: { cookie: cookieA } })).status)
+      .toBe(200)
+
+    // 变异（三条都实测过；Vitest 只报第一条失败的断言）：
+    //   · 只去掉 `sessionFileRoute` 的 `^…$` → **第 3 句**（`/file/step/1/x`）先红，
+    //     而且回的是 200 + 图片字节 —— 内层 `step\/(\d+)` 锚不住了，匹配到 `step/1`
+    //     就收工。但 `/file/`、`/file/x` 两句**照样绿**：外层那三个并列词还得出
+    //     现一个才匹配得上，"完不完整"它管不着（所以这两句用的是 `call`，
+    //     它们永远走 JSON）。
+    //   · 只去掉 `sessionThumbRoute` 的     → 前两句绿、`/thumb/x` 先红
+    //     （这条会话没存过 thumb，兜底回原图 → 200 + 那张图）。
+    //   · 只去掉 `sessionOneRoute` 的       → **第 1 句就红**：它最宽松，而它在
+    //     app.ts 里排在最后，`/file/`、`/thumb/x`、`/x` 全被它抢走，回的是详情
+    //     JSON —— 这就是"静默抢走"的样子，也正是以后往 `/api/sessions/:id` 底下
+    //     加子路由（比如会话历史 `/messages`）时会撞上的事。
+    expect((await call(base, 'GET', `/api/sessions/${id}/file/`, undefined, cookieA)).status).toBe(404)
+    expect((await call(base, 'GET', `/api/sessions/${id}/file/x`, undefined, cookieA)).status).toBe(404)
+    // ⚠️ 下面这两句用裸 fetch：正则失守时它们回的是**图片字节**（200），用 `call`
+    //    会先炸在 `r.json()` 上（报 SyntaxError，看不出"本该 404"）—— 裸 fetch 才让
+    //    失败信息读作干干净净的 `expected 200 to be 404`。
+    const cutStep = await fetch(`${base}/api/sessions/${id}/file/step/1/x`, { headers: { cookie: cookieA } })
+    expect(cutStep.status).toBe(404)
+    const cutThumb = await fetch(`${base}/api/sessions/${id}/thumb/x`, { headers: { cookie: cookieA } })
+    expect(cutThumb.status).toBe(404)
+    expect((await call(base, 'GET', `/api/sessions/${id}/x`, undefined, cookieA)).status).toBe(404)
   })
 })
