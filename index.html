@@ -3,6 +3,37 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- ★ 2026-10-01 补的两样（App 补深色模式那天）。
+         `color-scheme`：告诉浏览器"这份文档两种模式都认"，于是**在 CSS 还没
+         下载完的那一下**不会先闪一帧白底（深色模式下那一帧很扎眼）。
+         `theme-color`：手机浏览器地址栏/状态栏那一圈的颜色。**必须带 media** ——
+         一个值只能对应一种模式（MDN 上写明 `media` 匹配时那条才生效）。
+         ⚠️ 这两个值跟的是 **App** 的底色（浅 #f7ddf6 / 深 #170b16）。落地页浅色
+         那档和它**同一个值**；深色那档（#241223）比它亮一档 —— 差得不多，
+         地址栏和页面之间看不出接缝，所以没为它单开一套。 -->
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f7ddf6" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#170b16" media="(prefers-color-scheme: dark)" />
+
+    <!-- ★ 2026-10-01 补：标题和简介**写死在 HTML 里**，不再只靠 JS 注入。
+        为什么：`src/main.tsx` 是纯客户端渲染（`createRoot().render()`），
+        服务端返回的 HTML 里正文是 0 个字 —— 而**社交软件的抓取器、各家 AI
+        爬虫（GPTBot / ClaudeBot / PerplexityBot / Bytespider）全都不执行 JS**，
+        它们看到的就是一张白纸。标签写在这儿，它们至少读得到这一页是什么。
+        ⚠️ 正文那 555 个字仍然是 JS 跑完才有的 —— 那件事要**预渲染**才能解，
+        比补标签大得多，还没做（见 docs 里的调研结论）。
+        ⚠️ `og:url` 和 `og:image` 按规范必须是**绝对网址**，而这台机器上
+        现在还没有一个正式域名（`server/` 只听 127.0.0.1）—— 等域名定了再补，
+        别填一个假的进去。`og:image` 还需要一张**网址不带哈希**的封面图
+        （Vite 给打包资源加的哈希每次都变），所以那一步要放到 `public/`。 -->
+    <title>RuiXing —— 说句话，照片就修好了</title>
+    <meta name="description" content="上传一张照片，说句话就能改：「天空再蓝一点」「后面那个人去掉」。不用装软件，打开就能用。调色在你自己手机里算，要动结构的那一步才联网。" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="RuiXing" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:title" content="RuiXing —— 说句话，照片就修好了" />
+    <meta property="og:description" content="上传一张照片，说句话就能改：「天空再蓝一点」「后面那个人去掉」。不用装软件，打开就能用。" />
+
     <!-- 标签页上那朵小玫瑰（2026-09-29）。用 SVG：一个文件吃到 16px 到视网膜屏，
          不用像 ICO 那样同一个图案塞好几档尺寸。
          ⚠️ 用**带圆角方框那版**（rose-tile），不是光秃秃的 rose：
@@ -10,9 +41,17 @@
          用户原话「标签页的图标太小了，用圆角方框给它框起来」。
          rose-tile 把 viewBox 收紧到「花 + 11% 的边」，花就填满了整块方框；
          底色是这朵花自己最深的那层粉，白色花形在浅色/深色标签栏上都立得住。
-         导出脚本：.superpowers/scratch/product-test/export_logo.py -->
+         导出脚本：.superpowers/scratch/product-test/export_logo.py
+
+         ★ 2026-10-01 补的两行 PNG（同一个脚本导出来的，别手改）：
+         · `apple-touch-icon`：iOS「加到主屏幕」用的是它，而且**苹果完全不读
+           `rel="icon"`** —— 少了它，主屏图标会是页面的一张截图。
+           180×180 是不透明 PNG，这是苹果定的那一档。
+         · 32px 的 PNG 是给**搜索引擎**的：Google 站点图标的支持格式清单里
+           没有 SVG，只有它自家的 SVG favicon 不进搜索结果。 -->
     <link rel="icon" type="image/svg+xml" href="/src/assets/logo/rose-tile.svg" />
-    <title>RuiXing</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/src/assets/logo/png/rose-tile-32.png" />
+    <link rel="apple-touch-icon" href="/src/assets/logo/png/rose-tile-180.png" />
   </head>
   <body>
     <div id="root"></div>

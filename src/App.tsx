@@ -990,6 +990,21 @@ export default function App() {
     if (!checking && user && view.kind === 'landing') go({ kind: 'edit' }, { replace: true })
   }, [checking, user, view, go])
 
+  /**
+   * 标签页那个标题。★ 2026-10-01 加的。
+   *
+   * `index.html` 里写死的标题是**落地页**那句（「说句话，照片就修好了」），
+   * 而且必须写死在文件里 —— 社交抓取器和 AI 爬虫都不跑 JS，靠 JS 注入的标题
+   * 它们一个字都读不到。代价是**每一屏一进来都顶着那句营销文案**，所以
+   * App 这几屏要把它换回产品名。
+   *
+   * 落地页那一支不管：它自己的 effect 会设成同一句、离开时还原
+   * （`LandingPage.tsx` 里那个 prevTitle）。
+   */
+  useEffect(() => {
+    if (view.kind !== 'landing') document.title = 'RuiXing'
+  }, [view.kind])
+
   // 还没问出"我是谁"之前什么都别显示 —— 认出没登录的访客是**一次网络往返**，
   // 直接按 user === null 渲染的话，每个登录着的用户回访时都会先看到登录页闪一下。
   //
