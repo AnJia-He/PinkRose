@@ -125,6 +125,19 @@ describe('patch / put / del', () => {
     expect(calls[0].init.body).toBeUndefined()
     expect(calls[0].init.headers).toBeUndefined()
   })
+
+  it('keepalive 只在点名要的那一次加上 —— 而且真的传给了 fetch', async () => {
+    // 2026-10-01 终审 I1：页面正在消失时（刷新 / 关标签页）那趟落盘要用 keepalive
+    // 才发得出去 —— 普通 fetch 会在卸载时被掐断。这里钉的是"接线"：不传时
+    // init 里**没有这个字段**（不许塞一个 `keepalive: false`——那会让 init 的
+    // 形状随调用点漂，和 signal 那条同一条规矩），传了就是真的要传给 fetch。
+    // 变异：`put` 忘了把第三个参数递给 `send` → 第二句红（永远发不出最后一趟）。
+    const calls = stubFetch(200, {})
+    await put('/api/sessions/7', { messages: [] })
+    await put('/api/sessions/7', { messages: [] }, true)
+    expect(calls[0].init.keepalive).toBeUndefined()
+    expect(calls[1].init.keepalive).toBe(true)
+  })
 })
 
 /**

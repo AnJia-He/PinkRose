@@ -3361,6 +3361,53 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     expect(after.steps).toHaveLength(before.steps.length)
   })
 
+  it('★ 刷新/关页面前，把还没到点的那趟发出去 —— 而且走 keepalive（I1）', async () => {
+    // 2026-10-01 终审 I1：验收线第 1 条是「上传 → 说一句话 → **刷新** →
+    // 照片、对话、参数全在」，而验收的人正是**看到结果就按 F5** —— 那一刻
+    // 800ms 防抖还没到点，而那个闹钟是挂在 effect 里的，页面一卸载就没了：
+    // 那句话**一个字节都没发出去**，连一条失败通报都没有（请求压根没发）。
+    // 修法：`pagehide` / `visibilitychange(hidden)` 各挂一条 → `flushPersist(true)`。
+    //   ⚠️ 必须带 keepalive —— 普通 fetch 会在卸载时被浏览器掐断（接线那条
+    //   在 client.test.ts 里钉；这里钉的是"这两个事件真的会触发落盘"）。
+    // 变异：把那个 effect 删掉 → 下面第一句红（只剩 1 个 PUT，第 2 句没发出去）。
+    await renderApp()
+    await uploadPhoto()
+    await waitPersist()                                  // PUT #1：上传那一趟
+    expect(sessionCalls('/api/sessions/1', 'PUT')).toHaveLength(1)
+
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 20 }, reply: '给你提亮了。' }))
+    await say('亮一点')                                   // **不等** waitPersist
+
+    // ① 按了 F5：`pagehide` 先到
+    await act(async () => {
+      window.dispatchEvent(new Event('pagehide'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    let puts = sessionCalls('/api/sessions/1', 'PUT')
+    expect(puts).toHaveLength(2)
+    expect(bodyOf(puts[1]!).messages.map((m: { text: string }) => m.text)).toContain('亮一点')
+    // 页面正在消失 → 这一趟必须点名 keepalive（普通 fetch 发不完）
+    expect((puts[1]![1] as RequestInit).keepalive).toBe(true)
+
+    // ② 再来一趟，这次演"切到后台"（`visibilitychange → hidden`）：移动端标签页
+    //    被冻结前多半只来这一个（`pagehide` 不一定来）—— 少挂它就有一种
+    //    "页面要走了"接不住。jsdom 的 `visibilityState` 恒为 visible，
+    //    这里临时盖成 hidden（用 own property 盖住原型上的 getter，跑完就摘）。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 30 }, reply: '好。' }))
+    await say('再亮一点')
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    Reflect.deleteProperty(document, 'visibilityState')
+    puts = sessionCalls('/api/sessions/1', 'PUT')
+    expect(puts).toHaveLength(3)
+    expect(bodyOf(puts[2]!).messages.map((m: { text: string }) => m.text)).toContain('再亮一点')
+  })
+
   it('★ 底图换过的那趟落盘：上路的是**压过的**那条路（`bitmapToDataUrl`），不是画布直出', async () => {
     // 为什么这条路要单独钉：出网的字节必须过 `MAX_DIMENSION` 那顶帽子 ——
     // 落盘那趟的暴露面是"**提供方回的图比它声明的更大**"那条偏差分支
@@ -3441,7 +3488,7 @@ describe('恢复：打开就接着上次那条', () => {
         ...(i === 0 ? {} : { prompt: `make it step ${i}` }),
       })
       if (i > 0) messages.push({ id: sid - 1, role: 'user', text: `make it step ${i}`, at: 0 })
-      messages.push({ id: sid, role: 'assistant', text: `${tag}第 ${i} 步`, at: 0, stepId: sid })
+      messages.push({ id: sid, role: 'assistant', text: `${tag}第 ${i} 步`, at: 0 })
     }
     messages.push({ id: 2 * n, role: 'user', text: words, at: 0 })
     return { ...SMETA(id, { stepCount: n }), messages, steps }
@@ -3568,6 +3615,32 @@ describe('恢复：打开就接着上次那条', () => {
     expect(back.bitmap).toBe(decodedBitmaps[0])
     expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 0 })
     await waitPersist()
+  })
+
+  it('★ 恢复出来的**每一步**都带着小图 —— 刷新前后同一条对话长得一样（spec §5）', async () => {
+    // 服务端不存每一步的缩略图（spec §5：「客户端本来就会给每一步生成缩略图…
+    // 恢复的时候现生成就行」）—— 而恢复那条路原来给每一步塞的是 `thumb: ''`，
+    // `ChatPanel` 的 `thumbs[m.id] &&` 于是**什么都不渲染**：活着的时候每条助手
+    // 气泡下面都挂着小图，刷新之后只剩最后一步有。用户看到的差别是"我改过的那几步
+    // 去哪了"，而套件里**一个红都不会有** —— 空串只是"不渲染"。
+    // 变异：恢复循环里改回 `thumb: ''` → 下面第一句红（只剩 1 张 = 最后那步的）。
+    withSessions([makeSession(7, 3, '把天调蓝一点', 'S7')])
+    await renderApp()
+
+    // 3 步 → 3 条助手气泡，每条下面都该有小图
+    const thumbs = [...container.querySelectorAll('img.bubble-thumb')]
+    expect(thumbs).toHaveLength(3)
+    const srcs = thumbs.map(t => t.getAttribute('src') ?? '')
+    expect(srcs.every(s => s.startsWith('thumb:'))).toBe(true)
+    // 第 2 步是 `reusesPrev`（和第 1 步**同一张图**）—— 小图直接接着用，不重做：
+    // 重做一遍只会得到像素级不同、肉眼一样的两张，而"看着像换了一张"正是这条防的。
+    expect(srcs[1]).toBe(srcs[0])
+    expect(new Set(srcs).size).toBe(2)
+
+    // 而且补缩略图那个 effect **不会**再往上叠：它只认 `history` 最后一步，
+    // `last.thumb` 非空就该收手（不收手的话每次落盘都会重算一遍）。
+    await waitPersist()
+    expect(container.querySelectorAll('img.bubble-thumb')).toHaveLength(3)
   })
 
   it('★ 恢复出来的会话之间不串 —— 切到另一条，上一条的话不能跟过来', async () => {
@@ -3709,6 +3782,63 @@ describe('恢复：打开就接着上次那条', () => {
     const textsA = bodyOf(putsA[0]!).messages.map((m: { text: string }) => m.text)
     expect(textsA).toContain('切走之前说的这句')
     // 切过去那条照旧（这正是 ★★ 那条用例钉的事，这里顺带再量一次）
+    expect(bubbleTexts()).toContain('S7-用户说的')
+    expect(putCalls('/api/sessions/7')).toHaveLength(1)
+  })
+
+  it('★★ 生成完**不等落盘**就切走（底图换了那趟）—— 那一版底图照样发得出去', async () => {
+    // 2026-10-01 终审 C1。落盘那趟原来是在**发的时候**现读 `canvasElRef.current`
+    // 的，而画布只在「修图」那一屏存在（`{view.kind === 'edit' && …}` 一卸载，
+    // Canvas 的回调 ref 就把它置回 null）。切导航**不会**让落盘那个 effect 重跑
+    // （依赖里没有 `view`），于是 800ms 防抖还没到点就切走的话：
+    //   · 闹钟响时人在别的屏上 → `if (!el)` 把**整份 patch**（messages / steps /
+    //     params / base / thumb）一起扔掉，只有一行 console.error；
+    //   · 更糟的是 `flushPersist`（切会话时那个"提前点掉"）走的**是同一个 `run`**
+    //     —— 它本来正是为这个窗口写的，结果也被同一句 `if (!el)` 吞掉。
+    // 后果是**用户花了钱生成的那一步永远到不了服务端**：刷新回到生成之前，
+    // 而且不是"请求失败了"，是**压根没发**（连失败通报都没有）。
+    //
+    // 修法：`el` 在 effect 体里就拿到手（和 `snapshot` / `messagesNow` 并列）——
+    // effect 每次 `history` / `params` 变化都会重跑，所以这一份记号永远是
+    // "最后一次改动时那张画布"；而**画布卸载之后像素还在**（元素被 ref 引用着，
+    // `drawImage` / `toDataURL` 照常工作）—— 这正是这个修法成立的原因。
+    // 变异：`run` 里改回现读 `canvasElRef.current` → 下面第一句红（一个 PUT 都没有）。
+    const nine = { ...makeSession(9, 1, 'S9-用户说的', 'S9'), originalName: '九号.jpg' }
+    const seven = { ...makeSession(7, 1, 'S7-用户说的', 'S7'), originalName: '七号.jpg' }
+    withSessions([seven, nine])
+    await renderApp()
+    expect(bubbleTexts()).toContain('S9-用户说的')      // A = 9（最近动过的那条）
+
+    // 在 A 里**换一次底图**（生成式编辑）—— 只有 `changed === true` 的那趟
+    // 才走画布这条腿，光说话那种（changed=false）钉不到这个洞。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉路人' }))
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+    await say('把后面那个人去掉')      // ← 生成已经落地（底图换了）；**故意不等 waitPersist**
+
+    // 800ms 没到就切走：左栏「对话」→ 点开另一条（这条路的第一句就是 `flushPersist`）
+    await goNav('对话')
+    const row = [...container.querySelectorAll('.session-row')].find(
+      r => (r.textContent ?? '').includes('七号'))
+    expect(row).toBeTruthy()
+    await act(async () => {
+      ;(row!.querySelector('.session-open') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await waitPersist()
+
+    // ★ A 那一趟要**真的发出去**，而且**带着换了的那版底图** —— 两半缺一不可：
+    //   只看"有没有 PUT"，一个把 base 悄悄丢掉（或者退回旧底图）的实现照样绿，
+    //   而那一版底图是用户花钱生成的，丢了就是刷新回到生成之前。
+    const putsA = putCalls('/api/sessions/9')
+    expect(putsA).toHaveLength(1)
+    const bodyA = bodyOf(putsA[0]!)
+    expect(bodyA.base).toBeDefined()
+    // 走的是 `bitmapToDataUrl` 那条（画布直出的假货是 `canvas:…`，测试台上分得开）
+    expect(bodyA.base).toBe('original:画布')
+    // 顺带：切过去那条照旧接回来（切走本身没被这趟影响）
     expect(bubbleTexts()).toContain('S7-用户说的')
     expect(putCalls('/api/sessions/7')).toHaveLength(1)
   })
@@ -4051,8 +4181,14 @@ describe('恢复：打开就接着上次那条', () => {
     // （"原图没取回来、三颗按钮可能用不了"），所以**看不出坏** —— 但它一天天
     // 攒起来就是内存。`finally` 是让"报了错"不等于"把东西丢那儿不管"。
     withSessions([makeSession(7, 1, '上次那句', 'S7')])
-    vi.mocked(thumbMod.makeThumbnail).mockImplementationOnce(() => {
-      throw new Error('画布罢工了')
+    // ⚠️ 2026-10-01 终审 I2 之后，恢复**每一步都现做一张缩略图**（160 那张），
+    //   所以「第一次 `makeThumbnail` 调用」已经不是原图预览了 —— 判据改成看
+    //   **传给它的边长上限**：预览那张是 1280（`ORIGINAL_PREVIEW_MAX_SIDE`），
+    //   气泡小图是 160。要炸的仍然只是**原图预览**那一趟。
+    const realThumb = vi.mocked(thumbMod.makeThumbnail).getMockImplementation()!
+    vi.mocked(thumbMod.makeThumbnail).mockImplementation((src, maxSide) => {
+      if (maxSide === 1280) throw new Error('画布罢工了')
+      return realThumb(src, maxSide)
     })
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const decodedBefore = decodedBitmaps.length

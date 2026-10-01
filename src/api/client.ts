@@ -89,13 +89,30 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   return parsed as T
 }
 
-/** 四个动词只差一个 method 和一个 body —— 抽出来，"带不带 cookie"仍然只有一处说了算 */
-function send<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+/**
+ * 四个动词只差一个 method、一个 body 和两个开关 —— 抽出来，"带不带 cookie"
+ * 仍然只有一处说了算。
+ *
+ * `signal`：只有「停止」那条路用（/api/edit，见 postEdit）。
+ *
+ * ★ `keepalive`（2026-10-01 加）：页面**正在消失**时（刷新 / 关标签页）还要
+ *   发得出去的那条路 —— 普通 fetch 会在卸载时被浏览器掐断，keepalive 的不会。
+ *   今天只有落盘那一层用它（见 App.tsx 的 `pagehide` / `visibilitychange`）。
+ *   ⚠️ 浏览器对 keepalive 的**请求体有 64 KiB 的硬上限**，超了 fetch 会被
+ *   **当场拒绝**（TypeError，不是网络错误）—— 所以"要不要用它"得由调用方
+ *   按体量决定（App.tsx 里量过；别在这里替它猜）。
+ */
+function send<T>(
+  method: string, path: string, body?: unknown,
+  opts: { signal?: AbortSignal; keepalive?: boolean } = {},
+): Promise<T> {
   return request<T>(path, {
     method,
-    // ★ 2026-09-30 加 signal：**只为了让「停止」能真的掐断一次生成**。
-    //   不传时行为和以前一模一样（fetch 不认 undefined 的 signal）。
-    ...(signal ? { signal } : {}),
+    // ⚠️ 两个开关都写成"有才加"：`signal: undefined` / `keepalive: false` 看着
+    //   无害，但那会让 init 的形状随调用点漂 —— 有测试钉着"不传 signal 时
+    //   和以前一模一样"（client.test.ts 那三条）。
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.keepalive ? { keepalive: true } : {}),
     ...(body === undefined
       ? {}
       : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
@@ -104,12 +121,15 @@ function send<T>(method: string, path: string, body?: unknown, signal?: AbortSig
 
 /** 写接口。今天三个 AI 接口和账号那几个都在用。 */
 export const post = <T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> =>
-  send<T>('POST', path, body, signal)
+  send<T>('POST', path, body, { signal })
 /** 读接口（今天 `/api/me` 和作品列表用）。它不该是内联在账号模块里的一句 fetch ——
  *  那样 cookie 和错误翻译这两件事就又有了第二个说法。 */
 export const get = <T>(path: string): Promise<T> => send<T>('GET', path)
 export const patch = <T>(path: string, body: unknown): Promise<T> => send<T>('PATCH', path, body)
-export const put = <T>(path: string, body: unknown): Promise<T> => send<T>('PUT', path, body)
+/** ⚠️ 第三个参数是 `keepalive`（见 `send` 那段）—— 只有落盘那层用得上，
+ *  其余调用点不传，行为和以前一字不差。 */
+export const put = <T>(path: string, body: unknown, keepalive = false): Promise<T> =>
+  send<T>('PUT', path, body, { keepalive })
 export const del = <T>(path: string): Promise<T> => send<T>('DELETE', path)
 
 export async function postRoute(o: RouteRequest): Promise<RouteDecision> {

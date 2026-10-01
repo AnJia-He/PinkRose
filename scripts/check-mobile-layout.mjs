@@ -878,8 +878,8 @@ function judgeWelcome(label, m, view) {
  *   ⑤ 左栏三支 = 「修图 / 对话 / 作品」（§6.1），而且亮的是「对话」。
  *      ⚠️ 顺带钉住"这一页有没有自己的入口"：Task 6 之前它**根本没有来源**。
  */
-async function measureSessions(page) {
-  return page.evaluate(() => {
+async function measureSessions(page, targetName = null) {
+  return page.evaluate((want) => {
     const box = el => {
       if (!el) return null
       const b = el.getBoundingClientRect()
@@ -891,7 +891,18 @@ async function measureSessions(page) {
     }
     const rows = [...document.querySelectorAll('.session-row')]
     const thumbs = [...document.querySelectorAll('.session-thumb')]
-    const name = document.querySelector('.session-name')
+    // ★ 2026-10-01：可以**点名量某一行**（长名字那一段用）。
+    //   为什么非点名不可：列表是按 `updated_at` 倒序给的，而这个 App **自己**会写
+    //   —— 换页/关页面那一刻，还没到点的那趟落盘会被发出去（2026-10-01 I1 的修复，
+    //   那是**正确行为**），那一下会把**另一条**会话的时间戳顶上来，探针刚种下的
+    //   那条就不在第一行了。原来这段判据假定"我种下的必然是第一行"，于是它量的
+    //   东西会**悄悄换成别人**，红的时候只说"没量到它要量的东西" —— 量谁、由谁
+    //   决定，这里说清楚。点名之后，量的一直是它（找不到才按"没量到"报）。
+    const row = want
+      ? rows.find(r => (r.querySelector('.session-name')?.textContent ?? '').trim() === want) ?? null
+      : rows[0]
+    const name = row ? row.querySelector('.session-name') : null
+    const thumb = row ? row.querySelector('.session-thumb') : null
     const ask = document.querySelector('.session-ask')
     // ★ 量的是**正在确认的那一行**里的按钮，不是整页的 `.session-del`
     //   （2026-10-01 评审抓到的第二个洞：原来挑的是整页，页上一旦有两行，
@@ -907,8 +918,10 @@ async function measureSessions(page) {
       emptyTitle: document.querySelector('.sessions-empty-title')?.textContent?.trim() ?? '',
       goBtn: box(document.querySelector('.sessions-empty button')),
       dayTitle: document.querySelector('.gallery-day-title')?.textContent?.trim() ?? '',
-      row: box(rows[0]),
-      thumb: box(thumbs[0]),
+      // 点名那一段：这一行是**按名字找的**，不是"第一行"（见上面那段理由）
+      targeted: !!want,
+      row: box(row),
+      thumb: box(thumb),
       thumbsOk: thumbs.filter(i => i.naturalWidth > 0).length,
       name: name ? name.textContent.trim() : '',
       nameBox: box(name),
@@ -934,7 +947,7 @@ async function measureSessions(page) {
       scrollW: document.documentElement.scrollWidth,
       clientW: document.documentElement.clientWidth,
     }
-  })
+  }, targetName)
 }
 
 /** 左栏三支的顺序（§6.1）：修图是主入口，对话在中间，作品最后。 */
@@ -996,8 +1009,9 @@ function judgeSessions(label, m, view, mode) {
     return
   }
   if (!inView(m.row)) {
-    fails.push(`${label}：第一行没完整落在视口里` +
-      `（${m.row.left}~${m.row.right} / ${m.row.top}~${m.row.bottom}，视口 ${view.width}x${view.height}）`)
+    fails.push(`${label}：${m.targeted ? '点名那一行' : '第一行'}没完整落在视口里` +
+      `（${m.row ? `${m.row.left}~${m.row.right} / ${m.row.top}~${m.row.bottom}` : '不在 DOM 里'}，` +
+      `视口 ${view.width}x${view.height}）`)
   }
   if (!m.thumb) {
     fails.push(`${label}：行上没有缩略图（.session-thumb）`)
@@ -1284,9 +1298,13 @@ try {
       // ★ 再走**长名字**那一行。理由：名字是这一行里最脆的一格 —— flex 孩子的
       //   默认 `min-width: auto` 不肯缩到内容宽度以下，长名字会把整行顶出去，
       //   而**只有长名字时才看得出来**（短名字那些行一切正常，探针全绿）。
-      //   这条会话走真接口建、带一个很长的中文名，而且它是最新的一条 ——
-      //   排第一行，量的正是它。
+      //   这条会话走真接口建、带一个很长的中文名。
+      //   ⚠️ **它是不是第一行，判据不许依赖**（2026-10-01 改）：App 自己在换页那一刻
+      //   会把还没到点的那趟落盘发出去（I1 的修复，正确行为），那一下可能把另一条
+      //   会话的时间戳顶上来、把这条挤到第二行。所以下面**按名字点名量它**
+      //   （`measureSessions(page, 名字)`）—— 量谁由名字定，不由"第几行"定。
       const longName = '二〇二六年国庆节在凤凰古城拍的那一张照片.jpg'
+      const longShown = longName.replace(/\.[^.]+$/, '')
       const seededSession = await page.evaluate(async (cfg) => {
         const c = document.createElement('canvas')
         c.width = cfg.w
@@ -1307,18 +1325,18 @@ try {
       }
       await page.goto(`${APP}/sessions`, { waitUntil: 'load' })
       await page.waitForSelector('.session-thumb', { timeout: 15_000 })
-      const longOne = await measureSessions(page)
+      const longOne = await measureSessions(page, longShown)
       judgeSessions(`${view.name} · 对话页（名字很长的那一行）`, longOne, view, 'list')
-      if (longOne.name !== longName.replace(/\.[^.]+$/, '')) {
-        fails.push(`${view.name}：第一行不是那条长名字的会话（读到的是「${longOne.name}」）——` +
+      if (longOne.name !== longShown) {
+        fails.push(`${view.name}：名单里找不到那条长名字的会话（读到的是「${longOne.name}」）——` +
           '这条判据没量到它要量的东西')
       }
       // ⚠️ **只在窄屏上要它截断**：桌面那一行有 1140px 宽，20 个字放得下 ——
       //    那里不截断是**对的**（判"必须截断"会把好版面判红）。
       //    窄屏上不截断则是"名字那格不再收窄"的信号：下一步就是整行被顶出屏幕。
       if (view.width <= 640 && !longOne.nameClipped) {
-        fails.push(`${view.name}：那条名字（${longName.replace(/\.[^.]+$/, '').length} 个字）` +
-          '在这条窄屏上居然一点都没被截断 —— 要么它没排在第一行，要么名字那格不再收窄了' +
+        fails.push(`${view.name}：那条名字（${longShown.length} 个字）` +
+          '在这条窄屏上居然一点都没被截断 —— 要么名字那格不再收窄了' +
           '（长名字会把整行顶出去，而页面横向溢出那条判据只在**已经顶出去**之后才红）')
       }
 

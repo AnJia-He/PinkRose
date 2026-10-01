@@ -31,7 +31,7 @@ import {
 import { prepareForModel, prepareForRouting, type Sizable } from './image/prepare'
 import { ApiError, isAbort, postEdit, postRoute, postSuggest } from './api/client'
 import { bitmapsToClose, attachThumb, jumpTo, pushSnapshot, type Snapshot } from './core/history'
-import { GALLERY_THUMB_MAX_SIDE, bitmapToDataUrl, makeThumbnail } from './core/thumbnail'
+import { GALLERY_THUMB_MAX_SIDE, THUMB_MAX_SIDE, bitmapToDataUrl, makeThumbnail } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
 import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
 import type { Recipe } from '../shared/works.ts'
@@ -73,6 +73,19 @@ const isUnauthorized = (e: unknown): boolean =>
  *  不直接拿原图：3000 万像素重新上传一次纹理很贵，而"看原图"永远是在
  *  屏幕大小上比的，1280 已经看不出和原图的差别。 */
 const ORIGINAL_PREVIEW_MAX_SIDE = 1280
+
+/**
+ * 落盘那趟在"页面正在消失"时敢不敢用 `keepalive` 的**体量上限**（字节）。
+ *
+ * 浏览器对 keepalive 的请求体有 **64 KiB 的硬上限**，超了 fetch 会被**当场拒绝**
+ * —— 那比普通 fetch 还差（普通 fetch 至少"可能发得完"，被拒是必然发不出）。
+ * 所以调用点先量一下，超了就退回普通 fetch（见落盘 effect 里那段）。
+ * 取 60000 而不是 65536：给 JSON 头尾和将来加的字段留一点，别卡在边界上。
+ *
+ * ⚠️ 两种体量分得很开，这个数取中间哪都行：说一句话 / 拖滑块 ≈ 几 KB；
+ * 带一整张底图（base64）≈ 一两 MB，必然超。
+ */
+const KEEPALIVE_MAX_BYTES = 60_000
 
 /**
  * 照片超出本设备能画的上限时，先缩到画得动，再照常修。
@@ -296,7 +309,7 @@ export default function App() {
    *   所以切走那条路上要能**手动把它提前点掉**，见 `flushPersist`。
    */
   const pendingPersistRef = useRef<{
-    run: () => void
+    run: (keepalive?: boolean) => void
     timer: ReturnType<typeof setTimeout>
   } | null>(null)
   /**
@@ -306,13 +319,15 @@ export default function App() {
    *   **那一条的 `sessionId`** —— 状态一改，那份 payload 就已经是"上一条"的了，
    *   而这时候再发正是我们要的（把它写完再走）。
    * ⚠️ 先摘掉再发：不摘的话闹钟到点还会再发一遍，同一句话写两次。
+   * ★ `keepalive`：页面**正在消失**时才传 true（`pagehide` / 切到后台那两条路）——
+   *   普通 fetch 会在卸载时被掐断。它到底怎么用、什么体量不能用，见 `run` 里那段。
    */
-  const flushPersist = useCallback(() => {
+  const flushPersist = useCallback((keepalive = false) => {
     const p = pendingPersistRef.current
     if (!p) return
     pendingPersistRef.current = null
     clearTimeout(p.timer)
-    p.run()
+    p.run(keepalive)
   }, [])
   /** 挂载时那次"把上次那条会话接回来"跑过没有。**它保证只跑一次** ——
    *  为什么不能跟着 `user` 每次变都重跑，见下面那个恢复 effect 的注释。 */
@@ -532,13 +547,33 @@ export default function App() {
       //   项目最恨的那种失败。留个痕。
       if (detail.steps.length === 0) return discard('这条会话一步都没有，不接（建会话时原图就该算一步）')
 
+      /**
+       * 恢复时**现做**这一步的小图（spec §5 明说服务端不存每一步的缩略图：
+       * 「客户端本来就会给每一步生成缩略图，恢复的时候现生成就行」）。
+       *
+       * ⚠️ 不做的话**同一条对话刷新前后长得不一样**：活着的时候每一条助手气泡下面
+       *   都挂着小图（`ChatPanel` 的 `thumbs[m.id] &&`），恢复出来只有最后一步有
+       *   —— 而且**不报错**，`''` 只是"不渲染"。
+       * ⚠️ 它是**锦上添花**那一类（和 `onPick` 里 `setOriginalPreview` 同一个道理）：
+       *   做不出来只是这一步的气泡上没有小图，**绝不能让整条会话接不回来**
+       *   （那会把可选项升级成必须项）。失败走 console.error，不许静默。
+       */
+      const thumbOf = (b: ImageBitmap): string => {
+        try { return makeThumbnail(b, THUMB_MAX_SIDE) }
+        catch (e) {
+          console.error('恢复时缩略图没做出来（这一步的气泡上没有小图）', e)
+          return ''
+        }
+      }
       // 每一步都要解码回位图。⚠️ `reusesPrev` 是真的能省一次下载 + 一次解码：
       // 拖十次滑块就是十步，一步步全下就是十个一模一样的文件。
       for (const s of detail.steps) {
         const prev = steps.at(-1)
         if (s.reusesPrev && prev) {
+          // 和上一步是**同一张图**，小图直接接着用（重做一遍只会得到像素级不同、
+          // 肉眼一样的两张 —— 而这正是"刷新前后长得不一样"里最没必要的一种）。
           steps.push({ id: s.id, label: s.label, base: prev.base, params: s.params,
-                       isOriginal: false, thumb: '', prompt: s.prompt })
+                       isOriginal: false, thumb: prev.thumb, prompt: s.prompt })
           continue
         }
         const blob = await (await fetch(sessionStepUrl(detail.id, s.id))).blob()
@@ -546,7 +581,7 @@ export default function App() {
         if (stale()) { bitmap.close(); return discard('恢复：这次接回来的已经不作数了（页面换了，或者用户自己动手了）') }
         steps.push({ id: s.id, label: s.label, params: s.params,
                      base: { bitmap, width: bitmap.width, height: bitmap.height },
-                     isOriginal: steps.length === 0, thumb: '', prompt: s.prompt })
+                     isOriginal: steps.length === 0, thumb: thumbOf(bitmap), prompt: s.prompt })
       }
       const lastStep = steps[steps.length - 1]!
 
@@ -1551,6 +1586,22 @@ export default function App() {
     //   所以只盯 `[history, messages]` 的话，用户拖完滑块**一次都不会落盘**，
     //   刷新一下回到拖之前的样子 —— 而验收线第 1 条写着"参数全在"。
     const paramsNow = params
+    // ★★ 画布**在这一刻**拿到手，不在发的时候现读（2026-10-01 终审 C1）。
+    //
+    //   为什么不能在 `run` 里现读 `canvasElRef.current`：画布只在「修图」那一屏
+    //   存在（`{view.kind === 'edit' && …}` 一卸载，`Canvas` 那个回调 ref 就把它
+    //   置回 null），而**切导航不会让这个 effect 重跑**（依赖里没有 `view`）——
+    //   800ms 后闹钟响时用户可能已经在「对话」/「作品」上，现读就是 null，
+    //   于是 `run` 里那句 `if (!el)` 把**整份 patch**（messages / steps / params /
+    //   base / thumb）一声不吭地全扔掉：用户花了钱生成的那一步永远到不了服务端，
+    //   刷新回到生成之前，而且不是"请求失败了"，是**压根没发**。
+    //   连 `flushPersist` 也救不回来 —— 它调的是同一个 `run`，被同一句吞掉。
+    //
+    //   为什么现在拿不会拿到陈的：这个 effect 每次 `history` / `params` 变化都会
+    //   重跑，所以这一份记号永远是"最后一次改动那一刻那张画布"。
+    //   而**画布卸载之后像素还在**（元素还被这个 ref 引用着，`drawImage` /
+    //   `toDataURL` 照常工作）—— 这正是这个修法成立的原因。
+    const el = canvasElRef.current
 
     // ③：这里只**定一个闹钟**，不等任何网络。下一次改动会把这个闹钟重设。
     //
@@ -1559,7 +1610,7 @@ export default function App() {
     //   会在改状态之前把它**提前点掉**（`flushPersist`）—— 不登记的话这个闹钟
     //   连响的机会都没有：依赖（`sessionId` 就在里面）一变，下面那句清理就把
     //   它清掉了，上一条最后那几秒的改动永远丢了，且一句话不说。
-    const run = () => {
+    const run = (keepalive = false) => {
       const seq = ++persistSeqRef.current
       // ★ "这一趟送出去的是哪一版底图" —— 在这儿（**发出去之前**）就定死。
       //   ⚠️ 别等请求回来再读 `baseSeqRef.current`（见下面 ⑤ 那一行）：
@@ -1571,11 +1622,17 @@ export default function App() {
         try {
           const patch: SessionPatch = { messages: messagesNow, steps: snapshot, params: paramsNow }
           if (changed) {
-            const el = canvasElRef.current
             if (!el) {
-              // 这句到不了（落盘只在有 history 之后才会跑，画布那时一定在）——
-              // 但**不许静默**：真到了，这一版底图就这么丢了，一句话都不说
-              // 正是这个项目最恨的那种失败。
+              // ⚠️ 这一句**到得了**（2026-10-01 终审更正：旧注释说它到不了，是错的）。
+              //   两种走法都真的会发生，共同点是**这一笔状态变更落在没有画布的那一刻**：
+              //   ① 建会话的 id 是在**别的屏**上到位的，而那段窗口里又落过一次生成
+              //      （`changed` 因此为真）—— 上传之后马上切走就是这个形状；
+              //   ② 一次生成在用户切走**之后**才回来 —— 那一笔 `setHistory` 让 effect
+              //   在没有画布的那一刻重跑，`el` 就是 null（这份记号是当场拿的，
+              //   不会去复用上一张画布：那张上面画的还是生成**之前**的样子，
+              //   拿它顶上去等于把用户花钱生成的这一版**标成已存**，比丢掉更坏）。
+              //   **不许静默**：真到了，这一版底图就这么丢了，一句话都不说
+              //   正是这个项目最恨的那种失败。
               console.error('落盘时画布不在，这一版底图没存下来')
               return
             }
@@ -1594,7 +1651,18 @@ export default function App() {
             //   服务端把好好的缩略图删了重存）。
             patch.thumb = makeThumbnail(el, GALLERY_THUMB_MAX_SIDE)
           }
-          await updateSession(sessionId, patch)
+          // ★ `keepalive` 只在"页面正在消失"那两条路上传进来（`pagehide` /
+          //   切到后台，见下面那个 effect）。但**不能无条件用**：浏览器对 keepalive
+          //   的请求体有 64 KiB 硬上限，超了 fetch 当场被拒 —— 那比普通 fetch 还差
+          //   （普通 fetch 至少"可能发得完"，被拒是必然发不出）。所以量一下：
+          //   ⚠️ 量的必须是**编码后的字节数**（`TextEncoder`），不是 `length` ——
+          //   一屏中文一个字三个字节，数字符会少算三倍。
+          //   （典型体量：说一句话 / 拖滑块 ≈ 几 KB，能带；带一整张底图 ≈ 一两 MB，
+          //    必然超 —— "刚生成完就按 F5"那种场景这一版接受"可能赶不上"，
+          //    边界写在设计文档 §7。）
+          const keepaliveOk = keepalive
+            && new TextEncoder().encode(JSON.stringify(patch)).byteLength <= KEEPALIVE_MAX_BYTES
+          await updateSession(sessionId, patch, keepaliveOk)
           // ⑤：**写成功之后**才记下"这一版底图存过了" —— 记的是**这一趟送出去的
           //   那版**（`sending`），不是"回来时的当前版"（理由见上面 `sending`）。
           //
@@ -1633,6 +1701,37 @@ export default function App() {
     // ⚠️ `sessionId` **必须在依赖里** —— 它一到，这个副作用得再跑一遍，
     //   否则"上传之后立刻动的那一下"落不了盘（见 `sessionId` 那段长注释）。
   }, [history, messages, params, sessionId])
+
+  /**
+   * 页面**要走了**（刷新 / 关标签页 / 切到后台）—— 把还没到点的那趟落盘立刻发出去。
+   *
+   * ★ 2026-10-01 终审 I1 加的。验收线第 1 条是「上传 → 说一句话 → **刷新** →
+   *   照片、对话、参数全在」，而验收的人正是**看见结果就按 F5**：那一刻 800ms
+   *   防抖还没到点，而那个闹钟是挂在 effect 里的 —— 页面一卸载就没了。那一句话
+   *   **一个字节都没发出去**，而且连一条失败记录都没有（请求压根没发），
+   *   用户回来看到的是"我说的话没了"，跟没存过一样。
+   *
+   * ⚠️ **两个事件都要挂，各管一半**（少一个就有一种"页面要走了"接不住）：
+   *   · `pagehide` 管"页面真的要没了"：刷新、关标签页、导航走、手机上切 App；
+   *   · `visibilitychange → hidden` 管"切标签页 / 切到后台"：移动端上标签页
+   *     被系统冻结前多半只来这一个（`pagehide` 不一定来），而且桌面切标签页
+   *     也是"用户以为放下了、回头可能再也不回来"的那一刻。
+   * ⚠️ 两处都走 `keepalive`：普通 fetch 会在卸载时被浏览器掐断（见 `run` 里
+   *   那段和 `./api/client` 的 `send`）。体量超了 64 KiB 的那种（带整张底图）
+   *   会自动退回普通 fetch —— 边界写在设计文档 §7，不在代码里说了算。
+   * ⚠️ **重复触发无害**：`flushPersist` 第一句就把待办摘掉了，第二次进来是空操作
+   *   （两个事件在真机上本来就经常连着来）。
+   */
+  useEffect(() => {
+    const bye = () => flushPersist(true)
+    const onVis = () => { if (document.visibilityState === 'hidden') bye() }
+    window.addEventListener('pagehide', bye)
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.removeEventListener('pagehide', bye)
+      document.removeEventListener('visibilitychange', onVis)
+    }
+  }, [flushPersist])
 
   // ── 左栏导航 + 网址（Task 10） ──────────────────────────────────────
   //
