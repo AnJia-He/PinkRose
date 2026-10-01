@@ -16,8 +16,13 @@ import { NAME_REQUIRED, UNEXPECTED_FAILURE } from '../../shared/copy.ts'
  */
 type Props = { onDone: () => Promise<void> }
 
-/** 密码格右边那颗小眼睛的两个形状。**是内联 SVG，不是图标库** ——
- *  `dependencies` 永远只有 piexifjs / react / react-dom，为一只眼睛拉个库不值得。
+/** 密码格右边那颗小眼睛的两个形状。
+ *
+ *  ⚠️ **2026-10-01 起理由改了**：原来这里写的是"内联 SVG，不是图标库，
+ *  因为 `dependencies` 永远只有 piexifjs / react / react-dom"—— 那条零新依赖的
+ *  规矩被用户推翻了（「通用交互件一律用现成的组件库」，
+ *  见 docs/superpowers/specs/2026-10-01-frontend-component-library.md）。
+ *  这两只眼睛**已经排进"换成 lucide"那一批**，换掉之前先别再加新的手绘图标。
  *
  * ⚠️ 哪张图代表哪个状态，是**有约定但没有共识**的（搜一下就有三个真实的讨论：
  * 「我的眼睛按钮反了：该显示的时候变成了隐藏」、「Material Design 里密码切换图标

@@ -34,6 +34,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // 前端组件装了 Base UI 之后，它每次状态更新都在问"这是不是 act 环境"，
+    // 不设就是每个零件刷一屏警告（见 src/test-setup.ts）。
+    setupFiles: ['src/test-setup.ts'],
     // 三条线各自的测试都在这儿：前端 src/、后端 server/、共用 shared/
     include: ['src/**/*.test.{ts,tsx}', 'server/**/*.test.ts', 'shared/**/*.test.ts'],
   },

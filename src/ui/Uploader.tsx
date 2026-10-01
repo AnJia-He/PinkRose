@@ -3,10 +3,15 @@ import logoMark from '../assets/logo/rose.svg'
 
 type Props = { onPick: (file: File) => void }
 
-/** 「选一张照片」那个框里的图。**内联 SVG，不是图标库** —— 和登录页那只眼睛
- *  同一个理由：`dependencies` 永远只有 piexifjs / react / react-dom。
- *  画的是一张照片（方框 + 山 + 太阳），不是"上传箭头"：用户要做的动作是
- *  "挑一张照片"，不是"上传"—— 这一屏上"上传"这个词一次都没出现过。 */
+/** 「选一张照片」那个框里的图。画的是一张照片（方框 + 山 + 太阳），
+ *  不是"上传箭头"：用户要做的动作是"挑一张照片"，不是"上传"——
+ *  这一屏上"上传"这个词一次都没出现过。
+ *
+ *  ⚠️ **2026-10-01 起这条理由改了**：原来这里写的是"内联 SVG，因为
+ *  `dependencies` 永远只有 piexifjs / react / react-dom"—— 那条**零新依赖**的
+ *  规矩被用户推翻了（见 `docs/superpowers/specs/2026-10-01-frontend-component-library.md`）：
+ *  通用交互件一律用现成的库。所以这只手画的图**已经排进"换成 lucide"那一批**，
+ *  在换掉之前先别再加新的手绘图标。 */
 function PhotoIcon() {
   return (
     <svg className="uploader-icon" viewBox="0 0 24 24" width="30" height="30" fill="none"
