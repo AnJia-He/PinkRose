@@ -77,7 +77,7 @@ function EyeOffIcon() {
  *  `checkPassword` 各自那几句）—— 等于把用户看得懂的话换成看不懂的。
  *  `App.test.tsx` 里那条「星号只属于注册页」最后一句钉着"没人把 required 加回来"。
  *
- *  颜色**故意不是红的**：本文件里那个红（#e06c75）是**错误**的颜色，见 styles.css
+ *  颜色**故意不是红的**：那个红（`--danger`）是**错误**的颜色，见 styles.css
  *  里 `.login-error` 那段注释 —— 一个空着的必填格不是错误，只是还没填。 */
 function Req() {
   return (
