@@ -135,31 +135,46 @@
 
 ```sql
 CREATE TABLE sessions (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at  INTEGER NOT NULL,
-    updated_at  INTEGER NOT NULL,
-    title       TEXT,              -- 自动取第一条用户消息；可改；null = 还没起名
-    original    TEXT NOT NULL,     -- 上传的原图（data/photos 里的文件名）
-    base        TEXT NOT NULL,     -- "现在这一张"（每一步覆盖，只留当前）
-    thumb       TEXT,              -- 列表上那张小图（和作品的 thumb_name 同款）
-    messages    TEXT NOT NULL,     -- JSON：对话
-    steps       TEXT NOT NULL      -- JSON：每一步（见 4.3）
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL,
+    title         TEXT,              -- ⚠️ 这一版永远是 NULL，见下面那条更正
+    original      TEXT NOT NULL,     -- 上传的原图（data/photos 里的文件名）
+    original_name TEXT,              -- 用户那张照片**上传时的名字**（「古镇.jpg」）
+    base          TEXT NOT NULL,     -- "现在这一张"（每一步覆盖，只留当前）
+    thumb         TEXT,              -- 列表上那张小图（和作品的 thumb_name 同款）
+    messages      TEXT NOT NULL,     -- JSON：对话
+    steps         TEXT NOT NULL,     -- JSON：每一步（见 4.3）
+    files         TEXT NOT NULL      -- JSON：这条会话落过的**全部**文件名（删会话时按它回收）
 );
 CREATE INDEX sessions_user_updated ON sessions(user_id, updated_at DESC);
 ```
+
+> ⚠️ **2026-10-01 终审更正**：上面这份现在和 `server/db.ts` 的第 4 条迁移**逐字一致**
+> （原来这份少了 `original_name` 和 `files` 两列 —— 而 `name` 是规范 §6.3 的列表标题
+> 和"恢复后下载的文件名"靠的东西，`files` 是 `DELETE` 回收文件时唯一的名单。
+> 照着旧的那份推，会以为这两样东西没地方存）。
+> `title` 那一列：**这一版没有任何路径能把它写非空** —— 客户端不送 `title`，
+> 列表上也没有"改名"那颗动作（见 §6.3 的更正）。它和 `SessionMeta.title`、
+> `PUT` 收 `title` 都是**给下一段留的**。
 
 **`messages` 的形状**（小，纯文本）：
 
 ```ts
 type SessionMessage = {
-  id: number
+  id: number        // ⚠️ 助手那条的 id **同时就是**它那一步的 SessionStep.id（「回到这一步」按它对号）
   role: 'user' | 'assistant'
   text: string
   at: number
-  stepId?: number   // 助手那条挂在哪一步上 —— 「回到这一步」靠它
 }
 ```
+
+> ⚠️ **2026-10-01 终审更正**：这里原来还有一个 `stepId?: number`（注释写着
+> 「助手那条挂在哪一步上 —— 「回到这一步」靠它」）。**那个字段从来没被赋过值**
+> （客户端从没送过它），"回到这一步"真正靠的是**消息 id 就是步骤 id**
+> （`App.tsx` 的 `confirmMark` 把同一个号给了消息和快照）。字段已从
+> `shared/sessions.ts` 和服务端一起删掉 —— 别再往回加。
 
 ### 4.2 文件住在哪
 
@@ -239,11 +254,18 @@ type SessionStep = {
 
 | 接口 | 干什么 |
 |---|---|
-| `POST /api/sessions` | 上传时建一条。body `{ image, thumb? }`（原图，base64，和 `WorkInput.image` 同一个形状）→ `{ id }` |
+| `POST /api/sessions` | 上传时建一条。body `{ image, thumb?, name? }`（原图，base64，和 `WorkInput.image` 同一个形状；`name` = 用户那张照片上传时的文件名，见 §6.3）→ `{ id }` |
 | `GET /api/sessions` | 列表（元数据，**不含图**）。按 `updated_at` 倒序 |
 | `GET /api/sessions/:id` | 一条的详情：`title` / `messages` / `steps` / 三个文件名 |
-| `PUT /api/sessions/:id` | 更新，**每个字段都可选、谁传更新谁**：`{ base?, thumb?, messages?, steps?, title? }`。⚠️ `base` 传的是**新那张图的字节** —— 只在**底图真的换了**的时候传（生成式编辑之后）；拖滑块那种更新只传 `messages` + `steps` + `title`，**不传图** |
+| `PUT /api/sessions/:id` | 更新，**每个字段都可选、谁传更新谁**：`{ base?, thumb?, messages?, steps?, title?, params? }`。⚠️ `base` 传的是**新那张图的字节** —— 只在**底图真的换了**的时候传（生成式编辑之后）；拖滑块那种更新只传 `messages` + `steps` + `params`，**不传图**。⚠️ `params` 是**必须单独有的那一条路**（理由见 §4.3 那条 2026-10-01 更正），服务端**只写到最后一步**上 |
 | `DELETE /api/sessions/:id` | 删。**连带删它自己的文件，但不动任何作品** |
+
+> ⚠️ **2026-10-01 终审更正（照实现写）**：建会话的 body 里有 `name`（§6.3 的列表
+> 标题、恢复之后「下载」的文件名都靠它）；PUT 的 body 里还有 `params`
+> （拖滑块不走 `history`，它必须单独送一条 —— 见 §4.3 那条更正）。
+> `title` 这一版**没有人传**（见 §4.1 的更正）；它到了谁手上要记住这两个值不一样：
+> **`null` / 不传 = "这次不动标题"，清空要传 `''`**（服务端把空串存成 `null`
+> = 还没起名）—— 客户端那个类型里 `title` 因此写成 `string`，不是 `string | null`。
 
 原图和每一步的图**不走上面这些** —— 走 `<img src>`，让浏览器自己取
 （和作品那两个 `fileUrl` / `fullUrl` 同一个路数）：
@@ -292,10 +314,22 @@ type SessionStep = {
 ### 6.3 列表
 
 按天分组（**复用作品页那套 `dayKey` / `dayLabel`，别新写一套**）。
-每条一行：**最后那张的缩略图 + 标题 + 时间**。
+每条一行：**最后那张的缩略图 + 标题 + 几步**。
 
-- 标题：自动取**第一条用户消息**的前若干字；没有消息就用照片原名（去扩展名）
+- 标题：三级退 —— **用户起的名字 → 照片上传时的名字（去扩展名）→「还没说话」**
+  （口径只有一份：`shared/sessions.ts` 的 `sessionTitle`）
 - 悬停/长按出两个动作：**改名**、**删掉**（⚠️ 删要就地确认，走 `.notice` 那套，不弹系统框）
+
+> ⚠️ **2026-10-01 终审更正（这条现在说的是实现，不是原来的计划）**：
+>   · **改名没有做** —— 列表上只有「删除」那颗动作。所以 `title` 列这一版
+>     **永远是 NULL**（客户端不送它），列表上显示的是上面那三级退的第二/第三级。
+>   · 原稿写的「标题：自动取**第一条用户消息**的前若干字」**也没有做** ——
+>     这是**这一版没做**（§10 的分期里「改名」和列表排在同一段，实际没落地），
+>     **不是"做了但看不见"**。下一段补的时候：`title` 列、`SessionMeta.title`、
+>     服务端 PUT 收 `title` 都在，缺的只是界面上那颗按钮和那次调用
+>     （⚠️ 清空传 `''`、不是 `null`，见 §5）。
+>   · 行尾显示的是「N 步」而**不是时间**：`SessionMeta.stepCount` 就是为了它
+>     （「3 步」比时间有用），这一条改的是文档，不是代码。
 
 ### 6.4 新建
 
@@ -314,6 +348,16 @@ type SessionStep = {
 - **恢复会话 = 把所有步骤的全尺寸图都取回来。** 一条 5 步的会话大约几 MB。
   变长之后的优化（只取最后 K 步全尺寸、更早的只给缩略图、
   跳回去时再取）**这一版不做** —— 先把"不丢"做对，再说省流量。
+- **关页面/刷新那一刻，最后一小段是"能救则救"。** 800ms 防抖还没到点的那趟，
+  在 `pagehide`（刷新、关标签页）和切到后台（`visibilitychange → hidden`）时
+  会**立刻发出去**，走 `keepalive`（普通 `fetch` 会在卸载时被浏览器掐断）。
+  ⚠️ **边界说在明处**：浏览器对 keepalive 的请求体有 **64 KiB 硬上限** ——
+  「只说了一句话 / 拖了下滑块」那趟（几 KB）真的发得完；而**刚生成完就按 F5**
+  那趟带着一整张底图（base64 一两 MB），超出几十倍，会被**退回普通 `fetch`**
+  —— 它可能赶在页面消失前发完，也**可能发不完**。这一版接受这一点：
+  真丢了的话用户看到的是"最后那次生成之前"的样子，而屏幕上的
+  「这是上次没做完的」说的正是这个（不是一句假话）。真要把它也救下来，
+  得让那一步的字节在**没出过这个标签页**的地方也有一份 —— 那是改数据流，不是补丁。
 - **没有置顶 / 归档 / 项目分组 / 批量删除 / 搜索。** 见 §8。
 
 ---
@@ -356,9 +400,11 @@ type SessionStep = {
 **这一段（设计 → 计划 → 做）**
 1. 迁移 + `server/sessions.ts`（存/取/删）+ 那四条接口 + 文件那三条
 2. 前端的"落盘"那一半：上传建会话、每步更新、挂载恢复
-3. 左栏「对话」+ 列表 + 改名 + 删除
+3. 左栏「对话」+ 列表 + 删除（⚠️ 2026-10-01 实况：**改名没做**，见 §6.3 的更正
+   —— 它是下一段的第一个候选，接口和列都在）
 
 **下一段（和别的活一起排）**
+- **列表上的「改名」**（§6.3 原定在这一段，实际没落地；`title` 列和 PUT 都在等它）
 - **防滥用那张表**（§6.6）：会话让存储真正开始长，**每人 5 GB 那条不能再拖**
 - 会话列表的搜索
 - 恢复时只取最后 K 步（§7 那条优化）

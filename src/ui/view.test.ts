@@ -46,9 +46,13 @@ describe('网址 ↔ 界面', () => {
   })
 
   it('来回一趟是原样 —— 不然前进/后退会越走越偏', () => {
+    // ⚠️ 这个清单**必须是全的**：`View` 的每一支都要在这里出现一次。
+    //   「对话」（`sessions`）原来漏在清单外 —— 于是新那条路由**一个单测都没有**，
+    //   而它是按 F5 / 收藏 / 转发链接时的落点（2026-10-01 终审补的）。
     for (const v of [
       { kind: 'landing' } as const,
       { kind: 'edit' } as const,
+      { kind: 'sessions' } as const,
       { kind: 'gallery' } as const,
       { kind: 'work', id: 7 } as const,
       { kind: 'account' } as const,
@@ -56,6 +60,13 @@ describe('网址 ↔ 界面', () => {
     ]) {
       expect(viewFromPath(pathOf(v))).toEqual(v)
     }
+  })
+
+  it('★ 「对话」的网址认得出来、也拼得回去', () => {
+    // 少认这一行，按 F5 的人会被扔回修图页 —— 而他明明还站在会话列表上
+    // （那种"刷新一下回到别处"最让人以为是自己点错了）。见的另一头在 Nav.tsx。
+    expect(viewFromPath('/app/sessions')).toEqual({ kind: 'sessions' })
+    expect(pathOf({ kind: 'sessions' })).toBe('/app/sessions')
   })
 
   it('★ 作品详情页的网址里**没有名字**，只有 id（§3.5.1）', () => {

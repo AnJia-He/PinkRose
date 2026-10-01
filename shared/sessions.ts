@@ -22,13 +22,24 @@ export type SessionMeta = {
   stepCount: number
 }
 
+/**
+ * 对话里的一条消息。
+ *
+ * ⚠️ **助手那条的 `id` 同时就是它那一步的 `SessionStep.id`** —— 「回到这一步」、
+ * 缩略图和「再来一版」都是按这个约定对号的（`App.tsx` 的 `confirmMark` 把
+ * `say()` 拿到的号给了消息和快照两边；`ChatPanel` 拿 `m.id` 去 `thumbs` /
+ * `jumpableIds` 里找）。**这个约定只有客户端知道**，服务端原样存、原样回。
+ *
+ * ⚠️ 这里原来还有一个 `stepId?: number` 字段，注释写着「助手那条挂在哪一步上
+ * —— 回到这一步靠它」。**那个字段从来没被赋过值**（客户端从没送过），
+ * 真正对号的是上面那个约定。2026-10-01 终审删掉了它 —— 别再往回加：
+ * 一个永远为空的字段会让下一个读的人照着它去实现，然后发现"回到这一步"根本不看它。
+ */
 export type SessionMessage = {
   id: number
   role: 'user' | 'assistant'
   text: string
   at: number
-  /** 助手那条挂在哪一步上 —— 「回到这一步」靠它。用户那条没有 */
-  stepId?: number
 }
 
 /**
@@ -65,7 +76,7 @@ export type SessionDetail = SessionMeta & {
  * 而不是一句占位文案。
  */
 export function sessionTitle(
-  s: Pick<SessionMeta, 'title' | 'originalName' | 'createdAt'>,
+  s: Pick<SessionMeta, 'title' | 'originalName'>,
 ): string {
   const t = s.title?.trim()
   if (t) return t

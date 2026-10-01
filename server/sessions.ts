@@ -11,8 +11,21 @@ const nowMs = (deps: SessionsDeps): number => (deps.now ?? Date.now)()
 
 /** 单张图的上限，和作品那边同一个数（前端导出的都是 2048 长边、1 MB 上下） */
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
-/** 一条会话最多几句话、几步。防的是"有人存一万条" */
+/** 一条会话最多收几句话（`readMessages` 里 `slice(-MAX_MESSAGES)`）。防的是"有人存一万条" */
 const MAX_MESSAGES = 200
+/**
+ * 一次 PUT 最多收几步（`o.steps.slice(-MAX_STEPS)`，只留**最后** 100 条）。
+ *
+ * ⚠️ **它不是"这条会话最多几步"那个帽子**（2026-10-01 终审更正，别照着它推）：
+ *   · 截的是**这一次送来的**那一串，超了就**静默丢掉最老的那几步** —— 库里那串
+ *     跟着变短，而那几步引用的文件还在盘上（`files` 名单见下一条）；
+ *   · 更要紧的是 `files` 名单**只增不减**（`[...own, ...新写的]`），盘上的文件
+ *     也只有**删整条会话**才会被回收：一个会话改十次底图就多十张全尺寸图，
+ *     这个常量一个字节都拦不住。
+ *   真正的"每条会话最多 N 步 / 每人 5 GB"是设计文档 §4.5/§10 里那张**还没做**的
+ *   防滥用表，要做得在合并**之后**截，并把被截掉的那几步引用的文件一起收回来
+ *   （还得确认没有别的步骤共用它们）—— 那是另一件事，别拿这个常量当它。
+ */
 const MAX_STEPS = 100
 const MAX_TEXT_LEN = 2000
 const MAX_PROMPT_LEN = 2000
@@ -226,11 +239,13 @@ function readMessages(raw: unknown): SessionMessage[] {
     const text = str(o.text).slice(0, MAX_TEXT_LEN)
     if (!role || !text) return []
     const id = Number(o.id)
-    const sid = Number(o.stepId)
+    // ⚠️ 这里原来还留着一个 `stepId`（"助手那条挂在哪一步上"）—— 客户端从没送过它，
+    //    「回到这一步」真正靠的是**消息 id 就是步骤 id**（见 `shared/sessions.ts`
+    //    `SessionMessage` 那段）。2026-10-01 终审删掉了它：一个永远收不到的字段
+    //    会让下一个读的人以为服务端在保管它。
     return [{
       id: Number.isInteger(id) && id > 0 ? id : 0,
       role, text, at: Number(o.at) || 0,
-      ...(Number.isInteger(sid) && sid > 0 ? { stepId: sid } : {}),
     }]
   })
 }
