@@ -577,7 +577,11 @@ describe('模型设置', () => {
     await click(inPart(row('那个快的'), '用这个'))
     expect(api.activateModel).toHaveBeenCalledWith('chat', 2)
     // 换过去了：✓ 跟着走，当前那行也变了
-    expect(row('那个快的').textContent).toContain('✓')
+    // ★ 2026-10-01：那个 ✓ 从**字符**换成了**图标**（lucide 的 Check），
+    //   所以这里断言的是"记号落到了哪一行"，不再是某个字符 ——
+    //   意思一个字没变，而且顺带把"旧那行还留着记号"也钉住了。
+    expect(row('那个快的').querySelector('.models-mark svg')).toBeTruthy()
+    expect(row('我的便宜货').querySelector('.models-mark svg')).toBeNull()
     expect(group('对话与理解').querySelector('.models-now')?.textContent).toContain('那个快的')
     // ★ 图片那一栏**纹丝不动** —— 两个类别各自独立（§7.4）
     expect(group('图片生成').querySelector('.models-now')?.textContent).toContain('用默认')

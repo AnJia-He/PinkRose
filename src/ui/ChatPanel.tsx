@@ -1,4 +1,5 @@
 import type { SuggestCard } from '../../shared/protocol.ts'
+import { RotateCw, Undo2 } from 'lucide-react'
 
 export type ChatMessage = {
   id: number
@@ -58,6 +59,7 @@ export default function ChatPanel({
               <div className="bubble-actions">
                 {jumpableIds.includes(m.id) && (
                   <button className="bubble-jump" onClick={() => onJump(m.id)}>
+                    <Undo2 size={13} aria-hidden="true" />
                     回到这一步
                   </button>
                 )}
@@ -65,9 +67,14 @@ export default function ChatPanel({
                     一个是回去，一个是回去**并且立刻重来**（靠 ↶ / ↻ 区分）。
                     ⚠️ 它是这两颗里**唯一**要禁用的那颗 —— 忙的时候再掷一次
                     就是两次生成同时在跑，钱是两倍（「回到这一步」不禁用是有意的，
-                    见 App.tsx 的 onJump 那段）。 */}
+                    见 App.tsx 的 onJump 那段）。
+                    ★ 2026-10-01：两个箭头以前是 CSS 的 `content: '↶' / '↻'`，
+                    现在是 lucide 图标。**仍然是装饰**（`aria-hidden`）：
+                    图标是 svg，进不了 textContent，所以按文字找按钮的地方
+                    和读屏软件看到的都还只有「回到这一步」/「再来一版」这五个字。 */}
                 {rerunnable.includes(m.id) && (
                   <button className="bubble-rerun" disabled={!!busy} onClick={() => onRerun(m.id)}>
+                    <RotateCw size={13} aria-hidden="true" />
                     再来一版
                   </button>
                 )}

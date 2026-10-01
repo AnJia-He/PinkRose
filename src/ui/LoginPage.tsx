@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 import { login, signup } from '../api/account'
 import logoMark from '../assets/logo/rose.svg'
 import { Field, TextInput } from './kit/Field.tsx'
@@ -37,27 +38,17 @@ type Props = { onDone: () => Promise<void> }
  * 而且**不能只靠图标**：这一格此刻是不是明文，最硬的指示器是密码框自己
  * （圆点 = 藏着，明文 = 露着），眼睛长什么样从来不是唯一的信号。 */
 function EyeIcon() {
-  return (
-    <svg className="login-eye-icon" viewBox="0 0 24 24" width="18" height="18" fill="none"
-         stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
-         aria-hidden="true" focusable="false">
-      <path d="M2 12s3.7-6.5 10-6.5S22 12 22 12s-3.7 6.5-10 6.5S2 12 2 12Z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  )
+  // ★ 2026-10-01：换成 lucide 的图标。原来是自己画的内联 SVG，理由写在上面的
+  //   注释里 —— 那条（"零新依赖"）已经被用户推翻。**换的只是画法**：
+  //   哪张图代表哪个状态、`aria-label` 说什么，一个字都没动。
+  //   `strokeWidth` 给 1.7（不是默认的 2）：这是原来那两笔画出来的粗细，
+  //   换库之后视觉上不该有一丝变化。
+  return <Eye size={18} strokeWidth={1.7} className="login-eye-icon" aria-hidden="true" />
 }
 
 /** 划掉的那只眼睛（= 点下去把密码收回去）。见上面那段"哪张图代表哪个状态"。 */
 function EyeOffIcon() {
-  return (
-    <svg className="login-eye-icon" viewBox="0 0 24 24" width="18" height="18" fill="none"
-         stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
-         aria-hidden="true" focusable="false">
-      <path d="M2 12s3.7-6.5 10-6.5S22 12 22 12s-3.7 6.5-10 6.5S2 12 2 12Z" />
-      <circle cx="12" cy="12" r="3" />
-      <path d="M4 20 20 4" />
-    </svg>
-  )
+  return <EyeOff size={18} strokeWidth={1.7} className="login-eye-icon" aria-hidden="true" />
 }
 
 /** 「这一格必填」那个星号 —— 外加它的**可读等价物**（2026-09-25 用户要的）。

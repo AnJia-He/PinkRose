@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ArrowLeft } from 'lucide-react'
 import { getWork, renameWork, deleteWork, fullUrl } from '../api/works'
 import { workName, type WorkMeta, type WorkDetail } from '../../shared/works.ts'
 import { buildFilename } from '../export/save'
@@ -132,7 +133,7 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
   return (
     <section className="detail">
       <header className="detail-head">
-        <button className="detail-back" onClick={onBack}>← 作品</button>
+        <button className="detail-back" onClick={onBack}><ArrowLeft size={14} aria-hidden="true" />作品</button>
         {renaming ? (
           /* ⚠️ 2026-10-01：这一格**故意没过 `<Field>`** —— 它是"就地改名"，
              名字由它旁边的位置说明（它顶掉的就是那个 `<h1>`），加标签反而是多余的。

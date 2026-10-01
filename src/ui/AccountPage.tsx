@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ChevronRight } from 'lucide-react'
 import { logout, type AccountUser } from '../api/account.ts'
 import { listModels, type PublicConfig } from '../api/models.ts'
 import { listWorks } from '../api/works.ts'
@@ -124,7 +125,7 @@ export function AccountPage({
           {/* 拿不到名单时这一格整个不出现（见上面那个 effect 的注释）——
               「默认」两个字在那种情况下是一句没根据的话。 */}
           {models !== null && <span className="account-row-value">{modelValue(models)}</span>}
-          <span className="account-row-go" aria-hidden="true">›</span>
+          <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
         </button>
       </div>
 

@@ -628,9 +628,11 @@ button.primary:where(:hover):where(:not(:disabled)),
   background: transparent; border-color: var(--line-2); color: var(--muted);
 }
 /* 两个箭头一个意思一个形状：↶ 是"回到那一步"，↻ 是"再来一次"。
-   字数一样、形状一样、只有这个符号和文字不同 —— 它们本来就只差这一点。 */
-.bubble-jump::before { content: '↶'; font-size: 13px; line-height: 1; }
-.bubble-rerun::before { content: '↻'; font-size: 13px; line-height: 1; }
+   字数一样、形状一样、只有这个符号和文字不同 —— 它们本来就只差这一点。
+   ★ 2026-10-01：这两个记号原来在这里用 `content: '↶' / '↻'` **画出来**，
+   现在是 lucide 图标（写在 `ChatPanel.tsx` 里，带 `aria-hidden`）。
+   换的理由和当初不用字符的理由是同一个：**记号不能进 textContent** ——
+   svg 天生就不进，比伪元素还干净。间距由上面那条 `gap: 5px` 管。 */
 .bubble-jump:hover, .bubble-rerun:hover { color: var(--rose-300); border-color: var(--accent); background: var(--rose-tint); }
 /* 忙的时候「再来一版」是禁用的。⚠️ 全局那条 `button:where(:disabled)` 只降透明度，
    **管不到颜色** —— 不写这一条，鼠标停上去它照样变粉，看着能点，
@@ -1198,13 +1200,13 @@ button.primary:where(:hover):where(:not(:disabled)),
 .models-mark { width: 1em; color: var(--rose-300); }
 .models-alias { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 
-/* 「添加一套」是这一栏的**唯一出路**，别做成一条不起眼的小链接。 */
-.models-add { margin-top: var(--sp-3); }
-/* 那颗按钮前面的 +（§7.4 那张图上是 `+ 添加一套`）。
-   走 CSS 装饰、不写进文案 —— 和 `.bubble-jump::before` 那个 ↶ 同一个道理：
-   进了 textContent 的话，读屏软件会念一个加号，按文字找这颗按钮的地方
-   也得跟着认一个字面上不存在的符号。 */
-.models-add::before { content: '+'; margin-right: var(--sp-2); }
+/* 「添加一套」是这一栏的**唯一出路**，别做成一条不起眼的小链接。
+   ★ 2026-10-01：那颗 `+` 从伪元素换成了 lucide 图标（写在 TSX 里），
+   所以这里改成 flex 排一行、间距交给 `gap`。
+   ⚠️ 那条"记号不许进 textContent"的规矩没变：`ModelSettings.test.tsx` 里是按
+   `(textContent ?? '').trim() === '添加一套'` 找这颗按钮的，图标进来之后
+   textContent 仍然只有那四个字（svg 不进 textContent）。 */
+.models-add { display: inline-flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); }
 /* 「当前：……」。它回答的是"我现在到底在用哪套" —— 目录里那句话的落点。 */
 .models-now { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-4) 0 0; font-size: 13px; color: var(--muted); }
 

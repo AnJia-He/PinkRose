@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { ArrowUp } from 'lucide-react'
 // ⚠️ 样式表**不在这儿 import** —— 它在 `src/main.tsx` 里、排在 `styles.css` 后面。
 // 这一页有几条规则要盖掉全局的（body 底色、文档滚动条、color-scheme），
 // 而那份顺序是有讲究的，理由写在那边的导入语句上。
@@ -102,7 +103,7 @@ function BackToTop() {
           top: 0,
           behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
         })}
-      >↑</button>
+      ><ArrowUp size={18} aria-hidden="true" /></button>
     </div>
   )
 }

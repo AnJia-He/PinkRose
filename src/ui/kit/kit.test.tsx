@@ -18,6 +18,7 @@ import { Slider as BaseSlider } from '@base-ui-components/react/slider'
 import { User } from 'lucide-react'
 import { Field, TextInput } from './Field.tsx'
 import { Slider } from './Slider.tsx'
+import ChatPanel from '../ChatPanel.tsx'
 import { LoginPage } from '../LoginPage.tsx'
 
 async function mount(node: React.ReactNode) {
@@ -114,6 +115,28 @@ describe('<Slider>：键盘能改值，读屏能念出这是哪一条', () => {
     const c = await mount(<Slider label="亮度" value={3} min={-100} max={100} onChange={() => {}} />)
     const value = c.querySelector('.slider-value') as HTMLElement
     expect(value.getAttribute('aria-hidden')).toBe('true')
+  })
+})
+
+describe('图标（2026-10-01 统一走 lucide）', () => {
+  /* ⚠️ 这条守的是**当初不用字符画记号的那个理由**：记号一旦进了 textContent，
+     读屏软件会念它，而"按文字找这颗按钮"的地方（`ModelSettings.test.tsx` 的
+     `inPart`、`App.test.tsx` 里那几个 clickTop/goNav）就会认不出来。
+     svg 天生不进 textContent —— 所以换成图标之后这条**更稳**了，但要有人钉着。 */
+  it('「回到这一步」里的箭头是 svg，按钮的文字还是那五个字', async () => {
+    const c = await mount(
+      <ChatPanel
+        messages={[{ id: 1, role: 'assistant', text: '好，这就去掉。' }]}
+        cards={[]} busy={null} suggesting={false} thumbs={{}}
+        rerunnable={[1]} jumpableIds={[1]} marking={false} canConfirmMark={false}
+        onSend={() => {}} onStop={() => {}} onCard={() => {}} onJump={() => {}}
+        onRerun={() => {}} onConfirmMark={() => {}} onCancelMark={() => {}}
+      />,
+    )
+    const jump = c.querySelector('.bubble-jump') as HTMLButtonElement
+    expect(jump.querySelector('svg')).toBeTruthy()
+    expect(jump.textContent?.trim()).toBe('回到这一步')
+    expect(jump.textContent).not.toContain('↶')
   })
 })
 

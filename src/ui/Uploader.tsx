@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Image as ImageIcon } from 'lucide-react'
 import logoMark from '../assets/logo/rose.svg'
 
 type Props = { onPick: (file: File) => void }
@@ -7,21 +8,12 @@ type Props = { onPick: (file: File) => void }
  *  不是"上传箭头"：用户要做的动作是"挑一张照片"，不是"上传"——
  *  这一屏上"上传"这个词一次都没出现过。
  *
- *  ⚠️ **2026-10-01 起这条理由改了**：原来这里写的是"内联 SVG，因为
- *  `dependencies` 永远只有 piexifjs / react / react-dom"—— 那条**零新依赖**的
- *  规矩被用户推翻了（见 `docs/superpowers/specs/2026-10-01-frontend-component-library.md`）：
- *  通用交互件一律用现成的库。所以这只手画的图**已经排进"换成 lucide"那一批**，
- *  在换掉之前先别再加新的手绘图标。 */
+ *  ★ 2026-10-01：换成 lucide 的 `Image`（同一个东西：方框 + 山 + 太阳）。
+ *  原来是自己画的内联 SVG，理由是"零新依赖"—— 那条规矩已被用户推翻
+ *  （见 docs/superpowers/specs/2026-10-01-frontend-component-library.md）。
+ *  `strokeWidth` 给 1.5（不是默认的 2），和原来那笔画出来的粗细一致。 */
 function PhotoIcon() {
-  return (
-    <svg className="uploader-icon" viewBox="0 0 24 24" width="30" height="30" fill="none"
-         stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-         aria-hidden="true" focusable="false">
-      <rect x="3" y="4" width="18" height="16" rx="3" />
-      <circle cx="8.5" cy="9.5" r="1.5" />
-      <path d="M21 15.5 16.2 11 10 17.2M3.4 16.6l3.1-2.7 3 2.6" />
-    </svg>
-  )
+  return <ImageIcon className="uploader-icon" size={30} strokeWidth={1.5} aria-hidden="true" />
 }
 
 /**

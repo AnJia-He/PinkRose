@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { User } from 'lucide-react'
 import Canvas from './ui/Canvas'
 import Uploader from './ui/Uploader'
 import AdjustmentPanel from './ui/AdjustmentPanel'
@@ -1078,7 +1079,7 @@ export default function App() {
                 放**最后一个**子节点是为了让它钉住右上角：`.topbar` 是
                 space-between，第三个孩子会被排到正中间去。 */}
             <button className="user-btn" onClick={() => go({ kind: 'account' })}
-                    aria-label="用户管理">👤</button>
+                    aria-label="用户管理"><User size={17} aria-hidden="true" /></button>
           </header>
 
           {/* 通报条（取代了原来的 window.alert）。它和下面那两条横幅是**三种东西**：
