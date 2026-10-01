@@ -56,3 +56,22 @@ export function makeThumbnail(source: Sizable, maxSide = THUMB_MAX_SIDE): string
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
   return canvas.toDataURL('image/jpeg', 0.7)
 }
+
+/**
+ * 位图 → data URL。**送给服务端的图走这条路**（建会话要原图的字节）。
+ *
+ * 用 **JPEG 0.92**：这是"存下来接着改"的那一份，不是缩略图，画质要够 ——
+ * 但也不是最终导出（那一步在 `buildExportBlob`，走的是 blob 不是 data URL）。
+ *
+ * ⚠️ 别用 `makeThumbnail` 代替：那个是 **0.7**，而且会**缩到 480**。
+ * 拿它当原图传上去，用户回头再打开这张会话，底图是糊的 —— 而且不报错。
+ */
+export function bitmapToDataUrl(source: Sizable): string {
+  const canvas = document.createElement('canvas')
+  canvas.width = source.width
+  canvas.height = source.height
+  const ctx = canvas.getContext('2d', { colorSpace: 'srgb' })
+  if (!ctx) throw new Error('拿不到 2D 上下文，做不了 data URL')
+  ctx.drawImage(source, 0, 0)
+  return canvas.toDataURL('image/jpeg', 0.92)
+}

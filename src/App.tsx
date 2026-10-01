@@ -16,6 +16,7 @@ import logoMark from './assets/logo/rose.svg'
 import { pathOf, viewFromPath, type View } from './ui/view'
 import { me, type AccountUser } from './api/account'
 import { createWork, replaceWork } from './api/works'
+import { createSession, updateSession, type SessionPatch } from './api/sessions'
 import { decodeImageFile, type DecodedImage } from './image/decode'
 import { resizeBitmap } from './image/resize'
 import { fitToLimit, probeLimit } from './render/limits'
@@ -26,7 +27,7 @@ import {
 import { prepareForModel, prepareForRouting, type Sizable } from './image/prepare'
 import { ApiError, isAbort, postEdit, postRoute, postSuggest } from './api/client'
 import { bitmapsToClose, attachThumb, jumpTo, pushSnapshot, type Snapshot } from './core/history'
-import { GALLERY_THUMB_MAX_SIDE, makeThumbnail } from './core/thumbnail'
+import { GALLERY_THUMB_MAX_SIDE, bitmapToDataUrl, makeThumbnail } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
 import type { RouteDecision, SuggestCard } from '../shared/protocol.ts'
 import type { Recipe } from '../shared/works.ts'
@@ -176,6 +177,24 @@ export default function App() {
   /** 这一趟修图（同一张上传的照片）里，上一次存进去的是哪个。
    *  **换图时清零** —— 它记的是"这张照片"，换一张就该重新问（§3.4）。 */
   const [savedId, setSavedId] = useState<number | null>(null)
+
+  /**
+   * 这一趟修图挂在服务端哪条会话上。null = 还没建起来（正在建、或者建失败了）。
+   *
+   * ⚠️⚠️ **必须是 state，不能是 ref。** 这一条是 2026-10-01 实测出来的坑：
+   *   建会话是**不 await** 的（见 `onPick`），所以上传之后有一段时间 `sessionId`
+   *   还是 null。而那个落盘副作用的第一句就是"没有会话就 return"。
+   *
+   *   用 ref 的话：用户上传完**立刻拖一下滑块**（那是这个产品最自然的第一个动作 ——
+   *   落地页写的就是"拖滑块不用登录"），副作用跑起来看到 null，**直接 return**；
+   *   等建会话终于回来、把 id 写进 ref，**ref 的变化不触发重渲染**，于是副作用
+   *   再也不会为那一次改动跑一遍 —— **那一版改动永远不会落盘，而且不报错。**
+   *   等用户刷新才发现，而那时候他已经说不清丢了什么了。
+   *
+   *   换成 state 之后，id 一到就重渲染、副作用自己再跑一遍 —— 竞态没了，
+   *   而且比 ref 少一个概念（一个真值来源，不是两个）。
+   */
+  const [sessionId, setSessionId] = useState<number | null>(null)
   /** 非 null = 正在问"上次那张要替换掉吗"，手里攥着刚做好的那张图。
    *
    *  ⚠️ **配方是"问的那一刻"那一份，不是回答那一刻的**（终审 M4）。`blob` 是
@@ -237,6 +256,10 @@ export default function App() {
    *  「回到这一步」换底图**故意不算**（它换回的是同一张照片的旧版本，
    *  卡片说的仍然成立，而且跳回原图之后那批卡片恰好又是对的）。 */
   const baseSeqRef = useRef(0)
+  /** 落盘的次序号。后一次回来时前一次可能还在路上 —— 只认最新的那一次 */
+  const persistSeqRef = useRef(0)
+  /** 上一次**成功写进服务端**的底图是第几版。只在写成功之后才更新 —— 见下面那句注释 */
+  const lastPersistedBaseSeqRef = useRef(-1)
   /** 用户**这一趟说过的原话**（send / 卡片各写各的）。
    *  模型说拿不准时要把它留到用户点完图 —— 届时"原来那句话"是**那一刻**的那句，
    *  不是某个 state 里可能已经翻篇的那句。 */
@@ -500,6 +523,29 @@ export default function App() {
       setHistory([
         { id: welcomeId, label: '原图', base: img, params: ZERO, isOriginal: true, thumb: '' },
       ])
+
+      // ★ 在服务端把这条会话立起来。**不 await** —— 建会话是"锦上添花"，
+      //   等它等于把用户挡在门外（上传那一步已经有一句"正在打开照片…"了）。
+      //   建失败也**不影响本地修图**，但要说一声（见下面 catch）。
+      //
+      // ⚠️ `setSessionId(null)` 这一行是**给同一趟里再换一张照片**留的保险：
+      //   上一张的 id 还留着的话，落盘副作用会把**这一张**的步骤和消息写进
+      //   **上一条会话**里 —— 串会话，而且不报错。（今天应用里没有"换一张"的
+      //   入口 —— 换图 = 重开一次，所以这一行到不了；一行保险，留着。）
+      setSessionId(null)
+      void (async () => {
+        try {
+          // `makeThumbnail` 是**同步**的（返回 data URL 字符串），别手滑写 await。
+          const thumb = makeThumbnail(img.bitmap, GALLERY_THUMB_MAX_SIDE)
+          const { id } = await createSession(bitmapToDataUrl(img.bitmap), thumb, file.name)
+          // ⚠️ 只在**这张照片还是当前那张**时才认这个 id：
+          //   用户可能在等的时候又换了一张（那会让这个 id 变成上一条会话的）
+          if (originalFileRef.current === file) setSessionId(id)
+        } catch (e) {
+          console.error('会话没建起来', e)
+          noticeBad('这次的改动暂时存不下来（刷新就没了），修图照常。')
+        }
+      })()
 
       // 卡片是**可选件，绝不能让用户等它**：这里只把它挂到后台去跑，
       // 发送键立刻就是可用的（见 SUGGEST_WAIT_MS 那段）。
@@ -931,6 +977,76 @@ export default function App() {
       console.error('缩略图生成失败（不影响修图）', e)
     }
   }, [history])
+
+  /**
+   * 把"现在这一趟"存回服务端。
+   *
+   * ⚠️ 五件事，一件都不能错：
+   *   ① **防抖**：拖一次滑块会推出很多版 —— 不防抖就是每个像素一次 PUT。
+   *   ② **不许在底图没换的时候传 `base`** —— 那会多存一个没人引用的文件
+   *      （设计文档 §4.3 那条"参数步不产生新图"，落点就在这儿）。
+   *   ③ **不许在调用点上 await** —— 用户拖滑块是连续的，等一次网络往返就等于拖不动。
+   *   ④ **不许把失败吞掉** —— 静默失败是这个项目最恨的：用户会以为存上了。
+   *   ⑤ **`lastPersistedBaseSeqRef` 只在写成功之后才更新** —— 先更新的话，
+   *      一次失败会把那一版底图**永久跳过**（后面再也不会重传它）。
+   */
+  useEffect(() => {
+    const last = history[history.length - 1]
+    if (sessionId === null || !last) return
+    // 底图这一版存过没有？`lastPersistedBaseSeqRef` 只在**写成功**之后才跟进
+    // （见 ⑤）——它的初值 -1 表示"一版都还没存过"。
+    const changed = baseSeqRef.current !== lastPersistedBaseSeqRef.current
+    const snapshot = history.map((s) => ({
+      id: s.id, label: s.label, params: s.params, prompt: s.prompt, at: 0,
+    }))
+    // ⚠️ `ChatMessage` 上**没有 `at`**（这个客户端不显示消息时间），而
+    //   `SessionMessage.at` 是必填的 —— 送 0 = "这个信息我们没有"（服务端
+    //   `readMessages` 收到缺省时落的也是 0）。**不能在这里现取 `Date.now()`**：
+    //   这一串每次落盘都整段重发，`Date.now()` 会把**每条**消息的时间每次改写成
+    //   "此刻"，比没有更糟。将来真要在气泡上显示时间，该改的是 `ChatMessage`
+    //   （加一个字段、在 `say`/`send` 那几处写进去），不是在这里补一个数。
+    const messagesNow = messages.map((m) => ({ ...m, at: 0 }))
+    // ★ `params` **必须一起送**，而且**必须在依赖里**。
+    //   ⚠️ 这个客户端里"改参数"（拖滑块 / 套预设 / 按重置）**不会**让 `history` 变
+    //   —— 那是既有的裁定 ⑤（见 `WorkDetailPage` 那个 `onApply` 的注释）。
+    //   所以只盯 `[history, messages]` 的话，用户拖完滑块**一次都不会落盘**，
+    //   刷新一下回到拖之前的样子 —— 而验收线第 1 条写着"参数全在"。
+    const paramsNow = params
+
+    // ③：这里只**定一个闹钟**，不等任何网络。下一次改动会把这个闹钟重设。
+    const timer = setTimeout(() => {
+      const seq = ++persistSeqRef.current
+      void (async () => {
+        try {
+          const patch: SessionPatch = { messages: messagesNow, steps: snapshot, params: paramsNow }
+          if (changed) {
+            const el = canvasElRef.current
+            if (!el) return
+            patch.base = el.toDataURL('image/jpeg', 0.9)
+            // ★ 缩略图**跟着 base 一起换**，spec §6.3 要求列表上是「最后那张」的样子。
+            //   不换的话，列表永远显示刚上传那张原图 —— 用户改了半天，左栏「对话」里
+            //   还是那张没改过的照片，而且**不报错**。
+            //   只在 `changed` 那一支里做：图没变的时候重做一张是白费（而且会让
+            //   服务端把好好的缩略图删了重存）。
+            patch.thumb = makeThumbnail(el, GALLERY_THUMB_MAX_SIDE)
+          }
+          await updateSession(sessionId, patch)
+          // ⑤：**写成功之后**才记下"这一版底图存过了"
+          if (changed) lastPersistedBaseSeqRef.current = baseSeqRef.current
+        } catch (e) {
+          // 只认**最新**那一次失败 —— 早先那几次可能已经被后一次覆盖掉了，
+          // 那时候弹"没存下来"是在说一件已经不成立的事
+          if (seq === persistSeqRef.current) {
+            console.error('这一步没存下来', e)
+            noticeBad('刚才那一步没存下来，刷新可能接不上。')
+          }
+        }
+      })()
+    }, 800)
+    return () => clearTimeout(timer)
+    // ⚠️ `sessionId` **必须在依赖里** —— 它一到，这个副作用得再跑一遍，
+    //   否则"上传之后立刻动的那一下"落不了盘（见 `sessionId` 那段长注释）。
+  }, [history, messages, params, sessionId])
 
   // ── 左栏导航 + 网址（Task 10） ──────────────────────────────────────
   //

@@ -39,7 +39,14 @@ vi.mock('./ui/Canvas', async () => {
         ref: (node: HTMLElement | null) => {
           canvasRef.current = node
           // 模拟"渲染过了"：把当前参数写在节点上，缩略图能读到
-          if (node) node.dataset.rendered = JSON.stringify(params)
+          if (node) {
+            node.dataset.rendered = JSON.stringify(params)
+            // 真的 `toDataURL` 要 2D 画布，jsdom 给不出来（回一个 `'data:,'`，
+            // 还往控制台刷一行 "Not implemented"）。落盘那条路要拿它当**底图**的
+            // 字节（`el.toDataURL('image/jpeg', 0.9)`）—— 假的这一版把"此刻画布上
+            // 是哪一版参数"带上，断言才分得清送出来的底图是哪一版。
+            ;(node as HTMLCanvasElement).toDataURL = () => `canvas:${node.dataset.rendered}`
+          }
         },
         // ⚠️ 报回来的坐标必须**跟着事件走**，不能写死 (0.5, 0.5)：
         //    写死的话"换个地方再点"那条测试永远不可能红 —— 第二次点被守卫
@@ -95,10 +102,14 @@ vi.mock('./image/prepare', () => ({
  *    · mock 里自己写死一个旧值：那更坏 —— `makeThumbnail(canvas, 160)` 一声不吭地
  *      照做，测试全绿而量出来的尺寸永远是错的。
  *  所以只假掉 `makeThumbnail` 这一个真需要画布的东西，常量原样透传 —— 下面
- *  「★ 作品页那张缩略图的上限是 480」那一条守着这两件事。 */
+ *  「★ 作品页那张缩略图的上限是 480」那一条守着这两件事。
+ *
+ *  `bitmapToDataUrl`（Task 4：建会话时要送的**原图**）同理，也是 canvas → `toDataURL`：
+ *  不假掉的话 jsdom 那边 `getContext('2d')` 回 null，函数当场抛 —— 建会话那条路
+ *  整条走不到，而现象只是屏幕上多一句"存不下来"。 */
 vi.mock('./core/thumbnail', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./core/thumbnail')>()
-  return { ...actual, makeThumbnail: vi.fn() }
+  return { ...actual, makeThumbnail: vi.fn(), bitmapToDataUrl: vi.fn() }
 })
 
 /** 把圈画进图里那一步要 2D 画布，jsdom 同样给不出来。
@@ -283,6 +294,18 @@ function withModelsError(message: string) {
   })
 }
 
+/** 盖上"**建会话失败**"这一条 —— 500。
+ *  演的是"那一次锦上添花没成"：修图照常，但屏幕上必须说一声（Task 4）。 */
+function withSessionsError() {
+  const inner = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === '/api/sessions' && (init?.method ?? 'GET') === 'POST') {
+      return jsonResponse({ error: { code: 'INTERNAL', message: '建不起来' } }, 500)
+    }
+    return inner(url, init)
+  })
+}
+
 function decision(over: Partial<RouteDecision> = {}): RouteDecision {
   return {
     route: 'params',
@@ -318,6 +341,14 @@ beforeEach(() => {
       `thumb:${(src as { __tag?: string })?.__tag
         ?? (src as HTMLElement)?.dataset?.rendered
         ?? '还没画'}`)
+
+  // ★ 假的 `bitmapToDataUrl` = **原图那一版**，前缀和缩略图**分开**。
+  //   分开是有用的：会话的 `image` 字段是"回头接着改的那张底"，它必须走
+  //   `bitmapToDataUrl`（0.92 画质、不缩边）。谁要是拿 `makeThumbnail` 顶上，
+  //   送上去的就会变成 `thumb:…` —— 断言当场红。不分开的话两者一模一样，
+  //   用户的底图**静默地**变糊，测试全绿。
+  vi.mocked(thumbMod.bitmapToDataUrl).mockImplementation(
+    (src: unknown) => `original:${(src as { __tag?: string })?.__tag ?? '画布'}`)
 
   // 默认：设备很宽裕，什么都能画。要测"缩"的那几条自己把这个改小。
   vi.mocked(limitsMod.probeLimit).mockReturnValue({ maxSide: 8192, maxArea: null })
@@ -380,6 +411,22 @@ beforeEach(() => {
     // 各用例自己用 withModels 盖上一条真的。
     if (url === '/api/models' && (init?.method ?? 'GET') === 'GET') {
       return jsonResponse({ configs: [] })
+    }
+    // 会话（Task 4）：**上传照片就会建一条**。默认**建得成**（id = 1）——
+    // 「服务端没建成就不能假装在存」那条用例自己把这一格盖成 500。
+    if (url === '/api/sessions' && (init?.method ?? 'GET') === 'POST') {
+      return jsonResponse({ id: 1 })
+    }
+    // 每一步落盘那次更新（`PUT /api/sessions/:id`）。⚠️ **必须接住**：
+    // 落盘那一层有 800ms 防抖，慢机器上真有用例会活过那一秒 —— 掉进下面
+    // 兜底那个 blob 形状的话，屏幕上会多出一条"刚才那一步没存下来"的通报，
+    // 而它跟那条用例要测的事**一点关系都没有**（随机噪声比没有测试更糟）。
+    if (/^\/api\/sessions\/\d+$/.test(url) && (init?.method ?? 'GET') === 'PUT') {
+      // 响应是 `SessionMeta`；App 那边不用它的内容（只等它成功），给形状就行。
+      return jsonResponse({
+        id: 1, title: null, originalName: null,
+        createdAt: 0, updatedAt: 0, hasThumb: false, stepCount: 1,
+      })
     }
     // 退出登录（Task 8）：清 cookie 那一步在服务端，这里就用"后端从此不认这个人"
     // 代替。**必须真的接住这一条** —— 让它掉进下面那个兜底的 blob 形状的话，
@@ -3127,5 +3174,96 @@ describe('用户管理页', () => {
     expect(formatSize(240 * 1024)).toBe('240 KB')
     expect(formatSize(342 * MB)).toBe('342 MB')
     expect(formatSize(1.5 * 1024 * MB)).toBe('1.5 GB')
+  })
+})
+
+/**
+ * 把"这一趟修图"存到服务端（Task 4）：**上传建会话、每一次改动落盘**。
+ *
+ * 这一层错了**不会报错**，只会静静地丢：刷新之后参数回到拖动之前、对话少几句,
+ * 而屏幕上当时什么都没说。所以它值得自己的几条用例。
+ */
+describe('会话落盘：上传建会话、每一步更新', () => {
+  /** 等过落盘那一层防抖（800ms）。
+   *
+   *  ★ **真的等**（真定时器），不用假定时器：这个文件从头到尾都用真定时器，
+   *  而 `vi.useFakeTimers()` 会把三条路一起冻上（`act` 里的微任务、
+   *  那些"挂住不回"的 gate、以及 React 自己的调度）。900 只是留个余量 ——
+   *  `setTimeout` 保证的是"至少"这么久，慢机器上照样成立。 */
+  const waitPersist = async () => {
+    await act(async () => { await new Promise(r => setTimeout(r, 900)) })
+  }
+  /** 打到会话那两条路上的请求（建会话 / 每一步更新）。 */
+  const sessionCalls = (url: string, method: 'POST' | 'PUT') =>
+    fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === method)
+  const bodyOf = (call: unknown[]) => JSON.parse(String((call[1] as RequestInit).body))
+
+  it('★ 上传照片 → 会建一条会话；原图、缩略图、照片名一起送上去', async () => {
+    await renderApp()
+    await uploadPhoto()
+
+    const posts = sessionCalls('/api/sessions', 'POST')
+    expect(posts).toHaveLength(1)
+    const body = bodyOf(posts[0]!)
+    // ★ `image` 必须是**原图那一版**（`bitmapToDataUrl`：0.92 画质、不缩边）——
+    //   它是"回头接着改"的那张底。变异：拿 `makeThumbnail` 冒充（0.7 画质、
+    //   缩到 480）→ 这一句红。真发生了的话用户回头打开这条会话，底图是糊的，
+    //   而**没有任何地方会报错**（这一条守的就是它）。
+    expect(body.image).toBe('original:upload')
+    // 列表上那张小图（spec §6.3 用的是"最后那张"的样子；刚上传时就是这张）
+    expect(body.thumb).toBe('thumb:upload')
+    // 照片**上传时的名字**：列表标题和恢复之后「下载」的文件名都靠它（§6.3）
+    expect(body.name).toBe('p.jpg')
+  })
+
+  it('★ 服务端没建成就**不能假装在存** —— 说一声，修图照常', async () => {
+    // 建会话是"锦上添花"：它没成，**本地修图一点都不该受影响**（调色是免费的、
+    // 本地的）。但不许静默 —— 用户以为在存、其实什么都没存，是这个项目最恨的
+    // 一种失败：等他刷新才发现，而那时候他已经说不清丢了什么。
+    withSessionsError()
+    await renderApp()
+    await uploadPhoto()
+
+    // ① 屏幕上必须说一声，而且说的是**这件事**（不是"这张图打不开"那种甩锅话）
+    expect(container.querySelector('.notice')?.textContent ?? '')
+      .toContain('这次的改动暂时存不下来')
+
+    // ② 修图照常：照片在、话能说、颜色真的调上去了。
+    //   （少了这半条，一个"建会话失败就把整个应用卡住"的实现也能过。）
+    expect(canvasProps.images.at(-1)).toBeTruthy()
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 20 }, reply: '给你提亮了。' }))
+    await say('亮一点')
+    expect(lastReply()).toContain('提亮了')
+  })
+
+  it('★ 每一步都落盘：说过的话、调过的参数都在；底图没换就不重传它', async () => {
+    await renderApp()
+    await uploadPhoto()
+    // 第一次落盘：上传那一版（底图在这个副作用眼里是新的，所以它带 `base`）
+    await waitPersist()
+
+    // 再动一下 —— 说一句"亮一点"。⚠️ 这条**只改 params，不动 history**
+    //  （裁定 ⑤：改 params 从来不 push 快照）。所以落盘那条路要是没把 `params`
+    //  单独带上、也没把它放进依赖数组，**这一整趟都不会再落盘** ——
+    //  用户拖完滑块刷新一下回到拖动之前，而验收线第 1 条写着"参数全在"。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 20 }, reply: '给你提亮了。' }))
+    await say('亮一点')
+    await waitPersist()
+
+    const puts = sessionCalls('/api/sessions/1', 'PUT')
+    // 两次改动 → 恰好两次请求（拖滑块会一路推出很多版，防抖没做的话这里是一串）
+    expect(puts).toHaveLength(2)
+    const body = bodyOf(puts[1]!)
+    expect(body.messages.map((m: { text: string }) => m.text)).toContain('亮一点')
+    // ★ 参数单独走的那条路：它落在**最后一步**上，不是靠 history 带过去的
+    expect(body.params.exposure).toBe(20)
+    // ★ 底图没换就不许传 `base`（也不许重做缩略图）—— 传了就是多存一个
+    //   没人引用的文件，而服务端会把好好的缩略图删了重存（§4.3 那条的落点）
+    expect(body.base).toBeUndefined()
+    expect(body.thumb).toBeUndefined()
+    // 而且步骤还是那一步 —— 参数步不推快照
+    expect(body.steps).toHaveLength(1)
   })
 })
