@@ -10,6 +10,8 @@
  * 先修环境。
  */
 import { act } from 'react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it } from 'vitest'
 import { Slider } from '@base-ui-components/react/slider'
@@ -77,6 +79,39 @@ describe('<Field>：一格表单的三条约定', () => {
     const box = c.querySelector('.demo-field') as HTMLElement
     expect(box).toBeTruthy()
     expect(box.querySelector('input')).toBeTruthy()
+  })
+})
+
+describe('没有标签的那几格', () => {
+  /* ⚠️ 这三格**故意没过 `<Field>`**（它们没有标签、没有注解，包一层反而要把
+     `flex` 从输入框挪到外层，白折腾）。它们的风险是另一头的：
+     **只有 placeholder，没有可访问的名字** —— 所以下面钉的是那三条名字，
+     不是"用了什么标签"。原因写在各自文件里那一小段注释里。
+
+     ⚠️ 读源码这条路**不能用 `new URL(相对路径, import.meta.url)`**：
+     jsdom 环境里它拼出来不是 file:// 协议，`readFileSync` 会报
+     "The URL must be of scheme file"。按**项目根**拼（vitest 就是在那儿跑的）。 */
+  const srcOf = (name: string) => readFileSync(join(process.cwd(), 'src/ui', name), 'utf8')
+
+  it('搜索 / 改名 / 对话三格各自带着可访问名字（placeholder 不算名字）', () => {
+    const checks = [
+      ['GalleryPage.tsx', 'aria-label="找一张作品"'],
+      ['WorkDetailPage.tsx', 'aria-label="作品名字"'],
+      ['ChatPanel.tsx', 'aria-label="说说想怎么改"'],
+    ] as const
+    for (const [file, needle] of checks) {
+      expect(srcOf(file), file).toContain(needle)
+    }
+  })
+
+  it('模型设置那四格走 `<Field>` —— 别再手写第二套 <label htmlFor>', () => {
+    const src = srcOf('ModelSettings.tsx')
+    expect(src).toContain('<Field')
+    expect(src).not.toMatch(/<label htmlFor=/)
+    // ⚠️ id 是 ModelSettings.test.tsx 里 `field(id)` 的锚点，四格一个都不能少
+    for (const id of ['model-alias', 'model-url', 'model-name', 'model-key']) {
+      expect(src, id).toContain(`id="${id}"`)
+    }
   })
 })
 

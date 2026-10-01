@@ -27,13 +27,19 @@ export function Field(props: {
   label: React.ReactNode
   /** 标签下面、输入框下面那行小字。给了就一定和输入框连上（aria-describedby） */
   hint?: React.ReactNode
+  /** 注解那行 `<p>` 的类名（`.models-hint` 这种）。
+   *  ⚠️ 故意**不给默认值**：注解长什么样是各自的领地（模型设置那页和别处不同），
+   *  这里塞一个默认类名，等于凭空多出一个"摆着没人用"的类。 */
+  hintClassName?: string
   children: React.ReactNode
 }) {
   return (
     <BaseField.Root className={props.className}>
       <BaseField.Label>{props.label}</BaseField.Label>
       {props.children}
-      {props.hint ? <BaseField.Description>{props.hint}</BaseField.Description> : null}
+      {props.hint
+        ? <BaseField.Description className={props.hintClassName}>{props.hint}</BaseField.Description>
+        : null}
     </BaseField.Root>
   )
 }

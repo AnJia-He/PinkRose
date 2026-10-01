@@ -130,7 +130,16 @@ export default function ChatPanel({
           onSend(v)
         }}
       >
-        <input name="text" placeholder="说说想怎么改…" autoComplete="off" />
+        {/* ⚠️ 2026-10-01：这一格**故意没过 `<Field>`** —— 它没有标签也没有注解，
+            而 `.chat-input input` 身上那条 `flex: 1` 是它撑满那一行的全部依据，
+            包一层就得把 `flex` 挪到外层 div 上（这一条在手机上特别容易挤坏）。
+            可访问的名字直接给在输入框上：`placeholder` 只是提示，读屏软件不保证念它。
+
+            ⚠️ 它**必须继续叫 `name="text"` 且待在这个 `<form>` 里** ——
+            上面那段取值用它（`elements.namedItem('text')`），
+            `App.test.tsx` 里的 `say()` 辅助也按 `form.chat-input` + `input[name="text"]` 找它。 */}
+        <input name="text" placeholder="说说想怎么改…" autoComplete="off"
+               aria-label="说说想怎么改" />
         {/* ★ 2026-09-30：这一格**平时是「发送」，生成中是「停止」**。
             为什么值得专门做一个按钮（而不是让发送键继续 disabled 着）：
             生成要十几秒，而在这十几秒里用户原来**没有任何出口** ——

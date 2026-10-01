@@ -6,6 +6,7 @@ import {
   UNREADABLE_KEY_HINT, activateModel, createModel, deleteModel, listModels, testModel, updateModel,
   type ModelKind, type ProbeTarget, type ProbeResult, type PublicConfig,
 } from '../api/models'
+import { Field, TextInput } from './kit/Field.tsx'
 
 /**
  * 模型设置（§7.4）。**这一页是"限制"那件事的门面**，不是能力展示 ——
@@ -393,72 +394,66 @@ function ModelForm({
     >
       <h3 className="models-form-title">{config ? `编辑「${config.alias}」` : '添加一套'}</h3>
 
-      <div className="models-field">
-        <label htmlFor="model-alias">别名</label>
-        <input
-          id="model-alias" value={alias} autoComplete="off"
-          onChange={(e) => setAlias(e.target.value)}
-        />
+      <Field className="models-field" label="别名" hintClassName="models-hint"
+             hint="别名是给你自己认的，名单里显示的就是它。">
         {/* 别名是**给用户自己认的**（§7.4）：名单里到处显示的都是它，型号名藏在下面。
-            这条注解只说"它是干嘛的"，不提长度 —— 上限在服务端，超了那边会说人话。 */}
-        <p className="models-hint">别名是给你自己认的，名单里显示的就是它。</p>
-      </div>
+            这条注解只说"它是干嘛的"，不提长度 —— 上限在服务端，超了那边会说人话。
 
-      <div className="models-field">
-        <label htmlFor="model-url">接口地址</label>
-        <input
-          id="model-url" value={baseUrl} autoComplete="off" inputMode="url" spellCheck={false}
-          onChange={(e) => setBaseUrl(e.target.value)}
-        />
-        {/* 这句说的是**服务端**会做的归一化（`normalizeBaseUrl`）。
+            ⚠️ 2026-10-01 起：标签 / 输入框 / 注解这三样由 `<Field>` 摆，
+            它顺带把注解用 `aria-describedby` 和输入框连上（换之前全仓一条都没有）。
+            `id="model-alias"` **是测试的锚点**（`ModelSettings.test.tsx:161` 那个
+            `field(id)` 按 `#model-*` 找），一个字都不许改。 */}
+        <TextInput id="model-alias" value={alias} autoComplete="off"
+                   onChange={(e) => setAlias(e.target.value)} />
+      </Field>
+
+      <Field className="models-field" label="接口地址" hintClassName="models-hint"
+             hint="填域名也行，我们会补上 /v1">
+        {/* 那句注解说的是**服务端**会做的归一化（`normalizeBaseUrl`）。
             前端一个字都不自作聪明地补 —— 两处各补各的，规则迟早走岔。 */}
-        <p className="models-hint">填域名也行，我们会补上 /v1</p>
-      </div>
+        <TextInput id="model-url" value={baseUrl} autoComplete="off" inputMode="url" spellCheck={false}
+                   onChange={(e) => setBaseUrl(e.target.value)} />
+      </Field>
 
-      <div className="models-field">
-        <label htmlFor="model-name">模型名</label>
-        <input
-          id="model-name" value={modelId} autoComplete="off" spellCheck={false}
-          list="model-names"
-          onChange={(e) => setModelId(e.target.value)}
-        />
+      <Field className="models-field" label="模型名" hintClassName="models-hint"
+             hint="能从「测一下」带回来的名单里选，也能自己打。">
         {/* 下拉里的名单来自"测一下"（上游那把钥匙能看见的型号）。**同时允许手打**：
             商汤那份名单就不全，我们自己在用的那个不在里面。 */}
+        <TextInput id="model-name" value={modelId} autoComplete="off" spellCheck={false}
+                   list="model-names"
+                   onChange={(e) => setModelId(e.target.value)} />
         <datalist id="model-names">
           {options.map((n) => <option key={n} value={n} />)}
         </datalist>
-        <p className="models-hint">能从「测一下」带回来的名单里选，也能自己打。</p>
-      </div>
+      </Field>
 
-      <div className="models-field">
-        {config && !keyOpen ? (
-          <>
-            {/* 钥匙那一格（§7.7）。存着的时候**只给头尾两位**，明文连服务端都不往回送。
-                收起状态这儿没有可操作的控件，所以是 `<span>` 不是 `<label>` ——
-                标签得指向一个控件，指不到就别假装是标签（读屏软件会念一个不存在的字段）。 */}
-            <span>钥匙</span>
-            <div className="models-keyrow">
-              <b className={badKeyHint ? 'models-keybad' : undefined}>{config.keyHint}</b>
-              <button type="button" onClick={() => setKeyOpen(true)}>换一把</button>
-            </div>
-            {badKeyHint && (
-              // 这一句和上面那个红字是**同一件事的两种说法**：红字负责"这里出事了"，
-              // 这句负责"那怎么办"（《文案规范》：哪不对 + 怎么办，缺一不可）。
-              <p className="models-hint">这一把读不出来了，重填一次才能用。</p>
-            )}
-          </>
-        ) : (
-          <>
-            <label htmlFor="model-key">钥匙</label>
-            <input
-              id="model-key" type="password" value={apiKey} autoComplete="off"
-              placeholder={config ? '粘贴新的一把，换掉现在这个' : ''}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-            <p className="models-hint">只存在我们的服务器上，页面上只会显示头尾两位。</p>
-          </>
-        )}
-      </div>
+      {/* 钥匙那一格（§7.7）。两个分支**各是各的 `<div className="models-field">`**
+          （不是"一个壳子里换内容"）：收起态根本没有可操作的控件，
+          包在 `<Field>` 里就成了"一个指着不存在的控件的标签"。 */}
+      {config && !keyOpen ? (
+        <div className="models-field">
+          {/* 存着的时候**只给头尾两位**，明文连服务端都不往回送。
+              收起状态这儿没有可操作的控件，所以是 `<span>` 不是 `<label>` ——
+              标签得指向一个控件，指不到就别假装是标签（读屏软件会念一个不存在的字段）。 */}
+          <span>钥匙</span>
+          <div className="models-keyrow">
+            <b className={badKeyHint ? 'models-keybad' : undefined}>{config.keyHint}</b>
+            <button type="button" onClick={() => setKeyOpen(true)}>换一把</button>
+          </div>
+          {badKeyHint && (
+            // 这一句和上面那个红字是**同一件事的两种说法**：红字负责"这里出事了"，
+            // 这句负责"那怎么办"（《文案规范》：哪不对 + 怎么办，缺一不可）。
+            <p className="models-hint">这一把读不出来了，重填一次才能用。</p>
+          )}
+        </div>
+      ) : (
+        <Field className="models-field" label="钥匙" hintClassName="models-hint"
+               hint="只存在我们的服务器上，页面上只会显示头尾两位。">
+          <TextInput id="model-key" type="password" value={apiKey} autoComplete="off"
+                     placeholder={config ? '粘贴新的一把，换掉现在这个' : ''}
+                     onChange={(e) => setApiKey(e.target.value)} />
+        </Field>
+      )}
 
       <div className="models-probe">
         <button type="button" onClick={() => void runProbe()} disabled={probe.state === 'busy'}>

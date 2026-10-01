@@ -134,7 +134,12 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
       <header className="detail-head">
         <button className="detail-back" onClick={onBack}>← 作品</button>
         {renaming ? (
+          /* ⚠️ 2026-10-01：这一格**故意没过 `<Field>`** —— 它是"就地改名"，
+             名字由它旁边的位置说明（它顶掉的就是那个 `<h1>`），加标签反而是多余的。
+             又因为它是 `.detail-head` 那一行的 flex 孩子（`.rename-input` 身上有
+             `flex: 1`），包一层会让那个 `flex: 1` 落错地方。可访问的名字直接给。 */
           <input className="rename-input" autoFocus defaultValue={work.alias ?? ''}
+                 aria-label="作品名字"
                  onBlur={e => void doRename(e.target.value)}
                  onKeyDown={e => {
                    if (e.key === 'Enter') void doRename((e.target as HTMLInputElement).value)

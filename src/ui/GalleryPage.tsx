@@ -47,7 +47,13 @@ export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
     <section className="gallery">
       <header className="gallery-head">
         <h1 className="gallery-title">我的作品</h1>
+        {/* ⚠️ 2026-10-01：这一格**故意没过 `<Field>`**。它没有标签、没有注解、也没有
+            错误提示，包一层只为了给它一个名字的话，`.gallery-search` 身上那条
+            `flex: 1` 就得从输入框挪到外层那个 div 上（`.gallery-head` 是 flex 行，
+            孩子换人了整行就得重量）—— 换不到任何东西。
+            可访问的名字**直接给在输入框上**：placeholder 只是提示，读屏软件不保证念它。 */}
         <input className="gallery-search" value={q} placeholder="找一张…（名字，或者 9月25 这样的日期）"
+               aria-label="找一张作品"
                onChange={e => { setQ(e.target.value); setLimit(PAGE) }} />
       </header>
 
