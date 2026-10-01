@@ -77,6 +77,8 @@ describe('openDb', () => {
     'd3e6d1ea45be136378599f2752dd8ad81e6f263687801de6e19fd9ecdc634bbb',
     // 3 —— model_configs
     'c909062124bcb7ae24c36e2252e49bb1997bb4eff7132edd2662f6fc3b1f5a37',
+    // 4 —— sessions
+    '069f9a05b04ec339c0ccb3e3d15da306330a10b0476c749d09e1f8c9878de6e9',
   ]
 
   it('★ 已发布的迁移一个字都不许改 —— 指纹对不上 = "老库和新库从此是两个形状"', () => {

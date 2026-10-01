@@ -93,6 +93,35 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE users ADD COLUMN active_chat_config_id  INTEGER REFERENCES model_configs(id) ON DELETE SET NULL;
   ALTER TABLE users ADD COLUMN active_image_config_id INTEGER REFERENCES model_configs(id) ON DELETE SET NULL;
   `,
+  // 4 —— 会话表（2026-10-01）。设计：docs/superpowers/specs/2026-10-01-sessions-design.md
+  //
+  // 一次会话 = 一张上传的照片。和 `works` 是**两层，不合并**：
+  // 会话是过程（对话 + 每一步），作品是产物（用户挑出来存下的那张成图）。
+  //
+  // ⚠️ `original_name` 存的是**用户那张照片原来的名字**（`古镇.jpg`），
+  //    和 `original` 不是一回事 —— 后者是 storage 层给的文件名，是不透明的。
+  //    它有两个用处，都写进 spec 了：§6.3 列表上"没说过话的会话"叫什么，
+  //    以及恢复出来的会话「下载」时文件叫什么。
+  //
+  // ⚠️ `files` 这一列是**安全 + 收尸**两件事的落点，别当成冗余：
+  //   · 安全：`steps` 里每一步指向哪个文件，没有这份名单就没法验证
+  //     "这个文件确实属于这条会话"（`requireOwnFile`）；
+  //   · 收尸：删会话时要知道该删哪几个文件，不然盘上留一堆孤儿。
+  `CREATE TABLE sessions (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      title         TEXT,
+      original      TEXT NOT NULL,
+      original_name TEXT,
+      base          TEXT NOT NULL,
+      thumb         TEXT,
+      messages      TEXT NOT NULL,
+      steps         TEXT NOT NULL,
+      files         TEXT NOT NULL
+    );
+    CREATE INDEX sessions_user_updated ON sessions(user_id, updated_at DESC);`,
 ]
 
 /**
