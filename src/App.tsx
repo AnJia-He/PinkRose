@@ -524,29 +524,6 @@ export default function App() {
         { id: welcomeId, label: '原图', base: img, params: ZERO, isOriginal: true, thumb: '' },
       ])
 
-      // ★ 在服务端把这条会话立起来。**不 await** —— 建会话是"锦上添花"，
-      //   等它等于把用户挡在门外（上传那一步已经有一句"正在打开照片…"了）。
-      //   建失败也**不影响本地修图**，但要说一声（见下面 catch）。
-      //
-      // ⚠️ `setSessionId(null)` 这一行是**给同一趟里再换一张照片**留的保险：
-      //   上一张的 id 还留着的话，落盘副作用会把**这一张**的步骤和消息写进
-      //   **上一条会话**里 —— 串会话，而且不报错。（今天应用里没有"换一张"的
-      //   入口 —— 换图 = 重开一次，所以这一行到不了；一行保险，留着。）
-      setSessionId(null)
-      void (async () => {
-        try {
-          // `makeThumbnail` 是**同步**的（返回 data URL 字符串），别手滑写 await。
-          const thumb = makeThumbnail(img.bitmap, GALLERY_THUMB_MAX_SIDE)
-          const { id } = await createSession(bitmapToDataUrl(img.bitmap), thumb, file.name)
-          // ⚠️ 只在**这张照片还是当前那张**时才认这个 id：
-          //   用户可能在等的时候又换了一张（那会让这个 id 变成上一条会话的）
-          if (originalFileRef.current === file) setSessionId(id)
-        } catch (e) {
-          console.error('会话没建起来', e)
-          noticeBad('这次的改动暂时存不下来（刷新就没了），修图照常。')
-        }
-      })()
-
       // 卡片是**可选件，绝不能让用户等它**：这里只把它挂到后台去跑，
       // 发送键立刻就是可用的（见 SUGGEST_WAIT_MS 那段）。
       // ⚠️ **不 await**：await 了就等于又把用户挡回门外了，只是这次挡在
@@ -558,6 +535,48 @@ export default function App() {
       const timer = setTimeout(settle, SUGGEST_WAIT_MS)
       // `void`：loadCards 自己吞掉所有错（它绝不 reject），这里也不等它。
       void loadCards(img).finally(() => { clearTimeout(timer); settle() })
+
+      // ★ 在服务端把这条会话立起来。**不 await** —— 建会话是"锦上添花"，
+      //   等它等于把用户挡在门外（上传那一步已经有一句"正在打开照片…"了）。
+      //   建失败也**不影响本地修图**，但要说一声（见下面 catch）。
+      //
+      // ⚠️ 摆在这儿（`baseSeqRef.current++` **之后**）是有意的，不是随手挪的：
+      //   建会话送上去的那张图 == 此刻这一版底图，下面要照着这个版本号记
+      //   `lastPersistedBaseSeqRef`（否则第一趟落盘会重传一遍全尺寸底图）。
+      //   摆在 `++` 前面的话捕到的是**上一版**，记进去等于没记。
+      //
+      // ⚠️ `setSessionId(null)` 这一行是**给同一趟里再换一张照片**留的保险：
+      //   上一张的 id 还留着的话，落盘副作用会把**这一张**的步骤和消息写进
+      //   **上一条会话**里 —— 串会话，而且不报错。（今天应用里没有"换一张"的
+      //   入口 —— 换图 = 重开一次，所以这一行到不了；一行保险，留着。）
+      setSessionId(null)
+      void (async () => {
+        try {
+          // ⚠️ **在 await 之前**捕这一版底图：服务端手里那份 `base` 就是它
+          //   （建会话送的就是这一版）。**不能**等 `createSession` 回来再读
+          //   `baseSeqRef.current` —— 等的那会儿用户要是做了一次生成式编辑，
+          //   `baseSeqRef` 已经往前走了，读"现在"的值会把这个记号设成新版本：
+          //   服务端手里还是旧图，而那次编辑的底图会被**静默吞掉**（比多传
+          //   一版坏得多）。
+          const baseSeqAtCreate = baseSeqRef.current
+          // `makeThumbnail` 是**同步**的（返回 data URL 字符串），别手滑写 await。
+          const thumb = makeThumbnail(img.bitmap, GALLERY_THUMB_MAX_SIDE)
+          const { id } = await createSession(bitmapToDataUrl(img.bitmap), thumb, file.name)
+          // ⚠️ 只在**这张照片还是当前那张**时才认这个 id：
+          //   用户可能在等的时候又换了一张（那会让这个 id 变成上一条会话的）
+          if (originalFileRef.current === file) {
+            setSessionId(id)
+            // ★ 建会话送上去的那张图，服务端已经当 `original` + `base` 存了一份
+            //   —— 记一笔，第一趟落盘就不用**再传一遍全尺寸底图**（连缩略图）。
+            //   不记的话：服务端每收一个 `base` 都存成**新文件**，每条会话会白白
+            //   多背一张没人引用的原图和一张缩略图，外加一次白费的整图上传。
+            lastPersistedBaseSeqRef.current = baseSeqAtCreate
+          }
+        } catch (e) {
+          console.error('会话没建起来', e)
+          noticeBad('这次的改动暂时存不下来（刷新就没了），修图照常。')
+        }
+      })()
     } catch (e) {
       console.error(e)
       noticeBad('这张图打不开，换一张试试')

@@ -3240,7 +3240,8 @@ describe('会话落盘：上传建会话、每一步更新', () => {
   it('★ 每一步都落盘：说过的话、调过的参数都在；底图没换就不重传它', async () => {
     await renderApp()
     await uploadPhoto()
-    // 第一次落盘：上传那一版（底图在这个副作用眼里是新的，所以它带 `base`）
+    // 第一次落盘：上传那一版的**话和参数** —— 底图建会话时就已经在服务端了，
+    // 所以这一趟**不带** `base`（另一条用例钉着它）
     await waitPersist()
 
     // 再动一下 —— 说一句"亮一点"。⚠️ 这条**只改 params，不动 history**
@@ -3265,5 +3266,24 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     expect(body.thumb).toBeUndefined()
     // 而且步骤还是那一步 —— 参数步不推快照
     expect(body.steps).toHaveLength(1)
+  })
+
+  it('★ 建会话送上去的那张底图，落盘时不许**再传一遍**', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await waitPersist()
+
+    const puts = sessionCalls('/api/sessions/1', 'PUT')
+    // 这一趟该照常落盘（话和参数要送）—— 只是**不带图**
+    expect(puts).toHaveLength(1)
+    const body = bodyOf(puts[0]!)
+    // ★ 建会话已经把这张图当 `original` + `base` 各存了一份。第一趟落盘
+    //   要是再带一次 `base`，服务端 `handleUpdateSession` 会把它存成**新文件**
+    //   —— 每条会话白白多背一张没人引用的全尺寸图 + 一张缩略图，外加一次
+    //   白费的整图上传（2048 长边 JPEG 的 base64，一个来回）。
+    //   变异：建会话成功后不记 `lastPersistedBaseSeqRef`（或者记成 `++` 之前
+    //   的那一版）→ 这两句红。
+    expect(body.base).toBeUndefined()
+    expect(body.thumb).toBeUndefined()
   })
 })
