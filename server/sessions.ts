@@ -113,9 +113,11 @@ export async function handleCreateSession(
     ).run(user.id, t, t, original, name, original, thumb, JSON.stringify([original]))
     return { id: Number(r.lastInsertRowid) }
   } catch (e) {
-    // 插不进库就把刚写的文件收回来 —— 不收的话盘上留下两个**没人知道是什么**的文件
-    await deps.storage.remove(original).catch(() => {})
-    if (thumb) await deps.storage.remove(thumb).catch(() => {})
+    // 插不进库就把刚写的文件收回来 —— 不收的话盘上留下两个**没人知道是什么**的文件。
+    // ⚠️ 但**收不回来本身也不能静默**：盘满 / 权限出问题时，"文件为什么还在"
+    //    必须有第二个地方会说话（见"不许无声吞异常"那条全局约束）。
+    await deps.storage.remove(original).catch((e) => console.error('刚写的文件没收回：', e))
+    if (thumb) await deps.storage.remove(thumb).catch((e) => console.error('刚写的文件没收回：', e))
     throw e
   }
 }
@@ -269,28 +271,43 @@ export async function handleUpdateSession(
   }
 
   const t = nowMs(deps)
-  const steps = Array.isArray(o.steps)
-    ? mergeSteps(prevSteps, o.steps.slice(-MAX_STEPS), newFile, row.original, t)
-    : prevSteps
-  // 名单：原来的 + 这次新写的。每一步引用的文件都必须在名单里
-  const files = [...own, ...(newFile ? [newFile] : [])]
-  for (const s of steps) requireOwnFile(s.image, files)
-
-  const title = o.title === null || o.title === undefined
-    ? row.title
-    : (str(o.title).trim().slice(0, MAX_TITLE) || null)
-  const messages = o.messages === undefined ? row.messages : JSON.stringify(readMessages(o.messages))
-
+  // ⚠️ 从这儿到 UPDATE 成功为止，**任何一步抛出去都必须把刚写的两个文件收回来** ——
+  //    所以步骤合并（mergeSteps）、名单校验、消息清洗全在**同一个 try 里**，
+  //    不只是那句 UPDATE。这里原本只包了 UPDATE，于是漏了两个口子：
+  //    `mergeSteps` 撞上"缺 id"的步骤、`readMessages` 撞上非对象的消息，都在
+  //    `storage.save` 之后抛 —— 刚落盘的文件留在盘上，**没有任何一行引用它**，
+  //    删会话也收不到它（`files` 名单里根本没有），而每个这样的请求都漏一个，
+  //    可以无限打。`works.ts` 的 `handleReplaceWork` 就是为此把 `readRecipe`
+  //    也放进 try 的（裁定 ② 那段），这里照同一条形状。
+  let steps: StoredStep[]
+  let files: string[]
+  let title: string | null
+  let messages: string
   try {
+    steps = Array.isArray(o.steps)
+      ? mergeSteps(prevSteps, o.steps.slice(-MAX_STEPS), newFile, row.original, t)
+      : prevSteps
+    // 名单：原来的 + 这次新写的。每一步引用的文件都必须在名单里
+    files = [...own, ...(newFile ? [newFile] : [])]
+    for (const s of steps) requireOwnFile(s.image, files)
+
+    title = o.title === null || o.title === undefined
+      ? row.title
+      : (str(o.title).trim().slice(0, MAX_TITLE) || null)
+    // ⚠️ 和上面 `steps` 同一条口径：**不是数组就是"这次没送"**，库里的对话原样保留。
+    //    不这样写的话，一个把 messages 送成对象的客户端 bug 会把用户的整段对话
+    //    **静默**清成 `[]` —— 正是"错了不会报错，只会静静地错"那一类。
+    messages = Array.isArray(o.messages) ? JSON.stringify(readMessages(o.messages)) : row.messages
+
     deps.db.raw.prepare(
       `UPDATE sessions SET updated_at = ?, title = ?, base = ?, thumb = COALESCE(?, thumb),
          messages = ?, steps = ?, files = ? WHERE id = ? AND user_id = ?`,
     ).run(t, title, newFile ?? row.base, newThumb, messages,
       JSON.stringify(steps), JSON.stringify(files), id, user.id)
   } catch (e) {
-    // 记录没改成功 → 把**新写的**收回来，旧的一动没动
-    if (newFile) await deps.storage.remove(newFile).catch(() => {})
-    if (newThumb) await deps.storage.remove(newThumb).catch(() => {})
+    // 记录没改成功（或者半程校验炸了）→ 把**新写的**收回来，旧的一动没动
+    if (newFile) await deps.storage.remove(newFile).catch((e) => console.error('刚写的文件没收回：', e))
+    if (newThumb) await deps.storage.remove(newThumb).catch((e) => console.error('刚写的文件没收回：', e))
     throw e
   }
   // 换了缩略图才删旧的（旧的 base **不能删** —— 它可能还被某一步引用着）

@@ -135,6 +135,46 @@ describe('更新', () => {
     expect(stored.image).not.toBe(stolen)                   // 没引用别人的
     expect(JSON.parse(row.files)).toContain(stored.image)   // 用的是自己名下的
   })
+
+  // ★ 建那条路早有一条"盘上不留东西"的判据（describe '建会话' 里），更新这条路当时没有 ——
+  //   于是漏了一个：`mergeSteps`（还有清洗 messages 的 `readMessages`）**在 storage.save
+  //   之后、清收 try 之外**跑，它一抛，刚落盘那个 ≤8 MB 的文件就留在盘上：
+  //   没有任何一行记录引用它，删会话也收不到它 —— 而每个这样的请求都漏一个，可以无限打。
+  //   判据和建那条一样，是"目录前后一模一样"，不是"rejects 了就算"。
+  it('★ 校验在半程炸掉（步骤缺 id）→ 刚写的新文件也不许留在盘上', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    const before = readdirSync(photos).sort()
+    // base 是合法的先落了盘，`steps` 里那一条没有 id → mergeSteps 当场抛
+    await expect(handleUpdateSession(id, { base: JPEG, steps: [{ label: 'x' }] }, user, deps()))
+      .rejects.toThrow(/正整数/)
+    expect(readdirSync(photos).sort()).toEqual(before)
+  })
+
+  // ★ 和上面那条同一个形状，换 `messages` 里的坏货：`readMessages` 里的 `asObject` 会抛，
+  //   同样在 save 之后。两条一起守"后半程抛了也要把刚写的收回来"。
+  it('★ 校验在半程炸掉（消息不是对象）→ 刚写的新文件也不许留在盘上', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    const before = readdirSync(photos).sort()
+    await expect(handleUpdateSession(id, { thumb: JPEG, messages: ['不是对象'] }, user, deps()))
+      .rejects.toThrow()
+    expect(readdirSync(photos).sort()).toEqual(before)
+  })
+
+  // ⚠️ `steps` 那边早有 `Array.isArray` 守卫（送坏了就保留历史），`messages` 原来没有 ——
+  //   一个把 messages 送成对象的客户端 bug 会把用户的整段对话**静默**清成 `[]`，
+  //   正是"错了不会报错，只会静静地错"那一类。这条断言的就是"和 steps 同一条口径"。
+  it('★ messages 送成非数组 → 库里的对话原样保留（不许静默清空）', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(
+      id, { messages: [{ id: 1, role: 'user', text: '把路人去掉', at: 5 }] }, user, deps())
+    const before = (db.raw.prepare('SELECT messages FROM sessions WHERE id=?').get(id) as any).messages
+
+    await handleUpdateSession(id, { messages: { not: 'an array' } as any }, user, deps())
+
+    const after = (db.raw.prepare('SELECT messages FROM sessions WHERE id=?').get(id) as any).messages
+    expect(after).toBe(before)
+    expect(JSON.parse(after).length).toBe(1)
+  })
 })
 
 describe('删', () => {
