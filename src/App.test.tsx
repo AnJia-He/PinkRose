@@ -3324,4 +3324,33 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     expect(after.messages).toEqual(before.messages)
     expect(after.steps).toHaveLength(before.steps.length)
   })
+
+  it('★ 底图换过的那趟落盘：上路的是**压过的**那条路（`bitmapToDataUrl`），不是画布直出', async () => {
+    // 为什么这条路要单独钉：出网的字节必须过 `MAX_DIMENSION` 那顶帽子 ——
+    // 落盘那趟的暴露面是"**提供方回的图比它声明的更大**"那条偏差分支
+    // （`App.tsx` 的"以实际为准，不拉伸"），4096² 的 JPEG 0.9 能顶到服务端 8MB。
+    // 画布直出（`el.toDataURL`）没有帽子。测试台里两条出路的假货长得不一样
+    // （`original:` vs `canvas:`），所以分得清 —— 帽子本身在
+    // `src/core/thumbnail.test.ts` 里对着**真函数**量（画了多大、什么画质）。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉后面的路人' }))
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+
+    await renderApp()
+    await uploadPhoto()
+    await waitPersist()   // PUT #1：底图没换，不带 base
+
+    await say('把后面那个人去掉')
+    await waitPersist()   // PUT #2：底图换了 —— 这一趟必须带 base
+
+    const puts = sessionCalls('/api/sessions/1', 'PUT')
+    expect(puts).toHaveLength(2)
+    const body = bodyOf(puts[1]!)
+    // ★ 变异：改回 `el.toDataURL('image/jpeg', 0.9)` → 这里变成 `canvas:…`，红
+    expect(body.base).toBe('original:画布')
+    // 缩略图照旧跟着换（列表上要显示"最后那张"的样子）
+    expect(body.thumb).toContain('thumb:')
+  })
 })

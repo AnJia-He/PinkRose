@@ -58,21 +58,28 @@ export function makeThumbnail(source: Sizable, maxSide = THUMB_MAX_SIDE): string
 }
 
 /**
- * 位图 → data URL。**送给服务端的图走这条路**（建会话要原图的字节）。
+ * 位图/画布 → data URL。**送给服务端的图都走这条路**：
+ *   · 建会话那张原图（`onPick`）—— 画质 **0.92**（默认值）；
+ *   · 每一步落盘的那张底图（落盘副作用）—— 画质 **0.9**（显式传）。
  *
- * 用 **JPEG 0.92**：这是"存下来接着改"的那一份，不是缩略图，画质要够 ——
+ * 0.9x 是"存下来接着改"的那一份，不是缩略图，画质要够 ——
  * 但也不是最终导出（那一步在 `buildExportBlob`，走的是 blob 不是 data URL）。
  *
  * ★ **先压到 `MAX_DIMENSION`（`fitWithin`，只缩不放），再编码** ——
- * 2026-10-01 评审补的，原来是"按画布原尺寸整张送"：
- *   · 画布只按**设备 WebGL 上限**缩过图（见 `render/limits.ts`），桌面上那就是
- *     16384 —— 一张 ≥24 MP 的照片会**整张**从这条路送出去，而服务端
- *     `MAX_IMAGE_BYTES` 是 8 MB：JPEG 0.92 的 6000px 照片就能撞线 → **413**
- *     → 建会话失败，用户看到的是「存不下来」—— **指错了地方**（真相是"这张
- *     照片太大"），而且整条落盘从那以后都不会发生。
- *   · 压到 2048 之后字节预算才是**确定性**的：长边 2048 的 0.92 JPEG 在
- *     0.5~1 MB 量级，离 8 MB 很远。设计文档的存储估量本来也是按 2048 算的
- *     （「一步一张，量级在 1 MB 以内」）。
+ * 2026-10-01 评审补的，原来是"按画布原尺寸整张送"。**两处调用都要这顶帽子**：
+ *   · 建会话那趟：画布只按**设备 WebGL 上限**缩过图（见 `render/limits.ts`），
+ *     桌面上那就是 16384 —— 一张 ≥24 MP 的照片会**整张**从这条路送出去。
+ *   · 落盘那趟：生成有个"**提供方回的图比它声明的更大**"的偏差分支
+ *     （`App.tsx` 的"以实际为准，不拉伸"），4096² 的底图同样整张上路。
+ * 而服务端 `MAX_IMAGE_BYTES` 是 8 MB：6000px 的 0.92 JPEG 就能撞线 → **413**
+ * → 建会话/落盘失败，用户看到的是「存不下来」—— **指错了地方**（真相是"这张
+ * 照片太大"），而且整条落盘从那以后都不会发生。
+ * 压到 2048 之后字节预算才是**确定性**的：长边 2048 的 0.9x JPEG 在 0.5~1 MB
+ * 量级，离 8 MB 很远。设计文档的存储估量本来也是按 2048 算的
+ * （「一步一张，量级在 1 MB 以内」）。
+ *
+ * ⚠️ 压的**只是这一份输出**：传进来的画布/位图**一个像素都不动** ——
+ * 画布是工作台，预览、导出、下一次生成都按它的分辨率走（缩了它 = 每次导出降级）。
  *
  * ⚠️ **代价说在明处**：传一张 6000px 的照片、只拖滑块、然后**恢复**这条会话，
  *    拿到的是 2048 的底 —— 不恢复的话，这一趟导出本来能到 6000px。
@@ -82,7 +89,7 @@ export function makeThumbnail(source: Sizable, maxSide = THUMB_MAX_SIDE): string
  * ⚠️ 别用 `makeThumbnail` 代替：那个是 **0.7**，而且会**缩到 480**。
  * 拿它当原图传上去，用户回头再打开这张会话，底图是糊的 —— 而且不报错。
  */
-export function bitmapToDataUrl(source: Sizable): string {
+export function bitmapToDataUrl(source: Sizable, quality = 0.92): string {
   const { width, height } = fitWithin(source.width, source.height, MAX_DIMENSION)
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, width)
@@ -93,5 +100,5 @@ export function bitmapToDataUrl(source: Sizable): string {
   // 那条同款理由：默认档缩出来的边缘有锯齿）。
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
-  return canvas.toDataURL('image/jpeg', 0.92)
+  return canvas.toDataURL('image/jpeg', quality)
 }

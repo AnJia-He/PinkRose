@@ -47,6 +47,18 @@ describe('bitmapToDataUrl：送服务端的原图', () => {
     expect(coded).toEqual([{ type: 'image/jpeg', quality: 0.92 }])
   })
 
+  it('落盘那趟（画质传 0.9）：帽子是**同一顶** —— 4096² 的底图也压到 2048', () => {
+    // 落盘送的底图走同一个函数、只是画质传 0.9（见 `App.tsx` 落盘副作用）。
+    // 4096² 在这儿代表生成那条偏差分支的产物（"提供方回的图比声明的更大"）——
+    // 不压的话 JPEG 0.9 能顶到服务端 8MB 那条线。
+    const { drawn, coded } = stubCanvas()
+
+    bitmapToDataUrl(src(4096, 4096), 0.9)
+
+    expect(drawn).toEqual([[MAX_DIMENSION, MAX_DIMENSION]])
+    expect(coded).toEqual([{ type: 'image/jpeg', quality: 0.9 }])
+  })
+
   it('压的是**长边** —— 竖图 4000×6000 出来是 1365×2048', () => {
     const { drawn } = stubCanvas()
     bitmapToDataUrl(src(4000, 6000))
