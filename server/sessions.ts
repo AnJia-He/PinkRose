@@ -291,6 +291,22 @@ export async function handleUpdateSession(
     files = [...own, ...(newFile ? [newFile] : [])]
     for (const s of steps) requireOwnFile(s.image, files)
 
+    // ★ 「现在这一版参数」落在**最后一步**上。`SessionPatch.params` 那段注释讲了为什么
+    //   它必须单独走一个字段（客户端里 `params` 和 `history` 是两回事，拖滑块不动 history）。
+    //
+    //   两条刻意的窄：① **只动最后一步**，前面几步一个字节不碰 —— 客户端不能改写历史
+    //   （`mergeSteps` 规则 ②）这条规矩不能因为参数就被撬开一个口子；
+    //   ② **换一个对象，别原地改** —— `mergeSteps` 里 `out.push(old)` 推的是库里那条的
+    //   **同一个引用**，原地改会顺手动到 `prevSteps`。今天 `prevSteps` 是当场
+    //   `JSON.parse` 出来的、动它没事，但那是"今天没事"，不是"不会出事"。
+    if (o.params !== undefined && steps.length > 0) {
+      const last = steps[steps.length - 1]!
+      steps[steps.length - 1] = {
+        ...last,
+        params: applyDeltas(ZERO, asObject(o.params) as Partial<Adjustments>),
+      }
+    }
+
     title = o.title === null || o.title === undefined
       ? row.title
       : (str(o.title).trim().slice(0, MAX_TITLE) || null)

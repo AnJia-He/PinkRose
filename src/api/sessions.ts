@@ -1,5 +1,6 @@
 import { get, post, put, del } from './client'
 import type { SessionDetail, SessionMeta, SessionMessage, SessionStep } from '../../shared/sessions.ts'
+import type { Adjustments } from '../../shared/adjustments.ts'
 
 /**
  * 会话的接口。图**不从这里走** —— 和作品那套同一条规矩：图是 `<img src>`
@@ -29,6 +30,18 @@ export type SessionPatch = {
   messages?: SessionMessage[]
   /** ⚠️ 送的是**完整的一串**，服务端拿它和库里已有的按 `id` 对齐 */
   steps?: Omit<SessionStep, 'reusesPrev'>[]
+  /**
+   * **现在这一版参数**。⚠️ 它不是可选的礼貌项 —— 见下面那段。
+   *
+   * ★ 为什么必须单独有一个字段：这个客户端里 **`params` 和 `history` 是两回事**。
+   *   `App.tsx` 有一句明确的既有裁定：「**改 params 从来不 push 快照 —— 快照是给
+   *   "生成式编辑"用的（裁定 ⑤）**」（见 `WorkDetailPage` 那个 `onApply` 的注释）。
+   *   于是拖滑块、套预设、按重置，**都不会让 `history` 变**。
+   *
+   * ⚠️ 不传它的后果是**用户看得见**的：拖完滑块刷新一下，屏幕上回到拖之前的样子。
+   *   而验收线第 1 条写着「上传 → 说一句话 → 刷新 → 照片、对话、**参数全在**」。
+   */
+  params?: Adjustments
   title?: string | null
 }
 export async function updateSession(id: number, patch: SessionPatch): Promise<SessionMeta> {

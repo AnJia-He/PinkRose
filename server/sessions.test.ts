@@ -177,6 +177,102 @@ describe('更新', () => {
   })
 })
 
+/**
+ * ★ 这一组守的是验收线第 1 条里那三个字：**参数全在**。
+ *
+ * 为什么参数必须**单独走一个字段**、而不是跟着 `steps` 走：客户端里 `params` 和
+ * `history` 是两回事 —— `App.tsx` 有一句既有裁定「**改 params 从来不 push 快照
+ * （裁定 ⑤）**」，拖滑块 / 套预设 / 按重置都只 `setParams`，`history` 一动不动。
+ * 而落盘那条路是挂在 `history` 上的 —— 参数不带自己的一条路，
+ * 用户拖完滑块刷新一下就回到拖之前的样子（见 `SessionPatch.params` 那段注释）。
+ */
+describe('更新 · 参数', () => {
+  /** 库里 `steps` 那一列的**原样字符串**。好几条断言的判据是"逐字节"，不是"解析后相等" */
+  const rawSteps = (id: number): string =>
+    (db.raw.prepare('SELECT steps FROM sessions WHERE id=?').get(id) as any).steps
+  const stepsOf = (id: number): any[] => JSON.parse(rawSteps(id)) as any[]
+
+  it('★ 送一版 params → 落在**最后一步**上（拖滑块那种更新的落点）', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1), step(2)] }, user, deps())
+
+    // 客户端拖完滑块只送这一样：没有 base、没有新步骤（裁定 ⑤：history 根本没变）
+    await handleUpdateSession(id, { params: { ...ZERO, exposure: 20 } }, user, deps())
+
+    const steps = stepsOf(id)
+    expect(steps).toHaveLength(2)              // 没凭空多出一步、也没少掉一步
+    expect(steps[1].params.exposure).toBe(20)  // 最后一步 = 现在屏幕上那一版
+    expect(steps[0].params.exposure).toBe(0)   // 历史那一步没被顺手改掉
+  })
+
+  it('★ 三步：params 只动最后一步，前面几步**一个字节不碰**', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1), step(2), step(3)] }, user, deps())
+    const before = stepsOf(id)
+
+    await handleUpdateSession(id, { params: { ...ZERO, exposure: 20 } }, user, deps())
+
+    const after = stepsOf(id)
+    expect(after).toHaveLength(3)
+    // 判据是"逐字节相同" —— "客户端不能改写历史"（`mergeSteps` 规则 ②）这条规矩
+    // 不能因为参数就被撬开一个口子
+    expect(JSON.stringify(after.slice(0, 2))).toBe(JSON.stringify(before.slice(0, 2)))
+    expect(after[2].params.exposure).toBe(20)
+  })
+
+  it('★ 不送 params → 步骤那一列逐字节原样（不是"不送就写成全零"）', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(
+      id, { steps: [step(1), step(2, { ...ZERO, exposure: 20 })] }, user, deps())
+    const before = rawSteps(id)
+
+    // 这次只换标题。一个"不送就当全零"的实现会把最后一步的参数**静默抹掉** ——
+    // 正是"错了不会报错，只会静静地错"那一类
+    await handleUpdateSession(id, { title: '换个名字' }, user, deps())
+
+    expect(rawSteps(id)).toBe(before)
+  })
+
+  // ★ 这一条守的是实现里那句「**换一个对象，别原地改**」。为什么会有人原地改：
+  //   `mergeSteps` 对库里已有的一步走的是 `out.push(old)` —— 推的是**库里那一条的
+  //   同一个引用**。只要最后一步是"沿用的旧步"，`steps[last].params = …` 那种写法
+  //   就会顺手改到 `prevSteps` 里那个对象上。
+  //   ⚠️ 光有上面"三步"那个场景**抓不住**：那里每一步是各自独立的对象，原地改伤不到
+  //   别人。要让别名真的显形，得让**同一个对象在数组里出现两次** —— 客户端把同一个 id
+  //   送两遍就是这样（`byId.get(id)` 两次拿到同一个 `old`，`out` 里两个槽位是它）。
+  //   这一条就是那个形状：原地改会让**前面那一步**跟着变，断言当场变红。
+  it('★ 别名：最后一步和前面一步是同一个对象时，原地改会连前面那一步一起改掉', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1)] }, user, deps())
+    const first = stepsOf(id)[0]
+
+    await handleUpdateSession(
+      id, { steps: [step(1), step(1)], params: { ...ZERO, exposure: 20 } }, user, deps())
+
+    const steps = stepsOf(id)
+    expect(steps).toHaveLength(2)
+    expect(steps[1].params.exposure).toBe(20)                    // 新的一版落在最后一步
+    expect(steps[0].params.exposure).toBe(0)                     // 前面那一步没被牵连
+    expect(JSON.stringify(steps[0])).toBe(JSON.stringify(first)) // 逐字节相同
+  })
+
+  it('★ params 送成字符串 → 当场拒掉，连刚落盘的 base 也要收回来（不是静默写成全零）', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1)] }, user, deps())
+    const beforeSteps = rawSteps(id)
+    const beforeFiles = readdirSync(photos).sort()
+
+    // `asObject` 的口径：不是普通对象就抛 `HttpError('BAD_REQUEST')`。
+    // ⚠️ 这一句顺带守着这段代码**在不在清理 try 里面**：块要是被摆到 try 外面，
+    //    `base` 已经落了盘、这一抛就把它漏在盘上了（目录前后比对会红）。
+    await expect(handleUpdateSession(id, { base: JPEG, params: '不是对象' }, user, deps()))
+      .rejects.toThrow(/请求体不对/)
+
+    expect(rawSteps(id)).toBe(beforeSteps)     // 拒掉 = 库那一列一个字节没改
+    expect(readdirSync(photos).sort()).toEqual(beforeFiles)
+  })
+})
+
 describe('删', () => {
   it('★ 删了会话，它名下的文件一个不剩', async () => {
     const { id } = await handleCreateSession({ image: JPEG }, user, deps())
