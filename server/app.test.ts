@@ -1300,22 +1300,38 @@ describe('会话接口', () => {
     const a1 = (await call(base, 'POST', '/api/sessions', { image: JPEG, name: '甲.jpg' }, cookieA))
     const a2 = (await call(base, 'POST', '/api/sessions', { image: JPEG, name: '乙.jpg' }, cookieA))
     await call(base, 'POST', '/api/sessions', { image: JPEG, name: '别人的.jpg' }, cookieB)
-    // ★ 动的是**后建**的那一条（乙），于是"时间倒序"和"编号正序"给出**相反**的答案：
-    //     id 序是 [甲, 乙]，时间序是 [乙, 甲]。原来动的是先建那条，两者恰好一致 ——
-    //     `ORDER BY id`（或者干脆没有 `ORDER BY`）的实现在那条断言上**照样绿**，
-    //     "倒序"那两个字其实没有在被问。
-    // ⚠️ 光 `await` 不保证时钟往前走（同一毫秒内两次调用是常事），所以显式等一格 ——
-    //     否则 PUT 和建会话可能落在同一个毫秒上，这条会**偶发地红**。
-    await new Promise(r => setTimeout(r, 5))
+    const idA1 = (a1.body as { id: number }).id
     const idA2 = (a2.body as { id: number }).id
-    await call(base, 'PUT', `/api/sessions/${idA2}`, { title: '刚改过' }, cookieA)
+    // ★ 这条属性（"按**最后动过**的时间倒序"）要**两相**才问得住 —— 一个也别删、
+    //    也别"简化"回单相，单相无论动哪一条都漏一个静默的洞：
+    //    · 只动**后建**那条（期望 [乙, 甲]）：`ORDER BY id DESC` 和
+    //      `ORDER BY created_at DESC` 在这套夹具上给出**同一个答案**，照样绿；
+    //    · 只动**先建**那条（期望 [甲, 乙]）：`ORDER BY id ASC` 和
+    //      `ORDER BY created_at ASC` 照样绿。
+    //    也就是说"最后动过"和"创建时间 / 编号"在单相里**分不开**，而分不开的
+    //    那个洞正好是用户能看见的 bug：列表写着"最近改的在最前"，实际按创建时间排，
+    //    改过的旧会话永远沉底。两相合起来才把四个都逼红（各自实测过，
+    //    见 task-2-report §8）。
+    // ⚠️ 光 `await` 不保证时钟往前走（同一毫秒内两次调用是常事），所以每次 PUT 前
+    //    显式等一格 —— 否则"时间序"会退化成"落库序"，这些相会**偶发地红**。
+    const listed = async () => (await call(base, 'GET', '/api/sessions', undefined, cookieA))
+      .body as { sessions: {
+        id: number; title: string | null; originalName: string | null; stepCount: number
+      }[] }
 
-    const list = await call(base, 'GET', '/api/sessions', undefined, cookieA)
-    const rows = (list.body as { sessions: {
-      id: number; title: string | null; originalName: string | null; stepCount: number
-    }[] }).sessions
-    // 时间倒序 = [刚动过的乙, 甲]；编号正序会是 [甲, 乙] —— 两者不同，才问得动排序
-    expect(rows.map(r => r.id)).toEqual([idA2, (a1.body as { id: number }).id])
+    // 相 1：动**先建**的甲 —— 它必须顶到最前（时间倒序 = [甲, 乙]）。
+    // 这一相专门逼红 `id DESC` / `created_at DESC`（它们在相 2 里恰好和答案一致）。
+    await new Promise(r => setTimeout(r, 5))
+    await call(base, 'PUT', `/api/sessions/${idA1}`, { title: '刚改过' }, cookieA)
+    expect((await listed()).sessions.map(r => r.id)).toEqual([idA1, idA2])
+
+    // 相 2：接着动**后建**的乙 —— 现在轮到它顶到最前（时间倒序 = [乙, 甲]）。
+    // 这一相专门逼红 `id ASC` / `created_at ASC`（它们在相 1 里恰好和答案一致）。
+    await new Promise(r => setTimeout(r, 5))
+    await call(base, 'PUT', `/api/sessions/${idA2}`, { title: '也改过了' }, cookieA)
+    const last = await listed()
+    const rows = last.sessions
+    expect(rows.map(r => r.id)).toEqual([idA2, idA1])   // 倒序 + 只有自己的
     expect(rows[0]!.originalName).toBe('乙.jpg')
     expect(rows.every(r => r.stepCount === 0)).toBe(true)
 
@@ -1325,7 +1341,7 @@ describe('会话接口', () => {
     const diskNames = auth.db.raw
       .prepare('SELECT original, base, thumb FROM sessions WHERE user_id = 1').all() as
       { original: string; base: string; thumb: string | null }[]
-    const body = JSON.stringify(list.body)
+    const body = JSON.stringify(last)
     for (const n of diskNames.flatMap(r => [r.original, r.base, r.thumb])) {
       if (n) expect(body, `硬盘文件名 ${n} 漏出去了`).not.toContain(n)
     }
@@ -1500,9 +1516,9 @@ describe('会话接口', () => {
     //     就收工。但 `/file/`、`/file/x` 两句**照样绿**：外层那三个并列词还得出
     //     现一个才匹配得上，"完不完整"它管不着（所以这两句用的是 `call`，
     //     它们永远走 JSON）。
-    //   · 只去掉 `sessionThumbRoute` 的     → 前两句绿、`/thumb/x` 先红
+    //   · 只去掉 `sessionThumbRoute` 的 `^…$` → 前两句绿、`/thumb/x` 先红
     //     （这条会话没存过 thumb，兜底回原图 → 200 + 那张图）。
-    //   · 只去掉 `sessionOneRoute` 的       → **第 1 句就红**：它最宽松，而它在
+    //   · 只去掉 `sessionOneRoute` 的 `^…$`  → **第 1 句就红**：它最宽松，而它在
     //     app.ts 里排在最后，`/file/`、`/thumb/x`、`/x` 全被它抢走，回的是详情
     //     JSON —— 这就是"静默抢走"的样子，也正是以后往 `/api/sessions/:id` 底下
     //     加子路由（比如会话历史 `/messages`）时会撞上的事。
