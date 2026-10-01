@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import type { Server } from 'node:http'
+import { request, type Server } from 'node:http'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1207,5 +1207,216 @@ describe('★ 两套 key 彻底分开（§7.4，用户点名要的四条；⑤ �
     expect(calls).toEqual([
       { url: 'https://chat.example.com/v1/chat/completions', auth: 'Bearer sk-chat' },
     ])
+  })
+})
+
+describe('会话接口', () => {
+  /** 第二个用户。`appWithUser` 只建第一个，第二个往同一个 auth 里再注册一次。 */
+  async function twoUsers() {
+    const a = await appWithUser()
+    const b = handleSignup({ username: '小红', email: 'r@r.com', password: 'password123' }, a.auth)
+    return { base: a.base, auth: a.auth, cookieA: a.cookie, cookieB: `${SESSION_COOKIE}=${b.token}` }
+  }
+  const JPEG = 'data:image/jpeg;base64,AAAA'
+
+  it('★ 没登录 → 401，而不是 400 —— 鉴权排在读体之前', async () => {
+    // 判据和上面那条 AI 接口的用例**同一个套路**：送一个畸形体。
+    // 顺序反了的话，畸形体会把"没登录"盖成"你的 JSON 不对"。
+    const { base } = await appWithUser()
+    const res = await fetch(`${base}/api/sessions`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '这根本不是 JSON',
+    })
+    expect(res.status).toBe(401)
+  })
+
+  it('★ 别人的会话：取 / 改 / 删一律 404，且**两张表一个字节都没动**', async () => {
+    const { base, auth, cookieA, cookieB } = await twoUsers()
+    const mine = await call(base, 'POST', '/api/sessions', { image: JPEG }, cookieA)
+    const id = (mine.body as { id: number }).id
+
+    const snap = () => JSON.stringify({
+      sessions: auth.db.raw.prepare('SELECT * FROM sessions ORDER BY id').all(),
+      works: auth.db.raw.prepare('SELECT * FROM works ORDER BY id').all(),
+    })
+    const before = snap()
+
+    expect((await call(base, 'GET', `/api/sessions/${id}`, undefined, cookieB)).status).toBe(404)
+    expect((await call(base, 'PUT', `/api/sessions/${id}`, { title: '偷来的' }, cookieB)).status).toBe(404)
+    expect((await call(base, 'DELETE', `/api/sessions/${id}`, undefined, cookieB)).status).toBe(404)
+    expect((await call(base, 'GET', `/api/sessions/${id}/file/original`, undefined, cookieB)).status).toBe(404)
+    expect((await call(base, 'GET', `/api/sessions/${id}/thumb`, undefined, cookieB)).status).toBe(404)
+
+    // ★★ 这一句才是真判据。上面那五个 404 只说明"应答码对"，而**改坏了数据
+    //    再回 404** 也全是 404（上面那五个照样全绿）。
+    expect(snap()).toBe(before)
+    // 顺带确认它真的还在（别把"被删掉了所以 404"当成通过）
+    expect((await call(base, 'GET', `/api/sessions/${id}`, undefined, cookieA)).status).toBe(200)
+  })
+
+  it('★ GET / DELETE 不读请求体 —— 挂着一个永远不结束的体，也该立刻回', async () => {
+    // 这条守的是 Global Constraints 里那句"读它只会挂住等一个永远不会来的流"。
+    // 用手搓的 http 请求（`fetch` 没法半开着体不发）：先发头、发半截体，然后**不 end**。
+    // 路由要是读了体，响应就永远不来 —— 所以判据是"超时之前拿到了响应"。
+    const { base, cookieA } = await twoUsers()
+    const mine = await call(base, 'POST', '/api/sessions', { image: JPEG }, cookieA)
+    const id = (mine.body as { id: number }).id
+
+    for (const method of ['GET', 'DELETE'] as const) {
+      const status = await new Promise<number>((resolve, reject) => {
+        // ⚠️ 闹钟在**成功那条路**上也要收掉（clearTimeout）：不收的话 vitest 会抱怨
+        //    有个句柄没关。先声明、后赋值 —— 响应回调最早也要等到下一个 tick 才跑，
+        //    那一刻 timer 早就赋好了。
+        let timer: ReturnType<typeof setTimeout>
+        const req = request(
+          `${base}/api/sessions/${id}`,
+          { method, headers: { cookie: cookieA, 'transfer-encoding': 'chunked' } },
+          (res) => {
+            res.resume()
+            clearTimeout(timer)
+            resolve(res.statusCode!)
+            // ⚠️ 光把闹钟收掉还不够：这条连接**还是半开的**（请求体永远不 end），
+            //    不收掉它，afterEach 里那句 `server.close()` 会一直等这个连接，
+            //    整个文件挂在那儿跑不完。destroy 的是**客户端这一头**，
+            //    服务端的应答已经发出来了，不影响上面那句断言。
+            req.destroy()
+          },
+        )
+        req.on('error', reject)
+        req.write('{"title":')      // ← 半截 JSON，而且绝不 end()
+        timer = setTimeout(() => { req.destroy(); reject(new Error(`${method} 挂住了：它读了请求体`)) }, 3000)
+      })
+      expect(status, `${method} 的响应没回来`).toBeLessThan(500)
+    }
+  })
+
+  // ── 下面两条是 Task 1 评审点名补的覆盖缺口 ──────────────────────────────
+  // Task 1 只测了建 / 取 / 改 / 删四件事，而 `handleListSessions`、
+  // `handleSessionStepFile`（**唯一一条真能走到 `requireOwnFile` 的路**）、
+  // `toSteps` 的 `reusesPrev`、`stepCount` 全程**没有任何自动化覆盖** ——
+  // 而它们错了不会报错，只会静静地错（列表少一条、步骤图给错一张、
+  // 「回到这一步」跳错地方）。
+  it('★ 列表：只出自己的，按 updated_at 倒序，而且**不带硬盘文件名**', async () => {
+    const { base, auth, cookieA, cookieB } = await twoUsers()
+    const a1 = (await call(base, 'POST', '/api/sessions', { image: JPEG, name: '甲.jpg' }, cookieA))
+    const a2 = (await call(base, 'POST', '/api/sessions', { image: JPEG, name: '乙.jpg' }, cookieA))
+    await call(base, 'POST', '/api/sessions', { image: JPEG, name: '别人的.jpg' }, cookieB)
+    // 动一下先建的那条，把它顶到最前面 —— 排序才真的被断言到
+    const idA1 = (a1.body as { id: number }).id
+    await call(base, 'PUT', `/api/sessions/${idA1}`, { title: '刚改过' }, cookieA)
+
+    const list = await call(base, 'GET', '/api/sessions', undefined, cookieA)
+    const rows = (list.body as { sessions: {
+      id: number; title: string | null; originalName: string | null; stepCount: number
+    }[] }).sessions
+    expect(rows.map(r => r.id)).toEqual([idA1, (a2.body as { id: number }).id])  // 倒序 + 只有自己的
+    expect(rows[0]!.originalName).toBe('甲.jpg')
+    expect(rows.every(r => r.stepCount === 0)).toBe(true)
+
+    // ⚠️ Global Constraints 那句"`stored_name` 这类硬盘上的文件名永远不许出门"。
+    //    判据是**拿库里那三个真值去比**，不是拿照片名去比 —— `originalName`
+    //    **本来就该出门**（它是用户自己的文件名，不是 storage 起的不透明名字）。
+    const diskNames = auth.db.raw
+      .prepare('SELECT original, base, thumb FROM sessions WHERE user_id = 1').all() as
+      { original: string; base: string; thumb: string | null }[]
+    const body = JSON.stringify(list.body)
+    for (const n of diskNames.flatMap(r => [r.original, r.base, r.thumb])) {
+      if (n) expect(body, `硬盘文件名 ${n} 漏出去了`).not.toContain(n)
+    }
+  })
+
+  it('★ 某一步的图：自己的给 200（而且是**那一步自己的**那张），别人的和不存在的都 404', async () => {
+    const { base, cookieA, cookieB } = await twoUsers()
+    const mine = await call(base, 'POST', '/api/sessions', { image: JPEG }, cookieA)   // 原图 3 字节
+    const id = (mine.body as { id: number }).id
+    // ⚠️ 这次 PUT 故意送**两张图**、两个步骤：按 mergeSteps 的规矩 ③，新文件只落在
+    //    **最后一个新步骤**上，于是第 1 步照规矩 ① 留在原图上（3 字节），而 base
+    //    换成了新那张（4 字节）。少了这一手，"回的是那一步自己的图"和"无脑回 base"
+    //    两种实现在下面那三句上长得一模一样 —— 而"步骤图给错一张"正是这条用例
+    //    要守的那件事（见上面那段覆盖缺口的说明）。
+    const NEW = 'data:image/jpeg;base64,AQIDBA=='   // 4 字节，和原图那 3 个区分得开
+    await call(base, 'PUT', `/api/sessions/${id}`, {
+      base: NEW,
+      steps: [{ id: 1, label: '调色', params: {}, at: 1 }, { id: 2, label: '再来一步', params: {}, at: 2 }],
+    }, cookieA)
+
+    const url = `/api/sessions/${id}/file/step/1`
+    // ⚠️ 这条 200 不能用 `call`：它回的是**图片字节**，而 `call` 每次都 `r.json()`
+    //    （那会当场 SyntaxError）。取图那两条用例也是这么写的 —— 手搓 fetch，
+    //    顺带把 contentType 和字节数钉住（不然"回 200 但正文是空"照样绿）。
+    const own = await fetch(`${base}${url}`, { headers: { cookie: cookieA } })
+    expect(own.status).toBe(200)
+    expect(own.headers.get('content-type')).toBe('image/jpeg')
+    expect((await own.arrayBuffer()).byteLength).toBe(3)
+    // ★ 底图是**另外 4 个字节** —— 所以上面那个 3 证明的才是"这一步自己的图"，
+    //   而不是"凡是 step 就回 base"。
+    const baseNow = await fetch(`${base}/api/sessions/${id}/file/base`, { headers: { cookie: cookieA } })
+    expect((await baseNow.arrayBuffer()).byteLength).toBe(4)
+    // 别人的、和不存在的（这两条 404 是 JSON，`call` 用得上）：**同一个结局** ——
+    // 不存在的步不能"退回 base"、也不能给一张空图。
+    expect((await call(base, 'GET', url, undefined, cookieB)).status).toBe(404)
+    expect((await call(base, 'GET', `/api/sessions/${id}/file/step/999`, undefined, cookieA)).status)
+      .toBe(404)
+  })
+
+  it('★ 步骤列表：`reusesPrev` 只在"接着上一步那张图"时为 true（列表上那个「几步」也跟着走）', async () => {
+    // ★ 这条补的是 Task 1 评审点名的四个零覆盖里的最后一个。上面两条钉住了
+    //   `handleListSessions` / `handleSessionStepFile` / `stepCount`（0 那一半），
+    //   而 `toSteps` 那三行（`sessions.ts:136`）**整个仓库一条断言都没有** ——
+    //   错了既不报错也不 4xx：`false` 时客户端白下一次图、白解一次码，
+    //   而**该 false 的写成 true** 更糟 —— 界面会把两张不同的图当成同一张，
+    //   「回到这一步」跳回去看到的是错的画面。
+    const { base, cookieA } = await twoUsers()
+    const mine = await call(base, 'POST', '/api/sessions', { image: JPEG }, cookieA)
+    const id = (mine.body as { id: number }).id
+    await call(base, 'PUT', `/api/sessions/${id}`, {
+      base: 'data:image/jpeg;base64,AQIDBA==', steps: [{ id: 1, label: '调色', params: {}, at: 1 }],
+    }, cookieA)
+    // 第二次**不带图**（拖滑块那种）：新的一步按规矩 ③ 接着上一步那张
+    await call(base, 'PUT', `/api/sessions/${id}`, {
+      steps: [
+        { id: 1, label: '调色', params: {}, at: 1 },
+        { id: 2, label: '再亮一点', params: {}, at: 2 },
+      ],
+    }, cookieA)
+
+    const detail = await call(base, 'GET', `/api/sessions/${id}`, undefined, cookieA)
+    const steps = (detail.body as { steps: { id: number; reusesPrev: boolean }[] }).steps
+    expect(steps.map(s => s.id)).toEqual([1, 2])
+    // 第 1 步没有上一步（永远 false），第 2 步和它共用一张图 → true
+    expect(steps.map(s => s.reusesPrev)).toEqual([false, true])
+    // 顺带把非零的 `stepCount` 钉住 —— 列表那条只验了 0 那一半，
+    // 一个写死 `stepCount: 0` 的实现在它上面照样绿。
+    expect((detail.body as { stepCount: number }).stepCount).toBe(2)
+  })
+
+  it('★ 删 / 原图 / 缩略图 三条的成功路径真的走通了（不是只挂了个块）', async () => {
+    // ★ 上面那几条都只走到 404 —— 而**兜底那句也是 404**：把 app.ts 里这三块 `if`
+    //   整块删掉、或者方法/路径敲错，上面一条都不会红（"本来就没有这个接口"和
+    //   "没有这条会话"长得一模一样）。作品那组为同一个洞写过「★ DELETE 和 PUT 的
+    //   成功路径真的走通了」，这里是它的会话版。
+    const { base, cookieA } = await twoUsers()
+    const mine = await call(base, 'POST', '/api/sessions', { image: JPEG }, cookieA)   // 原图 3 字节
+    const id = (mine.body as { id: number }).id
+    // 把底图换成另外 4 个字节 —— 下面"原图那一条回的是**上传时那张**"才有得比。
+    await call(base, 'PUT', `/api/sessions/${id}`, { base: 'data:image/jpeg;base64,AQIDBA==' }, cookieA)
+
+    // ① 原图：是上传时那张（3 字节），不是现在的底图（4 字节）。
+    //    顺带钉住 `original` 这个分支真的接上了（正则里少写一个 `original` 就 404）。
+    const orig = await fetch(`${base}/api/sessions/${id}/file/original`, { headers: { cookie: cookieA } })
+    expect(orig.status).toBe(200)
+    expect((await orig.arrayBuffer()).byteLength).toBe(3)
+
+    // ② 缩略图：这条**没存过 thumb** → 按规矩兜底回原图，而且同样是 200
+    //    （`handleSessionThumb` 那条 `row.thumb ?? row.original` 的兜底）。
+    const thumb = await fetch(`${base}/api/sessions/${id}/thumb`, { headers: { cookie: cookieA } })
+    expect(thumb.status).toBe(200)
+    expect(thumb.headers.get('content-type')).toBe('image/jpeg')
+    expect((await thumb.arrayBuffer()).byteLength).toBe(3)
+
+    // ③ 删：回的是 `{ ok: true }`，而且**真的没了**（不是回个 200 就算）
+    const del = await call(base, 'DELETE', `/api/sessions/${id}`, undefined, cookieA)
+    expect(del.status).toBe(200)
+    expect(del.body).toEqual({ ok: true })
+    expect((await call(base, 'GET', `/api/sessions/${id}`, undefined, cookieA)).status).toBe(404)
   })
 })

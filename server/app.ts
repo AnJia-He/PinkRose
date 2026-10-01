@@ -21,6 +21,10 @@ import {
   clearSessionCookie, daysLeft, expiryOf, parseCookies, RENEW_WITHIN_DAYS,
   sessionCookie, sessionExpiry, signSession, SESSION_COOKIE,
 } from './session.ts'
+import {
+  handleCreateSession, handleDeleteSession, handleGetSession, handleListSessions,
+  handleSessionFile, handleSessionStepFile, handleSessionThumb, handleUpdateSession,
+} from './sessions.ts'
 import type { Storage } from './storage.ts'
 import { handleSuggest } from './suggest.ts'
 import {
@@ -290,6 +294,89 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
     if (req.method === 'POST' && path === '/api/works/delete') {
       const user = requireUser(deps, req, res)
       sendJson(res, 200, await handleDeleteWorks(await readJsonBody(req), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
+      return
+    }
+    // ── 会话（2026-10-01）。设计和约束见 docs/superpowers/specs/2026-10-01-sessions-design.md
+    //
+    // 顺序同作品那几条：先认人，再读体；GET / DELETE 不读体。
+    // 依赖形状也必须一模一样 —— 库藏在 auth 里，整个 deps 传下去编译器当场会拦。
+    if (req.method === 'POST' && path === '/api/sessions') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, await handleCreateSession(await readJsonBody(req), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
+      return
+    }
+    if (req.method === 'GET' && path === '/api/sessions') {
+      const user = requireUser(deps, req, res)
+      // ★ 这条 handler 是**同步**的（列表只有一次查询）—— 别顺手写成 `await …`，
+      //   那会把它变成 Promise，而 `sendJson` 收下一个 Promise 会序列化成 `{}`。
+      sendJson(res, 200, handleListSessions(user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
+      return
+    }
+    // 三条图片接口共用这一条正则。⚠️ **数一数括号**：`(\d+)` 一共两个 ——
+    // 第 1 组是会话 id，第 2 组是整个 `original | base | step/<id>`，而
+    // `step/` **里面**那个 `(\d+)` 是**第 3 组**（不是第 4，也没有第 4 组）。
+    //
+    // ⚠️ 写成 `[4]` 的后果**不会报错，只会静静地给错图**：`[4]` 是 `undefined`，
+    // 于是三元走 else 那支、把 `[2]`（`"step/999"` 这个**字符串**）当成 `which`
+    // 传下去 —— 而 `handleSessionFile` 里 `which === 'original' ? … : row.base`，
+    // 凡是不等于 `'original'` 的都回 **base**。也就是说：**任何** step 请求
+    // （包括压根不存在的 999）都会拿到 200 + 底图，`handleSessionStepFile`
+    // 一步都走不到，`requireOwnFile` 那条守卫永远不被经过。
+    // `server/app.test.ts` 里「某一步的图」那条的 `step/999 → 404` 正是钉它的。
+    const sessionFileRoute = /^\/api\/sessions\/(\d+)\/file\/(original|base|step\/(\d+))$/.exec(path)
+    if (req.method === 'GET' && sessionFileRoute) {
+      const user = requireUser(deps, req, res)
+      const d = { db: deps.auth.db, storage: deps.storage, now: deps.auth.now }
+      const id = Number(sessionFileRoute[1])
+      const stepId = sessionFileRoute[3]
+      const { bytes, contentType } = stepId
+        ? await handleSessionStepFile(id, Number(stepId), user, d)
+        : await handleSessionFile(id, sessionFileRoute[2] as 'original' | 'base', user, d)
+      sendBytes(res, 200, bytes, contentType)
+      return
+    }
+    // 列表上那张小图。⚠️ 和作品那两条一样，回的是 **`immutable` 长缓存** ——
+    // 所以客户端拼 URL 时要带上 `updated_at` 当版本号（前端那边 `sessionThumbUrl`）。
+    const sessionThumbRoute = /^\/api\/sessions\/(\d+)\/thumb$/.exec(path)
+    if (req.method === 'GET' && sessionThumbRoute) {
+      const user = requireUser(deps, req, res)
+      const { bytes, contentType } = await handleSessionThumb(Number(sessionThumbRoute[1]), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      })
+      sendBytes(res, 200, bytes, contentType)
+      return
+    }
+    // 单条的详情（GET）/ 更新（PUT）/ 删除（DELETE）—— 三条共用这一个正则。
+    // ⚠️ 和作品那组同一条规矩：**写成独立的一行、别内联进下面的 `if`**，
+    //    下面三条都要接着用这一个变量；而 `^…$` 锚着整串，上面两条子路由
+    //    （`/file/…`、`/thumb`）谁也抢不走谁的。
+    const sessionOneRoute = /^\/api\/sessions\/(\d+)$/.exec(path)
+    if (req.method === 'GET' && sessionOneRoute) {
+      const user = requireUser(deps, req, res)
+      // 同步 handler，理由同上面列表那条：别写成 `await`。
+      sendJson(res, 200, handleGetSession(Number(sessionOneRoute[1]), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
+      return
+    }
+    if (req.method === 'PUT' && sessionOneRoute) {
+      // 顺序同 /api/password 和作品那几条：先认人，再读体。没登录的人不该有资格
+      // 让服务器缓冲 12 MB —— 而且畸形请求体的 400 会盖住"没登录"这个更重要的结局。
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, await handleUpdateSession(Number(sessionOneRoute[1]), await readJsonBody(req), user, {
+        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
+      }))
+      return
+    }
+    if (req.method === 'DELETE' && sessionOneRoute) {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, await handleDeleteSession(Number(sessionOneRoute[1]), user, {
         db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
       }))
       return
