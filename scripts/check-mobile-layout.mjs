@@ -854,6 +854,175 @@ function judgeWelcome(label, m, view) {
   }
 }
 
+// ── 2026-10-01 加（Task 6）：左栏「对话」那一页 ─────────────────────────
+/**
+ * 为什么补这一段：**新页面一出生就必须被量过**，否则它没有任何版面检查。
+ * 更坏的是探针会**静默腐烂** —— 选择器和网址会随产品改名而烂掉，而且一声不吭
+ * （文件开头那条教训就是为这个写的）。
+ *
+ * 三态都要量，因为它们挤的程度不一样：
+ *   · **空态**（刚注册、一条会话都没有）：只有一句话和一颗按钮。它是新用户点进
+ *     「对话」看到的**第一眼**；
+ *   · **列表**：一行里塞着"缩略图 + 名字 + 几步 + 删除"。390px 的手机上去掉左栏
+ *     （92px）和页面留白，剩不到 250px —— **全站最挤的一行就是它**；
+ *   · **就地确认**（按了「删除」）：又多出一句问话和两颗按钮。这一态的设计是
+ *     "这一行换了个问题问"（照片和名字让位），**那个让步只有在窄屏上量过才算数**。
+ *
+ * 判据每一条都能说出错了会怎样：
+ *   ① 这一页真的在（`.sessions`）—— 网址或选择器腐烂的第一现场；
+ *   ② **横向不溢出**：一行撑破会顶出一根横向滚动条，而 `.shell` 是锁死一屏的，
+ *      整页会左右滑；
+ *   ③ 该看得见的东西**完整落在视口里**（行、缩略图、问句、两颗按钮）；
+ *   ④ 缩略图是个**方块**（`.session-thumb` 定死了宽高）—— 不定的后果不是难看，
+ *      是每张图跳出来都把后面的行推一下；
+ *   ⑤ 左栏三支 = 「修图 / 对话 / 作品」（§6.1），而且亮的是「对话」。
+ *      ⚠️ 顺带钉住"这一页有没有自己的入口"：Task 6 之前它**根本没有来源**。
+ */
+async function measureSessions(page) {
+  return page.evaluate(() => {
+    const box = el => {
+      if (!el) return null
+      const b = el.getBoundingClientRect()
+      return {
+        w: Math.round(b.width), h: Math.round(b.height),
+        top: Math.round(b.top), left: Math.round(b.left),
+        bottom: Math.round(b.bottom), right: Math.round(b.right),
+      }
+    }
+    const rows = [...document.querySelectorAll('.session-row')]
+    const thumbs = [...document.querySelectorAll('.session-thumb')]
+    const name = document.querySelector('.session-name')
+    const ask = document.querySelector('.session-ask')
+    const dels = [...document.querySelectorAll('.session-row .session-del')]
+    return {
+      onPage: !!document.querySelector('.sessions'),
+      nav: [...document.querySelectorAll('.nav button')].map(b => b.textContent.trim()),
+      navOn: document.querySelector('.nav-item.on')?.textContent?.trim() ?? '',
+      rows: rows.length,
+      emptyTitle: document.querySelector('.sessions-empty-title')?.textContent?.trim() ?? '',
+      goBtn: box(document.querySelector('.sessions-empty button')),
+      dayTitle: document.querySelector('.gallery-day-title')?.textContent?.trim() ?? '',
+      row: box(rows[0]),
+      thumb: box(thumbs[0]),
+      thumbsOk: thumbs.filter(i => i.naturalWidth > 0).length,
+      name: name ? name.textContent.trim() : '',
+      nameBox: box(name),
+      // 名字被截断了没有（`scrollWidth > clientWidth` 就是那个省略号真的生效了）。
+      // **截断本身是对的** —— 要的是"它只在自己的格子里截，没把整行顶出去"。
+      nameClipped: name ? name.scrollWidth > name.clientWidth + 1 : false,
+      askText: ask ? ask.textContent.trim() : '',
+      askBox: box(ask),
+      dels: dels.map(b => b.textContent.trim()),
+      delBoxes: dels.map(b => box(b)),
+      scrollW: document.documentElement.scrollWidth,
+      clientW: document.documentElement.clientWidth,
+    }
+  })
+}
+
+/** 左栏三支的顺序（§6.1）：修图是主入口，对话在中间，作品最后。 */
+const NAV_THREE = ['修图', '对话', '作品']
+
+function judgeSessions(label, m, view, mode) {
+  console.log(`── ${label}`)
+  console.log(`     左栏 ${m.nav.join(' / ')}（亮的是「${m.navOn}」）`)
+  if (mode === 'empty') {
+    console.log(`     空态「${m.emptyTitle}」 ` +
+      `按钮 ${m.goBtn ? `${m.goBtn.w}x${m.goBtn.h} @${m.goBtn.top}` : '不在'}`)
+  } else {
+    console.log(`     ${m.rows} 行；第一行 ${m.row ? `${m.row.w}x${m.row.h} @${m.row.left}~${m.row.right}` : '不在'}；` +
+      `缩略图 ${m.thumb ? `${m.thumb.w}x${m.thumb.h}` : '不在'}（解开 ${m.thumbsOk} 张）；` +
+      `名字「${m.name}」${m.nameClipped ? '（截断了，这是对的）' : ''}` +
+      `；分组标题「${m.dayTitle}」`)
+    if (m.askText) {
+      console.log(`     确认态「${m.askText}」 按钮 ${m.dels.join(' / ')} ` +
+        `@${m.delBoxes.map(b => (b ? `${b.left}~${b.right}` : '不在')).join(' , ')}`)
+    }
+  }
+
+  const inView = b => !!b && b.top >= -TOL && b.bottom <= view.height + TOL &&
+    b.left >= -TOL && b.right <= view.width + TOL
+
+  if (!m.onPage) {
+    fails.push(`${label}：找不到 .sessions —— 「对话」这一页整个不在 ` +
+      '（网址改了？组件改名了？探针烂掉的时候就是这个形状）')
+    return
+  }
+  if (m.nav.join('/') !== NAV_THREE.join('/')) {
+    fails.push(`${label}：左栏是「${m.nav.join(' / ')}」——` +
+      `§6.1 要的是「${NAV_THREE.join(' / ')}」三支，顺序也是这个`)
+  }
+  if (m.navOn !== '对话') {
+    fails.push(`${label}：人站在对话页上，左栏亮的却是「${m.navOn}」`)
+  }
+  if (m.scrollW > m.clientW + TOL) {
+    fails.push(`${label}：横向溢出（文档 ${m.scrollW} > 视口 ${m.clientW}）—— ` +
+      '一行撑破了，整页要左右滑，而 .shell 是锁死一屏的')
+  }
+
+  if (mode === 'empty') {
+    if (!m.emptyTitle) {
+      fails.push(`${label}：空态里没有那句「还没改过照片」（.sessions-empty-title）`)
+    }
+    if (!m.goBtn) {
+      fails.push(`${label}：空态里没有那颗「去改一张」—— 用户看到"还没改过照片"之后没有下一步`)
+    } else if (!inView(m.goBtn)) {
+      fails.push(`${label}：那颗「去改一张」没落在视口里（@${m.goBtn.top}~${m.goBtn.bottom}，` +
+        `视口 ${view.height}）—— 写了却看不见，等于没写`)
+    }
+    return
+  }
+
+  if (m.rows < 1) {
+    fails.push(`${label}：一行都没摆出来（服务端上明明有会话）—— 名单没渲染`)
+    return
+  }
+  if (!inView(m.row)) {
+    fails.push(`${label}：第一行没完整落在视口里` +
+      `（${m.row.left}~${m.row.right} / ${m.row.top}~${m.row.bottom}，视口 ${view.width}x${view.height}）`)
+  }
+  if (!m.thumb) {
+    fails.push(`${label}：行上没有缩略图（.session-thumb）`)
+  } else if (m.thumb.w !== m.thumb.h) {
+    fails.push(`${label}：缩略图不是个方块（${m.thumb.w}x${m.thumb.h}）——` +
+      '尺寸不定的后果不是难看：每张图跳出来都会把后面的行推一下')
+  }
+  if (m.thumbsOk === 0) {
+    fails.push(`${label}：一张缩略图都没解开（naturalWidth 全是 0）—— 列表上那些图根本没取到`)
+  }
+  if (!m.name) {
+    fails.push(`${label}：行上没有名字（.session-name 是空的）`)
+  }
+  // ⚠️ **名字只许在自己的格子里截**（`min-width: 0` + 省略号那一条）：
+  //   盒子右边缘越过整行 = 它把行顶出去了。窄屏上这事儿看不出来 ——
+  //   它表现为"整页多出一根横向滚动条"，而那是另一条判据在喊。
+  if (m.nameBox && m.row && m.nameBox.right > m.row.right + TOL) {
+    fails.push(`${label}：名字那一格顶出了整行` +
+      `（名字右 ${m.nameBox.right} > 行右 ${m.row.right}）—— 长名字把行撑破了`)
+  }
+  if (!/·\s*\d+\s*条$/.test(m.dayTitle)) {
+    fails.push(`${label}：列表上没有按天分组的那行标题（现在读到的是「${m.dayTitle}」）——` +
+      '它是和作品页共用的那一套（groupByDay），两页必须一起长这样')
+  }
+
+  if (mode === 'confirm') {
+    if (!m.askText) {
+      fails.push(`${label}：按了「删除」却没有就地确认那句（.session-ask）——` +
+        '用户不知道自己刚才按了什么（这一版明确说好**不弹系统框**）')
+    } else if (!inView(m.askBox)) {
+      fails.push(`${label}：那句「${m.askText}」没落在视口里（@${m.askBox.left}~${m.askBox.right}）`)
+    }
+    // 确认态的两颗按钮（「删掉」「取消」）：点错一次东西就没了，所以它们在不在屏上
+    // 是**真判据**，不是排版洁癖。
+    m.delBoxes.forEach((b, i) => {
+      if (!inView(b)) {
+        fails.push(`${label}：确认态第 ${i + 1} 颗按钮（「${m.dels[i]}」）没完整落在视口里` +
+          `（${b ? `${b.left}~${b.right}` : '不在 DOM 里'}）`)
+      }
+    })
+  }
+}
+
 console.log(`── 量的是 ${URL}`)
 console.log(`   ${await checkServedBuild()}`)
 
@@ -955,6 +1124,18 @@ try {
       await page.waitForTimeout(400)   // 让那条进场动画走完（.welcome 是 translateY 进来的）
       judgeWelcome(`${view.name} · 上传前那一屏`, await measureWelcome(page), view)
 
+      // ── 对话页 · 空态（Task 6）──────────────────────────────────────
+      // 趁这个账号**一条会话都没有**（照片还没传）—— 那是新用户点进「对话」看到
+      // 的第一眼。等传完照片这里就永远至少有一条了，所以只有这一个窗口量得到它。
+      await page.goto(`${APP}/sessions`, { waitUntil: 'load' })
+      await page.waitForSelector('.sessions', { timeout: 15_000 })
+      await page.waitForTimeout(300)   // 让进场动画走完（空态是 translateY 进来的）
+      judgeSessions(`${view.name} · 对话页（一条都没有）`, await measureSessions(page), view, 'empty')
+
+      // 回修图页接着走原来那一路（下面要传照片）
+      await page.goto(APP, { waitUntil: 'load' })
+      await page.waitForSelector('input[type="file"]', { state: 'attached', timeout: 15_000 })
+
       await page.setInputFiles('input[type="file"]', PHOTO)
       await page.waitForSelector('canvas', { timeout: 15_000 })
       await page.waitForTimeout(1200)
@@ -1021,6 +1202,71 @@ try {
       await page.getByRole('button', { name: '知道了' }).click()
       await page.waitForTimeout(200)
       saveFails = false
+
+      // ── 对话页（Task 6）──────────────────────────────────────────────
+      // 传完照片就有了**一条真的会话**（Task 4 那条 `POST /api/sessions` 建的），
+      // 所以这一屏量的是真数据，不是夹具。
+      await page.goto(`${APP}/sessions`, { waitUntil: 'load' })
+      await page.waitForSelector('.session-row', { timeout: 15_000 })
+      // 缩略图是**一张张取**的：等它们都落地再量（没取到的会在下面那条里报出来）
+      await page.waitForFunction(
+        () => [...document.querySelectorAll('.session-thumb')].every(i => i.complete),
+        null, { timeout: 10_000 }).catch(() => { /* 解不开的下面那条会报出来 */ })
+      judgeSessions(`${view.name} · 对话页（传完照片那一条）`,
+        await measureSessions(page), view, 'list')
+
+      // ★ 就地确认那一态。⚠️ 必须量：它比常态**更宽**（多一句问话 + 两颗按钮），
+      //   而 390px 上那一行本来就已经是最挤的一处。
+      await page.locator('.session-row .session-del').first().click()
+      await page.waitForSelector('.session-ask', { timeout: 5_000 })
+      await page.waitForTimeout(200)
+      judgeSessions(`${view.name} · 对话页（正在问"删掉这条？"）`,
+        await measureSessions(page), view, 'confirm')
+      // 量完收回（「取消」也是用户真会按的按钮）。不收的话下面每一屏都多一样东西，
+      // 而那些判据量的是别的功能。
+      await page.getByRole('button', { name: '取消' }).click()
+      await page.waitForTimeout(200)
+
+      // ★ 再走**长名字**那一行。理由：名字是这一行里最脆的一格 —— flex 孩子的
+      //   默认 `min-width: auto` 不肯缩到内容宽度以下，长名字会把整行顶出去，
+      //   而**只有长名字时才看得出来**（短名字那些行一切正常，探针全绿）。
+      //   这条会话走真接口建、带一个很长的中文名，而且它是最新的一条 ——
+      //   排第一行，量的正是它。
+      const longName = '二〇二六年国庆节在凤凰古城拍的那一张照片.jpg'
+      const seededSession = await page.evaluate(async (cfg) => {
+        const c = document.createElement('canvas')
+        c.width = cfg.w
+        c.height = cfg.h
+        const g = c.getContext('2d')
+        g.fillStyle = '#c3417e'; g.fillRect(0, 0, cfg.w, cfg.h)
+        g.fillStyle = '#ae376f'; g.fillRect(0, Math.round(cfg.h / 3), cfg.w, Math.round(cfg.h / 3))
+        const r = await fetch('/api/sessions', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ image: c.toDataURL('image/jpeg', 0.6), name: cfg.name }),
+        })
+        return r.status
+      }, { w: SEED_IMAGE_W, h: SEED_IMAGE_H, name: longName })
+      if (seededSession !== 200) {
+        fails.push(`${view.name}：造一条长名字的会话没成功（HTTP ${seededSession}）—— ` +
+          '下面那条判据就没有能信的数据了')
+      }
+      await page.goto(`${APP}/sessions`, { waitUntil: 'load' })
+      await page.waitForSelector('.session-thumb', { timeout: 15_000 })
+      const longOne = await measureSessions(page)
+      judgeSessions(`${view.name} · 对话页（名字很长的那一行）`, longOne, view, 'list')
+      if (longOne.name !== longName.replace(/\.[^.]+$/, '')) {
+        fails.push(`${view.name}：第一行不是那条长名字的会话（读到的是「${longOne.name}」）——` +
+          '这条判据没量到它要量的东西')
+      }
+      // ⚠️ **只在窄屏上要它截断**：桌面那一行有 1140px 宽，20 个字放得下 ——
+      //    那里不截断是**对的**（判"必须截断"会把好版面判红）。
+      //    窄屏上不截断则是"名字那格不再收窄"的信号：下一步就是整行被顶出屏幕。
+      if (view.width <= 640 && !longOne.nameClipped) {
+        fails.push(`${view.name}：那条名字（${longName.replace(/\.[^.]+$/, '').length} 个字）` +
+          '在这条窄屏上居然一点都没被截断 —— 要么它没排在第一行，要么名字那格不再收窄了' +
+          '（长名字会把整行顶出去，而页面横向溢出那条判据只在**已经顶出去**之后才红）')
+      }
 
       // ── 作品页（Task 11）────────────────────────────────────────────
       // 先在**真接口**上放几张：图是页面里现画的一张小 JPEG，不在脚本里塞一串

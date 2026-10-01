@@ -955,7 +955,10 @@ describe('导出：分享还是存下来，用户自己选', () => {
     vi.mocked(saveMod.canShareImage).mockReturnValue(true)
     await renderApp()
     await uploadPhoto()
-    expect(topbarButtons()).toEqual(['调色', '分享', '保存'])
+    // ⚠️ 2026-10-01（Task 6）末尾多了一颗「新的一张」（§6.4）—— 两条清单都跟着加，
+    //    它们钉的是"那一格的两种长相"和"有没有混进别的东西"（`.user-btn` 是兄弟、
+    //    不在 `.actions` 里），不是"永远只有三颗"。
+    expect(topbarButtons()).toEqual(['调色', '分享', '保存', '新的一张'])
   })
 
   it('不能分享的设备上，那一格换成「下载」', async () => {
@@ -969,10 +972,11 @@ describe('导出：分享还是存下来，用户自己选', () => {
     //    也就是说**存成功了反而拿不到**。所以那一格不该空着，它该换成
     //    同一个动作（"把图给我"）在桌面上的另一种给法。
     //    两半都得守：堵上整条路不行，留一个点了没反应的按钮也不行。
+    //    （2026-10-01 Task 6：末尾又多了一颗「新的一张」，清单跟着加。）
     vi.mocked(saveMod.canShareImage).mockReturnValue(false)
     await renderApp()
     await uploadPhoto()
-    expect(topbarButtons()).toEqual(['调色', '下载', '保存'])
+    expect(topbarButtons()).toEqual(['调色', '下载', '保存', '新的一张'])
   })
 
   it('点「下载」→ 真的下载一份，文件名和分享那条一样', async () => {
@@ -3606,14 +3610,116 @@ describe('恢复：打开就接着上次那条', () => {
     expect(bubbleTexts()).not.toContain('S9-用户说的')
   })
 
+  it('★★ 在 A 里改点东西，从列表里切到 B —— 落盘打在 B 的 id 上、body 里没有 A 的话', async () => {
+    // Task 6 新增的那条路：**从列表里点开一条**（`loadSession(id, 'open')`）。
+    // 它和挂载那条恢复路共用同一份代码，但多了一个挂载时没有的动作：**切走** ——
+    // A 那一份状态（history / messages / params / sessionId）此刻正挂在屏幕上。
+    //
+    // ⚠️ 这条用例钉的是 `loadSession` 里那句「写状态那一批里一次 `await` 都不许有」：
+    //   中途让出的话，落盘那个 effect 会带着**旧 history + 新 sessionId** 跑一次 ——
+    //   那等于**把 A 的活儿写进 B**。写错了不报错、看起来也一切正常：用户切过去、
+    //   屏幕上确实是 B 的照片，只是 B 的对话里凭空多了一句他从没说过的话，
+    //   而 B 原来的对话被整段顶掉（下次打开 B 才发现）。
+    const nine = { ...makeSession(9, 1, 'S9-用户说的', 'S9'), originalName: '九号.jpg' }
+    const seven = { ...makeSession(7, 1, 'S7-用户说的', 'S7'), originalName: '七号.jpg' }
+    withSessions([seven, nine])
+    await renderApp()
+
+    // ① 打开就接回**最近动过的那条**（A = id 9）
+    expect(bubbleTexts()).toContain('S9-用户说的')
+    expect(bubbleTexts()).not.toContain('S7-用户说的')
+    // A 这一趟解出来的位图（第 1 步那张 + 原图那张）：切走时**一个都不许漏**
+    const aBitmaps = [...decodedBitmaps]
+
+    // ② 在 A 里改点东西，等它落盘 —— 这句就是待会儿**不许出现在 B 里**的那句
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({ reply: '好。' }))
+    await say('A 里加的这句')
+    await waitPersist()
+    expect(putCalls('/api/sessions/9')).toHaveLength(1)
+
+    // ③ 走**真入口**切到 B：左栏「对话」→ 点「七号」那一行
+    await goNav('对话')
+    const row = [...container.querySelectorAll('.session-row')].find(
+      r => (r.textContent ?? '').includes('七号'))
+    expect(row).toBeTruthy()
+    await act(async () => {
+      ;(row!.querySelector('.session-open') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    // 这一趟是"取详情 → 一步步下图解码 → 取原图"几段往返。**故意等够**（连落盘那层
+    // 防抖一起过）：下面 ⑥ 要断的是"落盘打在哪条上"，早些断的话，一个把状态**分两批**
+    // 写的实现还没跑到第二批 —— 那时候它看起来反而像是没毛病。
+    await waitPersist()
+
+    // ④ 屏幕上换成 B 了：对话跟着换
+    expect(bubbleTexts()).toContain('S7-用户说的')
+    expect(bubbleTexts()).not.toContain('S9-用户说的')
+    // ⚠️ 点开这一条**不许说**「这是上次没做完的那张」：用户明明点的是另一条，
+    //    那句话会被读成"我点开的这条就是上次那条" —— 一句假话（见 loadSession 头 ③）。
+    expect(container.querySelector('.notice')?.textContent ?? '')
+      .not.toContain('这是上次没做完的')
+    // ⑤ 切走那条（A）的位图要**还回去** —— 不还，切几次就把标签页拖垮
+    //    （`setHistory` 那个 updater 里的 `bitmapsToClose(prev, [])`）。
+    for (const b of aBitmaps) expect(vi.mocked(b.close)).toHaveBeenCalled()
+
+    // ⑥ ★★ 落盘这一趟：打的是 **B 的 id**，而且 body 里**没有 A 的那句话**。
+    //    两句缺一不可 —— 只看"B 收到了 PUT"的话，把 `setHistory` 和 `setSessionId`
+    //    分两批写的实现也会绿：那时候 B 收到的正是 A 的整份活儿。
+    await waitPersist()
+    expect(putCalls('/api/sessions/9')).toHaveLength(1)   // A 上还是原来那一趟，没有第二次
+    const puts = putCalls('/api/sessions/7')
+    expect(puts).toHaveLength(1)
+    const texts = bodyOf(puts[0]!).messages.map((m: { text: string }) => m.text)
+    expect(texts).toContain('S7-用户说的')
+    expect(texts).not.toContain('A 里加的这句')
+    expect(texts).not.toContain('S9-用户说的')
+  })
+
+  it('★ 「新的一张」回到选照片那一屏 —— 下一张会开**新的**一条，不写回旧的那条', async () => {
+    // §6.4：顶栏那颗「新的一张」= "我再改一张"。它**不删**当前这条会话
+    // （那条已经在服务端上存着了），只是回到上传前那一屏。
+    withSessions([makeSession(7, 1, '旧的那句', 'S7')])
+    await renderApp()
+    expect(bubbleTexts()).toContain('S7第 0 步')
+    const oldBitmaps = [...decodedBitmaps]
+
+    const btn = [...container.querySelectorAll('.actions button')]
+      .find(b => (b.textContent ?? '').trim() === '新的一张') as HTMLButtonElement | undefined
+    expect(btn).toBeTruthy()
+    await act(async () => { btn!.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    // ① 回到"选一张照片"那一屏；顶栏那一排（只在有图时出现）跟着收起来
+    expect(container.querySelector('canvas')).toBeNull()
+    expect(container.querySelector('input[type="file"]')).toBeTruthy()
+    expect(container.querySelector('.actions')).toBeNull()
+    // ② 刚切走那条的位图要还回去
+    for (const b of oldBitmaps) expect(vi.mocked(b.close)).toHaveBeenCalled()
+
+    // ③ 下一张是**新的一条会话**（`POST /api/sessions` 回的是 id 1），
+    //    落盘要打在 1 上 —— 归零 `sessionId` 少一处，新照片的消息和步骤就会
+    //    写进**上一条会话**（用户回头打开那条，会看到一张不是自己的照片）。
+    await uploadPhoto()
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({ reply: '好。' }))
+    await say('新的这张改一下')
+    await waitPersist()
+    expect(putCalls('/api/sessions/7')).toHaveLength(0)
+    const puts = putCalls('/api/sessions/1')
+    expect(puts).toHaveLength(1)
+    const texts = bodyOf(puts[0]!).messages.map((m: { text: string }) => m.text)
+    expect(texts).toContain('新的这张改一下')
+    expect(texts).not.toContain('S7第 0 步')
+  })
+
   it('★ 恢复还在路上时用户先传了照片 —— 上次那条不许把新的顶掉', async () => {
     // 恢复是一串网络往返（列表 → 详情 → 每一步的图）。这几百毫秒里屏幕上
     // 还是"选一张照片"那一屏 —— 用户完全可能先自己传一张。这时候把恢复的
     // 结果盖上去，等于**把他刚传的那张顶掉**：屏幕上换成旧照片，而他刚建的那条
     // 会话在服务端已经存在（列表里凭空多一条），两边都不报错。
     // ★ 这条会话故意给**两步**，而且第 2 步带 `reusesPrev`（`makeSession` 里那个
-    //   `i === 1`）—— 它让两步**共用同一个位图对象**。作废那一条路要把这些位图
-    //   关掉，而"同一张关两遍"只有在共用对象时才可能发生。一步的会话量不出这件事。
+    //   `i === 1`）：作废发生在下载之前的话，这几步一步都不许被碰到（见下面 ④）。
+    //   "两步共用一个位图对象、释放时只关一次"那一件事现在由**卸载**那条用例钉着
+    //   （它那条路真的会解出来再扔）。
     withSessions([makeSession(7, 2, '上次那句', 'S7')])
     const gate = makeGate()
     const inner = fetchMock.getMockImplementation()!
@@ -3649,9 +3755,15 @@ describe('恢复：打开就接着上次那条', () => {
     //    同一个 `ImageBitmap` 连关两次**不抛**，第二次是空操作。钉的是**意图**
     //    —— 一个位图对应一次释放，将来真出现"关了还在用的那张"这类问题时，
     //    数得清才查得动。
+    //    （这个"只关一次"的账现在由下面那条**卸载**的用例管着：这一条路已经
+    //      一张都不解了，见 ④。两边合起来覆盖的还是同一件事。）
+    //
+    // ④ ★ 这一趟**连一步都不该解**。2026-10-01（Task 6）把这道闸门从"解码之后"
+    //    挪到了"拿到详情之后"：用户已经在自己那张照片上干活了，我们没理由再把
+    //    旧会话那几步的图**下载回来、解码、再扔掉** —— 每张都是全尺寸图。
+    //    （原来那种写法走到这儿会解出 1 张。）
     const decoded = decodedBitmaps.slice(decodedBefore)
-    expect(decoded).toHaveLength(1)
-    expect(vi.mocked(decoded[0]!.close)).toHaveBeenCalledTimes(1)
+    expect(decoded).toHaveLength(0)
   })
 
   it('★ 恢复下到一半页面被关掉（卸载）—— 前面已经解出来的位图一个都不许漏', async () => {
@@ -3679,6 +3791,10 @@ describe('恢复：打开就接着上次那条', () => {
     const decoded = decodedBitmaps.slice(decodedBefore)
     expect(decoded).toHaveLength(2)                     // 第 1 步那个 + 第 3 步刚解出来的那个
     for (const b of decoded) expect(vi.mocked(b.close)).toHaveBeenCalled()
+    // ★ 而且**一个对象只关一次**：第 2 步是 `reusesPrev`（和第 1 步共用同一个位图），
+    //   `releaseDecoded` 里那个 `new Set` 就是干这个的 —— 少了它会变成 2。
+    //   （2026-10-01 Task 6：这条账原来挂在上一条用例上，那条路现在一张都不解了。）
+    expect(vi.mocked(decoded[0]!.close)).toHaveBeenCalledTimes(1)
   })
 
   it('★ 原图取回来了、缩略图这一步却炸了 —— 那张位图照样要还回去', async () => {

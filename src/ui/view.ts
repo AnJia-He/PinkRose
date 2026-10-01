@@ -22,6 +22,9 @@
 export type View =
   | { kind: 'landing' }
   | { kind: 'edit' }
+  // 会话列表（§6.1，Task 6）。它是「对话」那一支：**过程**的家
+  // —— 「修图」是现在这一次，「作品」是结果，三样是三件事，别合并（§3 第 3 条）。
+  | { kind: 'sessions' }
   | { kind: 'gallery' }
   | { kind: 'work'; id: number }
   // 用户管理（§3.6）。收在右上角那颗 👤 后面（§3.2）—— 一辈子点几次，不占一级导航
@@ -38,6 +41,9 @@ export function viewFromPath(path: string): View {
   const m = /^\/works\/(\d+)$/.exec(path) ?? /^\/app\/works\/(\d+)$/.exec(path)
   if (m) return { kind: 'work', id: Number(m[1]) }
   if (path === '/works' || path === `${APP}/works`) return { kind: 'gallery' }
+  // 会话列表和上面几个一样要**认得出来**（F5、收藏、别人发来的一条链接）——
+  // 少认这一行，按 F5 的人会被扔去修图页，而他明明还站在列表上。
+  if (path === `${APP}/sessions`) return { kind: 'sessions' }
   if (path === `${APP}/account`) return { kind: 'account' }
   // 模型设置也可以直接打开（F5、收藏、别人发来的一条链接）——
   // 少认这一行，用户按 F5 就被扔回修图页，而他明明还在这页上。
@@ -49,6 +55,7 @@ export function viewFromPath(path: string): View {
 
 export function pathOf(v: View): string {
   if (v.kind === 'landing') return '/'
+  if (v.kind === 'sessions') return `${APP}/sessions`
   if (v.kind === 'gallery') return `${APP}/works`
   if (v.kind === 'work') return `${APP}/works/${v.id}`
   if (v.kind === 'account') return `${APP}/account`

@@ -242,6 +242,7 @@ body {
 .hint::before,
 .app-loading::before,
 .gallery-more::before,
+.sessions-more::before,
 .bubble.pending::before,
 .cards-now::before {
   content: ''; flex: none; border-radius: 50%;
@@ -1090,18 +1091,24 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
 /* ⚠️ 那个圈**必须转**（§3.5）：没有它，用户会以为到底了，而不是"还在加载"。
    纯 CSS 画一个（零依赖、也不用引一张图），转得慢一点 —— 它转得快会像卡住。 */
-.gallery-more {
+/* ⚠️ 下面这两条**对话页也用**（`.sessions-more` / `.sessions-end`）—— 它们是同一个
+   形状（列表末尾的一圈 / 一句话），所以并进同一条规则，不另写一份：
+   两份迟早会漂成两种转法、两种"没有更多了"。 */
+.gallery-more, .sessions-more {
   display: flex; align-items: center; justify-content: center; gap: var(--sp-2);
   padding: var(--sp-5) 0; color: var(--muted); font-size: 13px;
 }
-.gallery-more::before { width: 14px; height: 14px; }
+.gallery-more::before, .sessions-more::before { width: 14px; height: 14px; }
 /* 到底了。**它是一句话，不是一块内容** —— 原来居中挂在整页宽的正中间，
    左边那一列作品还在的时候，它孤零零飘在右边一大片空地上。改成居中 + 两侧短线。 */
-.gallery-end {
+.gallery-end, .sessions-end {
   display: flex; align-items: center; gap: var(--sp-4);
   margin: var(--sp-6) 0 0; color: var(--muted-2); font-size: 12.5px;
 }
-.gallery-end::before, .gallery-end::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.gallery-end::before, .gallery-end::after,
+.sessions-end::before, .sessions-end::after {
+  content: ''; flex: 1; height: 1px; background: var(--line);
+}
 
 /* 三种"还没有图"的状态：**都没有图，说的却是三件不同的事**（还没拿到 /
    一张都没有 / 筛掉了），所以各是各的句子，别合成一句。
@@ -1117,6 +1124,100 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .gallery-empty-title { margin: 0; font-size: 17px; }
 .gallery-hint { margin: var(--sp-2) 0 0; font-size: 13px; color: var(--muted); }
 .gallery-error { margin: var(--sp-5) 0 0; color: var(--danger); }
+
+/* ── 对话列表（Task 6，§6.1）：**过程**的家 ────────────────────────
+   「修图」是现在这一次，「作品」是结果，这一页是"我改过哪些" —— 三样是三件事。
+
+   ⚠️ 版面规矩和作品页**一模一样**：`flex: 1` + 自己滚（理由见上面 `.gallery`
+   那段的第一条 —— 不自己滚的时候，撑出去的是**整个文档**，左栏会跟着长列表
+   一起滚走）。分组标题也复用 `.gallery-day-title`（组件里用的就是同一个类名）：
+   同一天在两页里必须是同一个名字、同一种长相，而且两页谁也不该各写一份。
+
+   ⚠️ 四种状态（还没拿到 / 打不开 / 一条都没有 / 有）**都住在这一个 `.sessions`
+   里面**（照 GalleryPage）—— 它既是"能滚的那一格"，也是空态居中要的宽度。 */
+.sessions {
+  flex: 1; min-width: 0; min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+}
+.sessions-day { margin-top: var(--sp-5); }
+
+/* 一行 = [缩略图][名字][几步][删除]。
+   它是一**行**不是一格，所以照 `.gallery-cell` 的手感（圆角、悬停抬一点、
+   :active 有反馈 —— 那条在全局 `button:where(:active)` 上）却用 flex 排：
+   手感是同一套，骨骼不一样。 */
+.session-row {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding-right: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--panel);
+  transition: border-color var(--dur-1) ease, background-color var(--dur-1) ease;
+}
+.session-row:hover { border-color: var(--line-3); background: var(--raised); }
+
+/* 点开这一条那半边的**整块**（图 + 名字 + 几步）。它自己也是按钮，
+   所以键盘用户一路 Tab 过来时看得见自己停在哪一行。 */
+.session-open {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: none; border: 0; border-radius: var(--r-md);
+  color: var(--text); text-align: left;
+}
+.session-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* 缩略图**定死一个小方块**（宽高都写死，不只 aspect-ratio）：图是一张张跳出来的，
+   让它们自己决定多高的话，列表会跟着一跳一跳。
+   ⚠️ 尺寸走令牌（文件头那条"间距只许引用"的规矩）；`--sp-7` 是 48px ——
+   够看清是哪张，又不会在手机上把名字挤没。 */
+.session-thumb {
+  flex: none; width: var(--sp-7); height: var(--sp-7);
+  aspect-ratio: 1 / 1; object-fit: cover;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--raised);
+  transition: border-color var(--dur-1) ease, transform var(--dur-2) var(--ease);
+}
+.session-row:hover .session-thumb { border-color: var(--accent); transform: translateY(-2px); }
+
+/* ⚠️ **`min-width: 0` 不能漏**：flex 孩子的默认 `min-width: auto` 不肯缩到内容宽度
+   以下，长名字（原图名可以很长）会把整行撑破。而且**只有长名字时才看得出来** ——
+   短名字的那些行一切正常。 */
+.session-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 14px;
+}
+.session-steps { flex: none; font-size: 12px; color: var(--muted); }
+
+/* 删除：一行里最不常按的一颗，所以长得最轻（默认就是裸按钮，悬停才现出形状）。 */
+.session-del {
+  flex: none; padding: var(--sp-1) var(--sp-2);
+  font-size: 12px; color: var(--muted);
+  background: none; border-color: transparent;
+}
+.session-del:hover:not(:disabled) { color: var(--danger); border-color: var(--line-2); }
+
+/* 就地确认（**不弹系统框**，这个产品的规矩）。
+   ⚠️ 确认态是**这一行换了个问题问**：照片、名字、步数让位给那句问话和两颗按钮。
+   位置不动（还是列表里的那一行），所以"问的是哪一条"一眼看得出来。
+   为什么必须让位：390px 的手机上，去掉左栏和页面留白只剩 ~250px，一行里塞不下
+   "缩略图 48 + 名字 + 几步 + 问句 + 两颗按钮"。`min-width: 0` 只救得了名字
+   —— 缩略图和"几步"是 `flex: none`，它们会把整行**横向撑破**（整页多出一条横向
+   滚动条，而 `.shell` 是锁死一屏的）。 */
+.session-row.confirming { justify-content: flex-end; padding: var(--sp-2) var(--sp-3); }
+.session-row.confirming .session-open { display: none; }
+.session-ask { flex: 1; font-size: 12.5px; color: var(--text); white-space: nowrap; }
+/* 两颗按钮里**只有「删掉」是危险的**：它们文案都很短、长得又一样，点错一次
+   东西就没了 —— 颜色是这里唯一还能区分的余地。 */
+.session-row.confirming .session-del:first-of-type { color: var(--danger); }
+
+/* 空态照作品页那两条（"两句拉开档次"的理由在那边写着，这里一样成立）。 */
+.sessions-empty {
+  margin-top: 18vh; text-align: center; color: var(--text);
+  animation: welcome-in .5s var(--ease) both;
+}
+.sessions-empty-title { margin: 0; font-size: 17px; }
+.sessions-empty .btn-primary { margin-top: var(--sp-4); }
 
 /* ── 作品详情页（Task 12）：这张图怎么来的 ──────────────────────────
    ⚠️ **`.detail` 必须自己滚**（下面那条 overflow-y: auto），和 `.gallery` 同一条规矩：

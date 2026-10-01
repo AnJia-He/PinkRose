@@ -7,6 +7,7 @@ import AdjustmentPanel from './ui/AdjustmentPanel'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import { LoginPage } from './ui/LoginPage'
 import { GalleryPage } from './ui/GalleryPage'
+import { SessionsPage } from './ui/SessionsPage'
 import { WorkDetailPage } from './ui/WorkDetailPage'
 import { AccountPage } from './ui/AccountPage'
 import { ModelSettings } from './ui/ModelSettings'
@@ -300,6 +301,271 @@ export default function App() {
   }, [])
 
   /**
+   * 组件还在不在（卸载之后回来的那一趟 `loadSession` 什么都不许写）。
+   *
+   * ⚠️ **为什么不是每趟一个局部 `alive`**（Task 5 原来就是那种写法）：dev 是
+   *   **StrictMode**（`main.tsx`），挂载 effect 会"跑 → 清理 → 再跑"一遍。局部的
+   *   `alive` 在第一次清理里就被放倒了，而那趟恢复还在路上；第二次挂载又撞上
+   *   `restoreTriedRef` 直接 return —— 于是**恢复在 dev 里整个是死的**
+   *   （2026-10-01 在真 Chrome 里验的：传完照片刷新，照片没回来，
+   *   而服务端上那条会话明明在）。挂在 ref 上、**每次挂载都置回 true**，
+   *   StrictMode 那一下重挂载就不再误伤；真正卸载（关页面、测试里 unmount）
+   *   之后仍然是 false。
+   */
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+  /** 接过几次会话。一趟还没回来时用户又开了一趟 —— 前面那趟作废（见 loadSession）。 */
+  const loadSeqRef = useRef(0)
+
+  /**
+   * 把服务端上的一条会话接回来（spec §6.2）。
+   *
+   * ★ 2026-10-01（Task 6）从"挂载时恢复"那一段里抽出来的，**两条路走同一份代码**：
+   *   挂载时接回**最新那条**（`why: 'restore'`），左栏「对话」里点开某一条
+   *   （`why: 'open'`）。抽之前那段只在挂载时跑 —— "点开一条旧会话"是这个列表
+   *   存在的全部意义，而它当时**没有任何路径**。
+   *
+   * ⚠️ **两条路的差别只有三处**，别再多分（多分开一处就会各漂各的）：
+   *   ① 「用户已经自己动手了」那道闸门：`'restore'` 用**绝对**判据（手上只要有活儿
+   *      就不许盖），`'open'` 用**相对**判据（这趟期间他动了手才作废）。为什么
+   *      不能一样：`pickStartedRef` 一旦置位**永不复位**，拿绝对判据去挡"用户自己
+   *      点开的那一条"，等于第一次上传之后列表里点什么都**静默无反应**。
+   *   ② 失败怎么办：`'restore'` 不吭声（用户本来就什么都没做，接不回来就是
+   *      "这次从头开始"）；`'open'` 必须说一句，不然就是"点了没反应"。
+   *   ③ 接回来时那句话：`'restore'` 要说「这是上次没做完的」（§6.2 明文要求）；
+   *      `'open'` **不能说这句** —— 他会读成"我刚点开的这条是上次没做完的那条"，
+   *      而他明明点了另一条，那是句假话。
+   *
+   * ⚠️⚠️ **四件事一件都不能丢**（全是 Task 5 评审一轮一轮抠出来的，都**静默出错**）：
+   *   ① `idRef` 跳过接回来的所有 id（下面标了 ★★）；② `lastPersistedBaseSeqRef`
+   *   跟着走；③ `pickStartedRef` 那道闸门；④ 作废时 `releaseDecoded()` 把位图还回去。
+   *
+   * ⚠️ **写状态那一批里一次 `await` 都不许有**：中途让出的话，落盘那个 effect 会
+   *   带着**旧 history + 新 sessionId** 跑一次 —— 那等于**把 A 的活儿写进 B**。
+   */
+  const loadSession = useCallback(async (id: number, why: 'restore' | 'open'): Promise<void> => {
+    const gen = ++loadSeqRef.current
+    /** 这一趟**开始时**用户手上的状态（"他是不是在这趟里又动了手"靠它比） */
+    const pickAtStart = pickStartedRef.current
+    const baseAtStart = baseSeqRef.current
+    // 点开那一路要有反馈：那一刻屏幕上要么是空的（底下会露出"选一张照片"那个
+    // 上传器 —— 用户会以为这条会话没了），要么还是上一条会话的照片。盖一句话，
+    // 别让他对着一屏假画面猜。
+    //
+    // ⚠️ 顺手把**上一条**留下的通报收掉：通报说的都是"眼前这张照片"的事，
+    //   而这张照片马上就要换掉了。最刺眼的一条是恢复那句"这是上次没做完的那张"
+    //   —— 它是 `tone: 'ok'`、4 秒才自己走，用户在这 4 秒里点开另一条会话，
+    //   这句话就正好挂在**另一张照片**上，读出来是一句假话（§6.2 要防的正是它，
+    //   只是方向反了）。点开这条路上没有别的通报要留：接回来了就没什么好说的，
+    //   接不回来下面自己会说（`discard` / catch 里的 `noticeBad`）。
+    if (why === 'open') {
+      setBusy('正在打开这条对话…')
+      setNotice(null)
+    }
+
+    /** 已经解码、还没交给 history 的位图。**要一次性还清** —— 光还刚解出来的那张，
+     *  前面几步的就跟着 `steps` 一起没人管了，它们占的是 GPU 内存。 */
+    const steps: Snapshot[] = []
+    let released = false
+    const releaseDecoded = () => {
+      if (released) return
+      released = true
+      // **按对象去重**：`reusesPrev` 复用的那几步共用同一个位图对象。
+      // （2026-10-01 在真 Chrome 里量过：同一个 `ImageBitmap` 连关两次**不抛**，
+      //   第二次是空操作 —— 这一层是"数得清"，不是"救得急"。）
+      for (const b of new Set(steps.map(s => s.base))) b.bitmap.close()
+    }
+    /**
+     * 这一趟还算不算数。
+     *
+     * 三种"不算数"，一个都不能少：
+     *   · **页面没了**（`mountedRef`）—— 再写就是写到一棵已经不存在的树上；
+     *   · **又开了一趟**（`gen`）—— 两趟的写法是"后到者赢"，那先回来的那趟必须闭嘴；
+     *   · **这中间用户自己动手了** —— 上面 ① 那两种判据。用户先传了照片，屏幕上
+     *     还是"选一张照片"那一屏（什么都没挡住他）；这时候把旧的接回来就是把他刚
+     *     传的那张顶掉，而他刚建的那条会话在服务端已经存在（列表里凭空多一条），
+     *     两边都不报错。
+     */
+    const stale = (): boolean => {
+      if (!mountedRef.current || gen !== loadSeqRef.current) return true
+      return why === 'restore'
+        ? (pickStartedRef.current || baseSeqRef.current !== 0)
+        : (pickStartedRef.current !== pickAtStart || baseSeqRef.current !== baseAtStart)
+    }
+    /** 作废：位图还回去、日志留痕（**不许静默**）；点开那一路还要说一声。 */
+    const discard = (note: string) => {
+      releaseDecoded()
+      console.error(note)
+      if (why === 'open') noticeBad('这条对话没打开，再试一次？')
+    }
+
+    try {
+      const detail = await getSession(id)
+      if (stale()) return discard('这条会话没接回来（作废了）：不是页面换了，就是用户自己动手了')
+      // 一步都没有 = 这条会话是个空壳（正常到不了这儿：建会话时原图就算一步）。
+      // 与其摆一张没有对话、「回到这一步」也点不动的空图，不如照旧让用户自己选。
+      // ⚠️ 原来这里是**一声不吭地 return** —— 点了列表却什么都没发生，正是这个
+      //   项目最恨的那种失败。留个痕。
+      if (detail.steps.length === 0) return discard('这条会话一步都没有，不接（建会话时原图就该算一步）')
+
+      // 每一步都要解码回位图。⚠️ `reusesPrev` 是真的能省一次下载 + 一次解码：
+      // 拖十次滑块就是十步，一步步全下就是十个一模一样的文件。
+      for (const s of detail.steps) {
+        const prev = steps.at(-1)
+        if (s.reusesPrev && prev) {
+          steps.push({ id: s.id, label: s.label, base: prev.base, params: s.params,
+                       isOriginal: false, thumb: '', prompt: s.prompt })
+          continue
+        }
+        const blob = await (await fetch(sessionStepUrl(detail.id, s.id))).blob()
+        const bitmap = await createImageBitmap(blob)
+        if (stale()) { bitmap.close(); return discard('恢复：这次接回来的已经不作数了（页面换了，或者用户自己动手了）') }
+        steps.push({ id: s.id, label: s.label, params: s.params,
+                     base: { bitmap, width: bitmap.width, height: bitmap.height },
+                     isOriginal: steps.length === 0, thumb: '', prompt: s.prompt })
+      }
+      const lastStep = steps[steps.length - 1]!
+
+      // 「按住看原图」那张预览要从**原图**重新生成一次（它本来是内存里的 data URL）。
+      //
+      // ★ 顺手把 `originalFileRef` 也补上 —— 这一步**不是可选的锦上添花**：
+      //   「保存 / 分享 / 下载」三条路的门口都有一句
+      //   `if (!canvasElRef.current || !originalFileRef.current) return`，
+      //   而恢复出来的会话手里原来**没有**这个 File —— 三颗按钮会一起
+      //   "点了没反应"，不报错、也不提示。
+      //
+      //   ⚠️ 别去松那三处的守卫（那是治症状）：`exportCurrent` 要这个 File 是
+      //   做两件**真事** —— `buildExportBlob(canvas, file, …)` 拿它写回 EXIF，
+      //   `buildFilename(file.name, …)` 决定下载下来的文件叫什么。松掉守卫换来
+      //   的是"导出能成，但没 EXIF、名字还叫 `_ruixing.jpg`" —— 比"没反应"更坏，
+      //   因为它不报错、也不明显。这里补上真正的那个 File，那三处从"错的"变成
+      //   "对的"，一个字都不用改。
+      //
+      // ⚠️⚠️ 但**这一份 File 里没有 EXIF**，和用户真传的那张不一样。服务端存的
+      //   `original` 是 `bitmapToDataUrl` 编出来的，中间过了一次 `<canvas>` ——
+      //   而 canvas 编码**不携带 EXIF**（拍摄时间、GPS 在那一步就没了）。
+      //   所以恢复出来的会话导出时，`withExif` 读到的是**一份空的 EXIF**，
+      //   产出的是一张普通 JPEG：不报错，只是那些信息本来就没有。
+      //   活的会话（没恢复过的）照旧是准的 —— 用户真那个 File 还在内存里。
+      //   要补上得让服务端另存一份**原始字节**，那是另一件事，别在这儿假装它还在。
+      let originalBack = true
+      try {
+        const ob = await (await fetch(sessionOriginalUrl(detail.id))).blob()
+        // ⚠️ 这一趟网络往返里用户同样可能自己动手了 —— 再往下就是**直接改他的
+        //    `originalFileRef` 和屏幕上的预览**（`setOriginalPreview`），写错了
+        //   是"照片是新传的、导出的却是旧的"这种看不出来的错。
+        if (stale()) return discard('这条会话没接回来（作废了）：不是页面换了，就是用户自己动手了')
+        const oi = await createImageBitmap(ob)
+        // ⚠️ `close()` 必须在 `finally` 里：`makeThumbnail` 抛（拿不到 2D 上下文）
+        //   的时候，写在下一行的那个 `oi.close()` 根本轮不到 —— 那张位图会一直
+        //   占着 GPU 内存，而且这恰恰是**异常路径**，平时没人会盯着它。
+        try {
+          setOriginalPreview(makeThumbnail(oi, ORIGINAL_PREVIEW_MAX_SIDE))
+        } finally {
+          oi.close()
+        }
+        // 名字用用户上传时那个（spec §6.3 / §6.4）。没有名字就兜一个 ——
+        // 空名字会让 `buildFilename` 产出 `_ruixing.jpg` 这种没法看的文件名。
+        originalFileRef.current = new File(
+          [ob], detail.originalName?.trim() || '照片.jpg', { type: ob.type || 'image/jpeg' })
+      } catch (e) {
+        // ⚠️ 上面那两件事的**重要性不一样**，所以这个 catch 只说得起其中一件：
+        //   预览没了只是少了「按住看原图」；而 `originalFileRef` 没了，
+        //   保存/分享/下载会**一起静默失效**（见上面那段）。真到那一步要让用户知道。
+        originalBack = false
+        // ⚠️ 预览要**抹掉**：留着的是上一条会话那张原图（点开另一条会话时），
+        //   而「按住看原图」会把它当成**这一条**的原图给用户看 —— 一张别人的照片。
+        setOriginalPreview(null)
+        console.error('原图没取回来（预览和保存/分享/下载都会受影响）', e)
+      }
+
+      // ★★ 下面这一批**必须一次写完**（中间一次 await 都没有）——
+      //    中途让出的话，落盘那个 effect 会带着**旧 history + 新 sessionId** 跑一次：
+      //    那等于把 A 的活儿写进 B。App.test.tsx 里有一条测试钉着它。
+      setHistory(prev => {
+        // 切走的这条会话的位图要还回去（含它的原图）。不还就是"切几次把标签页拖垮"
+        // —— 每张原图按 32 MP 算是 129 MB 的 GPU 内存。
+        // ⚠️ 用 updater 里那个 `prev`，不用外面那个 `history`：这里要的是**真正被
+        //   换掉的那一份**，而且 updater 里的写法不依赖闭包抓到的是哪一轮的 history。
+        //    （`close()` 幂等，StrictMode 重放这个 updater 也安全。）
+        for (const s of bitmapsToClose(prev, [])) s.bitmap.close()
+        return steps
+      })
+      setImage(lastStep.base)
+      setParams(lastStep.params)
+      setMessages(detail.messages)
+      setSessionId(detail.id)
+      // 上一条照片那些**临时**状态跟着一起清（和 `onPick` 里换图时清的是同一批，
+      // 同一个道理）：点选流程、"替换上次那张"的问句。不清的话，红圈会钉在
+      // **另一张照片**上，而「就改这里」会拿旧标记 + 旧那句话花掉一次生成的钱。
+      setPending(null)
+      setSavedId(null)
+      setAsking(null)
+      // 建议卡片也不留：它是照着**上一张**照片算出来的，点一下就是花钱去改
+      // 一件在这张照片上根本没发生的事。
+      setCards([])
+      // ★★ 本地那个 id 计数器要**跟着跳到接回来的这些号之后**（2026-10-01 评审抓到）。
+      //   每个会话的 id 都从 1 开始（欢迎语 = 1，而它同时就是第 1 步的 id ——
+      //   `onPick` 里那个 `say()` 拿到的号给了消息和快照两边），而 `idRef` 每次
+      //   挂载都从 0 重来。不同步的后果都是**真 id 上的碰撞**：
+      //     · 用户恢复之后说的第一句话拿到 id 1 —— 和接回来的那条欢迎语重号
+      //       （`ChatPanel` 的 `key={m.id}`，dev 里 React 直接警告）；
+      //     · 助手那条拿到 id 2 —— 只要旧历史里有个 id 2 的步骤，**新生成的那一步
+      //       就和它同一个 id**。而服务端 `mergeSteps` 是按 id 对齐的：旧的那条
+      //       被推两遍，**用户刚花钱生成的那一步整条丢掉**，刷新就没了；
+      //       「回到这一步」/「再来一版」也都会拿到旧的那条（`history.find` 取的
+      //       是**第一个**同 id 的）—— 跳到旧图、重跑旧 prompt，又是一次真花钱。
+      //   一次 `Math.max` 就够：id 只会往前长。`detail.steps` 非空（上面那道闸门
+      //   挡过了），所以这个展开至少有一个数。
+      idRef.current = Math.max(
+        idRef.current,
+        ...detail.messages.map(m => m.id),
+        ...detail.steps.map(s => s.id),
+      )
+      // ★ 底图**换过一版了**（从 A 的换成 B 的）—— 记号往前挪一格，顺手把
+      //   "这一版已经存过了"也记上：刚接回来的这一版**就是服务端上那一版**，
+      //   别一进来就把它重传一次（不记的话：下一次落盘会带着 `base` 上路，而服务端
+      //   每收一次 `base` 就存成一个新文件 —— 每条会话白白多背一张没人引用的
+      //   全尺寸图，还白传一趟）。
+      //   ⚠️ 这个 `++` 还顺手管住两件"迟到的活儿"：上传时那批**建议卡片**和
+      //      十几秒前那次**生成**。它们回来时发现底图版本变了，就会自己作废 ——
+      //      不作废的话，A 的卡片 / A 生成的那张图会**落进 B**（`loadCards` 那道闸门
+      //      看的正是这个版本号）。
+      baseSeqRef.current++
+      lastPersistedBaseSeqRef.current = baseSeqRef.current
+      // ⚠️ 两条通报**只有一格**（`notice` 是一个对象）：上面 catch 里那句
+      //   "原图没取回来"先设、这里再无条件设一句，同一个批次里**后设的赢** ——
+      //   用户只会看到"接着改就行"，而那一刻「保存」「分享」「下载」其实是坏的。
+      //   所以两条合成一句：坏的那半留着（它带着动作），"上次那张"那半也不能丢
+      //   （§6.2 要的那句话，这时候更不能省 —— 正是它告诉用户照片不是刚传的）。
+      // ⚠️ 三颗按钮都要点名，不能只说「保存」「下载」：能分享的设备上，用户看到的
+      //   那颗叫「分享」，漏了它就是"说的是屏幕上没有的那颗按钮"。
+      // ⚠️ 点开那一路**不说"上次"那句**（理由见函数头 ③），但坏消息照说 ——
+      //   它是真的，而且带着动作。
+      const bad = '原图没取回来，「保存」「分享」「下载」可能用不了，刷新一下试试。'
+      if (why === 'restore') {
+        setNotice(originalBack
+          ? { text: '这是上次没做完的那张，接着改就行。', tone: 'ok' }
+          : { text: `这是上次没做完的那张，接着改就行。不过${bad}`, tone: 'bad' })
+      } else if (!originalBack) {
+        setNotice({ text: `这条对话打开了，不过${bad}`, tone: 'bad' })
+      }
+    } catch (e) {
+      // 半路炸了：**这一趟解码出来的位图要还回去**（不然就漏在内存里没人认领）
+      releaseDecoded()
+      console.error(why === 'restore' ? '上次那条没接回来' : '这条会话没打开', e)
+      // 挂载那一路不打扰用户：接不回来就是"这次从头开始"，而他本来就什么都还没做。
+      // 点开那一路必须说 —— 不然就是点了没反应。
+      if (why === 'open') noticeBad('这条对话没打开，再试一次？')
+    } finally {
+      if (why === 'open') setBusy(null)
+    }
+  }, [noticeBad])
+
+  /**
    * 打开页面之后，把"上次那条会话"接回来（spec §6.2）。
    *
    * ⚠️ 必须排在上面 `me()` 那一次之后 —— 要登录态。摆在前面的两句是同一个道理：
@@ -313,166 +579,25 @@ export default function App() {
    *
    * ⚠️ 接回来的东西要**说一句**"这是上次没做完的"（§6.2）。不说的话用户会以为
    *   照片是刚上传的 —— 那是句假话，而这一版存的成本全是为了少说假话。
+   *
+   * ⚠️ "取列表、拿第一条、交给 loadSession" 这三步**只有这一处**：点开列表里
+   *   某一条走的是同一个 loadSession（Task 6 抽出来的），两条路的写法不许分家。
    */
   useEffect(() => {
     if (checking || !user || restoreTriedRef.current) return
     restoreTriedRef.current = true
-    let alive = true
     void (async () => {
       try {
         const list = await listSessions()
-        if (!alive || list.length === 0) return
         // 列表是服务端按 `updated_at` 倒序给的（§5），第一条就是"上次动过的"。
-        const detail = await getSession(list[0]!.id)
-        // 一步都没有 = 这条会话是个空壳（正常到不了这儿：建会话时原图就算一步）。
-        // 与其摆一张没有对话、「回到这一步」也点不动的空图，不如照旧让用户自己选。
-        if (!alive || detail.steps.length === 0) return
-
-        // 每一步都要解码回位图。⚠️ `reusesPrev` 是真的能省一次下载 + 一次解码：
-        // 拖十次滑块就是十步，一步步全下就是十个一模一样的文件。
-        const steps: Snapshot[] = []
-        // 把**已经解出来的**位图全还回去。**按对象去重** —— `reusesPrev` 复用的
-        // 那几步共用同一个位图对象，一次释放对应一个对象，别对着同一个关两遍。
-        // （2026-10-01 在真 Chrome 里量过：同一个 `ImageBitmap` 连关两次**不抛**，
-        //   第二次是空操作 —— 所以这一层是"数得清"，不是"救得急"。）
-        // 下面两条**提前收工**的路都要走它：页面没了、用户先动手了。
-        const releaseDecoded = () => {
-          for (const b of new Set(steps.map(s => s.base))) b.bitmap.close()
-        }
-        for (const s of detail.steps) {
-          const prev = steps.at(-1)
-          if (s.reusesPrev && prev) {
-            steps.push({ id: s.id, label: s.label, base: prev.base, params: s.params,
-                         isOriginal: false, thumb: '', prompt: s.prompt })
-            continue
-          }
-          const blob = await (await fetch(sessionStepUrl(detail.id, s.id))).blob()
-          const bitmap = await createImageBitmap(blob)
-          // 页面已经关了/换了（cleanup 把 `alive` 放倒）就别再往下建了。
-          // ⚠️ 还的时候是**全部**：光还刚解出来的这一张，前面那几步的位图就跟着
-          //    `steps` 一起没人管了 —— 它们占的是 GPU 内存，得一张一张还。
-          if (!alive) { bitmap.close(); releaseDecoded(); return }
-          steps.push({ id: s.id, label: s.label, params: s.params,
-                       base: { bitmap, width: bitmap.width, height: bitmap.height },
-                       isOriginal: steps.length === 0, thumb: '', prompt: s.prompt })
-        }
-        const lastStep = steps[steps.length - 1]!
-
-        // ⚠️ 上面这几趟网络往返里，用户完全可能**自己先传了一张** —— 那时候屏幕上
-        //   还是"选一张照片"那一屏，什么都没挡住他。再把恢复的结果盖上去，就是
-        //   **把他刚传的那张顶掉**：屏幕上换成旧照片，而他刚建的那条会话在服务端
-        //   已经存在（列表里凭空多一条），两边都不报错。
-        //
-        //   两道判据，**缺一不可**：
-        //     · `pickStartedRef` —— `onPick` 一进门（任何 await 之前）就置位。
-        //       少了它，用户"点了选图、还在解码"的那个窗口是瞎的：那几十到几百
-        //       毫秒里 `baseSeqRef` 还是 0，恢复会照常写状态，紧接着被 `onPick`
-        //       覆盖 —— 唯独**那句通报没人覆盖**，用户盯着自己刚传的照片，屏幕上
-        //       却写着「这是上次没做完的那张」（正是 §6.2 要防的错，方向相反）。
-        //     · `baseSeqRef` —— 上传之后的**生成式编辑**也会推它，用户在那几趟
-        //       往返里自己改了一版同样要算数。
-        //
-        //   判到了就把这次接回来的**作废**（位图还回去 + 控制台留痕，不许静默）。
-        if (pickStartedRef.current || baseSeqRef.current !== 0) {
-          releaseDecoded()
-          console.error('恢复：这段时间里用户已经开了新的一张，这次接回来的作废')
-          return
-        }
-
-        // 「按住看原图」那张预览要从**原图**重新生成一次（它本来是内存里的 data URL）。
-        //
-        // ★ 顺手把 `originalFileRef` 也补上 —— 这一步**不是可选的锦上添花**：
-        //   「保存 / 分享 / 下载」三条路的门口都有一句
-        //   `if (!canvasElRef.current || !originalFileRef.current) return`，
-        //   而恢复出来的会话手里原来**没有**这个 File —— 三颗按钮会一起
-        //   "点了没反应"，不报错、也不提示。
-        //
-        //   ⚠️ 别去松那三处的守卫（那是治症状）：`exportCurrent` 要这个 File 是
-        //   做两件**真事** —— `buildExportBlob(canvas, file, …)` 拿它写回 EXIF，
-        //   `buildFilename(file.name, …)` 决定下载下来的文件叫什么。松掉守卫换来
-        //   的是"导出能成，但没 EXIF、名字还叫 `_ruixing.jpg`" —— 比"没反应"更坏，
-        //   因为它不报错、也不明显。这里补上真正的那个 File，那三处从"错的"变成
-        //   "对的"，一个字都不用改。
-        //
-        // ⚠️⚠️ 但**这一份 File 里没有 EXIF**，和用户真传的那张不一样。服务端存的
-        //   `original` 是 `bitmapToDataUrl` 编出来的，中间过了一次 `<canvas>` ——
-        //   而 canvas 编码**不携带 EXIF**（拍摄时间、GPS 在那一步就没了）。
-        //   所以恢复出来的会话导出时，`withExif` 读到的是**一份空的 EXIF**，
-        //   产出的是一张普通 JPEG：不报错，只是那些信息本来就没有。
-        //   活的会话（没恢复过的）照旧是准的 —— 用户真那个 File 还在内存里。
-        //   要补上得让服务端另存一份**原始字节**，那是另一件事，别在这儿假装它还在。
-        let originalBack = true
-        try {
-          const ob = await (await fetch(sessionOriginalUrl(detail.id))).blob()
-          const oi = await createImageBitmap(ob)
-          // ⚠️ `close()` 必须在 `finally` 里：`makeThumbnail` 抛（拿不到 2D 上下文）
-          //   的时候，写在下一行的那个 `oi.close()` 根本轮不到 —— 那张位图会一直
-          //   占着 GPU 内存，而且这恰恰是**异常路径**，平时没人会盯着它。
-          try {
-            setOriginalPreview(makeThumbnail(oi, ORIGINAL_PREVIEW_MAX_SIDE))
-          } finally {
-            oi.close()
-          }
-          // 名字用用户上传时那个（spec §6.3 / §6.4）。没有名字就兜一个 ——
-          // 空名字会让 `buildFilename` 产出 `_ruixing.jpg` 这种没法看的文件名。
-          originalFileRef.current = new File(
-            [ob], detail.originalName?.trim() || '照片.jpg', { type: ob.type || 'image/jpeg' })
-        } catch (e) {
-          // ⚠️ 上面那两件事的**重要性不一样**，所以这个 catch 只说得起其中一件：
-          //   预览没了只是少了「按住看原图」；而 `originalFileRef` 没了，
-          //   保存/分享/下载会**一起静默失效**（见上面那段）。真到那一步要让用户知道。
-          originalBack = false
-          console.error('原图没取回来（预览和保存/分享/下载都会受影响）', e)
-        }
-
-        setHistory(steps)
-        setImage(lastStep.base)
-        setParams(lastStep.params)
-        setMessages(detail.messages)
-        setSessionId(detail.id)
-        // ★★ 本地那个 id 计数器要**跟着跳到接回来的这些号之后**（2026-10-01 评审抓到）。
-        //   每个会话的 id 都从 1 开始（欢迎语 = 1，而它同时就是第 1 步的 id ——
-        //   `onPick` 里那个 `say()` 拿到的号给了消息和快照两边），而 `idRef` 每次
-        //   挂载都从 0 重来。不同步的后果都是**真 id 上的碰撞**：
-        //     · 用户恢复之后说的第一句话拿到 id 1 —— 和接回来的那条欢迎语重号
-        //       （`ChatPanel` 的 `key={m.id}`，dev 里 React 直接警告）；
-        //     · 助手那条拿到 id 2 —— 只要旧历史里有个 id 2 的步骤，**新生成的那一步
-        //       就和它同一个 id**。而服务端 `mergeSteps` 是按 id 对齐的：旧的那条
-        //       被推两遍，**用户刚花钱生成的那一步整条丢掉**，刷新就没了；
-        //       「回到这一步」/「再来一版」也都会拿到旧的那条（`history.find` 取的
-        //       是**第一个**同 id 的）—— 跳到旧图、重跑旧 prompt，又是一次真花钱。
-        //   一次 `Math.max` 就够：id 只会往前长。`detail.steps` 非空（上面那道闸门
-        //   挡过了），所以这个展开至少有一个数。
-        idRef.current = Math.max(
-          idRef.current,
-          ...detail.messages.map(m => m.id),
-          ...detail.steps.map(s => s.id),
-        )
-        // 刚接回来的这一版**就是服务端上那一版**，别一进来就把它重传一次
-        // （不记的话：下一次落盘会带着 `base` 上路，而服务端每收一次 `base` 就存成
-        //  一个新文件 —— 每条会话白白多背一张没人引用的全尺寸图，还白传一趟）
-        lastPersistedBaseSeqRef.current = baseSeqRef.current
-        // ⚠️ 两条通报**只有一格**（`notice` 是一个对象）：上面 catch 里那句
-        //   "原图没取回来"先设、这里再无条件设一句，同一个批次里**后设的赢** ——
-        //   用户只会看到"接着改就行"，而那一刻「保存」「分享」「下载」其实是坏的。
-        //   所以两条合成一句：坏的那半留着（它带着动作），"上次那张"那半也不能丢
-        //   （§6.2 要的那句话，这时候更不能省 —— 正是它告诉用户照片不是刚传的）。
-        // ⚠️ 三颗按钮都要点名，不能只说「保存」「下载」：能分享的设备上，用户看到的
-        //   那颗叫「分享」，漏了它就是"说的是屏幕上没有的那颗按钮"。
-        setNotice(originalBack
-          ? { text: '这是上次没做完的那张，接着改就行。', tone: 'ok' }
-          : {
-              text: '这是上次没做完的那张，接着改就行。不过原图没取回来，' +
-                '「保存」「分享」「下载」可能用不了，刷新一下试试。',
-              tone: 'bad',
-            })
+        if (!mountedRef.current || list.length === 0) return
+        await loadSession(list[0]!.id, 'restore')
       } catch (e) {
         console.error('上次那条没接回来', e)
         // 不打扰用户：接不回来就是"这次从头开始"，而他本来就什么都还没做
       }
     })()
-    return () => { alive = false }
-  }, [checking, user])
+  }, [checking, user, loadSession])
 
   /** 追加一条助手消息，返回它的 id —— 快照要用同一个 id 挂「回到这一步」。 */
   const say = useCallback((text: string): number => {
@@ -509,6 +634,12 @@ export default function App() {
     // ★ 一次生成 = 一个 controller。「停止」按的就是它（见 stopGeneration）。
     const ac = new AbortController()
     editAbortRef.current = ac
+    // ★ 这一次生成是**冲着哪一版底图**去的。十几秒里用户完全可能切走（左栏「对话」
+    //   里点开一条、或者按「新的一张」），而那时候这一版的结果**不许再往下写** ——
+    //   写下去就是把它塞进**另一条会话**的 history（那条对话凭空多一步、屏幕上换成
+    //   这张照片），紧接着被落盘那一趟写进那条会话：两条会话互相污染，一句报错都没有。
+    //   钱已经花了，但写错地方更坏（§9 那三条"错了不会报错"里就有"串会话"）。
+    const seqAtStart = baseSeqRef.current
     setBusy('正在改…大约 10 秒')
     try {
       // source 直接就是能 drawImage 的东西（位图或画布），不用再拆一层
@@ -528,6 +659,14 @@ export default function App() {
         console.warn(
           `[edit] 回图尺寸与声明不符：声明 ${out.width}x${out.height}，` +
           `实际 ${bitmap.width}x${bitmap.height}（以实际为准，不拉伸）`)
+      }
+      // 用户切走了（切会话 / 新的一张都会推 `baseSeqRef`）—— 这一版作废。
+      // ⚠️ 位图要还回去，别漏在内存里；而且**要留痕**：钱花了、东西没给，
+      //   静默扔掉是这个项目最恨的那种失败。
+      if (baseSeqRef.current !== seqAtStart) {
+        bitmap.close()
+        console.error('生成回来时用户已经切走了，这一版不写进去（钱已经花了，但写进别的会话更坏）')
+        return
       }
       const nextBase: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
       // 底图换了一版 —— 上传时那批建议卡片从这一刻起作废（见 loadCards）。
@@ -783,6 +922,43 @@ export default function App() {
       setBusy(null)
     }
   }, [history, say, loadCards])
+
+  /**
+   * 「新的一张」—— 回到"选一张照片"那一屏（§6.4，Task 6）。
+   *
+   * ⚠️ **它不删当前这条会话**：那条已经在服务端上存着了，左栏「对话」里还找得到。
+   *    表现上要和「保存」分清楚 —— 保存是"把这张存进作品"，新的一张是"我再改一张"。
+   *
+   * ⚠️ **归零前要把 `history` 里那些位图 `close()` 掉**（和 `onPick` 里那段
+   *    `bitmapsToClose` 是同一个道理）：不关就是换几次照片把标签页拖垮 ——
+   *    原图和每条生成式的 base 都占着 GPU 内存（32 MP 一张约 129 MB）。
+   *
+   * ⚠️ **生成在跑的时候不许按**（按钮那边也 disabled 了）：那一次回来时会往
+   *    history 里推一步、并且 `setImage` —— 而那时候屏幕上已经什么都没有了，
+   *    会凭空长出一张没有会话、也不会落盘的照片。
+   */
+  const startNew = useCallback(() => {
+    if (busy) return
+    // 副作用留在状态更新外面，别塞进 updater（updater 可能被重放）。
+    for (const s of bitmapsToClose(history, [])) s.bitmap.close()
+    setImage(null)
+    setHistory([])
+    setMessages([])
+    setCards([])
+    setParams(ZERO)
+    setSavedId(null)
+    // ⚠️ 归零 = "这一趟还没挂到服务端上"（下一次上传会建一条新的）。不归零的话，
+    //   落盘那个 effect 会带着**新照片**的消息和步骤去写**上一条**会话。
+    //   （同一趟里再换一张照片那条路也有这道保险 —— 见 onPick 里 `setSessionId(null)`
+    //    那一段；这里从另一头把它做成了正经入口。）
+    setSessionId(null)
+    // 上一条照片那些**临时**状态：点选流程、"上次那张要替换掉吗"、原图预览。
+    // 留着的话红圈会钉在下一张照片上，而「替换」问的是上一张存过的那条作品。
+    setPending(null)
+    setAsking(null)
+    setOriginalPreview(null)
+    originalFileRef.current = null
+  }, [busy, history])
 
   const send = useCallback(async (text: string) => {
     const canvas = canvasElRef.current
@@ -1432,6 +1608,13 @@ export default function App() {
                 <button onClick={onSave} disabled={delivering !== null}>
                   {delivering === 'save' ? '准备中…' : '保存'}
                 </button>
+                {/* 「新的一张」= 回到上传前那一屏去选下一张（§6.4）——
+                    它是**"我再改一张"**，和「保存」（把这张存进作品）是两件事。
+                    ⚠️ 它**不删**当前这条会话：那条已经在服务端上存着了，左栏
+                      「对话」里还找得到。
+                    ⚠️ 忙的时候 disabled：生成在跑的那十几秒里，那一次回来时会往
+                       history 里写一步，而那时候这张照片早就不在屏幕上了。 */}
+                <button onClick={startNew} disabled={busy !== null}>新的一张</button>
               </div>
             )}
             {/* 用户管理收在右上角（§3.2）—— 它一辈子点几次，不配占一个一级位置。
@@ -1443,9 +1626,10 @@ export default function App() {
                 ⚠️ 它**是 `.actions` 的兄弟，不在 `.actions` 里**。两条理由：
                 · `.actions` 是"这张图能拿去哪儿"（分享/下载/保存），只在**有图**
                   的时候出现；用户管理没有图也在，混在一起会让它跟着一起消失；
-                · 有两条测试按结构钉着 `.actions button` 恰好是那三颗
-                  （见 App.test.tsx 的 topbarButtons），混进去等于改了一个没人
-                  说要改的界面。
+                · 有两条测试按结构钉着 `.actions button` 恰好是哪几颗
+                  （见 App.test.tsx 的 topbarButtons；2026-10-01 Task 6 起是
+                  **四颗**——末尾多了「新的一张」§6.4），混进去等于改了一个
+                  没人说要改的界面。
                 放**最后一个**子节点是为了让它钉住右上角：`.topbar` 是
                 space-between，第三个孩子会被排到正中间去。 */}
             <button className="user-btn" onClick={() => go({ kind: 'account' })}
@@ -1582,6 +1766,18 @@ export default function App() {
       {/* 作品页（Task 11）：按天分组、先摆 60 张、名字就是时间所以搜日期也能搜到。
           `onOpen` 只把 id 交出去 —— 拼网址那条规则仍然只有一份（ui/view.ts），
           组件自己不认识"网址"这回事。 */}
+      {/* 对话列表（Task 6，§6.1）：**过程**的家 —— 改过哪些。
+          · `onOpen` 走的就是 Task 5 那条恢复路（`loadSession`），只不过这次接的是
+            **用户点的那一条**；点完立刻切到修图页，接回来的那几趟网络往返期间屏幕上
+            有一句"正在打开这条对话…"（不然那一刻他会看到"选一张照片"那一屏，
+            以为这条会话没了）。
+          · `onNew` 和顶栏那颗「新的一张」是同一件事（回到上传前那一屏）。 */}
+      {view.kind === 'sessions' && (
+        <SessionsPage
+          onOpen={(id) => { go({ kind: 'edit' }); void loadSession(id, 'open') }}
+          onNew={() => { startNew(); go({ kind: 'edit' }) }}
+        />
+      )}
       {view.kind === 'gallery' && <GalleryPage onOpen={(id) => go({ kind: 'work', id })} />}
       {view.kind === 'work' && (
         <WorkDetailPage

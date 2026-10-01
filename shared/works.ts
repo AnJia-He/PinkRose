@@ -33,7 +33,16 @@ export type Recipe = {
 
 export type WorkDetail = WorkMeta & { recipe: Recipe }
 
-export type DayGroup = { day: string; label: string; works: WorkMeta[] }
+/**
+ * 能按天分组的东西要有的**最少那一个字段**。
+ *
+ * ⚠️ 分组和标签**只碰 `updatedAt`**，别的字段一概不看 —— 所以作品（`WorkMeta`）
+ * 和会话（`SessionMeta`）都能喂进来，而 `DayGroup` 默认那个参数仍然是 `WorkMeta`，
+ * 现有调用点一个字都不用改。
+ */
+export type DayGroupable = { updatedAt: number }
+
+export type DayGroup<T extends DayGroupable = WorkMeta> = { day: string; label: string; works: T[] }
 
 const pad = (n: number): string => String(n).padStart(2, '0')
 
@@ -79,10 +88,16 @@ export function matchesQuery(w: WorkMeta, query: string, now: number): boolean {
   return workName(w, now).toLowerCase().includes(q)
 }
 
-/** 按天分组，新的在前，组内也新的在前。 */
-export function groupByDay(works: readonly WorkMeta[], now: number): DayGroup[] {
+/**
+ * 按天分组，新的在前，组内也新的在前。
+ *
+ * ★ 泛型（Task 6）：**分组逻辑只有这一份** —— 对话列表（§6.1）和作品页用的是
+ * 同一个函数、同一个 `dayLabel`。复制一份出来的话，同一天会在两页里显示成
+ * 两个名字（一个「10月1日」一个「2026年10月1日」），而且没人会同时看着两页。
+ */
+export function groupByDay<T extends DayGroupable>(works: readonly T[], now: number): DayGroup<T>[] {
   const sorted = [...works].sort((a, b) => b.updatedAt - a.updatedAt)
-  const groups = new Map<string, DayGroup>()
+  const groups = new Map<string, DayGroup<T>>()
   for (const w of sorted) {
     const key = dayKey(w.updatedAt)
     let g = groups.get(key)

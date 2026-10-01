@@ -129,6 +129,12 @@ async function main() {
     await page.fill('input[name=email]', `${Date.now()}@copy.audit`)
     await page.click('.login-submit')
     await page.waitForSelector('.nav', { timeout: 20_000 })
+    // ★ 空态那两句（「还没改过照片。」+「去改一张」）只有**一条会话都没有**的账号
+    //   看得到 —— 而那是新用户点进「对话」的**第一眼**。趁照片还没传，先抓下来：
+    //   传完之后就再也回不到这一屏了（哪怕换一页重新打开也至少有一条）。
+    await page.goto(`${APP}/sessions`, { waitUntil: 'networkidle' })
+    await page.waitForSelector('.sessions-empty', { timeout: 15_000 })
+    await grab(page, '对话页 · 一条会话都没有')
     await page.close()
   }
 
@@ -190,6 +196,23 @@ async function main() {
     // 存一张，好让作品页/详情页有东西可看
     await page.click('.actions button:has-text("保存")')
     await page.waitForTimeout(4000)
+
+    // ── 对话页（Task 6）────────────────────────────────────────────────
+    // 上传那张照片时已经建了一条会话（Task 4），所以这一屏有真东西。
+    await page.click('.nav-item:has-text("对话")')
+    await page.waitForSelector('.session-row', { timeout: 15_000 })
+    await page.waitForTimeout(800)
+    await grab(page, '对话页')
+
+    // ★ 就地确认那三句（「删掉这条？」「删掉」「取消」）**只在按了「删除」之后存在**，
+    //   而这一版明确说好**不弹系统框** —— 那三句就是这个产品里"要删东西"时
+    //   用户看到的全部字，也恰恰是最少被人读过的那几句。
+    await page.click('.session-row .session-del')
+    await page.waitForSelector('.session-ask', { timeout: 5_000 })
+    await page.waitForTimeout(300)
+    await grab(page, '对话页 · 点了「删除」（就地确认）')
+    await page.click('.session-row button:has-text("取消")')
+    await page.waitForTimeout(300)
 
     await page.click('.nav-item:has-text("作品")')
     await page.waitForSelector('.gallery-cell', { timeout: 15_000 })
