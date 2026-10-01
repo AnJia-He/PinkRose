@@ -1298,6 +1298,11 @@ describe('会话接口', () => {
   it('★ 列表：只出自己的，按 updated_at 倒序，而且**不带硬盘文件名**', async () => {
     const { base, auth, cookieA, cookieB } = await twoUsers()
     const a1 = (await call(base, 'POST', '/api/sessions', { image: JPEG, name: '甲.jpg' }, cookieA))
+    // ⚠️ 两次建会话之间也要隔开：`created_at` 落在**同一个毫秒**时，
+    //    `ORDER BY created_at DESC/ASC` 的变异会跟正确实现给出一样的顺序、两相全绿 ——
+    //    "created_at 那一半"就退化成看运气（实测 back-to-back 的 POST 约有 2% 撞上）。
+    //    id 那一半不用等：AUTOINCREMENT 保证甲 < 乙 是结构性的。
+    await new Promise(r => setTimeout(r, 5))
     const a2 = (await call(base, 'POST', '/api/sessions', { image: JPEG, name: '乙.jpg' }, cookieA))
     await call(base, 'POST', '/api/sessions', { image: JPEG, name: '别人的.jpg' }, cookieB)
     const idA1 = (a1.body as { id: number }).id
@@ -1310,10 +1315,13 @@ describe('会话接口', () => {
     //      `ORDER BY created_at ASC` 照样绿。
     //    也就是说"最后动过"和"创建时间 / 编号"在单相里**分不开**，而分不开的
     //    那个洞正好是用户能看见的 bug：列表写着"最近改的在最前"，实际按创建时间排，
-    //    改过的旧会话永远沉底。两相合起来才把四个都逼红（各自实测过，
-    //    见 task-2-report §8）。
-    // ⚠️ 光 `await` 不保证时钟往前走（同一毫秒内两次调用是常事），所以每次 PUT 前
-    //    显式等一格 —— 否则"时间序"会退化成"落库序"，这些相会**偶发地红**。
+    //    改过的旧会话永远沉底。两相合起来才把四个都逼红 —— 前提是下面那三处
+    //    显式等待都在（各自实测过，见 task-2-report §8）。
+    // ⚠️ 这条用例里那**三处** `setTimeout(…, 5)` 缺一不可，别当多余删掉 ——
+    //    它们逼出的是**严格**先后：建甲建乙之间那格保证 `created_at 甲 < created_at 乙`，
+    //    两次 PUT 前那两格保证 `updated_at` 也一路严格递增。少了任何一格，"时间序"
+    //    就会退化成并列（并列时退回落库序），上面那句"两相合起来把四个都逼红"
+    //    就变成**看运气**而不是结构性成立。id 不用等：AUTOINCREMENT 是结构性的。
     const listed = async () => (await call(base, 'GET', '/api/sessions', undefined, cookieA))
       .body as { sessions: {
         id: number; title: string | null; originalName: string | null; stepCount: number
