@@ -15,6 +15,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteDecision, SuggestResponse } from '../shared/protocol.ts'
 import { ZERO } from '../shared/adjustments.ts'
+import type {
+  SessionDetail, SessionMessage, SessionMeta, SessionStep,
+} from '../shared/sessions.ts'
 
 // ── 假扮：这些是浏览器能力，jsdom 里没有 ──────────────────────────────
 // 原则是"只换掉必要的那一个，其余保留真的"，免得把要测的东西一起假掉。
@@ -148,6 +151,15 @@ let bitmapSeq = 0
 function fakeBitmap(tag: string) {
   return { width: 1200, height: 800, close: vi.fn(), __tag: tag } as unknown as ImageBitmap
 }
+/**
+ * `fetch(某张图) → createImageBitmap` 那条路**解出来的**位图，按解出来的顺序攒着。
+ *
+ * 为什么要单独记一份：`vi.mocked(createImageBitmap).mock.results` 里拿到的是
+ * **Promise**（这个 stub 是 async 的），要自己拆；而这条线上真正要问的问题是
+ * "**同一个位图对象被关了几次**"（见「恢复还在路上」那条用例的第 ④ 条），
+ * 直接拿着对象问最省事，也不会因为将来 stub 换成非 async 而失效。
+ */
+const decodedBitmaps: ImageBitmap[] = []
 /** 上传染回来的**包装对象**（`decodeImageFile` 的返回类型），不是裸的 bitmap。 */
 function fakeDecoded(tag: string) {
   return { bitmap: fakeBitmap(tag), width: 1200, height: 800 }
@@ -328,6 +340,7 @@ beforeEach(() => {
   history.replaceState(null, '', '/app')
   vi.clearAllMocks()
   bitmapSeq = 0
+  decodedBitmaps.length = 0
   canvasProps.images.length = 0
   canvasProps.props.length = 0
   ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -376,7 +389,11 @@ beforeEach(() => {
     width: 2048, height: 1365,
   }))
   // 生成回来的图：走 fetch -> blob -> createImageBitmap 这条真链路
-  vi.stubGlobal('createImageBitmap', vi.fn(async () => fakeBitmap(`decoded-${++bitmapSeq}`)))
+  vi.stubGlobal('createImageBitmap', vi.fn(async () => {
+    const b = fakeBitmap(`decoded-${++bitmapSeq}`)
+    decodedBitmaps.push(b)
+    return b
+  }))
   // ★ 2026-09-25（Task 7）加：开页那一次 `/api/me` 要回一个**登录着的人**——
   //   这一整个文件测的是修图那条线，它的前提就是"已经登录"（后端现在只认
   //   登录过的人，不认就直接 401）。要测登录页本身的那几条把 `meUser` 置空。
@@ -416,6 +433,16 @@ beforeEach(() => {
     // 「服务端没建成就不能假装在存」那条用例自己把这一格盖成 500。
     if (url === '/api/sessions' && (init?.method ?? 'GET') === 'POST') {
       return jsonResponse({ id: 1 })
+    }
+    // 恢复（Task 5）：打开 App 就会问一次"上次那条"。**默认一条都没有** ——
+    // 这个文件里绝大多数用例的前提都是"从零开始"，不该被一条凭空冒出来的会话
+    // 影响（恢复会把照片、对话、参数一起装回来）。要测恢复的那几条自己用
+    // `withSessions` 盖上一条真的。
+    // ⚠️ 这一条**必须接住**（不能让它掉进下面那个兜底的 blob 形状）：那样
+    // `listSessions()` 会抛成"连不上服务器"，每条用例的控制台上都会多一行
+    // 「上次那条没接回来」—— 噪声会盖住真话。
+    if (url === '/api/sessions' && (init?.method ?? 'GET') === 'GET') {
+      return jsonResponse({ sessions: [] })
     }
     // 每一步落盘那次更新（`PUT /api/sessions/:id`）。⚠️ **必须接住**：
     // 落盘那一层有 800ms 防抖，慢机器上真有用例会活过那一秒 —— 掉进下面
@@ -511,6 +538,21 @@ async function goNav(name: string) {
     btn.click()
     await new Promise(r => setTimeout(r, 0))
   })
+}
+
+/** 等过落盘那一层防抖（800ms）。Task 4 和 Task 5 两节都用它。
+ *
+ *  ★ **真的等**（真定时器），不用假定时器：这个文件从头到尾都用真定时器，
+ *  而 `vi.useFakeTimers()` 会把三条路一起冻上（`act` 里的微任务、
+ *  那些"挂住不回"的 gate、以及 React 自己的调度）。900 只是留个余量 ——
+ *  `setTimeout` 保证的是"至少"这么久，慢机器上照样成立。 */
+async function waitPersist() {
+  await act(async () => { await new Promise(r => setTimeout(r, 900)) })
+}
+
+/** 某一笔请求的请求体（已经 JSON.parse 过）。 */
+function bodyOf(call: unknown[]) {
+  return JSON.parse(String((call[1] as RequestInit).body))
 }
 
 // ── 测试 ─────────────────────────────────────────────────────────
@@ -3184,19 +3226,9 @@ describe('用户管理页', () => {
  * 而屏幕上当时什么都没说。所以它值得自己的几条用例。
  */
 describe('会话落盘：上传建会话、每一步更新', () => {
-  /** 等过落盘那一层防抖（800ms）。
-   *
-   *  ★ **真的等**（真定时器），不用假定时器：这个文件从头到尾都用真定时器，
-   *  而 `vi.useFakeTimers()` 会把三条路一起冻上（`act` 里的微任务、
-   *  那些"挂住不回"的 gate、以及 React 自己的调度）。900 只是留个余量 ——
-   *  `setTimeout` 保证的是"至少"这么久，慢机器上照样成立。 */
-  const waitPersist = async () => {
-    await act(async () => { await new Promise(r => setTimeout(r, 900)) })
-  }
   /** 打到会话那两条路上的请求（建会话 / 每一步更新）。 */
   const sessionCalls = (url: string, method: 'POST' | 'PUT') =>
     fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === method)
-  const bodyOf = (call: unknown[]) => JSON.parse(String((call[1] as RequestInit).body))
 
   it('★ 上传照片 → 会建一条会话；原图、缩略图、照片名一起送上去', async () => {
     await renderApp()
@@ -3352,5 +3384,259 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     expect(body.base).toBe('original:画布')
     // 缩略图照旧跟着换（列表上要显示"最后那张"的样子）
     expect(body.thumb).toContain('thumb:')
+  })
+})
+
+/**
+ * 打开就接着上次那条（Task 5，spec §6.2）。
+ *
+ * 这一层错了**不会报错**，只会安静地少东西：屏幕上回到"选一张照片"（用户以为
+ * 上次白干了），或者更糟 —— 图和话都回来了，屏幕上却**没有一句话说明这是上次的**，
+ * 用户于是以为照片是刚上传的（§6.2 把这句话写成硬要求，就是为了这个）。
+ *
+ * 还有一处最贵、也最容易静静坏掉的地方：恢复出来的会话**手里没有那个 File**，
+ * 而「保存 / 分享 / 下载」三条路共同的开头（`exportCurrent`）要求有它 ——
+ * 少了它两边都不报错，只是三颗按钮**一起点了没反应**。下面第一条钉着它。
+ */
+describe('恢复：打开就接着上次那条', () => {
+  /** 一条会话的元数据。`updatedAt` 决定它在列表里排第几（服务端按它倒序给）。 */
+  const SMETA = (id: number, over: Partial<SessionMeta> = {}): SessionMeta => ({
+    id, title: null, originalName: '古镇.jpg', createdAt: 0, updatedAt: id * 100,
+    hasThumb: true, stepCount: 1, ...over,
+  })
+
+  /**
+   * 造一条 n 步的会话。
+   *
+   * ⚠️ 第 i 步**消息的 id 和这一步自己的 id 是同一个数** —— 真会话就是这样的
+   * （`say()` 拿回来的那个 id 同时给了消息和快照），而「回到这一步」那颗按钮
+   * 正是靠这个对号才出现。用别的 id 造，就测不出"恢复之后还能不能跳回去"。
+   *
+   * `tag` 只用来让两条会话的助手消息**一眼分得开**（"上一条的话跟过来没有"）。
+   */
+  function makeSession(
+    id: number, n: number, words: string, tag: string,
+  ): SessionDetail {
+    const steps: SessionStep[] = []
+    const messages: SessionMessage[] = []
+    for (let i = 0; i < n; i++) {
+      const sid = id * 100 + i
+      steps.push({
+        id: sid,
+        label: i === 0 ? '原图' : '生成式编辑',
+        params: { ...ZERO, exposure: i },
+        at: 0,
+        // 第 2 步和第 1 步**用的是同一张图**（`reusesPrev`）—— 恢复时它该省一次下载
+        reusesPrev: i === 1,
+        ...(i === 0 ? {} : { prompt: `make it step ${i}` }),
+      })
+      messages.push({ id: sid, role: 'assistant', text: `${tag}第 ${i} 步`, at: 0, stepId: sid })
+    }
+    messages.push({ id: id * 100 + 90, role: 'user', text: words, at: 0 })
+    return { ...SMETA(id, { stepCount: n }), messages, steps }
+  }
+
+  /** 盖上一整条会话的路：列表、详情、原图、每一步的图。只加不改。
+   *
+   *  返回的 `serve` 用来演"换一条会话"（重开一次页面时服务端那边最近动过的
+   *  已经换成另一条了）—— 今天"切到另一条"的现实形态就是这个，会话列表由
+   *  Task 6 做。 */
+  function withSessions(initial: SessionDetail[]) {
+    let rows = [...initial]
+    const stepGets: string[] = []
+    let originalGets = 0
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET'
+      if (url === '/api/sessions' && method === 'GET') {
+        // 服务端按 `updated_at` 倒序给（§5）—— 最上面那条就是"上次动过的"
+        return jsonResponse({ sessions: [...rows].sort((a, b) => b.updatedAt - a.updatedAt) })
+      }
+      const one = /^\/api\/sessions\/(\d+)$/.exec(url)
+      if (one && method === 'GET') {
+        const d = rows.find(x => x.id === Number(one[1]))
+        if (!d) return jsonResponse({ error: { code: 'NOT_FOUND', message: '没有这条' } }, 404)
+        return jsonResponse(d)
+      }
+      if (/^\/api\/sessions\/\d+\/file\/original$/.test(url)) {
+        originalGets++
+        return { blob: async () => new Blob(['ORIGINAL'], { type: 'image/jpeg' }) }
+      }
+      if (/^\/api\/sessions\/\d+\/file\/step\/\d+$/.test(url)) {
+        stepGets.push(url)
+        return { blob: async () => new Blob([url], { type: 'image/jpeg' }) }
+      }
+      return inner(url, init)
+    })
+    return {
+      stepGets,
+      originalCount: () => originalGets,
+      serve: (next: SessionDetail[]) => { rows = [...next] },
+    }
+  }
+
+  /** 屏幕上所有气泡的文字（用户的和助手的都在里面）。 */
+  const bubbleTexts = () =>
+    [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
+  /** 打到某条会话上的更新请求。 */
+  const putCalls = (url: string) =>
+    fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === 'PUT')
+  /** 「下载」那颗按钮（桌面浏览器那一档：`canShare` 假成 false）。 */
+  const downloadBtn = () =>
+    [...container.querySelectorAll('.actions button')]
+      .find(b => (b.textContent ?? '').includes('下载')) as HTMLButtonElement | undefined
+
+  it('★ 打开就接着上次那条 —— 而且屏幕上要说清"这是上次没做完的"', async () => {
+    const { stepGets } = withSessions([makeSession(7, 7, '把天调蓝一点', 'S7')])
+    await renderApp()
+
+    // ① 画布上有图（假的 `createImageBitmap` 统一回 1200×800）——
+    //    这一句其实是"画布上真的接上了那张"，而不是"某个 state 变了"。
+    expect(canvasProps.images.at(-1)).toMatchObject({ width: 1200, height: 800 })
+
+    // ② 对话回来了：用户那句和助手那几句都在
+    expect(bubbleTexts()).toContain('把天调蓝一点')
+    expect(bubbleTexts()).toContain('S7第 6 步')
+
+    // ③ ★ 步骤**一步都不许截断**（§7：这一版明确不做"只取最后 K 步"）。
+    //    截断的后果不是"少几张缩略图"：`jumpTo` 找不到 id 就原样返回一份拷贝，
+    //    老步骤上那颗「回到这一步」会变成**点了没反应**的死按钮，而且不报错。
+    //    `MAX_SNAPSHOTS` 是 6，这里给 7 步 —— 截断的话这里只剩 6 颗。
+    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(7)
+
+    // ④ `reusesPrev` 的那一步**不重新下载**（它和上一步是同一张图）：
+    //    7 步里第 2 步（id 701）带这个标记，所以只该有 6 次取图。
+    //    变异：不看 `reusesPrev` 每步都下一遍 → 第一条变成 7、第二条红。
+    expect(stepGets).toHaveLength(6)
+    expect(stepGets.some(u => u.endsWith('/701'))).toBe(false)
+
+    // ⑤ ★ 必须说一句"这是上次的"（§6.2）—— 不说的话用户以为照片是刚传的
+    expect(container.querySelector('.notice')?.textContent ?? '')
+      .toContain('这是上次没做完的那张')
+
+    // ⑥ 「按住看原图」那张预览要**从原图重新生成**一份（它本来是内存里的 data URL）
+    expect(canvasProps.props.at(-1)?.originalPreview).toBeTruthy()
+
+    // ⑦ ★★ 「保存 / 分享 / 下载」三条路还活着。它们共同的开头要一个**真 File**
+    //    （`originalFileRef`），恢复出来的会话原来没有它 —— 三颗按钮会一起
+    //    "点了没反应"，不报错、也不提示。名字还必须来自**用户上传时那个名字**：
+    //    兜一个空名字的话 `buildFilename` 给出的是 `_ruixing.jpg` 这种没法看的。
+    //    变异：恢复时不重建那个 File（或者不传名字）→ 这两句红。
+    const dl = downloadBtn()
+    expect(dl).toBeTruthy()
+    await act(async () => { dl!.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(saveMod.downloadImage).toHaveBeenCalledWith(expect.anything(), '古镇_ruixing.jpg')
+    expect(saveMod.buildExportBlob).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ name: '古镇.jpg' }), 'image/jpeg', 0.95)
+
+    // ⑧ 刚接回来的这一版**就是服务端上那一版**：下一次落盘不许把整张底图重传
+    //    （不记的话，服务端每收一次 `base` 就多存一个没人引用的文件，而这是
+    //     一进页面就会发生的第一趟）
+    await waitPersist()
+    const puts = putCalls('/api/sessions/7')
+    expect(puts).toHaveLength(1)
+    expect(bodyOf(puts[0]!).base).toBeUndefined()
+
+    // ⑨ ★ 「回到这一步」在**恢复之后**真的按得动（设计 §9 第 4 条）。
+    //    这一条和 ③ 是同一件事的两半：③ 说按钮在，⑨ 说按钮按下去画面真的回去。
+    //    截断步骤的后果在这里现原形 —— `jumpTo` 找不到 id 时**原样返回一份拷贝**：
+    //    按钮还在、点下去什么都不会发生、一句错也不报。
+    const jumps = [...container.querySelectorAll('.bubble-jump')] as HTMLButtonElement[]
+    await act(async () => { jumps[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    // 跳回**最老那一步**：画布换成它的底图（恢复时第一张解出来的就是它），
+    // 参数也跟着回去 —— 只还原图不还原参数，画面和滑块就是对不上的两回事
+    // （`onJump` 里那两行注释说的就是这个）。
+    const back = canvasProps.images.at(-1) as unknown as { bitmap: ImageBitmap }
+    expect(back.bitmap).toBe(decodedBitmaps[0])
+    expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 0 })
+    await waitPersist()
+  })
+
+  it('★ 恢复出来的会话之间不串 —— 切到另一条，上一条的话不能跟过来', async () => {
+    // 两条会话，内容一眼分得开（助手那几句也带着自己那条的前缀）
+    const nine = makeSession(9, 2, 'S9-用户说的', 'S9')
+    const seven = makeSession(7, 2, 'S7-用户说的', 'S7')
+    const { serve } = withSessions([seven, nine])
+    await renderApp()
+
+    // ① 接回来的是**最近动过的那条**（列表是服务端按 updated_at 倒序给的），
+    //    另一条的话一个字都不许出现 —— 两条都接回来、或者接错一条，都红。
+    expect(bubbleTexts()).toContain('S9-用户说的')
+    expect(bubbleTexts()).toContain('S9第 1 步')
+    expect(document.body.textContent ?? '').not.toContain('S7')
+
+    // ② 接着改：改动要落在**这一条**上。串了的话会写进另一条 ——
+    //    那种错不报错，只在用户下次打开另一条会话时才发现（话跑到别人那儿去了）。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({ reply: '好。' }))
+    await say('再亮一点')
+    await waitPersist()
+    expect(putCalls('/api/sessions/7')).toHaveLength(0)
+    const puts = putCalls('/api/sessions/9')
+    expect(puts).toHaveLength(1)
+    const texts = bodyOf(puts[0]!).messages.map((m: { text: string }) => m.text)
+    expect(texts).toContain('S9-用户说的')
+    expect(texts).toContain('再亮一点')
+    expect(texts).not.toContain('S7-用户说的')
+
+    // ③ 换一条：今天"切到另一条"的现实形态就是**重开一次页面**
+    //    （会话列表是 Task 6 的事）。重开之后接回来的是服务端上最近动过的那条，
+    //    上一条的话一句都不能跟过来。
+    serve([seven])
+    await act(async () => root.unmount())
+    container.remove()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await renderApp()
+    expect(bubbleTexts()).toContain('S7-用户说的')
+    expect(bubbleTexts()).not.toContain('S9-用户说的')
+  })
+
+  it('★ 恢复还在路上时用户先传了照片 —— 上次那条不许把新的顶掉', async () => {
+    // 恢复是一串网络往返（列表 → 详情 → 每一步的图）。这几百毫秒里屏幕上
+    // 还是"选一张照片"那一屏 —— 用户完全可能先自己传一张。这时候把恢复的
+    // 结果盖上去，等于**把他刚传的那张顶掉**：屏幕上换成旧照片，而他刚建的那条
+    // 会话在服务端已经存在（列表里凭空多一条），两边都不报错。
+    // ★ 这条会话故意给**两步**，而且第 2 步带 `reusesPrev`（`makeSession` 里那个
+    //   `i === 1`）—— 它让两步**共用同一个位图对象**。作废那一条路要把这些位图
+    //   关掉，而"同一张关两遍"只有在共用对象时才可能发生。一步的会话量不出这件事。
+    withSessions([makeSession(7, 2, '上次那句', 'S7')])
+    const gate = makeGate()
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/sessions' && (init?.method ?? 'GET') === 'GET') await gate.promise
+      return inner(url, init)
+    })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // 这一趟之前已经解出来过几张（上传那张走的是 `decodeImageFile`，不从这里过；
+    // 记一笔是为了只数**恢复这一趟**解出来的）
+    const decodedBefore = decodedBitmaps.length
+
+    await renderApp()          // 「我是谁」回来之后，恢复就上路了，卡在列表那一趟
+    await uploadPhoto()        // 用户等不及，自己传了一张
+    await act(async () => { gate.open(); await new Promise(r => setTimeout(r, 0)) })
+
+    // ① 画布上还是**用户刚传的那张**（假的解码器给它挂的记号是 `upload`）
+    const shown = canvasProps.images.at(-1) as unknown as { bitmap: { __tag: string } }
+    expect(shown.bitmap.__tag).toBe('upload')
+    // ② 而且不许说"这是上次没做完的那张" —— 那会儿屏幕上根本不是上次那张
+    expect(container.querySelector('.notice')?.textContent ?? '')
+      .not.toContain('这是上次没做完的')
+    // ③ 也不能静默：这一次作废要在控制台留痕
+    expect(errSpy.mock.calls.some(c => String(c[0]).includes('作废'))).toBe(true)
+    errSpy.mockRestore()
+
+    // ④ ★ 作废时那些位图要关掉，而且**一个对象只关一次**。
+    //    两步共用一个位图对象（第 2 步 `reusesPrev`），所以这一步只该下载一次、
+    //    只该解码出一个位图；关的时候也只是**一个** —— 按对象去重（`new Set`）
+    //    就是干这个的，少了它这里会变成 2。
+    //
+    //    ⚠️ 把这条钉住的理由不是"关两遍会抛"：2026-10-01 在真 Chrome 里试过，
+    //    同一个 `ImageBitmap` 连关两次**不抛**，第二次是空操作。钉的是**意图**
+    //    —— 一个位图对应一次释放，将来真出现"关了还在用的那张"这类问题时，
+    //    数得清才查得动。
+    const decoded = decodedBitmaps.slice(decodedBefore)
+    expect(decoded).toHaveLength(1)
+    expect(vi.mocked(decoded[0]!.close)).toHaveBeenCalledTimes(1)
   })
 })
