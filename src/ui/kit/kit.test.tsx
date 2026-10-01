@@ -14,6 +14,8 @@ import { createRoot } from 'react-dom/client'
 import { describe, expect, it } from 'vitest'
 import { Slider } from '@base-ui-components/react/slider'
 import { User } from 'lucide-react'
+import { Field, TextInput } from './Field.tsx'
+import { LoginPage } from '../LoginPage.tsx'
 
 async function mount(node: React.ReactNode) {
   const container = document.createElement('div')
@@ -38,5 +40,63 @@ describe('零件库的地基', () => {
     const c = await mount(<User size={16} />)
     const svg = c.querySelector('svg')!
     expect(svg.getAttribute('stroke')).toBe('currentColor')
+  })
+})
+
+describe('<Field>：一格表单的三条约定', () => {
+  it('label 用 for 指向输入框 —— 点字能聚焦到框', async () => {
+    const c = await mount(
+      <Field className="demo-field" label="名字" hint="两到二十个字">
+        <TextInput name="who" defaultValue="" />
+      </Field>,
+    )
+    const input = c.querySelector('input') as HTMLInputElement
+    const label = c.querySelector('label') as HTMLLabelElement
+    expect(label.getAttribute('for')).toBe(input.id)
+    expect(input.id).toBeTruthy()
+  })
+
+  it('注解用 aria-describedby 挂在输入框上 —— 读屏的人会念到它', async () => {
+    const c = await mount(
+      <Field className="demo-field" label="名字" hint="两到二十个字">
+        <TextInput name="who" defaultValue="" />
+      </Field>,
+    )
+    const input = c.querySelector('input') as HTMLInputElement
+    const hint = c.querySelector('p') as HTMLParagraphElement
+    expect(hint.textContent).toBe('两到二十个字')
+    expect(input.getAttribute('aria-describedby')).toBe(hint.id)
+  })
+
+  it('我们给的类名落在最外层 —— 测试和 CSS 都按它认人', async () => {
+    const c = await mount(
+      <Field className="demo-field" label="名字">
+        <TextInput name="who" defaultValue="" />
+      </Field>,
+    )
+    const box = c.querySelector('.demo-field') as HTMLElement
+    expect(box).toBeTruthy()
+    expect(box.querySelector('input')).toBeTruthy()
+  })
+})
+
+describe('登录页三格换过来之后', () => {
+  it('每一格都是 for/id 显式配对（不是靠"把输入框包进 label"隐式关联）', async () => {
+    const c = await mount(<LoginPage onDone={async () => {}} />)
+    for (const name of ['username', 'password']) {
+      const input = c.querySelector(`.login-field input[name="${name}"]`) as HTMLInputElement
+      expect(input, `${name} 那一格还在不在`).toBeTruthy()
+      const label = c.querySelector(`.login-field label[for="${input.id}"]`)
+      expect(label, `${name} 那一格的 label 有没有用 for 指过去`).toBeTruthy()
+    }
+  })
+
+  it('密码那一格：眼睛仍然在同一个 .login-pw 里，而且不是 label 的子元素', async () => {
+    const c = await mount(<LoginPage onDone={async () => {}} />)
+    const eye = c.querySelector('.login-pw .login-eye') as HTMLButtonElement
+    expect(eye).toBeTruthy()
+    // 按钮是 labelable 元素，包进 label 会污染输入框的可读名字（见 LoginPage 那段注释）
+    expect(eye.closest('label')).toBeNull()
+    expect(c.querySelector('.login-pw input[name="password"]')).toBeTruthy()
   })
 })

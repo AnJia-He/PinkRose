@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { login, signup } from '../api/account'
 import logoMark from '../assets/logo/rose.svg'
+import { Field, TextInput } from './kit/Field.tsx'
 import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../../shared/account.ts'
 import { NAME_REQUIRED, UNEXPECTED_FAILURE } from '../../shared/copy.ts'
 
@@ -253,22 +254,25 @@ export function LoginPage({ onDone }: Props) {
             （它按 `name` + `autoComplete` 认哪一格是哪个）有好处，顺便才当了测试的钩子。
             `autoComplete` 那几个**一个字都没动** —— 它们按模式在
             `current-password` / `new-password` 之间分，动错了会惹那个密码管理器。 */}
-        <label className="login-field">
-          <span>名字{mode === 'signup' && <Req />}</span>
-          <input name="username" value={username} onChange={e => setUsername(e.target.value)}
-                 autoComplete="username" autoFocus />
-        </label>
+        <Field className="login-field" label={<>名字{mode === 'signup' && <Req />}</>}>
+          <TextInput name="username" value={username} onChange={e => setUsername(e.target.value)}
+                     autoComplete="username" autoFocus />
+        </Field>
 
-        {/* ⚠️ 密码这一格外面**不是** `<label>`（名字和邮箱那两格是），是有理由的：
-            那个开关得和输入框**并排**，而 `<button>` 也是 labelable 元素 ——
-            把它包进 `<label>` 里，
+        {/* ⚠️ 密码这一格外面**不是**一个把输入框包进去的 `<label>`（原来名字和邮箱
+            那两格是），是有理由的：那个开关得和输入框**并排**，而 `<button>`
+            也是 labelable 元素 —— 把它包进 `<label>` 里，
               · 输入框的可读名字会从「密码」变成「密码 显示」（label 的文本替代
                 会一路把按钮上的字也算进去），读屏的人听到的是个自相矛盾的名字；
               · 而 label 的"点一下聚焦到它的控件"认的是**第一个** labelable 元素，
                 顺序稍不留神就会点到那个按钮上去。
-            所以这一格用 `htmlFor` 显式配对，结构上把开关和输入框放进同一行。
-            类名照旧是 `login-field`（只是挂在一个 div 上），
-            `.login-field input` 那几条样式和测试里的选择器都不受影响。
+            所以这一格要的是"显式配对"那种结构。
+
+            ★ 2026-10-01 起，这个结构由 `<Field>` 统一给出来（它就是
+            `<div class="login-field"><label for=…>…</label> + 控件` 这个形状）——
+            也就是说**三格现在是同一种写法**了，不再是"两格包着、一格配对"。
+            类名照旧是 `login-field`，`.login-field input` 那几条样式和测试里的
+            选择器都不受影响。
 
             ⚠️ 「可读名字」这件事**只在注册模式下多了一层**：那里 `<Req />` 里那份
             `.login-sr` 的「（必填）」也在这一格的 label 里，所以读屏的人听到的是
@@ -276,12 +280,11 @@ export function LoginPage({ onDone }: Props) {
             用户拍板），这一格的可读名字就是干干净净的「密码」。而 `.login-sr` 那份字
             是 `display: none` **不出来的**：那种写法会把节点从可访问性树里一并删掉，
             等于没加（见 styles.css 里 `.login-sr` 那条）。 */}
-        <div className="login-field">
-          <label htmlFor="login-password">密码{mode === 'signup' && <Req />}</label>
+        <Field className="login-field" label={<>密码{mode === 'signup' && <Req />}</>}>
           <div className="login-pw">
-            <input id="login-password" name="password" value={password} onChange={e => setPassword(e.target.value)}
-                   type={showPassword ? 'text' : 'password'}
-                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+            <TextInput name="password" value={password} onChange={e => setPassword(e.target.value)}
+                       type={showPassword ? 'text' : 'password'}
+                       autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
             {/* ⚠️⚠️ `type="button"` 一个字都不能省。这个 `<button>` 在
                 `<form className="login-box" onSubmit={submit}>` **里面** ——
                 那是个**真的表单**，而表单里不写 `type` 的 `<button>` **默认就是
@@ -314,16 +317,15 @@ export function LoginPage({ onDone }: Props) {
               {showPassword ? <EyeOffIcon /> : <EyeIcon />}
             </button>
           </div>
-        </div>
+        </Field>
 
         {/* 邮箱排最后（见上面那段顺序说明）。它在**登录模式下整个不渲染** ——
             注册才要它，而登录页问的只有"我是谁"。 */}
         {mode === 'signup' && (
-          <label className="login-field">
-            <span>邮箱<Req /></span>
-            <input name="email" value={email} onChange={e => setEmail(e.target.value)}
-                   type="email" autoComplete="email" />
-          </label>
+          <Field className="login-field" label={<>邮箱<Req /></>}>
+            <TextInput name="email" value={email} onChange={e => setEmail(e.target.value)}
+                       type="email" autoComplete="email" />
+          </Field>
         )}
 
         {error && <p className="login-error">{error}</p>}
