@@ -544,33 +544,37 @@ button.primary:where(:hover):where(:not(:disabled)),
 .slider.on .slider-label { color: var(--text); }
 .slider.on .slider-value { color: var(--rose-300); font-weight: 600; }
 
-/* ── 滑块本体 ────────────────────────────────────────────────────────
-   浏览器原生那条在深色界面上是一道白槽配一颗白钮，和这套界面完全不搭。
-   自己画：轨道 4px 圆头，拇指一颗粉色圆点带深色描边。
-   ⚠️ `-webkit-` 和 `-moz-` 两套都要写，少一套就在某个浏览器上退回原生样子
-   （Chrome 认前者，Firefox 只认后者）。 */
-.slider input[type='range'] {
-  -webkit-appearance: none; appearance: none;
-  width: 100%; height: 20px; margin: 0; background: transparent; cursor: pointer;
+/* ── 滑块本体（2026-10-01 换的）──────────────────────────────────────
+   换之前这里是**两套手写的伪元素**：`::-webkit-slider-runnable-track / -thumb`
+   加 `::-moz-range-track / -thumb`，上面那句注释自己写着"少一套就在某个浏览器上
+   退回原生样子"。现在轨道、已选中的那一段、拇指都是**普通 div**，一套 CSS 通吃；
+   结构、键盘（方向键 / Home / End / PageUp / PageDown）和读屏由 Base UI 给。
+
+   ⚠️ 那个 `<input type="range">` 仍然在，但它**藏在拇指里面**
+   （`position: fixed`、1px 大小，库自己写死的内联样式），负责接读屏和表单语义。
+   **别再给它写外观** —— 写了也看不见，只会让后来的人以为这里还有第二套样式。
+
+   ⚠️ 拇指是**轨道的兄弟**、不是孩子（库的 DOM 就是这样），所以 `top: 50%`
+   这些百分比是按 `.slider-control` 解析的 —— 它身上的 `position: relative`
+   不是装饰，去掉拇指会跑到页面左上角去。 */
+.slider-control {
+  position: relative; display: flex; align-items: center;
+  width: 100%; height: 20px; cursor: pointer;
 }
-.slider input[type='range']::-webkit-slider-runnable-track {
-  height: 4px; border-radius: var(--r-pill); background: var(--line-2);
-}
-.slider input[type='range']::-webkit-slider-thumb {
-  -webkit-appearance: none; appearance: none;
-  width: 14px; height: 14px; border-radius: 50%; margin-top: -5px;
-  background: var(--accent); border: 2px solid var(--bg); box-shadow: var(--shadow-1);
+.slider-track { width: 100%; height: 4px; border-radius: var(--r-pill); background: var(--line-2); }
+.slider-indicator { border-radius: var(--r-pill); background: var(--accent); }
+.slider-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--panel); box-shadow: var(--shadow-1);
   transition: transform var(--dur-1) var(--ease), background-color var(--dur-1) ease;
 }
-.slider input[type='range']:hover::-webkit-slider-thumb { transform: scale(1.18); }
-.slider input[type='range']:active::-webkit-slider-thumb { transform: scale(1.05); background: var(--rose-300); }
-.slider input[type='range']::-moz-range-track {
-  height: 4px; border-radius: var(--r-pill); background: var(--line-2);
-}
-.slider input[type='range']::-moz-range-thumb {
-  width: 14px; height: 14px; border: 2px solid var(--bg); border-radius: 50%;
-  background: var(--accent); box-shadow: var(--shadow-1);
-}
+/* 悬停/按下挂在**整条 control** 上，不是那 14px 的圆点上 —— 和换之前一样：
+   鼠标落在滑轨上任何一处，圆点都该有反应（14px 的悬停区太窄了）。 */
+.slider-control:hover .slider-thumb { transform: scale(1.18); }
+.slider-control:active .slider-thumb { transform: scale(1.05); background: var(--rose-300); }
+/* 键盘用户走到这一条上要看得见。拇指自己是 `tabindex="-1"`，真正拿焦点的是
+   里面那个原生输入，所以焦点圈得借 `:has` 画在拇指上。 */
+.slider-thumb:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ── 对话栏 ──────────────────────────────────────────────────────────
    这是整个产品的心脏（卖点是"对话式修图"，不是"更多滤镜"），

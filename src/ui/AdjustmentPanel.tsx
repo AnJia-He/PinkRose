@@ -1,5 +1,6 @@
 import { PARAM_KEYS, PARAM_LABELS, isChanged, type Adjustments, PARAM_MIN, PARAM_MAX } from '../../shared/adjustments.ts'
 import { PRESETS } from '../core/presets'
+import { Slider } from './kit/Slider.tsx'
 
 type Props = {
   value: Adjustments
@@ -39,18 +40,19 @@ export default function AdjustmentPanel({ value, onChange, onReset }: Props) {
           // 不存在"记号和数据对不上"。写法跟 Uploader 那个 `.over` 同款。
           // ⚠️ "动过没有"的判据来自 shared/adjustments 的 `isChanged` ——
           //    作品详情页那张表问的是同一件事，两处**必须同一个判据**。
-          <label key={k} className={`slider${isChanged(value, k) ? ' on' : ''}`}>
-            <span className="slider-label">{PARAM_LABELS[k]}</span>
-            <input
-              type="range"
-              min={PARAM_MIN}
-              max={PARAM_MAX}
-              step={1}
-              value={value[k]}
-              onChange={e => set(k, Number(e.target.value))}
-            />
-            <span className="slider-value">{value[k]}</span>
-          </label>
+          //
+          // ★ 2026-10-01：滑块本体换成 `kit/Slider`（Base UI 的行为 + 我们的长相）。
+          //   它自己就是一个原生 `<input type="range">`，**顺序和条数一个没变**，
+          //   所以 `AdjustmentPanel.test.ts`（读源码守那 8 个键）照旧。
+          <Slider
+            key={k}
+            label={PARAM_LABELS[k]}
+            value={value[k]}
+            min={PARAM_MIN}
+            max={PARAM_MAX}
+            changed={isChanged(value, k)}
+            onChange={v => set(k, v)}
+          />
         ))}
       </div>
     </aside>

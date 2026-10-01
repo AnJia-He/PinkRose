@@ -14,9 +14,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it } from 'vitest'
-import { Slider } from '@base-ui-components/react/slider'
+import { Slider as BaseSlider } from '@base-ui-components/react/slider'
 import { User } from 'lucide-react'
 import { Field, TextInput } from './Field.tsx'
+import { Slider } from './Slider.tsx'
 import { LoginPage } from '../LoginPage.tsx'
 
 async function mount(node: React.ReactNode) {
@@ -29,9 +30,9 @@ async function mount(node: React.ReactNode) {
 describe('零件库的地基', () => {
   it('Base UI 的滑块在我们这套 jsdom 里渲染得出原生 range（键盘/读屏都挂在它身上）', async () => {
     const c = await mount(
-      <Slider.Root defaultValue={20} min={-50} max={50} aria-label="亮度">
-        <Slider.Control><Slider.Track><Slider.Indicator /></Slider.Track><Slider.Thumb /></Slider.Control>
-      </Slider.Root>,
+      <BaseSlider.Root defaultValue={20} min={-50} max={50} aria-label="亮度">
+        <BaseSlider.Control><BaseSlider.Track><BaseSlider.Indicator /></BaseSlider.Track><BaseSlider.Thumb /></BaseSlider.Control>
+      </BaseSlider.Root>,
     )
     const input = c.querySelector('input[type="range"]') as HTMLInputElement
     expect(input).toBeTruthy()
@@ -79,6 +80,40 @@ describe('<Field>：一格表单的三条约定', () => {
     const box = c.querySelector('.demo-field') as HTMLElement
     expect(box).toBeTruthy()
     expect(box.querySelector('input')).toBeTruthy()
+  })
+})
+
+describe('<Slider>：键盘能改值，读屏能念出这是哪一条', () => {
+  it('右方向键 = +1，回调拿到的是**新值**', async () => {
+    const seen: number[] = []
+    const c = await mount(
+      <Slider label="亮度" value={0} min={-100} max={100} onChange={v => seen.push(v)} />,
+    )
+    const input = c.querySelector('input[type="range"]') as HTMLInputElement
+    expect(input.getAttribute('aria-valuenow')).toBe('0')
+    // ⚠️ **必须先聚焦**：Base UI 的滑块只在拇指是"活动的那一个"时才吃方向键
+    //    （真实用户就是 Tab 到它上面，那一下就是聚焦）。少了 focus 这一步，
+    //    事件派发出去没有任何反应 —— 而且不报错，很容易被当成"键盘坏了"。
+    await act(async () => { input.focus() })
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(seen.at(-1)).toBe(1)
+  })
+
+  it('外面仍然是 `<label className="slider">` —— CSS 和 `AdjustmentPanel.test.ts` 都按它认人', async () => {
+    const c = await mount(<Slider label="亮度" value={3} min={-100} max={100} onChange={() => {}} />)
+    const box = c.querySelector('label.slider') as HTMLElement
+    expect(box).toBeTruthy()
+    expect(box.querySelector('.slider-label')?.textContent).toBe('亮度')
+    expect(box.querySelector('.slider-value')?.textContent).toBe('3')
+  })
+
+  it('那个数字只是**给眼睛看的**，不许混进可读名字（输入框自己会报 aria-valuenow）', async () => {
+    const c = await mount(<Slider label="亮度" value={3} min={-100} max={100} onChange={() => {}} />)
+    const value = c.querySelector('.slider-value') as HTMLElement
+    expect(value.getAttribute('aria-hidden')).toBe('true')
   })
 })
 
