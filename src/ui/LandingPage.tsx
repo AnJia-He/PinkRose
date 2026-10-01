@@ -14,6 +14,10 @@ import beforeShot from '../assets/landing/before.jpg'
 import afterShot from '../assets/landing/after.jpg'
 import appWindow from '../assets/landing/app-window.webp'
 import appPanel from '../assets/landing/app-panel.webp'
+// 深色模式那两张（2026-10-01 补）。**不是另画一版**：App 在两个模式下
+// 真的长这样，两张都是从真界面上截的（`.superpowers/scratch/landing-art/_shot_live2.py`）。
+import appWindowDark from '../assets/landing/app-window-dark.webp'
+import appPanelDark from '../assets/landing/app-panel-dark.webp'
 
 /**
  * 落地页 —— **打开网站看到的第一眼**（2026-09-30 从
@@ -26,9 +30,11 @@ import appPanel from '../assets/landing/app-panel.webp'
  *   ③ 图片从 `create-image/落地页/` 搬进 `src/assets/landing/` 并**入了库**
  *      —— 它们就是页面的内容，不入库的话换台机器 clone 下来这一页是空的。
  *
- * ⚠️ **这一页的配色和 App 不是一套，这是有意的**：落地页是门面（浅色、
- * 黄点缀、大留白），App 是干活的工具（深色、粉点缀、密）。两种语境两套语言；
- * 分家之前 App **自己内部**有过三套语言，那种才是病。
+ * ⚠️ **这一页的配色和 App 是同一套**（2026-10-01 改）。原来这里写着"两套语言
+ * 是有意的"（门面浅色黄点缀、工具深色粉点缀）—— 那句话在 App 翻成粉底之后
+ * 就不成立了：打开网站是白+黄，点进去是粉，中间那一下像换了家公司。
+ * 现在两边同源：粉底 + 白面 + 品牌玫瑰，深带是压深的粉而不是近黑。
+ * 令牌仍然是 `lp-` 前缀的独立一套（同名会打架），只是**取色规则**一样。
  *
  * 交互只有三处，都不引依赖：
  *   · `.lp-rise` 进场（IntersectionObserver，滚到眼前才升起来）；
@@ -219,10 +225,22 @@ export default function LandingPage({ onEnter }: Props) {
         <div className="lp-bleed">
           <Reveal className="lp-prod">
             <div className="lp-prod-base">
-              <img src={appWindow} alt="RuiXing 修图界面，左边是照片，右边是对话和建议卡片" />
+              {/* ⚠️ **深底上不能嵌浅色的产品图。** 这一页切到深色时，屏幕上
+                  会多出两块发光的亮粉方块 —— 人眼第一眼撞见的是它们，不是标题。
+                  `<picture>` 让它跟着访客系统里那个偏好走：选中的那张才下载。
+                  （Linear / Vercel 那类产品页都是这么做的。）
+                  ⚠️ `<picture>` 默认是 inline，得在 CSS 里改成块级，
+                  不然里面那张图会多出一截行高。 */}
+              <picture>
+                <source srcSet={appWindowDark} media="(prefers-color-scheme: dark)" />
+                <img src={appWindow} alt="RuiXing 修图界面，左边是照片，右边是对话和建议卡片" />
+              </picture>
             </div>
             <div className="lp-prod-float">
-              <img src={appPanel} alt="展开的调色面板，六套风格预设和八条调整滑块" />
+              <picture>
+                <source srcSet={appPanelDark} media="(prefers-color-scheme: dark)" />
+                <img src={appPanel} alt="展开的调色面板，六套风格预设和八条调整滑块" />
+              </picture>
             </div>
           </Reveal>
         </div>

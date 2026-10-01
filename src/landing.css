@@ -11,34 +11,70 @@
    长得完全不像，将来谁改一边准保踩到另一边。`--accent` 同理：这边是**黄色**，
    App 那边是**粉玫瑰**。加了前缀之后，"这份文件里的东西只属于这份文件"。
 
-   ⚠️ 这一份的配色和 App **不是一套，这是有意的**：落地页是门面（浅色、黄点缀、
-   大留白），App 是干活的工具（深色、粉点缀、密）。两种语境，两套语言 ——
-   分家之前 App 自己内部有过三套语言，那种才是病。别再试图把它们合成一套。
+   ★ 2026-10-01 第二次改：**这套配色从"另立门户"改成"和 App 同源"**。
+
+   原来这一份自己就是一套语言：暖白底、一颗黄 `#ffd93d`、一块近黑的深带，
+   文件里还写着"落地页是门面、App 是工具，两套语言是有意的"。那句话在
+   **App 当天翻成粉底之后就变成了病**：打开网站是白+黄的，点「免费开始」
+   进去是粉的，中间那一下像换了家公司。分家之前 App **自己内部**有过三套
+   语言，那种才是要治的病；品牌**对外**只能有一套。
+
+   现在的取色规则（和 App 的 `styles.css` 同源，但**令牌仍然各占一套** ——
+   `lp-` 前缀这条规矩没变，两边同名会打架）：
+     · 底 = App 的 `--bg`（同一支樱花粉：门面就是产品本身的颜色）
+     · 面 = 白面板压上去，和 App 一样是"粉底 + 白卡片"两层
+     · 强调 = 品牌玫瑰 `#c3417e`（taste skill 挑的那一档）
+     · 深带 = **深李紫 `#1b0d1a`，不是近黑** —— 那一段仍然是全页唯一的
+       "关灯"章节，但关灯不等于关掉品牌色：把粉底压深、色相不跑
+     · 阴影 = 带品红的淡影（纯黑的影子压在粉底上会发灰、发脏，和 App 同规矩）
+
+   ⚠️ 每一档旁边都写着实测对比度。**改色之前先算一遍**：浅底上"淡一档"
+   是往不合格走，深底上反过来。
 
    旋钮（原样保留）：VARIANCE 7 / MOTION 4 / DENSITY 5
    ═══════════════════════════════════════════════════════════════════════ */
 .lp {
-  --lp-accent: #ffd93d;      /* 这一屏唯一的强调色 */
-  --lp-accent-ink: #14161b;
-  --lp-ink: #0a0b0e;
-  --lp-ink-2: #43484f;
-  --lp-ink-3: #8b9099;
-  --lp-bg: #fbfbf9;
-  --lp-surface: #ffffff;
-  --lp-line: #e7e5e0;
-  --lp-line-2: #d5d3cd;
-  --lp-deep: #050608;        /* 全页唯一那块深色，压到近黑 */
-  --lp-deep-2: #101318;
-  --lp-deep-ink: #f6f7f9;
-  --lp-deep-ink-2: #9aa0ac;
+  /* ── 颜色（2026-10-01 翻成品牌玫瑰；括号里是实测对比度）────────────── */
+  --lp-accent: #c3417e;        /* 这一屏唯一的强调色：白字压它 4.80:1、它压粉底 3.80:1 */
+  --lp-accent-hover: #ae376f;  /* 悬停（白字 5.87:1）—— 两个模式共用，见下面 */
+  --lp-accent-ink: #ffffff;    /* 压在强调色上的字 */
+  --lp-ink: #2b1229;           /* 标题：压粉底 13.62:1 / 压白面 16.68:1 */
+  --lp-ink-2: #5c3d61;         /* 正文（lede）：压粉底 7.24:1 */
+  --lp-ink-3: #76597c;         /* 最淡那档（15px 图注、14px 页脚）：4.76:1 —— 刚过线，别再调淡 */
+  --lp-bg: #f7ddf6;            /* 页面底 = App 的 --bg，同一支粉 */
+  --lp-surface: #fffaff;       /* 浮起来的面（右下角浮标）= App 的 --panel */
+  --lp-line: #ecc9e9;          /* 分隔线、bento 的缝 */
+  --lp-line-2: #dcb0da;        /* 重一档的描边 */
+  --lp-deep: #1b0d1a;          /* 全页唯一那块深色：粉底压深、色相不跑 */
+  --lp-deep-ink: #fdf3fb;      /* 压深带 17.33:1 */
+  --lp-deep-ink-2: #c3a8bf;    /* 压深带 8.64:1 */
+  /* 顶栏那条通栏**永远压在照片上**（照片什么颜色都有可能），所以它自带一套
+     字色，不跟页面的墨色走 —— 页面的墨色是给粉底算的。 */
+  --lp-nav-bg: rgba(27, 13, 26, .58);
+  --lp-nav-ink: #fdf3fb;       /* 最暗的照片上也 10.5:1 */
+  --lp-nav-ink-2: #cbb3c9;     /* 5.87:1 */
+  --lp-hero-ink-2: #d8c3d5;    /* 开场那句副文案（压在最暗处 6.87:1）*/
   --lp-r: 14px;
   --lp-pill: 999px;
 }
+/* ── 深色模式（2026-10-01 加：消费级产品的两种模式都要设计）────────────
+   ⚠️ **强调色两个模式**共用** `#c3417e`：白字压它 4.80:1，两种底上都过关。
+   深底上把强调色调亮会更好看，但那一亮，压在它上面的字就得**从白翻成近黑**
+   —— 项目里已经吃过一次这种"深浅关系偷偷反过来"的亏（见 styles.css 顶部）。
+   深色模式的身份感由**底**来给，不由强调色给。 */
 @media (prefers-color-scheme: dark) {
   .lp {
-    --lp-ink: #f6f7f9; --lp-ink-2: #c6cbd4; --lp-ink-3: #8a909c;
-    --lp-bg: #08090c; --lp-surface: #12151b; --lp-line: #232831; --lp-line-2: #2c323d;
-    --lp-deep: #050608; --lp-deep-2: #12151b;
+    --lp-ink: #fbeff9;   /* 压底 17.34:1 */
+    --lp-ink-2: #d3b4cf; /* 10.32:1 */
+    --lp-ink-3: #b090ad; /* 6.85:1 */
+    --lp-bg: #241223;
+    --lp-surface: #331a31;
+    --lp-line: #42263f; --lp-line-2: #553353;
+    /* 深色模式里那一段仍然是"更深的一块"，只是整页都暗下来了，
+       所以底往**亮**走了一点、深带留在最暗处，两块才分得开。 */
+    --lp-deep: #0d050c;
+    --lp-deep-ink: #fdf3fb; --lp-deep-ink-2: #c3a8bf;
+    --lp-nav-bg: rgba(13, 5, 12, .66);
   }
 }
 
@@ -88,23 +124,23 @@
 .lp-btn:active { transform: translateY(0) scale(.985) }
 .lp-btn-ink { background: var(--lp-ink); color: var(--lp-bg) }
 .lp-btn-accent { background: var(--lp-accent); color: var(--lp-accent-ink) }
-.lp-btn-accent:hover { background: #ffdf63 }
+.lp-btn-accent:hover { background: var(--lp-accent-hover) }
 
 /* ── 导航：整条通栏，不是悬浮胶囊 ─────────────────────────────────── */
 .lp-nav { position: fixed; top: 0; left: 0; right: 0; z-index: 30;
-  background: rgba(10, 11, 14, .5); backdrop-filter: blur(18px) saturate(150%);
+  background: var(--lp-nav-bg); backdrop-filter: blur(18px) saturate(150%);
   border-bottom: 1px solid rgba(255, 255, 255, .08) }
 .lp-nav .lp-wrap { display: flex; align-items: center; gap: 36px; height: 68px }
-.lp-brand { display: flex; align-items: center; gap: 13px; color: #fff; font-weight: 500; font-size: 15.5px; letter-spacing: .01em }
+.lp-brand { display: flex; align-items: center; gap: 13px; color: var(--lp-nav-ink); font-weight: 500; font-size: 15.5px; letter-spacing: .01em }
 /* ⚠️ 36px 是**用户定的**，2026-09-29。他看过 32 / 36 / 40 三档，要「大一点」那个。
    别按 App 顶栏那 26px 往回缩 —— 落地页是门面，标志值得大一点。
    （26px 是**下限**，不是目标：项目记忆（logo）里写着彩色版再小粉色就糊成一个点。） */
 .lp-brand img { width: 36px; height: 36px; display: block; flex: none }
 .lp-nav nav { display: flex; gap: 4px; margin-left: auto }
-.lp-nav nav a { color: #a9aebb; text-decoration: none; font-size: 14px; padding: 9px 14px; border-radius: var(--lp-pill);
+.lp-nav nav a { color: var(--lp-nav-ink-2); text-decoration: none; font-size: 14px; padding: 9px 14px; border-radius: var(--lp-pill);
   transition: color .3s ease }
-.lp-nav nav a:hover { color: #fff }
-.lp-nav .lp-login { color: #fff; font-size: 14px; font-weight: 500; text-decoration: none;
+.lp-nav nav a:hover { color: var(--lp-nav-ink) }
+.lp-nav .lp-login { color: var(--lp-nav-ink); font-size: 14px; font-weight: 500; text-decoration: none;
   border: 1px solid rgba(255, 255, 255, .26); border-radius: var(--lp-pill); padding: 8px 20px; margin-left: 10px;
   transition: background-color .3s ease }
 .lp-nav .lp-login:hover { background: rgba(255, 255, 255, .1) }
@@ -117,35 +153,51 @@
   transform: scale(1.05); animation: lp-drift 24s cubic-bezier(.16, 1, .3, 1) forwards }
 @keyframes lp-drift { to { transform: scale(1) } }
 .lp-hero::after { content: ""; position: absolute; inset: 0;
-  background: linear-gradient(180deg, rgba(5, 6, 8, .68) 0%, rgba(5, 6, 8, .16) 32%, rgba(5, 6, 8, .92) 100%) }
+  background: linear-gradient(180deg, rgba(27, 13, 26, .68) 0%, rgba(27, 13, 26, .16) 32%, rgba(27, 13, 26, .92) 100%) }
 .lp-hero-inner { position: relative; z-index: 2; width: 100% }
 .lp-hero h1 { color: #fff; max-width: 13em }
-.lp-hero p { margin-top: 28px; font-size: clamp(16px, 1.6vw, 20px); color: #c2c7d1; max-width: 30em; line-height: 1.8 }
+.lp-hero p { margin-top: 28px; font-size: clamp(16px, 1.6vw, 20px); color: var(--lp-hero-ink-2); max-width: 30em; line-height: 1.8 }
 .lp-hero .lp-btn { margin-top: 48px }
 
 /* ── 产品：两层，面板从主窗口里"掉出来" ──────────────────────────── */
 /* 这一块**破格**：比上下的文字栏宽出去，顶到接近整幅。参考站最显眼的
    一招就是"产品界面占满屏"，文字反而窄。容器自己居中，不靠 margin 算式。 */
 .lp-bleed { padding: 0 28px }
-.lp-prod { position: relative; max-width: 1560px; margin: 76px auto 0; padding-bottom: 17% }
+.lp-prod { position: relative; max-width: 1560px; margin: 76px auto 0; padding-bottom: calc(9.4% - 40px) }
+/* `<picture>` 只是个"按模式选图"的壳，本身不该产生盒子 —— 它默认是 inline，
+   里面那张 `display: block` 的图会因此多出一截行高（图片底下那条缝）。 */
+.lp-prod picture { display: block }
 .lp-prod-base { border-radius: var(--lp-r); overflow: hidden; border: 1px solid var(--lp-line);
-  box-shadow: 0 2px 4px rgba(10, 11, 14, .05), 0 30px 70px -28px rgba(10, 11, 14, .35) }
+  box-shadow: 0 2px 4px rgba(88, 26, 74, .05), 0 30px 70px -28px rgba(88, 26, 74, .35) }
 .lp-prod-base img { width: 100% }
 /* 浮层只从**右下角**掉出来一点点。压太多会切在主窗口的画面中间，
    看着像渲染坏了，不像"分层"。
 
-   压多少是有讲究的：产品图现在拍的是「用户说一句话 → AI 回一句」，
-   回复气泡和它的缩略图正好落在右下角 —— 压过 1168 那条线就把缩略图
-   横切成两截。所以 padding-bottom 从 12% 提到 17%：浮层往下退 70px，
-   让开那条回复。再少就跟主窗口挨不上了，"分层"就没了。 */
+   ⚠️ **`padding-bottom` 不是一个可以凭感觉写的数**：它留的是浮层那点高度，
+   而浮层是 `width: 72%` 的图 —— 所以它占的行高 = `72% × 图的高宽比`。
+   图一换形状，这个数就得跟着重算，否则浮层要么和主窗口脱开一截（留太多）、
+   要么把主窗口的对话栏压掉（留太少）。
+
+   2026-10-01 产品图重拍时的实测：
+     旧图 2820×760（3.7:1）→ 行高 72% × 0.27 = **19.4%**，当年写的是 17%
+     新图 2816×366（7.7:1）→ 行高 72% × 0.13 = **9.4%**，再减去 40px 让
+     它**压住**主窗口底边一点点（不压就"掉"不出来了，那才是这个设计的意思）。
+
+   （旧注释留在这里，别的没变：原来压到 1168 那条线会横切回复气泡的缩略图，
+   所以让它往下退，让开那条回复。） */
 .lp-prod-float { position: absolute; right: -1%; width: 72%; bottom: 0; border-radius: 12px; overflow: hidden;
   border: 1px solid rgba(255, 255, 255, .09);
-  box-shadow: 0 60px 120px -34px rgba(5, 6, 8, .66), 0 8px 26px -10px rgba(5, 6, 8, .4) }
+  box-shadow: 0 60px 120px -34px rgba(60, 14, 52, .66), 0 8px 26px -10px rgba(60, 14, 52, .4) }
 .lp-prod-float img { width: 100% }
 @media (max-width: 900px) {
   .lp-bleed { padding: 0 18px }
   .lp-prod { margin-top: 44px; padding-bottom: 0 }
   .lp-prod-float { position: static; left: auto; right: auto; margin-top: 14px }
+}
+/* ⚠️ 深色模式下那两道投影几乎看不见（浅色底上它们才是把窗口托起来的东西），
+   所以窗口和页面之间只剩描边这一层 —— 描边就得从 --lp-line 提一档。 */
+@media (prefers-color-scheme: dark) {
+  .lp-prod-base, .lp-prod-float { border-color: var(--lp-line-2) }
 }
 
 /* ── 深色带 ───────────────────────────────────────────────────────── */
@@ -156,7 +208,7 @@
 
 /* ── Before / After ───────────────────────────────────────────────── */
 .lp-ba { position: relative; margin-top: 64px; aspect-ratio: 2.05 / 1; overflow: hidden; border-radius: var(--lp-r);
-  box-shadow: 0 40px 90px -34px rgba(10, 11, 14, .45) }
+  box-shadow: 0 40px 90px -34px rgba(88, 26, 74, .45) }
 .lp-ba img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover }
 .lp-ba .lp-after { clip-path: inset(0 0 0 var(--lp-p, 52%)) }
 .lp-ba .lp-handle { position: absolute; top: 0; bottom: 0; left: var(--lp-p, 52%); width: 1px; background: rgba(255, 255, 255, .92);
@@ -194,9 +246,13 @@
 @media (max-width: 900px) { .lp-ba { aspect-ratio: 1.25 / 1; margin-top: 40px } .lp-ba-legend { grid-template-columns: 1fr; gap: 24px } }
 
 /* ── 特性 ─────────────────────────────────────────────────────────── */
+/* ★ 2026-10-01：格子从"页面底色"改成**白面**。翻粉底之前格子和页面同色，
+   靠缝（--lp-line）分层就够了；现在页面是粉的，格子要是还跟底同色，
+   这一块就只剩几根线浮在粉上 —— 而 App 那边的语言是"粉底 + 白面板"两层，
+   门面照抄这两层，两边看起来才是一家的。 */
 .lp-bento { display: grid; grid-template-columns: 1.45fr 1fr; gap: 1px; margin-top: 76px;
   background: var(--lp-line); border-radius: var(--lp-r); overflow: hidden }
-.lp-cell { background: var(--lp-bg); padding: 46px 46px 50px }
+.lp-cell { background: var(--lp-surface); padding: 46px 46px 50px }
 .lp-cell.lp-photo { grid-row: span 2; padding: 0; display: flex; flex-direction: column }
 .lp-cell.lp-photo img { width: 100%; flex: 1; min-height: 270px; object-fit: cover }
 .lp-cell.lp-photo .lp-cap { padding: 34px 46px 42px }
@@ -229,7 +285,7 @@
 .lp-dock button { width: 46px; height: 46px; border-radius: var(--lp-pill); border: 1px solid var(--lp-line-2);
   background: var(--lp-surface); color: var(--lp-ink); cursor: pointer; font-size: 17px; line-height: 1;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 8px 24px -8px rgba(10, 11, 14, .3);
+  box-shadow: 0 8px 24px -8px rgba(88, 26, 74, .3);
   opacity: 0; visibility: hidden; pointer-events: none;
   /* ⚠️ `visibility: hidden` 那一档是**必须的**（2026-09-30 补的）。
      只写 `opacity: 0` 的话，这个按钮**还在 Tab 顺序里** —— 键盘用户进门第一次
@@ -263,11 +319,11 @@
    和**文档滚动条**这三样的归属是文档级的，写在 `.lp` 里面管不到它们。
    （App 那边是深色，落地页这边是浅色 —— 不换的话浅色页面上挂着一条深灰
    滚动条，Windows 上很显眼。） */
-html.lp-on { color-scheme: light; scrollbar-color: var(--lp-line-2, #d5d3cd) transparent }
-html.lp-on body { background: #fbfbf9 }
+html.lp-on { color-scheme: light; scrollbar-color: var(--lp-line-2, #dcb0da) transparent }
+html.lp-on body { background: #f7ddf6 }
 @media (prefers-color-scheme: dark) {
-  html.lp-on { color-scheme: dark; scrollbar-color: #2c323d transparent }
-  html.lp-on body { background: #08090c }
+  html.lp-on { color-scheme: dark; scrollbar-color: #553353 transparent }
+  html.lp-on body { background: #241223 }
 }
 /* 这一页滚动条用默认宽度就好 —— App 那份的 `thin` 是为它自己的面板算的。 */
 html.lp-on * { scrollbar-width: auto }
@@ -277,11 +333,11 @@ html.lp-on * { scrollbar-width: auto }
    我是谁"那一瞬间 —— 用 App 那套深色的话，浅色页面前会先闪一块深色。
    ⚠️ 这里用不上 `html.lp-on`：那个类是 LandingPage 挂载时才加的，而这一屏
    比它早。所以配色写在**元素自己**身上。 */
-.app-loading.lp-loading { background: #fbfbf9; color: #8b9099 }
-.app-loading.lp-loading::before { border-color: #e7e5e0; border-top-color: #0a0b0e }
+.app-loading.lp-loading { background: #f7ddf6; color: #76597c }
+.app-loading.lp-loading::before { border-color: #ecc9e9; border-top-color: #2b1229 }
 @media (prefers-color-scheme: dark) {
-  .app-loading.lp-loading { background: #08090c; color: #8a909c }
-  .app-loading.lp-loading::before { border-color: #232831; border-top-color: #f6f7f9 }
+  .app-loading.lp-loading { background: #241223; color: #b090ad }
+  .app-loading.lp-loading::before { border-color: #42263f; border-top-color: #fbeff9 }
 }
 
 @media (prefers-reduced-motion: reduce) {
