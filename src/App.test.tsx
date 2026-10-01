@@ -3245,9 +3245,12 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     await waitPersist()
 
     // 再动一下 —— 说一句"亮一点"。⚠️ 这条**只改 params，不动 history**
-    //  （裁定 ⑤：改 params 从来不 push 快照）。所以落盘那条路要是没把 `params`
-    //  单独带上、也没把它放进依赖数组，**这一整趟都不会再落盘** ——
-    //  用户拖完滑块刷新一下回到拖动之前，而验收线第 1 条写着"参数全在"。
+    // （裁定 ⑤：改 params 从来不 push 快照）。它钉的是**请求体那一半**：
+    //  `params` 必须作为单独一条路送出去（不看 `history`、不看快照）。
+    //  ⚠️ 别以为它还守着依赖数组那一半：`say` 同时**加了 messages**，副作用
+    //  本来就会因此重跑、读到的是新 `params` —— 把 `params` 从依赖里删掉，
+    //  这条**照样绿**（2026-10-01 评审查出来的）。依赖那一半由下面那条
+    //  「只动参数…也要落盘」钉。
     vi.mocked(api.postRoute).mockResolvedValueOnce(
       decision({ route: 'params', paramDeltas: { exposure: 20 }, reply: '给你提亮了。' }))
     await say('亮一点')
@@ -3285,5 +3288,40 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     //   的那一版）→ 这两句红。
     expect(body.base).toBeUndefined()
     expect(body.thumb).toBeUndefined()
+  })
+
+  it('★ 只动参数（不推快照、不说话）也要落盘 —— 参数有自己的那条依赖', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await waitPersist()   // PUT #1：上传那一趟
+
+    // 打开调色面板，套一个预设 —— 这条路**不碰** messages、**不碰** history
+    // （裁定 ⑤：改参数从来不 push 快照；预设和滑块、重置同级）。
+    // ⚠️ 为什么必须是这种"只动参数"的改动：上面那条里的 `say('亮一点')` 会
+    // **同时**改 messages，副作用本来就会重跑 —— 光靠它，把 `params` 从依赖
+    // 数组里删掉也照样绿（2026-10-01 评审查出来的）。只有这里这一下能真的红：
+    // 删掉 `params` 依赖 → 这次点击没有任何东西再触发副作用 → 第二个 PUT
+    // 根本不会发生，而屏幕上什么都不说 —— 用户拖完滑块刷新回到拖之前。
+    const click = async (el: HTMLElement) => {
+      await act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
+    }
+    const topbar = [...container.querySelectorAll('.actions button')]
+      .find(b => (b.textContent ?? '').includes('调色')) as HTMLButtonElement
+    await click(topbar)
+    const preset = container.querySelector('.presets button') as HTMLButtonElement
+    await click(preset)
+    await waitPersist()
+
+    const puts = sessionCalls('/api/sessions/1', 'PUT')
+    // 两次改动 → 恰好两次请求
+    expect(puts).toHaveLength(2)
+    const before = bodyOf(puts[0]!)
+    const after = bodyOf(puts[1]!)
+    // 参数真的变了、而且送出来了（首个预设「日系通透」：exposure 8）
+    expect(after.params).not.toEqual(before.params)
+    expect(after.params.exposure).toBe(8)
+    // 而这一趟**没有**新消息、没有新步骤 —— 它真的是"只动参数"那一路
+    expect(after.messages).toEqual(before.messages)
+    expect(after.steps).toHaveLength(before.steps.length)
   })
 })

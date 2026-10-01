@@ -1035,12 +1035,24 @@ export default function App() {
     // ③：这里只**定一个闹钟**，不等任何网络。下一次改动会把这个闹钟重设。
     const timer = setTimeout(() => {
       const seq = ++persistSeqRef.current
+      // ★ "这一趟送出去的是哪一版底图" —— 在这儿（**发出去之前**）就定死。
+      //   ⚠️ 别等请求回来再读 `baseSeqRef.current`（见下面 ⑤ 那一行）：
+      //   请求在路上时用户完全可能又生成了一版；回来时读到的是**新版本号**，
+      //   而服务端手里刚收到的还是**旧底图** —— 那一版新底图紧接着要是失败，
+      //   这个记号已经把新版标成"存过了"，它就**永远不会再送**。
+      const sending = baseSeqRef.current
       void (async () => {
         try {
           const patch: SessionPatch = { messages: messagesNow, steps: snapshot, params: paramsNow }
           if (changed) {
             const el = canvasElRef.current
-            if (!el) return
+            if (!el) {
+              // 这句到不了（落盘只在有 history 之后才会跑，画布那时一定在）——
+              // 但**不许静默**：真到了，这一版底图就这么丢了，一句话都不说
+              // 正是这个项目最恨的那种失败。
+              console.error('落盘时画布不在，这一版底图没存下来')
+              return
+            }
             patch.base = el.toDataURL('image/jpeg', 0.9)
             // ★ 缩略图**跟着 base 一起换**，spec §6.3 要求列表上是「最后那张」的样子。
             //   不换的话，列表永远显示刚上传那张原图 —— 用户改了半天，左栏「对话」里
@@ -1050,8 +1062,9 @@ export default function App() {
             patch.thumb = makeThumbnail(el, GALLERY_THUMB_MAX_SIDE)
           }
           await updateSession(sessionId, patch)
-          // ⑤：**写成功之后**才记下"这一版底图存过了"
-          if (changed) lastPersistedBaseSeqRef.current = baseSeqRef.current
+          // ⑤：**写成功之后**才记下"这一版底图存过了" —— 记的是**这一趟送出去的
+          //   那版**（`sending`），不是"回来时的当前版"（理由见上面 `sending`）。
+          if (changed) lastPersistedBaseSeqRef.current = sending
         } catch (e) {
           // 只认**最新**那一次失败 —— 早先那几次可能已经被后一次覆盖掉了，
           // 那时候弹"没存下来"是在说一件已经不成立的事
