@@ -1,3 +1,5 @@
+import { useRef } from 'react'
+import { Images } from 'lucide-react'
 import { PARAM_KEYS, PARAM_LABELS, isChanged, type Adjustments, PARAM_MIN, PARAM_MAX } from '../../shared/adjustments.ts'
 import { PRESETS } from '../core/presets'
 import { Slider } from './kit/Slider.tsx'
@@ -6,10 +8,19 @@ type Props = {
   value: Adjustments
   onChange: (next: Adjustments) => void
   onReset: () => void
+  /**
+   * 用户挑了一张参考图，要"照着它调"。
+   *
+   * 面板只负责**把文件交出去**：采样和拟合都在 App 那边（本地、纯计算，
+   * 见 `core/colorMatch.ts`）。面板是长相，不碰画布和像素 —— 那两层
+   * 分开之后，"调色面板长什么样"和"怎么算出这组参数"才能各测各的。
+   */
+  onMatchReference: (file: File) => void
 }
 
-export default function AdjustmentPanel({ value, onChange, onReset }: Props) {
+export default function AdjustmentPanel({ value, onChange, onReset, onMatchReference }: Props) {
   const set = (k: keyof Adjustments, v: number) => onChange({ ...value, [k]: v })
+  const refInput = useRef<HTMLInputElement>(null)
 
   return (
     <aside className="panel">
@@ -26,6 +37,31 @@ export default function AdjustmentPanel({ value, onChange, onReset }: Props) {
           </button>
         ))}
       </div>
+
+      {/* 「照着这张调」**故意不摆进上面那一排**，两条理由：
+          · 那排是"按一下立刻出结果"的药丸，而这一颗点了会先开文件选择器
+            —— 混在一起，用户会以为按下去画面就该变；
+          · 上面那条注释写着"一排六个不许换行成两排"，多一颗长的就破了。
+          而它跟上排**是同一类东西**（产出一组参数），所以紧挨着它们。
+          ⚠️ 用真的 `<button>` 而不是 `<label>` 包一个 input：全站那套按钮的长相
+          （底色/边框/悬停/按下/禁用）都在 CSS 的 `button` 那条通用规则里，
+          用 label 就得把那一整套抄一遍 —— 抄完就多一份会漂的长相。 */}
+      <button className="presets-ref" onClick={() => refInput.current?.click()}>
+        <Images size={14} strokeWidth={1.5} aria-hidden="true" />
+        照着这张调
+      </button>
+      <input
+        ref={refInput}
+        className="presets-ref-file"
+        type="file"
+        accept="image/*"
+        onChange={e => {
+          const f = e.target.files?.[0]
+          if (f) onMatchReference(f)
+          // 清空 value：同一张参考图连选两次也要能再触发一次 change
+          e.target.value = ''
+        }}
+      />
 
       {/* 八条滑块**自己一层**，分栏只发生在这里；面板本身仍是"头 / 预设 / 滑块组"
           的竖列。

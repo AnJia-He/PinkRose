@@ -625,6 +625,21 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .presets button:hover { border-color: var(--accent); color: var(--rose-300); background: var(--rose-tint); }
 
+/* 「照着这张调」—— 从一张参考图生成一组参数，本质上是**自定义预设**，
+   所以紧挨着上面那一排。但它**不是药丸**：
+   · 点下去先开文件选择器（不是立刻生效），摆进那排会让人以为按一下就有结果；
+   · 那排是六个药丸、不许换行，多一颗长的就破了。
+   长相不在这里定义 —— 它是个真 `<button>`，底色/边框/悬停/按下全部来自
+   全站那条通用规则，这里只补"独占一行 + 居中"。2026-10-02 加（spec §4.6）。 */
+.presets-ref {
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  width: 100%; margin-bottom: var(--sp-4);
+  border-radius: var(--r-md); font-size: 13px; color: var(--muted);
+}
+.presets-ref:hover { border-color: var(--accent); color: var(--rose-300); background: var(--rose-tint); }
+/* 那个文件 input 永远不该被看见 —— 点的是上面那颗按钮。 */
+.presets-ref-file { display: none; }
+
 .slider {
   display: grid; grid-template-columns: 56px 1fr 40px;
   align-items: center; gap: var(--sp-3); margin: 5px 0;

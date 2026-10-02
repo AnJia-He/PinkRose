@@ -23,6 +23,8 @@ import {
 } from './api/sessions'
 import { decodeImageFile, type DecodedImage } from './image/decode'
 import { resizeBitmap } from './image/resize'
+import { samplePixels } from './image/sample'
+import { matchToReference } from './core/colorMatch'
 import { fitToLimit, probeLimit } from './render/limits'
 import { applyDeltas, ZERO, type Adjustments } from '../shared/adjustments.ts'
 import {
@@ -1131,6 +1133,48 @@ export default function App() {
   }, [history, setCurrentSession])
 
   /**
+   * 「照着这张调」—— 用户挑了一张参考图（spec §4.6 的"我想要这种色调"）。
+   *
+   * 整件事**都在本地**：解码参考图 → 两边各缩到 96px 采一遍色 →
+   * 拟合出六个参数（纯函数，见 `core/colorMatch.ts`）→ 直接 `setParams`。
+   * 不联网、不花钱、几十毫秒。**这也是为什么它不走生成层**：
+   * 送进模型去"重画"会把整张脸也重画一遍（脸部 58.6% 像素被改动，见
+   * `sensenova-api-facts`），而色调这件事本来就只是个色彩分布的问题。
+   *
+   * ⚠️ **送进去的是底图（`image`），不是画布上那份带参数渲染过的画面。**
+   *   这和"送去生成的必须是当前 base"是同一条铁律的两面：参数不该被算进
+   *   这次比较里，否则用户拖过一次滑块再"照着调"，前面那套参数会被叠两次。
+   *
+   * ⚠️ **参考图用完就关**（`bitmap.close()`）：`decodeImageFile` 给的位图占的是
+   *   GPU 内存，为采一次色一直留着它不值 —— 这个项目为这件事写过好几处注释。
+   *
+   * ⚠️ **它盖掉的是六个参数，清晰度和暗角原样留着**（`MatchedTone` 只有六个键，
+   *   想整份替换过不了 typecheck）。那两个跟"参考图长什么样"没关系：
+   *   暗角是构图选择，清晰度是局部细节。
+   *
+   * ⚠️ **故意不弹"这个色调我做不到满分"之类的提示。** 2026-10-02 量过：
+   *   八张真实旅游照两两配对（56 对），**48 对**的残差超过肉眼阈值，
+   *   而且残差的 **69% 落在明暗轴**（不是颜色）。也就是说"做不到满分"是常态、
+   *   不是例外 —— 每次都弹的提示是噪音，不是诚实。这件事属于产品和文档那一层
+   *   （见 spec §4.6 那条"未决"），不该做成一个永远在响的弹窗。
+   */
+  const matchReference = useCallback(async (file: File) => {
+    if (!image) return
+    let ref: DecodedImage | null = null
+    try {
+      ref = await decodeImageFile(file)
+      // 传的是 `image.bitmap` 而不是 `image`：`Sizable` 要的是"能 drawImage 的东西"
+      // 且自带宽高，而 `DecodedImage` 是个壳（位图在 `.bitmap` 上）。
+      const { params: matched } = matchToReference(samplePixels(image.bitmap), samplePixels(ref.bitmap))
+      setParams(p => ({ ...p, ...matched }))
+    } catch {
+      noticeBad('这张参考图打不开，换一张试试')
+    } finally {
+      ref?.bitmap.close()
+    }
+  }, [image, noticeBad])
+
+  /**
    * 「新的一张」—— 回到"选一张照片"那一屏（§6.4，Task 6）。
    *
    * ⚠️ **它不删当前这条会话**：那条已经在服务端上存着了，左栏「对话」里还找得到。
@@ -2077,6 +2121,7 @@ export default function App() {
               value={params}
               onChange={setParams}
               onReset={() => setParams(ZERO)}
+              onMatchReference={file => void matchReference(file)}
             />
           )}
         </div>
