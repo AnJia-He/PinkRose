@@ -64,6 +64,9 @@ export type ProbeFail =
   | 'no_endpoint'    // 404 / 405：地址上没有这个接口
   | 'server_error'   // >= 500：地址通、钥匙认，是服务商那边自己出错了
   | 'bad_response'   // 200 但不是 JSON：多半填的不是 AI 服务商的接口地址
+  // ★ 2026-10-02 加：3xx。我们**故意不跟重定向**（跟的话地址校验可以被
+  //   一跳 3xx 绕去内网），所以它要有自己的一类，好让用户看到一句能照着改的话。
+  | 'redirect'
 
 export type ProbeResult =
   | { ok: true; models: string[] }

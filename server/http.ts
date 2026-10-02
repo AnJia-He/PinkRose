@@ -186,3 +186,58 @@ export function sendError(res: ServerResponse, e: unknown): void {
   console.error('[internal]', e)   // 详细堆栈只进服务端日志
   sendJson(res, 500, new HttpError('INTERNAL', USER_MESSAGE.INTERNAL, 500))
 }
+
+/**
+ * ★ 2026-10-02（安全审计 S2）：**出站响应体的上限**。
+ *
+ * 加这个之前，`sn.ts` 和 `modeltest.ts` 读正文用的都是裸的 `await res.text()`
+ * —— Node 对响应体**没有任何内置上限**（实测：64 MB 一秒内完整缓冲），
+ * 代码里也没有 content-length 预检。而这两处的地址是**用户自己填的**：
+ * 注册一个号、把地址指向自己的服务器、让它流式回几十 GB，就能把这台机器的
+ * 内存吃光（全站一起挂，包括别人的修图）。超时（8s/60s/180s）兜的是**时间**，
+ * 兜不住**大小**。
+ *
+ * 三档差得很开，是照着各自的正常体量定的：探活只要一个模型名单；
+ * 路由/卡片是一小段 JSON；出图那一路正文是几百 KB 的 base64。
+ */
+export const OUTBOUND_LIMITS = {
+  probe: 1 << 20,   // 1 MB
+  chat: 2 << 20,    // 2 MB
+  edit: 64 << 20,   // 64 MB
+} as const
+
+/**
+ * 读上游正文，**超过上限就掐断**。
+ *
+ * 两道闸，缺一不可：
+ *   ① `content-length` 先看一眼 —— 老实报长度的，连读都不读；
+ *   ② 边读边累计 —— **攻击者不会老实报长度**，他会一块一块地灌
+ *      （`ReadableStream` 分块响应天然没有 content-length）。
+ *      只做①的话，这一条就是空的。
+ *
+ * 超限时**要把连接收掉**（`cancel()`）：不然对面还在往里灌，
+ * 我们这边只是不读了，连接一直挂着。
+ */
+export async function readTextCapped(res: Response, maxBytes: number): Promise<string> {
+  const declared = Number(res.headers.get('content-length') ?? NaN)
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    void res.body?.cancel().catch(() => {})
+    throw new Error(`上游声称要回 ${declared} 字节，超过上限 ${maxBytes}`)
+  }
+  if (!res.body) return ''
+
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      void reader.cancel().catch(() => {})
+      throw new Error(`上游回的正文超过上限 ${maxBytes} 字节，已掐断`)
+    }
+    chunks.push(value)
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}

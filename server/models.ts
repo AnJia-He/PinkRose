@@ -4,6 +4,7 @@ import {
 import type { PublicUser } from './account.ts'
 import type { Db } from './db.ts'
 import { HttpError, asObject, str } from './http.ts'
+import { assertModelHostAllowed } from './hostGuard.ts'
 import type { Vault } from './keyvault.ts'
 
 export type ModelKind = 'chat' | 'image'
@@ -91,6 +92,12 @@ export function normalizeBaseUrl(input: string): string {
   if (u.search || u.hash) {
     throw new HttpError('BAD_REQUEST', '接口地址里不要带 ? 后面的东西')
   }
+  // ★ 2026-10-02（安全审计 S1）：**内网地址在这里就拦掉**。
+  //   放在"必须带点"那条**前面**是有意的：`127.0.0.1` 是带点的（旧检查放它过），
+  //   而 `[::1]` 不带点（旧检查会说它"看起来不是一个网址"）—— 那是一句**不准的话**，
+  //   用户照着那句话会去改一个本来没问题的写法。
+  //   实测（加这条之前）：127.0.0.1 / 169.254.169.254 / 10.x / 192.168.x 全部放行。
+  assertModelHostAllowed(`${u.protocol}//${u.host}`)
   if (!u.hostname.includes('.')) {
     throw new HttpError('BAD_REQUEST', '接口地址看起来不是一个网址')
   }

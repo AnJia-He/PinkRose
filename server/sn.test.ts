@@ -166,14 +166,34 @@ describe('chatJson', () => {
  *   · 这一组钉 **`SnError.message` 一个字不动**（原文要走排查，上面那条用例正钉着它）；
  *   · `http.test.ts` 那一组钉**日志那一份**被抹干净。
  */
-describe('★ 上游正文里的凭据：message 留原文，只是不许这样进日志', () => {
+describe('★ 上游正文里的凭据：连 message 里都不留', () => {
   const ECHO = '{"error":{"message":"invalid api key: sk-live-9f2a7c41","received":"Bearer sk-live-9f2a7c41"}}'
 
-  it('401 正文回显的钥匙留在 message 里（排查要看的就是它）', async () => {
+  it('★ 401 正文回显的钥匙 —— 源头就抹掉（不是靠日志那一道拦）', async () => {
     const { impl } = fakeFetch({ status: 401, text: ECHO })
     const e = await new SenseNovaClient(cfg, impl).chatJson([{ role: 'user', content: 'h' }]).catch(e => e)
-    expect(e.message).toContain('sk-live-9f2a7c41')
-    expect(e.message).toContain('Bearer sk-live-9f2a7c41')
+    expect(e.message).not.toContain('sk-live-9f2a7c41')
+    // "上游说了什么"这条排查线索要留着 —— 不然等于为了安全把眼睛蒙上
+    expect(e.message).toContain('invalid api key')
+  })
+
+  it('★ 按值抹：上游用形状正则**认不出来**的写法回显，也抹得掉', () => {
+    // 这两种写法下面那两条正则都抓不到（没有 Bearer、也没有 sk- 前缀），
+    // 而钥匙本身我们**知道** —— 所以按值 replace 才是那道不漏的网。
+    const weird = '{"error":"api_key=9f2a7c41de88 rejected","hdr":"Authorization: 9f2a7c41de88"}'
+    const out = redactSecrets(weird, '9f2a7c41de88')
+    expect(out).not.toContain('9f2a7c41de88')
+    expect(out).toContain('[已隐藏]')
+  })
+
+  it('不传钥匙时行为和以前一样（那条调用路还在用形状正则）', () => {
+    expect(redactSecrets('Bearer abc123')).toBe('Bearer [已隐藏]')
+  })
+
+  it('太短的"钥匙"不按值抹 —— 会把正文里的正常内容咬掉', () => {
+    // 用户完全可能填个 "1234" 这种短串。按值抹的话，正文里任何 1234 都会没，
+    // 那比漏抹更坏（排查的人会以为上游说了别的话）。
+    expect(redactSecrets('上游说：用了 1234 次', '1234')).toContain('1234')
   })
 
   it('redactSecrets：Bearer 令牌和 sk- 串都抹掉，前缀留着（看得出这里原本是凭据）', () => {

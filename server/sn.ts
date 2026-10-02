@@ -1,3 +1,4 @@
+import { OUTBOUND_LIMITS, readTextCapped } from './http.ts'
 import type { AppErrorCode } from '../shared/protocol.ts'
 import type { Size } from '../shared/size.ts'
 
@@ -31,6 +32,12 @@ export class SnError extends Error {
  *    排查要看原文；测试也正冲着"两头"断（sn.test.ts 钉 message 留原文，
  *    http.test.ts 钉日志被抹干净）。
  *
+ * ⚠️ 2026-10-02 更正：上面那条"message 本身一个字不动"**已经不再成立**。
+ *    现在 `postJson` 在**拼 message 的那一刻**就按值抹了一遍（因为拼进去的是
+ *    上游原文，而它会被四个日志出口打出去 —— 与其指望四处都记得抹，不如在
+ *    源头就不让它进来）。所以 message 里那一份是**已抹过**的；日志出口这一层
+ *    留着是纵深防御。`sn.test.ts` 那条"message 留原文"的用例已经跟着改了。
+ *
  * ⚠️ **四个日志出口全走这一个函数**，不许各自抄一段正则：这里漂一点，
  *    就有一处的钥匙照漏（同一个毛病两份实现，这个仓库已经吃过太多次亏）。
  *
@@ -43,8 +50,17 @@ export class SnError extends Error {
  * 抹完前缀留着（`Bearer` / `sk-`）：日志读者该看得出"这里原本是凭据"，
  * 只是值不在里面；替换文本里没有能再次命中的字符，重复过一遍也不会再变。
  */
-export function redactSecrets(text: string): string {
-  return text
+export function redactSecrets(text: string, secret?: string): string {
+  // ★ 2026-10-02（安全审计 S5）：**先按值抹，再按形状抹**。
+  //   下面那两条只认识 `Bearer xxx` 和 `sk-xxx` 两种写法，而上游网关回显凭据的
+  //   形状五花八门（`api_key=…`、纯十六进制、`Authorization: xxx`）。钥匙是
+  //   **我们自己知道的那一串** —— 直接按值 replace，不管它被包装成什么样都抹得掉。
+  //   顺序要紧：按形状抹会把 `Bearer ` 前缀留下，于是原文里那串钥匙不再完整，
+  //   按值就匹配不到了 —— 所以**按值必须在前**。
+  //   长度下限 8：太短的串（比如用户填了个 "1234"）按值抹会把正文里的
+  //   正常数字也抹掉，那比漏抹更坏。
+  const byValue = secret && secret.length >= 8 ? text.split(secret).join('[已隐藏]') : text
+  return byValue
     // `[` / `]` 也在排除里：替换文本 `[已隐藏]` 自己带方括号，不排掉的话
     // 第二遍会把结尾的 `]` 留在外面（幂等性就是这个用例先抓出来的）
     .replace(/\bBearer\s+[^\s"',}\][]+/gi, 'Bearer [已隐藏]')
@@ -117,7 +133,7 @@ export class SenseNovaClient {
       // （"field Temperature invalid, only 1 is allowed for this model"）。
       // 各家默认值不同，让服务端自己定——路由不靠 temperature 保持稳定。
     }
-    const j = await this.postJson('/chat/completions', body, CHAT_TIMEOUT_MS)
+    const j = await this.postJson('/chat/completions', body, CHAT_TIMEOUT_MS, OUTBOUND_LIMITS.chat)
 
     const choice = (j as any)?.choices?.[0]
     if (!choice) {
@@ -156,7 +172,7 @@ export class SenseNovaClient {
       // 那个域名经常连接超时——生成成功了却拿不到图。
       response_format: 'b64_json',
     }
-    const j = await this.postJson('/images/edits', body, EDIT_TIMEOUT_MS, signal)
+    const j = await this.postJson('/images/edits', body, EDIT_TIMEOUT_MS, OUTBOUND_LIMITS.edit, signal)
 
     const b64 = (j as any)?.data?.[0]?.b64_json
     if (typeof b64 !== 'string' || !b64) {
@@ -168,7 +184,7 @@ export class SenseNovaClient {
   }
 
   private async postJson(path: string, body: unknown, timeoutMs: number,
-                         outer?: AbortSignal): Promise<unknown> {
+                         maxBytes: number, outer?: AbortSignal): Promise<unknown> {
     const url = `${this.cfg.baseUrl}${path}`
     let res: Response
     try {
@@ -179,6 +195,12 @@ export class SenseNovaClient {
           'content-type': 'application/json',
         },
         body: JSON.stringify(body),
+        // ★ 2026-10-02（安全审计 S1）：**不跟重定向**。
+        //   跟的话，"地址白名单/路径剥离"全都可以被一跳 3xx 绕过去：
+        //   用户填一个公网地址，它回 `Location: http://10.0.0.1:9200/_search`，
+        //   fetch 就替我们把请求打到内网去了（实测旧行为确实会跟）。
+        //   `manual` 时 Node 把那个 3xx 原样交回来，下面按"地址不对"处理。
+        redirect: 'manual',
         // 两个中断源合成一个：**超时**（一直就有）和**用户按了停止**（2026-09-30 加）。
         // AbortSignal.any 要 Node 20.3+，这个项目钉的是 Node 24。
         signal: outer
@@ -207,7 +229,11 @@ export class SenseNovaClient {
     // 套进来只会把它们重新包装一遍。
     let text: string
     try {
-      text = await res.text()
+      // ★ 2026-10-02（安全审计 S2）：**带上限读**。地址是用户自己填的，
+      //   裸的 `res.text()` 没有任何内置上限 —— 对面灌几十 GB 就能把这台
+      //   机器的内存吃光（超时兜时间，兜不住大小）。上限的来历见
+      //   `http.ts` 的 `OUTBOUND_LIMITS`。
+      text = await readTextCapped(res, maxBytes)
     } catch (e) {
       // 同上：停止可能发生在**读正文**这一段（生成那一路正文是几百 KB 的 base64）。
       if (outer?.aborted) {
@@ -215,9 +241,20 @@ export class SenseNovaClient {
       }
       throw new SnError('UPSTREAM_FAILED', `读取上游响应正文失败：${(e as Error).message}`, true)
     }
+    // ★ 2026-10-02：**3xx 单列一条**。我们故意不跟重定向（见上面 fetch 那段），
+    //   所以要让用户看到一句能照着改的话，而不是一条"上游 307"。
+    //   现实里最常见的来源：地址填了 `http://example.com` 而它跳去 https。
+    if (res.status >= 300 && res.status < 400) {
+      throw new SnError('UPSTREAM_FAILED',
+        `上游要求跳到别处（HTTP ${res.status}），接口地址要填**跳过去之后**的那个`, false)
+    }
     if (!res.ok) {
       throw new SnError(codeForStatus(res.status),
-        `上游 HTTP ${res.status}：${text.slice(0, 300)}`, res.status === 429 || res.status >= 500)
+        // ⚠️ 上游原文可能把钥匙回显出来（网关五花八门），而这一句会被**打日志**。
+        //   按形状抹（`Bearer` / `sk-`）不够 —— 钥匙是**我们自己知道的那一串**，
+        //   直接按值抹最可靠（安全审计 S5）。
+        `上游 HTTP ${res.status}：${redactSecrets(text.slice(0, 300), this.cfg.apiKey)}`,
+        res.status === 429 || res.status >= 500)
     }
     try {
       return JSON.parse(text)

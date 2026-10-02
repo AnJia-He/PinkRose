@@ -12,6 +12,7 @@
  * 调用方**绝不能**因为"名单里没有"就判用户填错，界面里必须留着"自己手打"。
  */
 
+import { OUTBOUND_LIMITS, readTextCapped } from './http.ts'
 import type { ProbeFail, ProbeResult } from '../shared/protocol.ts'
 
 /** 超时。这是个人在等的一次点击，比 AI 那几条路短得多。 */
@@ -46,6 +47,11 @@ function messageOf(reason: ProbeFail): string {
       return '这个地址上没有那个接口。多半是地址少了或多了 `/v1` 这类结尾。'
     case 'bad_response':
       return '那个地址回了一个我们看不懂的东西。确认一下填的是 AI 服务商的接口地址。'
+    case 'redirect':
+      // ★ 2026-10-02：我们**不跟重定向**（安全审计 S1 —— 跟的话，一跳 3xx 就能
+      //   把地址校验整个绕过去，请求会被导去内网）。最常见的来源是地址填了
+      //   `http://某站` 而它跳去 https，所以下一步动作就是"填跳过去之后那个"。
+      return '这个地址会跳到别处去，我们没有跟。请把**跳过去之后**的那个地址填进来。'
   }
 }
 
@@ -63,6 +69,9 @@ export async function probeConnection(
     res = await fetchImpl(url, {
       method: 'GET',
       headers: { authorization: `Bearer ${input.apiKey}` },
+      // ★ 2026-10-02（安全审计 S1）：不跟重定向。理由和 sn.ts 里那段一样 ——
+      //   这是**用户填的地址**，跟一跳 3xx 就能把请求导去内网，地址校验形同虚设。
+      redirect: 'manual',
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     })
   } catch {
@@ -84,6 +93,10 @@ export async function probeConnection(
   //
   // ⚠️ **也别顺手把它挪进 `no_endpoint`**：那一类说的是"这个地址上没有那个接口"
   // （404/405），下一步是去改地址。指错了路比不说还坏。
+  // ★ 2026-10-02：3xx 单列（我们不跟，见上面）。它排在 4xx 判断之前 ——
+  //   不然会被下面那句 `>= 400` 漏掉，落到"读正文"上去，读一个空的重定向响应。
+  if (res.status >= 300 && res.status < 400) return fail('redirect')
+
   if (res.status === 401 || res.status === 403) {
     return fail('unauthorized')
   }
@@ -97,8 +110,12 @@ export async function probeConnection(
 
   let body: unknown
   try {
-    body = JSON.parse(await res.text())
+    // ★ 2026-10-02（安全审计 S2）：**带上限读**。地址是用户填的，
+    //   裸的 `res.text()` 没有上限 —— 对面灌几十 GB 就能吃光内存（全站一起挂）。
+    body = JSON.parse(await readTextCapped(res, OUTBOUND_LIMITS.probe))
   } catch {
+    // ⚠️ 超限也归到这一类：对用户来说都是"那边回的东西我们用不了"，
+    //   而真正的原因（超过 1 MB）只该进我们自己的排查视野。
     return fail('bad_response')
   }
   const data = (body as { data?: unknown })?.data

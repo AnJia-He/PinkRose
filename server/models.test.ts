@@ -70,6 +70,36 @@ describe('接口地址归一化', () => {
     expect(() => normalizeBaseUrl('')).toThrow()
     expect(() => normalizeBaseUrl('not a url at all')).toThrow()
   })
+
+  it('★ 内网 / 本机地址一律拒绝（SSRF，2026-10-02 加的）', () => {
+    // 加这条之前实测过：下面这些**全部放行**，而用户填的地址会被服务端
+    // 拿去发请求 —— 等于任何人注册一个号就能拿这台机器当跳板扫内网。
+    for (const url of [
+      'http://127.0.0.1:11434/v1',      // 自建 Ollama 那一档（要开开关才放行）
+      'http://169.254.169.254/latest',  // 云上的凭据服务
+      'http://10.0.0.1/v1',
+      'http://172.16.5.5/v1',
+      'http://192.168.1.50:8080/v1',
+      'http://100.64.0.1/v1',
+      'http://0.0.0.0/v1',
+      'http://2130706433/v1',           // 十进制的 127.0.0.1，URL 解析器会还原
+      'http://[::1]:11434/v1',
+      'http://metadata.google.internal/latest',
+    ]) {
+      expect(() => normalizeBaseUrl(url), url).toThrow()
+    }
+  })
+
+  it('内网那句提示要说清"为什么"和"怎么解开"（文案规范 5）', () => {
+    expect(() => normalizeBaseUrl('http://10.0.0.1/v1')).toThrow(/内网/)
+    expect(() => normalizeBaseUrl('http://10.0.0.1/v1')).toThrow(/ALLOW_PRIVATE_MODEL_HOSTS/)
+  })
+
+  it('公网地址不受影响', () => {
+    expect(normalizeBaseUrl('https://api.deepseek.com')).toBe('https://api.deepseek.com/v1')
+    expect(normalizeBaseUrl('http://8.8.8.8/v1')).toBe('http://8.8.8.8/v1')
+    expect(normalizeBaseUrl('https://172.15.0.1/v1')).toBe('https://172.15.0.1/v1')
+  })
 })
 
 describe('增删改查', () => {

@@ -14,6 +14,7 @@ import {
   activateConfig, createConfig, deleteConfig, listConfigs, normalizeBaseUrl,
   resolveSecretById, updateConfig, type ModelConfigDeps, type ModelKind,
 } from './models.ts'
+import { assertModelHostAllowed } from './hostGuard.ts'
 import { probeConnection } from './modeltest.ts'
 import type { SerialQueue } from './queue.ts'
 import { handleRoute } from './route.ts'
@@ -417,6 +418,10 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
       if (body.id !== undefined) {
         const s = resolveSecretById(Number(body.id), str(body.kind) as ModelKind, user, deps.models)
         if (!s) throw new HttpError('BAD_REQUEST', '没有这一套设置', 404)
+        // ★ 2026-10-02：按 id 测的这条路**绕过了 normalizeBaseUrl** ——
+        //   它拿的是库里那份存下来的地址，所以这里要单独再拦一次内网
+        //   （和 clientFor 里那道同一个理由：存量配置不会自己消失）。
+        assertModelHostAllowed(s.baseUrl)
         conn = { baseUrl: s.baseUrl, apiKey: s.apiKey }
       } else {
         conn = {

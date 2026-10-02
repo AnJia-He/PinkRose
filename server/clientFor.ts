@@ -3,6 +3,7 @@ import type { Config } from './config.ts'
 import type { Db } from './db.ts'
 import type { Vault } from './keyvault.ts'
 import { resolveSecret, type ModelConfigDeps } from './models.ts'
+import { assertModelHostAllowed } from './hostGuard.ts'
 import { SenseNovaClient, type ModelConnection } from './sn.ts'
 
 export type ClientDeps = {
@@ -50,6 +51,15 @@ export function resolveClients(user: PublicUser, deps: ClientDeps): {
 function clientOf(kind: 'chat' | 'image', user: PublicUser, deps: ClientDeps): SenseNovaClient {
   const modelDeps: ModelConfigDeps = { db: deps.db, vault: deps.vault }
   const secret = resolveSecret(kind, user, modelDeps)
+
+  // ★ 2026-10-02（安全审计 S1）：**存量配置也要拦**。
+  //   上面那条内网黑名单是后来才加到 `normalizeBaseUrl` 的，而库里可能早就躺着
+  //   一条指向内网的地址（加校验之前存进去的）—— 它不会自己消失。
+  //   所以这里在**真正发请求之前**再拦一次。
+  //   ⚠️ 抛（而不是像别的失败那样安静回落到我们自己的钥匙）：这是"这个地址
+  //      不让用"的**政策拒绝**，不是"读不出来"。安静回落的话，用户的图照样改成了
+  //      —— 花的是我们的额度，而他以为用的是自己那套。
+  if (secret) assertModelHostAllowed(secret.baseUrl)
 
   // 用户没配（或配了用不了）→ 用我们自己的那一套。
   // 模型名取 config 里对应的那一个：chat 用 vlm、image 用 image model。

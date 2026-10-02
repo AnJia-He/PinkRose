@@ -1,3 +1,4 @@
+import { readTextCapped } from './http.ts'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createServer } from 'node:http'
 import { readJsonBody, sendJson, sendError, HttpError } from './http.ts'
@@ -134,8 +135,15 @@ describe('sendError', () => {
    * 打印，这是唯一一条"第三方回显经我们之手"的路。
    *
    * 这条用例走的是**真链路**：真客户端 → 真 401 回显 → 真 SnError → 真日志出口。
+   *
+   * ⚠️ **2026-10-02（安全审计 S5）改了契约**：原来只保证"进日志前抹掉"，
+   *    message 里留着明文（下面那句 `toContain` 就是旧契约的钉子）。
+   *    现在是在**拼 message 的那一刻**就按值抹掉 —— 四个日志出口每一个都得
+   *    记得抹太脆，漏一个就是明文进日志；源头抹掉则**不可能漏**。
+   *    多了一条更狠的：这里的钥匙是 `sk-live-…` 形状，形状正则认得出；
+   *    但**按值抹不挑形状**，上游用 `api_key=xxx` 那种写法回显也跑不掉。
    */
-  it('★ 上游 401 正文里回显的钥匙 —— 进日志前抹掉，但 message 原文留着', async () => {
+  it('★ 上游 401 正文里回显的钥匙 —— 连 message 里都不留（源头就抹）', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const echo = '{"error":{"message":"invalid api key: sk-live-9f2a7c41","sent":"Bearer sk-live-9f2a7c41"}}'
     const client = new SenseNovaClient(
@@ -147,7 +155,9 @@ describe('sendError', () => {
     const err = await client.chatJson([{ role: 'user', content: 'h' }])
       .then(() => { throw new Error('401 应该抛错，它却成功了') }, (e: Error) => e)
     // 前提：正文真的被拼进了 message（少了这一条，下面测的就是空气）
-    expect(err.message).toContain('sk-live-9f2a7c41')
+    // ★ 新契约：**钥匙不在里面了**，而"上游说了什么"这条线索要在。
+    expect(err.message).toContain('invalid api key')
+    expect(err.message).not.toContain('sk-live-9f2a7c41')
 
     const r = await withServer((_q, s) => sendError(s, err), '')
     expect(r.status).toBe(502)
@@ -157,5 +167,47 @@ describe('sendError', () => {
     // 用户那一侧照旧：上游原文（含钥匙）一个字都不许出去
     expect(r.text).not.toContain('sk-live-9f2a7c41')
     // 变异：把 console.error 那一行的 redactSecrets 拿掉 → logged 里带着整把钥匙 → 这一条红
+  })
+})
+
+/**
+ * ★ 2026-10-02（安全审计 S2）：出站响应体必须有上限。
+ *
+ * 加这条之前，`sn.ts` 和 `modeltest.ts` 都是裸的 `await res.text()` ——
+ * Node 对响应体**没有任何内置上限**，实测 64 MB 一秒内缓冲完。
+ * 而这两处的地址是**用户自己填的**：任何人注册个号、把地址指向自己的服务器、
+ * 让它流式回几十 GB，就能把这台机器的内存吃光（全站一起挂）。
+ */
+describe('readTextCapped', () => {
+  it('没超上限就照常读回来', async () => {
+    const res = new Response('你好，世界')
+    expect(await readTextCapped(res, 1024)).toBe('你好，世界')
+  })
+
+  it('声明了 content-length 且超限 → 连读都不读', async () => {
+    const res = new Response('x', { headers: { 'content-length': '99999999' } })
+    await expect(readTextCapped(res, 1024)).rejects.toThrow(/上限/)
+  })
+
+  it('★ 不带 content-length 的分块响应也拦得住（真正的攻击形状）', async () => {
+    // 攻击者不会老老实实报长度 —— 他会一块一块地灌。
+    const stream = new ReadableStream({
+      start(c) {
+        for (let i = 0; i < 200; i++) c.enqueue(new Uint8Array(1024))
+        c.close()
+      },
+    })
+    const res = new Response(stream)
+    await expect(readTextCapped(res, 10_000)).rejects.toThrow(/上限/)
+  })
+
+  it('刚好等于上限 → 放行（边界是"超过"才拦）', async () => {
+    const res = new Response('x'.repeat(100))
+    expect((await readTextCapped(res, 100)).length).toBe(100)
+  })
+
+  it('没有正文的响应回空串，不抛', async () => {
+    const res = new Response(null, { status: 204 })
+    expect(await readTextCapped(res, 100)).toBe('')
   })
 })
