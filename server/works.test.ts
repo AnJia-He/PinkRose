@@ -9,12 +9,13 @@ import {
   handleListWorks, handleRenameWork, handleReplaceWork, handleWorkFile, handleWorkThumb,
 } from './works.ts'
 import type { PublicUser } from './account.ts'
+import { b64Of, jpegBytes } from './testImages.ts'
 
 const USER: PublicUser = { id: 1, username: '小明', email: 'a@x.com' }
 const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
 
 /** 一张最小但**合法**的 base64 图。用它，别用 'AAAA' —— 那样测的是"能解码"不是"存对了" */
-const bytesOf = (n: number): string => Buffer.from(new Uint8Array(n).fill(7)).toString('base64')
+const bytesOf = (n: number): string => b64Of(jpegBytes(n))
 
 // ⚠️ 夹具写在**文件这一层**：这个文件从 Task 6 起有两个 describe（存一张 / 列全部），
 // 两边要的是同一套东西（一个内存库 + 一个临时目录）。各写一份 hook 只会多出一份

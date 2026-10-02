@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { handleSignup, type AccountDeps } from './account.ts'
+import { b64Of, jpegBytes } from './testImages.ts'
 import { createApp, type AppDeps } from './app.ts'
 import type { ClientDeps } from './clientFor.ts'
 import type { Config } from './config.ts'
@@ -157,7 +158,7 @@ async function appWithAgingTicket(): Promise<{
 
 /** 端点断言用的合法 /api/edit 请求体。 */
 const editBody = {
-  imageDataUrl: 'data:image/jpeg;base64,AA',
+  imageDataUrl: 'data:image/jpeg;base64,/9j/AA==',
   editPrompt: '删掉后面那个人',
   width: 1024,
   height: 768,
@@ -267,7 +268,7 @@ describe('createApp', () => {
     const r = await fetch(`${base}/api/route`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie },
-      body: JSON.stringify({ imageDataUrl: 'data:image/jpeg;base64,AA', text: '亮一点' }),
+      body: JSON.stringify({ imageDataUrl: 'data:image/jpeg;base64,/9j/AA==', text: '亮一点' }),
     })
     expect(r.status).toBe(503)
     // tsconfig.server.json 的 lib 不含 DOM：Response.json() 是 unknown，
@@ -295,7 +296,7 @@ describe('createApp', () => {
 
   it('POST /api/suggest 在没接客户端时返回 503 的结构化错误', async () => {
     const { base, cookie } = await appWithUser()
-    const r = await post(base, '/api/suggest', { imageDataUrl: 'data:image/jpeg;base64,AA' }, cookie)
+    const r = await post(base, '/api/suggest', { imageDataUrl: 'data:image/jpeg;base64,/9j/AA==' }, cookie)
     expect(r.status).toBe(503)
     expect(r.body.error!.code).toBe('INTERNAL')
   })
@@ -531,7 +532,7 @@ describe('账号与鉴权', () => {
     const base = await boot()
     const r = await fetch(`${base}/api/works`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ image: 'data:image/jpeg;base64,AA' }),
+      body: JSON.stringify({ image: 'data:image/jpeg;base64,/9j/AA==' }),
     })
     expect(r.status).toBe(401)
   })
@@ -619,7 +620,7 @@ describe('取图：真的把字节发出去', () => {
     // 上面那两条取图用例只走到 401 / 404 —— `sendBytes`（Task 4 加的）一行都没被它们碰到过，
     // 而它是"图真的回到浏览器"的唯一出口。
     const { base, cookie } = await appWithUser()
-    const b64 = Buffer.from(new Uint8Array(64).fill(7)).toString('base64')
+    const b64 = b64Of(jpegBytes(64))
     const created = await post(base, '/api/works', { image: `data:image/jpeg;base64,${b64}` }, cookie)
     expect(created.status).toBe(200)
     const id = (created.body as unknown as { id: number }).id
@@ -649,7 +650,7 @@ describe('取图：真的把字节发出去', () => {
     //   本来也会 404（"没有这张作品"），不锚定的实现在这条用例上照样绿 ——
     //   有图才有"200 + 把图给出去"那条岔路可走。
     const { base, cookie } = await appWithUser()
-    const b64 = Buffer.from(new Uint8Array(64).fill(7)).toString('base64')
+    const b64 = b64Of(jpegBytes(64))
     const created = await post(base, '/api/works', { image: `data:image/jpeg;base64,${b64}` }, cookie)
     expect(created.status).toBe(200)
     const id = (created.body as unknown as { id: number }).id
@@ -769,8 +770,9 @@ describe('删与替换：路由真的接上了', () => {
     // 或者干脆回个空 200 的实现，它们一条都不会红。这条把整条路走完：
     // 存 → 删掉 → **再取就没了**；存 → 换 → **取回来的是新那批字节**。
     const { base, cookie } = await appWithUser()
-    const image = (n: number): string =>
-      `data:image/jpeg;base64,${Buffer.from(new Uint8Array(n).fill(7)).toString('base64')}`
+    // ⚠️ 长度**恰好 n**（下面按字节数断言），所以是"拿文件头覆盖前几字节"，
+    //    不是"在前面插一段" —— 而文件头本身必须是真的（imagedata.ts 验魔数）。
+    const image = (n: number): string => `data:image/jpeg;base64,${b64Of(jpegBytes(n))}`
     const make = async (n: number): Promise<number> => {
       const created = await post(base, '/api/works', { image: image(n) }, cookie)
       expect(created.status).toBe(200)
@@ -803,7 +805,7 @@ describe('删与替换：路由真的接上了', () => {
 
   it('★ 批量删的成功路径真的走通了（回的是 deleted / missing 两个桶）', async () => {
     const { base, cookie } = await appWithUser()
-    const b64 = Buffer.from(new Uint8Array(64).fill(7)).toString('base64')
+    const b64 = b64Of(jpegBytes(64))
     const make = async (): Promise<number> => {
       const created = await post(base, '/api/works', { image: `data:image/jpeg;base64,${b64}` }, cookie)
       expect(created.status).toBe(200)
@@ -1051,7 +1053,7 @@ describe('★ 两套 key 彻底分开（§7.4，用户点名要的四条；⑤ �
   const TYPO = 'sk-img-typo'
 
   /** 演示用的 /api/route 请求体（上一个 describe 里的 routeBody 在别的作用域，不共用）。 */
-  const askBody = { imageDataUrl: 'data:image/jpeg;base64,AA', text: '亮一点' }
+  const askBody = { imageDataUrl: 'data:image/jpeg;base64,/9j/AA==', text: '亮一点' }
 
   type Outbound = { url: string; auth: string | undefined }
 
@@ -1217,7 +1219,7 @@ describe('会话接口', () => {
     const b = await handleSignup({ username: '小红', email: 'r@r.com', password: 'password123' }, a.auth)
     return { base: a.base, auth: a.auth, cookieA: a.cookie, cookieB: `${SESSION_COOKIE}=${b.token}` }
   }
-  const JPEG = 'data:image/jpeg;base64,AAAA'
+  const JPEG = 'data:image/jpeg;base64,/9j/'
 
   it('★ 没登录 → 401，而不是 400 —— 鉴权排在读体之前', async () => {
     // 判据和上面那条 AI 接口的用例**同一个套路**：送一个畸形体。
@@ -1364,7 +1366,7 @@ describe('会话接口', () => {
     //    换成了新那张（4 字节）。少了这一手，"回的是那一步自己的图"和"无脑回 base"
     //    两种实现在下面那三句上长得一模一样 —— 而"步骤图给错一张"正是这条用例
     //    要守的那件事（见上面那段覆盖缺口的说明）。
-    const NEW = 'data:image/jpeg;base64,AQIDBA=='   // 4 字节，和原图那 3 个区分得开
+    const NEW = 'data:image/jpeg;base64,/9j/AA=='   // 4 字节（FF D8 FF 00），和原图那 3 个区分得开
     await call(base, 'PUT', `/api/sessions/${id}`, {
       base: NEW,
       steps: [{ id: 1, label: '调色', params: {}, at: 1 }, { id: 2, label: '再来一步', params: {}, at: 2 }],
@@ -1400,7 +1402,7 @@ describe('会话接口', () => {
     const mine = await call(base, 'POST', '/api/sessions', { image: JPEG }, cookieA)
     const id = (mine.body as { id: number }).id
     await call(base, 'PUT', `/api/sessions/${id}`, {
-      base: 'data:image/jpeg;base64,AQIDBA==', steps: [{ id: 1, label: '调色', params: {}, at: 1 }],
+      base: 'data:image/jpeg;base64,/9j/AQIDBA==', steps: [{ id: 1, label: '调色', params: {}, at: 1 }],
     }, cookieA)
     // 第二次**不带图**（拖滑块那种）：新的一步按规矩 ③ 接着上一步那张
     await call(base, 'PUT', `/api/sessions/${id}`, {
@@ -1429,7 +1431,7 @@ describe('会话接口', () => {
     const mine = await call(base, 'POST', '/api/sessions', { image: JPEG }, cookieA)   // 原图 3 字节
     const id = (mine.body as { id: number }).id
     // 把底图换成另外 4 个字节 —— 下面"原图那一条回的是**上传时那张**"才有得比。
-    await call(base, 'PUT', `/api/sessions/${id}`, { base: 'data:image/jpeg;base64,AQIDBA==' }, cookieA)
+    await call(base, 'PUT', `/api/sessions/${id}`, { base: 'data:image/jpeg;base64,/9j/AQIDBA==' }, cookieA)
 
     // ① 原图：是上传时那张（3 字节），不是现在的底图（4 字节）。
     //    顺带钉住 `original` 这个分支真的接上了（正则里少写一个 `original` 就 404）。

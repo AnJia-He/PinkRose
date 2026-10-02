@@ -103,6 +103,12 @@ export function sendBytes(res: ServerResponse, status: number, bytes: Uint8Array
   res.writeHead(status, {
     'content-type': contentType,
     'content-length': bytes.byteLength,
+    // ★ 2026-10-02（安全审计 L3）：**别让浏览器去猜类型**。
+    //   没有这一条时，浏览器可能按内容嗅探出一个和 content-type 不一样的东西 ——
+    //   而这里的字节**是用户上传的**（见 imagedata.ts：现在有魔数校验了，
+    //   但那是"存进去时"的事，已经存在盘上的老文件不享受新校验）。
+    //   这一行让"我们说它是什么，浏览器就当它是什么"。
+    'x-content-type-options': 'nosniff',
     // 图是不可变的（换了图 = 换了 URL 上的 ?v=，见 Task 11）。
     // private：这是某个人的图，别让中间缓存留下它
     'cache-control': 'private, max-age=31536000, immutable',

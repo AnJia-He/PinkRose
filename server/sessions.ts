@@ -2,7 +2,7 @@ import type { Db } from './db.ts'
 import type { Storage } from './storage.ts'
 import type { PublicUser } from './account.ts'
 import { HttpError, asObject, str } from './http.ts'
-import { decodeDataUrl, mimeOf } from './imagedata.ts'
+import { decodeDataUrl, mimeOf, MAX_THUMB_BYTES } from './imagedata.ts'
 import { ZERO, applyDeltas, type Adjustments } from '../shared/adjustments.ts'
 import type { SessionDetail, SessionMessage, SessionMeta, SessionStep } from '../shared/sessions.ts'
 
@@ -112,6 +112,14 @@ export async function handleCreateSession(
   if (thumbRaw) {
     try {
       const t = decodeDataUrl(thumbRaw)
+      // ★ 2026-10-02（安全审计）：缩略图也要**有自己的体积上限**。
+      //   原来它只受总请求体 12 MB 管着 —— 一个请求能塞进来约 9 MB 的"缩略图"，
+      //   而作品那张本身的上限是 8 MB，"每张最多 8 MB"那句话当场不成立。
+      //   超了就走下面那条既有路径（当"这张没有缩略图"），**不拖垮整张图** ——
+      //   和裁定 ② 同一个道理。
+      if (t.bytes.byteLength > MAX_THUMB_BYTES) {
+        throw new Error(`缩略图 ${t.bytes.byteLength} 字节，超过上限`)
+      }
       thumb = await deps.storage.save(t.bytes, t.ext)
     } catch (e) {
       console.error('会话缩略图用不了（解不开或者存不下）：', e)
@@ -284,6 +292,14 @@ export async function handleUpdateSession(
   if (thumbRaw) {
     try {
       const t = decodeDataUrl(thumbRaw)
+      // ★ 2026-10-02（安全审计）：缩略图也要**有自己的体积上限**。
+      //   原来它只受总请求体 12 MB 管着 —— 一个请求能塞进来约 9 MB 的"缩略图"，
+      //   而作品那张本身的上限是 8 MB，"每张最多 8 MB"那句话当场不成立。
+      //   超了就走下面那条既有路径（当"这张没有缩略图"），**不拖垮整张图** ——
+      //   和裁定 ② 同一个道理。
+      if (t.bytes.byteLength > MAX_THUMB_BYTES) {
+        throw new Error(`缩略图 ${t.bytes.byteLength} 字节，超过上限`)
+      }
       newThumb = await deps.storage.save(t.bytes, t.ext)
     } catch (e) {
       console.error('会话缩略图用不了（解不开或者存不下）：', e)

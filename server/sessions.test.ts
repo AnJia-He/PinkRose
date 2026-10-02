@@ -14,13 +14,15 @@ import { HttpError } from './http.ts'
 // ⚠️ 「删了会话，作品还在」那一条要用到作品那一层 —— 它守的正是**两层互不牵连**
 import { handleCreateWork, handleGetWork, handleWorkFile } from './works.ts'
 import { ZERO } from '../shared/adjustments.ts'
+import { b64Of, jpegBytes, jpegUrl } from './testImages.ts'
 
 let dir: string; let db: Db; let storage: Storage
 /** 图片目录。几条"盘上留没留下东西"的断言直接看它 */
 let photos: string
 const user = { id: 1, username: '小明', email: 'a@b.c' }
 const other = { id: 2, username: '小红', email: 'd@e.f' }
-const JPEG = 'data:image/jpeg;base64,' + Buffer.from([1, 2, 3, 4]).toString('base64')
+// ⚠️ 文件头必须是真的：imagedata.ts 从 2026-10-02 起验魔数（安全审计）。
+const JPEG = jpegUrl(4)
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'ruixing-sessions-'))
@@ -59,7 +61,8 @@ describe('建会话', () => {
   })
 
   it('★ 图太大 → 413，而且**盘上不留东西**', async () => {
-    const big = 'data:image/jpeg;base64,' + Buffer.alloc(9 * 1024 * 1024).toString('base64')
+    // ⚠️ 也必须是真文件头 —— 不然它会先撞上魔数校验，测的就不是太大那一条了。
+    const big = `data:image/jpeg;base64,${b64Of(jpegBytes(9 * 1024 * 1024))}`
     // ★ 判据是"前后一模一样"，不是"rejects 了就算" —— 只断言 rejects 的话，
     //   一个"先落盘再校验"的实现照样绿，而那时盘上已经躺着一个没人认领的文件了。
     //   （`photos` 目录可能还没被建出来，所以先兜一下。）
