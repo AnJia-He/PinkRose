@@ -98,7 +98,7 @@ const MIME: Record<string, string> = {
  *   按 IP 记等于**全局限流**：一个人打错十次密码，全站都登不上了。
  *   按用户名记才挡得住真正要挡的那件事（盯着一个账号慢慢试）。
  */
-type Gates = { login: Limiter; signup: Limiter; probe: Limiter }
+type Gates = { login: Limiter; signup: Limiter; probe: Limiter; edit: Limiter }
 
 function newGates(): Gates {
   return {
@@ -106,7 +106,24 @@ function newGates(): Gates {
     // 注册按 IP —— 这里没有"某个账号"可盯，要挡的是批量开小号。
     signup: createLimiter({ max: 20, windowMs: 60 * 60_000 }),
     probe: createLimiter({ max: 30, windowMs: 10 * 60_000 }),
+    // ★ **日额度**：`/api/edit` 一次约 12,900 tokens，而注册是开放的 ——
+    //   同一个 wifi 下任何人注册个号就能把运营者的额度当免费 API 用。
+    //   数取自设计文档 §6.6（每人每天 20 次生成）—— 那张表一直躺在文档里没实现，
+    //   而 App 里那句「一天大概能改二十来张照片」说的就是它（所以它一直只能写"大概"）。
+    edit: createLimiter({ max: 20, windowMs: 24 * 60 * 60_000 }),
   }
+}
+
+/**
+ * 日额度用完了。
+ *
+ * ⚠️ **和 `assertGate` 分开写**：两者都是 429，但**下一步动作不一样** ——
+ * 那条是"慢一点再试"（几秒/几分钟），这条是"明天再来"。
+ * 共用一句话的话，用户会坐在那儿等一个几分钟后也不会好的东西。
+ */
+function assertDailyQuota(lim: Limiter, key: string): void {
+  if (lim.hit(key).ok) return
+  throw new HttpError('TOO_MANY', '今天改得够多了（一天大概二十来张），明天再来。', 429)
 }
 
 /**
@@ -544,6 +561,10 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       if (!deps.clients || !deps.queue) {
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
+      // ★ 日额度这一道**放在 503 之后**：后端没接线是**我们这边**的问题，
+      //   不该顺手把用户当天的额度记掉。放在这里（而不是 route/suggest 那两条）
+      //   是因为**只有它会真的花那 12,900 tokens**。
+      assertDailyQuota(gates.edit, `edit:${user.id}`)
       const body = await readJsonBody(req)
       // ★ 2026-09-30（「停止」按钮）：**用户走了，我们也要停。**
       //

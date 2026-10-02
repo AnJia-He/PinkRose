@@ -1676,3 +1676,42 @@ describe('★ 静态服务：原始的路径穿越 payload（裸 socket，不走
     })
   }
 })
+
+/**
+ * ★ 2026-10-02（安全审计 H1）。`/api/edit` 一次约 **12,900 tokens**，而注册是
+ * 开放的 —— 同一个 wifi 下任何人注册一个号就能把运营者的额度当免费 API 用。
+ * spec §6.6 早就写了「每人每天 20 次生成」，**那道闸门一直没做**
+ * （App 里那句「一天大概能改二十来张照片」说的就是它，所以那句一直只能写"大概"）。
+ */
+describe('★ 每天能改多少：付费那条接口的日额度', () => {
+  /** 只回 edit 那种形状（`data[0].b64_json`）的上游 —— `/api/edit` 要的是它，
+   *  不是 route/suggest 那种 `choices[0].message.content`。 */
+  const editUpstream = () => {
+    const impl = (async () =>
+      new Response('{"data":[{"b64_json":"AAAA"}]}', { status: 200 })) as unknown as typeof fetch
+    return { clients: stubClients(impl), queue: new SerialQueue({ sleep: async () => {} }) }
+  }
+
+  it('★ 同一个账号打满 20 次之后，第 21 次要被挡住，而且说明天再来', async () => {
+    const { base, cookie } = await appWithUser(editUpstream())
+    for (let i = 0; i < 20; i++) {
+      const r = await post(base, '/api/edit', editBody, cookie)
+      expect(r.status, `第 ${i + 1} 次`).toBe(200)
+    }
+    const r = await post(base, '/api/edit', editBody, cookie)
+    expect(r.status).toBe(429)
+    expect(r.body.error?.code).toBe('TOO_MANY')
+    // 文案要说到"明天"，而且要带上那个数 —— 用户得知道自己在哪条线上
+    expect(r.body.error?.message).toMatch(/明天|一天/)
+  })
+
+  it('额度是按**人**算的 —— 别人打满了不该连累你', async () => {
+    const { base, cookie, auth } = await appWithUser(editUpstream())
+    const b = await handleSignup({ username: '小红', email: 'r@r.com', password: 'password123' }, auth)
+    const cookieB = `${SESSION_COOKIE}=${b.token}`
+    for (let i = 0; i < 20; i++) await post(base, '/api/edit', editBody, cookie)
+    expect((await post(base, '/api/edit', editBody, cookie)).status).toBe(429)
+    // 另一个人第一次打，不该受影响
+    expect((await post(base, '/api/edit', editBody, cookieB)).status).toBe(200)
+  })
+})
