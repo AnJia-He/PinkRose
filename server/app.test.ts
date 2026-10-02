@@ -1,8 +1,9 @@
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { connect } from 'node:net'
+import { describe, it, expect, afterEach, afterAll, beforeAll, vi } from 'vitest'
 import { request, type Server } from 'node:http'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { handleSignup, type AccountDeps } from './account.ts'
 import { b64Of, jpegBytes } from './testImages.ts'
 import { createApp, type AppDeps } from './app.ts'
@@ -95,6 +96,10 @@ function newStorage(): Storage {
   openedDirs.push(root)
   return createStorage(root)
 }
+
+/** 只给下面那组"裸 socket 路径穿越"用例用的静态根。
+ *  **诱饵在它的上一层** —— 穿出去才够得着。 */
+const siteRoot = join(mkdtempSync(join(tmpdir(), 'ruixing-traversal-')), 'site')
 
 async function boot(extra: Partial<AppDeps> = {}): Promise<string> {
   // `extra.auth ?? newAuth()`：调用方自带 auth 时就不再另开一个没人用的库
@@ -1595,4 +1600,79 @@ describe('★ 限流：登录、注册、探活', () => {
     }
     expect((await post(base, '/api/login', { username: '小明', password: 'wrongpassword' })).status).toBe(429)
   })
+})
+
+/**
+ * ★ 2026-10-02（安全审计）：**这一条才是真的测到路径穿越的。**
+ *
+ * 上面那条 `/api/works/1/file/../../etc` **证明不了任何事** —— `fetch` 在把请求
+ * 发出去**之前**就把 `..` 归一化掉了（本文件里两处注释自己也承认了）。
+ * 也就是说 `serveStatic` 那道防线**一直没有有效的自动化守卫**：
+ * 下次谁改它，不会有测试变红。安全审计是用一次性裸 socket 手工验的，
+ * 这次把它固定下来。
+ *
+ * 所以这里**不走 fetch**：直接开 TCP，把原始的请求行写出去。
+ *
+ * ⚠️⚠️ **但变异之后发现：这一组也没守住 `serveStatic` 那道前缀检查。**
+ *   把 `if (target !== root && !target.startsWith(root + sep))` 整段拿掉，
+ *   下面九条**全绿**。原因是 `handle()` 里那句 `new URL(req.url, 'http://localhost')`
+ *   已经把 `..` 归一化掉了 —— 等路径走到 `serveStatic` 时，里面已经没有 `..` 了。
+ *   （同一个原因也让上面用 fetch 写的那条永远测不到东西。）
+ *
+ *   所以这一组守的是一个**端到端的性质**：这几串畸形的请求行，读不到静态根外面的
+ *   任何东西。这是真正要紧的那件事，而且它**确实会红** —— 谁哪天把 URL 解析那一步
+ *   换成一个不做归一化的实现，这里立刻就抓到了。
+ *
+ *   至于那行前缀检查本身：它是**够不到的纵深防御**（今天走 URL 到不了那儿）。
+ *   留着是为了"哪天上面那层变了"——但它今天**没有守卫，也造不出守卫**。
+ *   别以为这九条守着它。真要动那一行，先读这段。
+ */
+describe('★ 静态服务：原始的路径穿越 payload（裸 socket，不走 fetch）', () => {
+  /** 静态根**外面**的诱饵。它只要出现在响应里，就是穿出去了。 */
+  const DECOY = join(dirname(siteRoot), 'SECRET-OUTSIDE.txt')
+
+  beforeAll(() => {
+    mkdirSync(siteRoot, { recursive: true })
+    writeFileSync(join(siteRoot, 'index.html'), 'INDEX-OK')
+    writeFileSync(DECOY, 'TOPSECRET-MUST-NOT-LEAK')
+  })
+  afterAll(() => rmSync(siteRoot, { recursive: true, force: true }))
+
+  /** 裸 socket 发一个请求行，把整个响应读回来。 */
+  async function rawGet(base: string, target: string): Promise<string> {
+    const port = Number(new URL(base).port)
+    return await new Promise<string>((resolve, reject) => {
+      const sock = connect(port, '127.0.0.1', () => {
+        sock.write(`GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`)
+      })
+      let buf = ''
+      sock.setEncoding('utf8')
+      sock.on('data', d => { buf += d })
+      sock.on('end', () => resolve(buf))
+      sock.on('error', reject)
+    })
+  }
+
+  it('对照：正常那条路真的在发文件（不然下面几条全是空转）', async () => {
+    const res = await rawGet(await boot({ staticDir: siteRoot }), '/index.html')
+    expect(res).toContain('INDEX-OK')
+  })
+
+  for (const payload of [
+    '/../SECRET-OUTSIDE.txt',
+    '/../../SECRET-OUTSIDE.txt',
+    '/..%2fSECRET-OUTSIDE.txt',
+    '/%2e%2e/SECRET-OUTSIDE.txt',
+    '/%2e%2e%2fSECRET-OUTSIDE.txt',
+    '/..\SECRET-OUTSIDE.txt',
+    '/....//SECRET-OUTSIDE.txt',
+    '/%00SECRET-OUTSIDE.txt',
+    '/C:/Windows/win.ini',
+  ]) {
+    it(`穿不出去：${payload}`, async () => {
+      const res = await rawGet(await boot({ staticDir: siteRoot }), payload)
+      expect(res).not.toContain('TOPSECRET-MUST-NOT-LEAK')
+      expect(res).not.toContain('[extensions]')   // win.ini 的内容
+    })
+  }
 })
