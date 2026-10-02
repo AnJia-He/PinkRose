@@ -363,11 +363,28 @@ export async function handleUpdateSession(
     //    **静默**清成 `[]` —— 正是"错了不会报错，只会静静地错"那一类。
     messages = Array.isArray(o.messages) ? JSON.stringify(readMessages(o.messages)) : row.messages
 
-    deps.db.raw.prepare(
+    // ★ 2026-10-02（安全审计）：**乐观锁**。
+    //
+    //   上面那段是「读那一行 → await 落盘 → 写回去」，而中间那个 await 让出了
+    //   事件循环 —— 两条并发的 PUT 会**都读到旧的那一行**，后写的把先写的整个盖掉。
+    //   实测（加这条之前）：两次都回 200，先写者那一步**静默消失**，
+    //   而它落的文件不在名单里，删会话也收不走（永久孤儿）。
+    //
+    //   判据用 `updated_at`（那一行自带一个版本号，本来就在做缩略图的缓存钥匙）：
+    //   读它的时候是多少，写的时候就要求还是多少。对不上 = 中间有人改过。
+    //   `changes === 0` 就抛 —— 抛出去会走上面那个 `catch`，**刚写的文件一起收回**。
+    const res = deps.db.raw.prepare(
       `UPDATE sessions SET updated_at = ?, title = ?, base = ?, thumb = COALESCE(?, thumb),
-         messages = ?, steps = ?, files = ? WHERE id = ? AND user_id = ?`,
+         messages = ?, steps = ?, files = ?
+       WHERE id = ? AND user_id = ? AND updated_at = ?`,
     ).run(t, title, newFile ?? row.base, newThumb, messages,
-      JSON.stringify(steps), JSON.stringify(files), id, user.id)
+      JSON.stringify(steps), JSON.stringify(files), id, user.id, row.updated_at)
+    if (res.changes === 0) {
+      // 文案规范 5：哪不对 + 怎么办。**不许说成"没登录"或者"图不对"** ——
+      // 那两句会把人指去改一个没错的东西。
+      throw new HttpError('CONFLICT',
+        '这条对话刚刚在别的地方改过了，这次没存进去（免得把那边的新内容盖掉）。刷新一下看看。', 409)
+    }
   } catch (e) {
     // 记录没改成功（或者半程校验炸了）→ 把**新写的**收回来，旧的一动没动
     if (newFile) await deps.storage.remove(newFile).catch((e) => console.error('刚写的文件没收回：', e))

@@ -347,3 +347,42 @@ describe('删', () => {
     expect(existsSync(photos) ? readdirSync(photos) : []).toEqual([])
   })
 })
+
+/**
+ * ★★ 2026-10-02（安全审计，已复现）。这一条守的是**并发**那条路。
+ *
+ * `handleUpdateSession` 整段是：**读那一行 → `await` 落盘 → 写回去**。
+ * 中间那个 await 让出了事件循环 —— 于是两条并发的 PUT 会**都读到旧的那一行**，
+ * 后写的把先写的整个盖掉：**两次都回 200**，先写者那一步就静默消失了。
+ * 而它落盘的那个文件不在 `files` 名单里，删会话也收不走（永久孤儿）。
+ * 窗口很宽：`storage.save` 写一张 8 MB 的图本身就是一次 await。
+ *
+ * 判据写的是"**恰好一条成功**"而不是"某一条成功"：只钉后者的话，
+ * "两条都成功"照样绿 —— 而那正是这个 bug 的形状。
+ */
+describe('★ 同一条会话被两条路同时改', () => {
+  it('★★ 后到的那条要**报出来**，不许把先到的那一步静默吃掉', async () => {
+    const d = deps()
+    const { id } = await handleCreateSession({ image: JPEG }, user, d)
+    const before = readdirSync(photos).sort()
+
+    const results = await Promise.allSettled([
+      handleUpdateSession(id, { base: JPEG, steps: [step(1), step(2)] }, user, d),
+      handleUpdateSession(id, { base: JPEG, steps: [step(1), step(3)] }, user, d),
+    ])
+
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
+    const rejected = results.find(r => r.status === 'rejected') as PromiseRejectedResult
+    // 不能是"没登录""图不对"这类误导人的说法 —— 是**版本打架**
+    expect((rejected.reason as HttpError).status).toBe(409)
+
+    // 库里留下的那几步，每一张图都要在名单里（不然删会话收不走 = 永久孤儿）
+    const row = db.raw.prepare('SELECT steps, files FROM sessions WHERE id = ?').get(id) as
+      { steps: string; files: string }
+    for (const s of JSON.parse(row.steps) as { image?: string }[]) {
+      if (s.image) expect(JSON.parse(row.files)).toContain(s.image)
+    }
+    // 盘上只该多出**成功那条**写的那个文件（失败那条的已经收回）
+    expect(readdirSync(photos).length).toBe(before.length + 1)
+  })
+})

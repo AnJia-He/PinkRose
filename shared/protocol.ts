@@ -97,6 +97,9 @@ export type AppErrorCode =
   //   和 UPSTREAM_LIMIT 分开，因为下一步动作不一样：那条是"等上游缓过来"，
   //   这条是"你打得太快了，慢一点"。
   | 'TOO_MANY'
+  // ★ 2026-10-02 加（安全审计）：同一条会话被两条路同时改，后到的那条**明确失败**。
+  //   在它之前是"两次都回 200，先写的那一步静默消失" —— 这个项目最恨的那一类。
+  | 'CONFLICT'
   | 'INTERNAL'
 
 export type AppError = { error: { code: AppErrorCode; message: string } }
