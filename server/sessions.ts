@@ -19,9 +19,9 @@ const MAX_MESSAGES = 200
  * ⚠️ **它不是"这条会话最多几步"那个帽子**（2026-10-01 终审更正，别照着它推）：
  *   · 截的是**这一次送来的**那一串，超了就**静默丢掉最老的那几步** —— 库里那串
  *     跟着变短，而那几步引用的文件还在盘上（`files` 名单见下一条）；
- *   · 更要紧的是 `files` 名单**只增不减**（`[...own, ...新写的]`），盘上的文件
- *     也只有**删整条会话**才会被回收：一个会话改十次底图就多十张全尺寸图，
- *     这个常量一个字节都拦不住。
+ *   · 更要紧的是 `files` 名单**基本只增不减**（`handleUpdateSession` 里只有**被换掉的
+ *     那个缩略图**会从名单里拿掉，别的一律留着），盘上的文件也只有**删整条会话**
+ *     才会被回收：一个会话改十次底图就多十张全尺寸图，这个常量一个字节都拦不住。
  *   真正的"每条会话最多 N 步 / 每人 5 GB"是设计文档 §4.5/§10 里那张**还没做**的
  *   防滥用表，要做得在合并**之后**截，并把被截掉的那几步引用的文件一起收回来
  *   （还得确认没有别的步骤共用它们）—— 那是另一件事，别拿这个常量当它。
@@ -123,7 +123,12 @@ export async function handleCreateSession(
     const r = deps.db.raw.prepare(
       `INSERT INTO sessions (user_id, created_at, updated_at, title, original, original_name, base, thumb, messages, steps, files)
        VALUES (?, ?, ?, NULL, ?, ?, ?, ?, '[]', '[]', ?)`,
-    ).run(user.id, t, t, original, name, original, thumb, JSON.stringify([original]))
+    ).run(user.id, t, t, original, name, original, thumb,
+      // ⚠️ **缩略图也进名单**。它虽然在 `thumb` 那一列上，但它同样是**这条会话名下的
+      //    文件** —— `files` 是"删的时候该删哪些"的唯一依据，漏一样就是每删一条会话
+      //    在盘上留一个没人认领的文件，而且**永远没人会知道**。
+      //    （2026-10-02 用户在盘上抓到的就是它：3 条删过的会话 = 3 个孤儿缩略图。）
+      JSON.stringify(thumb ? [original, thumb] : [original]))
     return { id: Number(r.lastInsertRowid) }
   } catch (e) {
     // 插不进库就把刚写的文件收回来 —— 不收的话盘上留下两个**没人知道是什么**的文件。
@@ -303,7 +308,19 @@ export async function handleUpdateSession(
       ? mergeSteps(prevSteps, o.steps.slice(-MAX_STEPS), newFile, row.original, t)
       : prevSteps
     // 名单：原来的 + 这次新写的。每一步引用的文件都必须在名单里
-    files = [...own, ...(newFile ? [newFile] : [])]
+    //
+    // ⚠️ **缩略图也在名单里**（2026-10-02 修的）：它虽然在 `thumb` 那一列上，但
+    //    同样是这条会话名下的文件 —— 而 `files` 是"删的时候该删哪些"的唯一依据。
+    //    不进名单的后果是每删一条会话往盘上留一个孤儿，且**一声不吭**（本机实测：
+    //    3 条删过的会话 = 3 个孤儿缩略图）。
+    // ⚠️ 被换掉的那个旧缩略图要**同时从名单里拿掉**（下面 `catch` 之后那句会把它
+    //    从盘上删掉）。留着的话名单里就有一个指向"已经不存在的文件"的名字，
+    //    而 `files` 同时还当着 `requireOwnFile` 的许可名单 —— 一张注销不了的空头支票。
+    files = [
+      ...own.filter((f) => f !== (newThumb ? row.thumb : null)),
+      ...(newFile ? [newFile] : []),
+      ...(newThumb ? [newThumb] : []),
+    ]
     for (const s of steps) requireOwnFile(s.image, files)
 
     // ★ 「现在这一版参数」落在**最后一步**上。`SessionPatch.params` 那段注释讲了为什么

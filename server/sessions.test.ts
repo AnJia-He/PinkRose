@@ -106,7 +106,29 @@ describe('更新', () => {
     expect(files.length).toBe(before.length + 1)
     expect(row.base).not.toBe(row.original)
     expect(row.title).toBe('去掉路人')
-    expect(row.base).toBe(files[files.length - 1])   // base 永远是名单最后一个新文件
+    // ⚠️ 这一句在**这一条用例里**成立（没送 thumb，名单尾巴就是刚写的那张 base）。
+    //    别把它当成"名单最后一条永远是 base"：送了缩略图的话，缩略图跟在 base 后面
+    //    （缩略图也在名单里 —— 见下面「删完之后 photos 目录里一个文件都不剩」那条）。
+    expect(row.base).toBe(files[files.length - 1])   // base 是这次新写的那个文件
+  })
+
+  it('★ 缩略图也进 `files` 名单 —— 它同样是这条会话名下的文件', async () => {
+    // ⚠️ 这一条守的是**删除那条路唯一的依据**。缩略图住在自己那一列上，很容易
+    //    被当成"不是文件"漏掉名单 —— 而漏掉的后果**一声不吭**：每删一条会话，
+    //    盘上就多一个没人认领的缩略图，永久留着。
+    //    （2026-10-02 在真机上数出来的：3 条删过的会话 = 3 个孤儿，大小都落在缩略图那一档。）
+    const { id } = await handleCreateSession({ image: JPEG, thumb: JPEG }, user, deps())
+    let row = db.raw.prepare('SELECT * FROM sessions WHERE id=?').get(id) as any
+    expect(JSON.parse(row.files)).toContain(row.thumb)
+    // 换一个缩略图：新的进去、**旧的从名单里拿掉**（旧文件这时已经被删了，
+    // 名字再留着就是一张注销不掉的空头支票 —— `files` 同时还是许可名单）
+    const oldThumb = row.thumb
+    await handleUpdateSession(id, { thumb: JPEG }, user, deps())
+    row = db.raw.prepare('SELECT * FROM sessions WHERE id=?').get(id) as any
+    const files = JSON.parse(row.files)
+    expect(files).toContain(row.thumb)
+    expect(row.thumb).not.toBe(oldThumb)
+    expect(files).not.toContain(oldThumb)
   })
 
   it('★ 拖滑块那种更新：不传 base → **一个新文件都不该多**', async () => {
@@ -300,5 +322,25 @@ describe('删', () => {
     expect(work.id).toBe(workId)
     // 文件也真的还在（不是只剩一条打不开的记录）
     await expect(handleWorkFile(workId, user, deps())).resolves.toBeTruthy()
+  })
+
+  it('★★ 删完之后 photos 目录里**一个文件都不剩** —— 名单之外也不许留', async () => {
+    // ⚠️ 上面那一条是**照着 `files` 那份名单去查**的 —— 名单里少一个文件，它就
+    //    跟着少查一个，**永远不会红**。而名单确实一直少一个：**缩略图从来没进过
+    //    `files`**（它住在自己那一列上），而删除这条路上只看名单。
+    //
+    //    真凭实据（2026-10-02 本机数出来的）：盘上 1554 个文件，只有 **3** 个
+    //    不被任何一行引用 —— 而那 3 个正好就是删过的 3 条会话（id 90/92/102），
+    //    一条一个，大小都落在缩略图那一档。**不是竞态，是每删必漏。**
+    //    其中最新那个（`2ce2b111….jpg`，16115 字节）就是用户那天自己传的那张的
+    //    缩略图：会话行没了（`sqlite_sequence` 到 102，`max(id)` 只剩 101），
+    //    文件还在盘上躺着。
+    //
+    //    所以判据只能看**目录本身** —— 它不依赖任何人的名单写得对不对。
+    const { id } = await handleCreateSession({ image: JPEG, thumb: JPEG }, user, deps())
+    // 再换一次底图 + 缩略图（被换掉的那个缩略图当场就该删，见 handleUpdateSession）
+    await handleUpdateSession(id, { base: JPEG, thumb: JPEG, steps: [step(1)] }, user, deps())
+    await handleDeleteSession(id, user, deps())
+    expect(existsSync(photos) ? readdirSync(photos) : []).toEqual([])
   })
 })
