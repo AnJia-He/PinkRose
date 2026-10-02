@@ -93,6 +93,10 @@ export type AppErrorCode =
   | 'UPSTREAM_AUTH'
   | 'UPSTREAM_LIMIT'   // 429 限流，稍后重试可能成功，503
   | 'UPSTREAM_FAILED'  // 上游挂了或超时，502
+  // ★ 2026-10-02 加（安全审计 H2/S3）：**我们自己**的限流（不是上游的）。
+  //   和 UPSTREAM_LIMIT 分开，因为下一步动作不一样：那条是"等上游缓过来"，
+  //   这条是"你打得太快了，慢一点"。
+  | 'TOO_MANY'
   | 'INTERNAL'
 
 export type AppError = { error: { code: AppErrorCode; message: string } }

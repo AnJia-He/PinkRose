@@ -120,8 +120,8 @@ export function sendBytes(res: ServerResponse, status: number, bytes: Uint8Array
  * 这里，必须是编译错误，而不是运行时一个 undefined 状态码。
  */
 const STATUS_BY_CODE: Record<AppErrorCode, number> = {
-  BAD_REQUEST: 400, UNAUTHORIZED: 401, UPSTREAM_AUTH: 502, UPSTREAM_LIMIT: 503,
-  UPSTREAM_FAILED: 502, INTERNAL: 500,
+  BAD_REQUEST: 400, UNAUTHORIZED: 401, TOO_MANY: 429, UPSTREAM_AUTH: 502,
+  UPSTREAM_LIMIT: 503, UPSTREAM_FAILED: 502, INTERNAL: 500,
 }
 
 /**
@@ -149,6 +149,9 @@ export const CHECK_YOUR_KEY_TIP =
 const USER_MESSAGE: Record<AppErrorCode, string> = {
   BAD_REQUEST: '这次请求有点问题，换个说法试试',
   UNAUTHORIZED: '先登录一下',
+  // 兜底。真正的限流提示是**带秒数**的（在 app.ts 里现算），走不到这一句 ——
+  // 但地图必须穷尽，加一个错误码忘了这里得是编译错误。
+  TOO_MANY: '操作太频繁了，过一会儿再试',
   // ★ 这一句必须**不知道这把钥匙是谁的**也说真话。
   //
   // 归属（用户自己填的 / 我们自己的）没有被传到这个位置 —— 那要给三个 deps 类型

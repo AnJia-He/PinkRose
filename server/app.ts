@@ -15,6 +15,7 @@ import {
   resolveSecretById, updateConfig, type ModelConfigDeps, type ModelKind,
 } from './models.ts'
 import { assertModelHostAllowed } from './hostGuard.ts'
+import { createLimiter, type Limiter } from './ratelimit.ts'
 import { probeConnection } from './modeltest.ts'
 import type { SerialQueue } from './queue.ts'
 import { handleRoute } from './route.ts'
@@ -81,9 +82,52 @@ const MIME: Record<string, string> = {
   '.json': 'application/json; charset=utf-8',
 }
 
+/**
+ * 三个「可以被人反复打」的入口各一把限流器。
+ *
+ * ★ 2026-10-02 加（安全审计 H2 / M3 / S3）。在那之前：登录**一个失败计数都没有**
+ *   （字典可以慢慢试密码，而接口还主动回答"这个账号存不存在"）、注册不限量
+ *   （批量开小号去烧我们的额度）、`/api/models/test` 是登录即可用、不限速、
+ *   不排队的**网络探测器**（能靠返回码扫内网端口）。
+ *
+ * ⚠️ **挂在 `createApp` 里**（每个 app 一份），不是模块级单例 ——
+ *   模块级的话测试之间会互相污染：上一个用例把额度用光，下一个莫名其妙 429。
+ *
+ * ⚠️ **为什么登录按"用户名"记、不按 IP**：这个后端只听 127.0.0.1，而手机调试是
+ *   经 vite 代理进来的 —— 所有请求的 `remoteAddress` 都是 127.0.0.1。
+ *   按 IP 记等于**全局限流**：一个人打错十次密码，全站都登不上了。
+ *   按用户名记才挡得住真正要挡的那件事（盯着一个账号慢慢试）。
+ */
+type Gates = { login: Limiter; signup: Limiter; probe: Limiter }
+
+function newGates(): Gates {
+  return {
+    login: createLimiter({ max: 10, windowMs: 15 * 60_000 }),
+    // 注册按 IP —— 这里没有"某个账号"可盯，要挡的是批量开小号。
+    signup: createLimiter({ max: 20, windowMs: 60 * 60_000 }),
+    probe: createLimiter({ max: 30, windowMs: 10 * 60_000 }),
+  }
+}
+
+/**
+ * 额度不够就抛。**等待时间要说成人话** —— 900 秒没人算得出来是多久。
+ */
+function assertGate(lim: Limiter, key: string, what: string): void {
+  const r = lim.hit(key)
+  if (r.ok) return
+  const secs = Math.ceil(r.retryAfterMs / 1000)
+  const wait = secs >= 120 ? `${Math.ceil(secs / 60)} 分钟` : `${secs} 秒`
+  // ⚠️ **429 必须显式传**：`HttpError` 的 status 默认是 400，它**不查**
+  //    `STATUS_BY_CODE`（那张表只管 `SnError`）。不传的话，限流确实挡住了，
+  //    但用户收到的是"你的请求有问题"—— 而他要做的是"等一会儿再试"，
+  //    两件事的下一步动作完全不同。这一条是写测试时才发现的。
+  throw new HttpError('TOO_MANY', `${what}试得太频繁了，等 ${wait}再试。`, 429)
+}
+
 export function createApp(deps: AppDeps): Server {
+  const gates = newGates()
   return createServer((req, res) => {
-    handle(deps, req, res).catch(e => sendError(res, e))
+    handle(deps, req, res, gates).catch(e => sendError(res, e))
   })
 }
 
@@ -148,7 +192,7 @@ function renewSessionIfStale(
   ))
 }
 
-async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, gates: Gates): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost')
   const path = url.pathname
 
@@ -162,7 +206,9 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
     // 另外两个（/api/me、/api/password）自己在下面调 requireUser。
     if (req.method === 'POST' && path === '/api/signup') {
       const body = await readJsonBody(req)
-      const r = handleSignup(body, deps.auth)
+      // 注册按 IP（vite 代理之下所有请求都长着同一个 IP —— 见 newGates 那段）
+      assertGate(gates.signup, `signup:${req.socket.remoteAddress ?? '?'}`, '注册')
+      const r = await handleSignup(body, deps.auth)
       // 注册即登录：票直接挂在这一条响应上，前端不用再多打一次登录
       res.setHeader('set-cookie', sessionCookie(r.token, r.expiresAt))
       sendJson(res, 200, { user: r.user })
@@ -170,7 +216,15 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
     }
     if (req.method === 'POST' && path === '/api/login') {
       const body = await readJsonBody(req)
-      const r = handleLogin(body, deps.auth)
+      // 按**用户名**记（小写、截断）—— 理由见 newGates 那段。
+      // 名字读不出来时用一个固定桶：那是畸形请求，也该被限住。
+      const who = str((body as { username?: unknown })?.username).trim().toLowerCase().slice(0, 64) || '(空)'
+      const gate = `login:${who}`
+      assertGate(gates.login, gate, '登录')
+      const r = await handleLogin(body, deps.auth)
+      // 成功了就把计数清掉 —— 别让"前几次打错"一直攒着，
+      // 攒到第十次把一个正常用户挡在门外。
+      gates.login.reset(gate)
       res.setHeader('set-cookie', sessionCookie(r.token, r.expiresAt))
       sendJson(res, 200, { user: r.user })
       return
@@ -191,7 +245,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
       // 顺序同三个 AI 接口：先认人，再读体
       const user = requireUser(deps, req, res)
       const body = await readJsonBody(req)
-      const r = handleChangePassword(body, user, deps.auth)
+      const r = await handleChangePassword(body, user, deps.auth)
       res.setHeader('set-cookie', sessionCookie(r.token, r.expiresAt))
       sendJson(res, 200, { user: r.user })
       return
@@ -413,6 +467,9 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse):
     if (req.method === 'POST' && path === '/api/models/test') {
       const user = requireUser(deps, req, res)
       const body = asObject(await readJsonBody(req))
+      // ★ 它是登录即可用的**网络探测器**（失败原因三态可区分 = 能扫端口），
+      //   所以按用户限速。放在读体之后（要先知道是谁）。
+      assertGate(gates.probe, `probe:${user.id}`, '测试连接')
       // 库里那一套：先按 id 取，取不到就是 404（别人的 / 没有的，同一个结局）
       let conn: { baseUrl: string; apiKey: string }
       if (body.id !== undefined) {

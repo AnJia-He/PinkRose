@@ -58,7 +58,7 @@ function issue(user: PublicUser, passwordHash: string, deps: AccountDeps) {
   return { user, token: signSession(user.id, passwordHash, expiresAt, deps.secret), expiresAt }
 }
 
-export function handleSignup(body: unknown, deps: AccountDeps) {
+export async function handleSignup(body: unknown, deps: AccountDeps) {
   const o = asObject(body)
 
   // 前端那边也验一遍 —— 但那是体验，这遍才是规矩：请求可以伪造。
@@ -76,7 +76,7 @@ export function handleSignup(body: unknown, deps: AccountDeps) {
 
   // 哈希只在这里算一次，存库和签票用的是同一个 —— 两边不一致的话，
   // 刚注册完的人会立刻"登录态无效"。
-  const hash = hashPassword(p.value)
+  const hash = await hashPassword(p.value)
   try {
     deps.db.raw
       .prepare('INSERT INTO users (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)')
@@ -100,7 +100,7 @@ export function handleSignup(body: unknown, deps: AccountDeps) {
   return issue(row, hash, deps)
 }
 
-export function handleLogin(body: unknown, deps: AccountDeps) {
+export async function handleLogin(body: unknown, deps: AccountDeps) {
   const o = asObject(body)
   // ⚠️ 归一化用 `normalizeUsername`，**不是** `checkUsername` —— 后者还带着一整串
   // 「能不能拿这个名字注册」的规矩（长度、字符类、保留名），而登录问的是另一件事：
@@ -145,14 +145,14 @@ export function handleLogin(body: unknown, deps: AccountDeps) {
     .prepare('SELECT id, username, email, password_hash FROM users WHERE username = ?')
     .get(name) as Row | undefined
   if (!row) throw NO_SUCH()
-  if (!verifyPassword(rawPw, row.password_hash)) {
+  if (!(await verifyPassword(rawPw, row.password_hash))) {
     throw new HttpError('BAD_REQUEST', '密码不对，再试一次')
   }
 
   return issue({ id: row.id, username: row.username, email: row.email }, row.password_hash, deps)
 }
 
-export function handleChangePassword(body: unknown, user: PublicUser, deps: AccountDeps) {
+export async function handleChangePassword(body: unknown, user: PublicUser, deps: AccountDeps) {
   const o = asObject(body)
   const oldPw = str(o.oldPassword)
   const newPw = str(o.newPassword)
@@ -167,7 +167,7 @@ export function handleChangePassword(body: unknown, user: PublicUser, deps: Acco
   if (!row) throw new HttpError('BAD_REQUEST', '这个账号不在了')
   // 不验旧密码的话，谁捡到一张票（别人落下的手机、被复制走的 cookie）
   // 都能直接把号锁死 —— 把人关在门外比偷看更狠。
-  if (!verifyPassword(oldPw, row.password_hash)) {
+  if (!(await verifyPassword(oldPw, row.password_hash))) {
     throw new HttpError('BAD_REQUEST', '原来的密码不对')
   }
 
@@ -175,7 +175,7 @@ export function handleChangePassword(body: unknown, user: PublicUser, deps: Acco
   const p = checkPassword(newPw, user.username)
   if (!p.ok) throw new HttpError('BAD_REQUEST', p.message)
 
-  const hash = hashPassword(p.value)
+  const hash = await hashPassword(p.value)
   deps.db.raw.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id)
 
   // ★ 写完之后**必须发一张新票**：上面那次 UPDATE 让**包括当前这台在内**的所有票

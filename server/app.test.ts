@@ -125,7 +125,7 @@ async function appWithUser(
 ): Promise<{ base: string; cookie: string; auth: AccountDeps }> {
   const auth = newAuth()
   const base = await boot({ ...extra, auth })
-  const r = handleSignup({ username: '测试用户', email: 't@t.com', password: 'password123' }, auth)
+  const r = await handleSignup({ username: '测试用户', email: 't@t.com', password: 'password123' }, auth)
   return { base, cookie: `${SESSION_COOKIE}=${r.token}`, auth }
 }
 
@@ -146,7 +146,7 @@ async function appWithAgingTicket(): Promise<{
   const clock = { t: Date.now() }
   const auth = newAuth(() => clock.t)
   const base = await boot({ auth })
-  const r = handleSignup({ username: '老用户', email: 'o@o.com', password: 'password123' }, auth)
+  const r = await handleSignup({ username: '老用户', email: 'o@o.com', password: 'password123' }, auth)
   return {
     base,
     cookie: `${SESSION_COOKIE}=${r.token}`,
@@ -911,7 +911,7 @@ describe('/api/models', () => {
     const { base, auth, cookie: mine } = await appWithUser()
     // 第二个人：**同一个 app、同一个库**，只是另一张票 ——
     // 照 appWithUser 内部那一句写（同一个 auth 上再注册一个，就是"另一个人"）。
-    const other = handleSignup(
+    const other = await handleSignup(
       { username: '对面的人', email: 'other@t.com', password: 'password123' }, auth,
     )
     const theirs = `${SESSION_COOKIE}=${other.token}`
@@ -956,7 +956,7 @@ describe('/api/models', () => {
 
   it('★ 「测一下」：别人的 id / 不存在的 id → 404，空钥匙 → 400（都在出网之前）', async () => {
     const { base, auth, cookie: mine } = await appWithUser()
-    const other = handleSignup(
+    const other = await handleSignup(
       { username: '对面的人', email: 'other@t.com', password: 'password123' }, auth,
     )
     const theirs = `${SESSION_COOKIE}=${other.token}`
@@ -1094,7 +1094,7 @@ describe('★ 两套 key 彻底分开（§7.4，用户点名要的四条；⑤ �
         clientFactory: c => new SenseNovaClient(c, recordingFetch(calls, opts.reject)),
       },
     })
-    const r = handleSignup({ username: '测试用户', email: 't@t.com', password: 'password123' }, auth)
+    const r = await handleSignup({ username: '测试用户', email: 't@t.com', password: 'password123' }, auth)
     const cookie = `${SESSION_COOKIE}=${r.token}`
     /** 走真接口建一套配置并激活 —— 用户就是这么做的（不是直接往库里塞）。 */
     const addAndActivate = async (body: typeof CHAT | typeof IMAGE): Promise<void> => {
@@ -1214,7 +1214,7 @@ describe('会话接口', () => {
   /** 第二个用户。`appWithUser` 只建第一个，第二个往同一个 auth 里再注册一次。 */
   async function twoUsers() {
     const a = await appWithUser()
-    const b = handleSignup({ username: '小红', email: 'r@r.com', password: 'password123' }, a.auth)
+    const b = await handleSignup({ username: '小红', email: 'r@r.com', password: 'password123' }, a.auth)
     return { base: a.base, auth: a.auth, cookieA: a.cookie, cookieB: `${SESSION_COOKIE}=${b.token}` }
   }
   const JPEG = 'data:image/jpeg;base64,AAAA'
@@ -1540,5 +1540,57 @@ describe('会话接口', () => {
     const cutThumb = await fetch(`${base}/api/sessions/${id}/thumb/x`, { headers: { cookie: cookieA } })
     expect(cutThumb.status).toBe(404)
     expect((await call(base, 'GET', `/api/sessions/${id}/x`, undefined, cookieA)).status).toBe(404)
+  })
+})
+
+/**
+ * ★ 2026-10-02 加（安全审计 H2 / S3）。
+ *
+ * 在那之前 `/api/login` **一个失败计数都没有** —— 无锁定、无退避，而接口还主动
+ * 回答"这个账号存不存在"。字典可以慢慢试密码，这个项目最恨的那种静默失守
+ * （界面上一切正常，只是有人在门外一把把试钥匙）就长在这里。
+ */
+describe('★ 限流：登录、注册、探活', () => {
+  const WRONG = { username: '查无此人', password: 'whatever-1234' }
+
+  it('★ 同一个账号连打十次 → 第十一次是 429，而且说得出还要等多久', async () => {
+    const base = await boot({ auth: newAuth() })
+    for (let i = 0; i < 10; i++) {
+      const r = await post(base, '/api/login', WRONG)
+      // 前 ten 次是"没这个账号"，不是限流 —— 先钉住这个前提，
+      // 不然下面那条 429 可能只是别的东西坏了
+      expect(r.status).toBe(400)
+    }
+    const r = await post(base, '/api/login', WRONG)
+    expect(r.status).toBe(429)
+    expect(r.body.error?.code).toBe('TOO_MANY')
+    // 文案规范 5：哪不对 + 怎么办。而"怎么办"里必须有个**人算得出来的时间**
+    // （900 秒没人算得出是多久）。
+    expect(r.body.error?.message).toMatch(/等 .*(分钟|秒)再试/)
+  })
+
+  it('★ 限的是**那个账号**，不是全站 —— 别人被限不该连累你', async () => {
+    const base = await boot({ auth: newAuth() })
+    for (let i = 0; i < 11; i++) await post(base, '/api/login', WRONG)
+    expect((await post(base, '/api/login', WRONG)).status).toBe(429)
+    // 换一个名字，照常走正常逻辑（这里是"没这个账号"，不是 429）
+    const other = await post(base, '/api/login', { username: '别人', password: 'whatever-1234' })
+    expect(other.status).toBe(400)
+  })
+
+  it('登录成功把计数清零 —— 前几次打错不该一直攒着', async () => {
+    const auth = newAuth()
+    const base = await boot({ auth })
+    await handleSignup({ username: '小明', email: 'm@m.com', password: 'goodpassword' }, auth)
+    for (let i = 0; i < 9; i++) {
+      await post(base, '/api/login', { username: '小明', password: 'wrongpassword' })
+    }
+    // 第九次之后用对的密码进来 —— 应该成功，而且把计数清掉
+    expect((await post(base, '/api/login', { username: '小明', password: 'goodpassword' })).status).toBe(200)
+    // 再打十次错的，第 11 次才该被限（如果没清，第 2 次就满了）
+    for (let i = 0; i < 10; i++) {
+      await post(base, '/api/login', { username: '小明', password: 'wrongpassword' })
+    }
+    expect((await post(base, '/api/login', { username: '小明', password: 'wrongpassword' })).status).toBe(429)
   })
 })

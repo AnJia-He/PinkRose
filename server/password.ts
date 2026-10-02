@@ -1,4 +1,27 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto'
+
+/**
+ * scrypt 的**异步**版本。
+ *
+ * ★ 2026-10-02（安全审计 M1）：原来是 `scryptSync` —— 它跑在**主线程**上，
+ *   N=32768 一次几十毫秒，而这期间 Node **什么都干不了**。而调它的两个地方
+ *   （注册、登录）都**不需要登录**，也就是说任何人都能打：几十个并发登录
+ *   请求就能把整个服务卡住几秒（连 /api/health 和别人的修图一起等）。
+ *   异步版走 libuv 线程池，主线程空出来继续接请求。
+ *
+ *   注意这不是"加个上限"能解决的：要防的是**延迟**，不是内存
+ *   （同步执行天然串行，一次只占 32 MiB）。
+ */
+function scryptAsync(
+  password: string, salt: Buffer, keylen: number, opts: ScryptOptions,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, keylen, opts, (err, key) => {
+      if (err) reject(err)
+      else resolve(key as Buffer)
+    })
+  })
+}
 
 /** scrypt 参数。N=2^15 在 2026 年的机器上约几十毫秒，够慢也够快。 */
 const N = 32768
@@ -34,14 +57,14 @@ const MAXMEM = 128 * N * R * 2
  * **每次调用的盐都不一样** —— 同一个密码在两个用户那里哈希也不同，
  * 于是"撞库"（拿别人的哈希表来试）在这个库里没有意义。
  */
-export function hashPassword(plain: string): string {
+export async function hashPassword(plain: string): Promise<string> {
   const salt = randomBytes(SALT_LEN)
-  const key = scryptSync(plain, salt, KEY_LEN, { N, r: R, p: P, maxmem: MAXMEM })
+  const key = await scryptAsync(plain, salt, KEY_LEN, { N, r: R, p: P, maxmem: MAXMEM })
   return `scrypt$${N}$${R}$${P}$${salt.toString('base64')}$${key.toString('base64')}`
 }
 
 /**
- * 校验。**永远返回 boolean，永远不抛。**
+ * 校验。**永远返回 boolean，永远不抛**（异步之后：永远不 reject）。
  *
  * 存坏的哈希（数据库被手工改过、或者以后换了算法）只该让这个人登不上，
  * 不该让整个登录接口 500 —— 那会把"一个人有问题"放大成"所有人都登不了"。
@@ -49,7 +72,7 @@ export function hashPassword(plain: string): string {
  * 比对用 timingSafeEqual：普通 `===` 会因为"比到第几位才不一样"而耗时不同，
  * 理论上能被用来一位一位地猜出哈希。
  */
-export function verifyPassword(plain: string, stored: string): boolean {
+export async function verifyPassword(plain: string, stored: string): Promise<boolean> {
   // 签名上的 `stored: string` 只在编译期成立 —— Node 的 TS 剥离模式运行时不设防，
   // 而它真正被调用的地方（把 password_hash 从数据库读出来）正好是个无类型的边界。
   // null / undefined 进来时，下一行的 split 会直接抛，那就把"一个人有问题"
@@ -72,7 +95,7 @@ export function verifyPassword(plain: string, stored: string): boolean {
 
   let actual: Buffer
   try {
-    actual = scryptSync(plain, salt, expected.length, { N: n, r, p, maxmem: MAXMEM })
+    actual = await scryptAsync(plain, salt, expected.length, { N: n, r, p, maxmem: MAXMEM })
   } catch {
     // 参数大到内存扛不住时 scryptSync 会抛。当成"对不上"，不是"服务器坏了"
     return false
