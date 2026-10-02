@@ -3518,6 +3518,13 @@ describe('恢复：打开就接着上次那条', () => {
         if (!d) return jsonResponse({ error: { code: 'NOT_FOUND', message: '没有这条' } }, 404)
         return jsonResponse(d)
       }
+      // 删一条（Task 6 的列表上那颗「删掉」）。**必须接住**：掉进下面那个兜底的
+      // blob 形状的话，`deleteSession` 读正文那一步会炸 —— 而"删失败了"这条路上
+      // App 那边什么都不做，测试于是绿在一个**报错的路径**上。
+      if (one && method === 'DELETE') {
+        rows = rows.filter(x => x.id !== Number(one[1]))
+        return jsonResponse({ ok: true })
+      }
       if (/^\/api\/sessions\/\d+\/file\/original$/.test(url)) {
         originalGets++
         // `originalFails` 演的是"原图这一趟取不回来"（文件没了、网断了）。
@@ -3958,6 +3965,93 @@ describe('恢复：打开就接着上次那条', () => {
     const texts = bodyOf(puts[0]!).messages.map((m: { text: string }) => m.text)
     expect(texts).toContain('新的这张改一下')
     expect(texts).not.toContain('S7第 0 步')
+  })
+
+  /** 列表上把某一条删掉：先点行尾那颗「删除」，再点确认条上的「删掉」。 */
+  async function deleteRow(name: string) {
+    const row = [...container.querySelectorAll('.session-row')].find(
+      r => (r.textContent ?? '').includes(name))
+    expect(row).toBeTruthy()
+    const hit = async (text: string) => {
+      const b = [...row!.querySelectorAll('button')].find(
+        x => (x.textContent ?? '').trim() === text) as HTMLButtonElement | undefined
+      expect(b).toBeTruthy()
+      await act(async () => { b!.click(); await new Promise(r => setTimeout(r, 0)) })
+    }
+    await hit('删除')
+    await hit('删掉')
+  }
+
+  /**
+   * ★★ 2026-10-02 用户报的那条：「我把对话的历史删掉了，为什么修图中还是有我上传的照片呢」。
+   *
+   * 根因：`SessionsPage` 只从 App 领 `onOpen` / `onNew` —— **没有 `onDeleted`**。
+   * 删掉的是服务端那一行和列表里那一格，App 手上那份"正在改的照片"**一个字节没动**。
+   *
+   * ⚠️ 后果不止"看着奇怪"，而且比看着奇怪糟得多：那是**静静地写不进去** ——
+   *   `sessionId` 还指着一条已经不存在的会话，之后再改什么都打在 404 上
+   *   （屏幕上只有一句"刚才那一步没存下来"），刷新一看全没。正是这个项目最恨的
+   *   那种失败：错了不报错，只是悄悄丢东西。
+   *
+   * 所以要钉两件事：**照片跟着走掉** + **不再往那条死会话上写一个字**。
+   */
+  it('★★ 删掉**正在改**的那条会话：屏幕上那张照片跟着走，而且不许再往那条上写', async () => {
+    const nine = { ...makeSession(9, 1, 'S9-用户说的', 'S9'), originalName: '九号.jpg' }
+    withSessions([nine])
+    await renderApp()
+    // ① 开门接着上次那条：画布上有图，对话在
+    expect(bubbleTexts()).toContain('S9-用户说的')
+    expect(container.querySelector('canvas')).toBeTruthy()
+    const openBitmaps = [...decodedBitmaps]
+
+    // ② 说一句话 —— 那一刻 800ms 的防抖**刚排上队**，故意不等它
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({ reply: '好。' }))
+    await say('删之前刚说的这句')
+
+    // ③ 走**真入口**去「对话」把它删掉
+    await goNav('对话')
+    await deleteRow('九号')
+
+    // ④ ★ 那一趟**已经排上队**的落盘不许发出去：它打的就是刚被删掉的那条，
+    //    发出去只会 404，屏幕上多一句"刚才那一步没存下来" —— 一句关于
+    //    **用户刚亲手删掉的那条会话**的警报。该做的是把它**扔掉**，不是 flush。
+    //    ⚠️ 必须**等过那 800ms 的防抖**再断：不等的话，一个"什么都没做"的实现
+    //    也过得了这一句 —— 闹钟还没响而已。
+    await waitPersist()
+    expect(putCalls('/api/sessions/9')).toHaveLength(0)
+
+    // ⑤ 回「修图」：那张照片要**跟着走** —— 回到"选一张照片"那一屏
+    await goNav('修图')
+    expect(container.querySelector('canvas')).toBeNull()
+    expect(container.querySelector('input[type="file"]')).toBeTruthy()
+    //    放下的那张的位图要还回去（不还就是"删几次把标签页拖垮"）
+    for (const b of openBitmaps) expect(vi.mocked(b.close)).toHaveBeenCalled()
+  })
+
+  it('删掉的是**别人那条**会话：手上正在改的这张一点都不能动', async () => {
+    // 上一条的反面。用户在列表里收拾旧账是常事，而**手上这张可能正改到一半** ——
+    // 删的要不是它，多动一下就是把人家干到一半的活儿抹了，而且不报错。
+    // 判据只有一条：`id === sessionIdRef.current`。
+    const nine = { ...makeSession(9, 1, 'S9-用户说的', 'S9'), originalName: '九号.jpg' }
+    const seven = { ...makeSession(7, 1, 'S7-用户说的', 'S7'), originalName: '七号.jpg' }
+    withSessions([seven, nine])
+    await renderApp()                       // 接回最近动过的九号
+    expect(bubbleTexts()).toContain('S9-用户说的')
+
+    await goNav('对话')
+    await deleteRow('七号')                  // 删的**不是**手上那条
+
+    await goNav('修图')
+    // 照片还在、对话还在 —— 而且之后照常能落盘
+    expect(container.querySelector('canvas')).toBeTruthy()
+    expect(bubbleTexts()).toContain('S9-用户说的')
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({ reply: '好。' }))
+    await say('删别人的那条之后说的')
+    await waitPersist()
+    const puts = putCalls('/api/sessions/9')
+    expect(puts).toHaveLength(1)
+    expect(bodyOf(puts[0]!).messages.map((m: { text: string }) => m.text))
+      .toContain('删别人的那条之后说的')
   })
 
   it('★ 连点两条会话：被顶掉的那一趟**不许**说「没打开」 —— 它没失败，只是慢了一步', async () => {

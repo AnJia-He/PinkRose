@@ -59,6 +59,7 @@ let container: HTMLElement
 let root: Root
 let onOpen: ReturnType<typeof vi.fn>
 let onNew: ReturnType<typeof vi.fn>
+let onDeleted: ReturnType<typeof vi.fn>
 
 const tick = () => new Promise((r) => setTimeout(r, 0))
 
@@ -85,6 +86,7 @@ beforeEach(() => {
 
   onOpen = vi.fn()
   onNew = vi.fn()
+  onDeleted = vi.fn()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -100,7 +102,7 @@ afterEach(() => {
 
 async function show() {
   await act(async () => {
-    root.render(<SessionsPage onOpen={onOpen} onNew={onNew} />)
+    root.render(<SessionsPage onOpen={onOpen} onNew={onNew} onDeleted={onDeleted} />)
     // 挂载那一次「拉列表」得落定，不然看到的是"还在取"那一瞬间
     await tick()
   })
@@ -180,10 +182,16 @@ describe('对话列表', () => {
     expect(api.deleteSession).toHaveBeenCalledWith(7)
     // 那一行当场走人（等下次刷新才消失的话，用户会以为没删掉）
     expect(rowOf('第 7 条')).toBeNull()
+    // ★ 删**成功之后**要把 id 交回去（2026-10-02）：这一页不知道"现在正在改的是哪条"，
+    //   App 才知道。删掉正在改的那条时，App 手上那份照片/对话/快照全靠这一声跟着走
+    //   —— 不喊的话 `sessionId` 会一直指着一条已经不存在的会话。
+    expect(onDeleted).toHaveBeenCalledTimes(1)
+    expect(onDeleted).toHaveBeenCalledWith(7)
     expect(confirmSpy).not.toHaveBeenCalled()
     confirmSpy.mockRestore()
     // 变异：改用 `window.confirm` → 第一条 not.toHaveBeenCalled 红；
-    // 删完不动本地名单 → 最后那条 toBeNull 红。
+    // 删完不动本地名单 → 最后那条 toBeNull 红；
+    // 删成功不喊 `onDeleted` → 上面那两条红。
   })
 
   it('★ 一条会话都没有时，是一句"还没改过照片" + 一个去修图的入口，不是一个空列表', async () => {
@@ -209,7 +217,7 @@ describe('对话列表', () => {
     let release!: () => void
     vi.mocked(api.listSessions).mockImplementation(() => new Promise((r) => { release = () => r([ses(1)]) }))
     await act(async () => {
-      root.render(<SessionsPage onOpen={onOpen} onNew={onNew} />)
+      root.render(<SessionsPage onOpen={onOpen} onNew={onNew} onDeleted={onDeleted} />)
       await tick()
     })
     expect(texts()).toContain('正在取')
@@ -236,6 +244,11 @@ describe('对话列表', () => {
     expect(texts()).toContain('没删掉')
     expect(container.querySelector('.sessions')).not.toBeNull()
     expect(container.querySelector('.sessions-empty-title')).toBeNull()
-    // 变异：删失败也往 `failed` 那个状态上写 → 最后两条红。
+    // ★ 而且**不许喊 `onDeleted`**：那一声在 App 那边是"把手上的照片放下来"。
+    //   服务端什么都没删掉，App 却把用户正在改的那张抹了 —— 一次网络抖动
+    //   就能让他丢掉干到一半的活儿。
+    expect(onDeleted).not.toHaveBeenCalled()
+    // 变异：删失败也往 `failed` 那个状态上写 → 最后两条红；
+    // 把 `onDeleted` 挪到 `await` 前面（或者 try 外面）→ 这一条红。
   })
 })

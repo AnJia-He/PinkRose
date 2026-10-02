@@ -831,7 +831,7 @@ export default function App() {
       if (baseSeqRef.current !== seqAtStart) {
         bitmap.close()
         console.error('生成回来时用户已经切走了，这一版不写进去（钱已经花了，但写进别的会话更坏）')
-        noticeBad('你切走时，刚才那次生成还没回来 —— 结果没写进去。要的话，回到那条再说一遍。')
+        noticeBad('你切走时，刚才那次生成还没回来 —— 结果没写进去。要的话，再说一遍。')
         return
       }
       const nextBase: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
@@ -1098,28 +1098,18 @@ export default function App() {
   }, [history, say, loadCards, setCurrentSession])
 
   /**
-   * 「新的一张」—— 回到"选一张照片"那一屏（§6.4，Task 6）。
+   * 把"手上这一张"整个放下：照片、对话、参数、快照、会话 id，一件不留。
    *
-   * ⚠️ **它不删当前这条会话**：那条已经在服务端上存着了，左栏「对话」里还找得到。
-   *    表现上要和「保存」分清楚 —— 保存是"把这张存进作品"，新的一张是"我再改一张"。
+   * ⚠️ **它只清状态** —— 不发网络、不看 `busy`、不推版本号。那三件事**两条调用
+   *   路要的不一样**（见 `startNew` 和 `onSessionDeleted`），摆在这儿就会二选一
+   *   错一边。条件留在各自的调用点上，理由也写在那边。
    *
    * ⚠️ **归零前要把 `history` 里那些位图 `close()` 掉**（和 `onPick` 里那段
    *    `bitmapsToClose` 是同一个道理）：不关就是换几次照片把标签页拖垮 ——
    *    原图和每条生成式的 base 都占着 GPU 内存（32 MP 一张约 129 MB）。
-   *
-   * ⚠️ **生成在跑的时候不许按**（按钮那边也 disabled 了）：那一次回来时会往
-   *    history 里推一步、并且 `setImage` —— 而那时候屏幕上已经什么都没有了，
-   *    会凭空长出一张没有会话、也不会落盘的照片。
+   *    副作用留在状态更新外面，别塞进 updater（updater 可能被重放）。
    */
-  const startNew = useCallback(() => {
-    if (busy) return
-    // ★ 第一句（在动状态之前）：把上一条**还没到点**的那趟落盘提前发出去。
-    //   和切会话是同一条路 —— 状态一清，那个 800ms 的闹钟就被 effect 的清理
-    //   连根清掉了，用户最后改的那几下会永远丢了（见 `flushPersist`）。
-    //   摆在 `busy` 那道守卫**下面**：被挡回去的那一次什么都没发生，
-    //   更不该去动落盘。
-    flushPersist()
-    // 副作用留在状态更新外面，别塞进 updater（updater 可能被重放）。
+  const resetEditor = useCallback(() => {
     for (const s of bitmapsToClose(history, [])) s.bitmap.close()
     setImage(null)
     setHistory([])
@@ -1138,7 +1128,65 @@ export default function App() {
     setAsking(null)
     setOriginalPreview(null)
     originalFileRef.current = null
-  }, [busy, flushPersist, history, setCurrentSession])
+  }, [history, setCurrentSession])
+
+  /**
+   * 「新的一张」—— 回到"选一张照片"那一屏（§6.4，Task 6）。
+   *
+   * ⚠️ **它不删当前这条会话**：那条已经在服务端上存着了，左栏「对话」里还找得到。
+   *    表现上要和「保存」分清楚 —— 保存是"把这张存进作品"，新的一张是"我再改一张"。
+   *
+   * ⚠️ **生成在跑的时候不许按**（按钮那边也 disabled 了）：那一次回来时会往
+   *    history 里推一步、并且 `setImage` —— 而那时候屏幕上已经什么都没有了，
+   *    会凭空长出一张没有会话、也不会落盘的照片。
+   */
+  const startNew = useCallback(() => {
+    if (busy) return
+    // ★ 第一句（在动状态之前）：把上一条**还没到点**的那趟落盘提前发出去。
+    //   和切会话是同一条路 —— 状态一清，那个 800ms 的闹钟就被 effect 的清理
+    //   连根清掉了，用户最后改的那几下会永远丢了（见 `flushPersist`）。
+    //   摆在 `busy` 那道守卫**下面**：被挡回去的那一次什么都没发生，
+    //   更不该去动落盘。
+    flushPersist()
+    resetEditor()
+  }, [busy, flushPersist, resetEditor])
+
+  /**
+   * 用户把**正在改的那一条**从「对话」列表里删掉了（2026-10-02 用户报的那条：
+   * 「我把对话的历史删掉了，为什么修图中还是有我上传的照片呢」）。
+   *
+   * ⚠️ 这件事发生在服务端和那一页上，**App 这边不会自己知道** —— 删除成功后
+   *   `SessionsPage` 才把这个 id 交回来。不听的话后果不止"看着奇怪"：`sessionId`
+   *   还指着一条**已经不存在的**会话，之后再改什么都打在 404 上（屏幕上只有一句
+   *   "刚才那一步没存下来"），刷新一看全没 —— 错了不报错，只是悄悄丢东西。
+   *
+   * ⚠️ **不是他删的那条就一个字节都不许动**：用户在列表里收拾旧账是常事，
+   *   而手上这张可能正改到一半。
+   *
+   * ★ 和 `startNew` 有三处不同，每一处都有理由：
+   *   ① **不 flush，直接把它扔了**：那一趟打的就是刚被删掉的那条，发出去只会
+   *      404 —— 那不是"把活儿写完再走"，是把活儿扔进一个已经不存在的地址，
+   *      还顺手在屏幕上留一句关于**用户刚亲手删掉的东西**的警报。
+   *   ② **不看 `busy`**：`startNew` 忙的时候可以拒绝（那是用户的一次选择，等十几秒
+   *      再按就是了），而**删除已经发生了** —— 状态再不清，就是把人留在一条死会话上。
+   *   ③ **推一版 `baseSeqRef`**：正在跑的那次生成回来时会拿它跟出发时的版本比，
+   *      不一样就自己作废并且**说一声**（见 `applyDecision` 里 `seqAtStart` 那段）。
+   *      不推的话它会一头写进刚清空的 history —— 屏幕上凭空长出一张不属于任何会话、
+   *      也永远不会落盘的照片，而用户刚刚才亲手删掉一条。
+   *      （`startNew` 不用推这一版：它忙的时候直接拒绝了，走不到这个岔口。）
+   */
+  const onSessionDeleted = useCallback((id: number) => {
+    if (id !== sessionIdRef.current) return
+    const p = pendingPersistRef.current
+    if (p) {
+      // ② 的同一个道理：只有"已经不作数的那一趟"才在扔的范围里。**先摘再清计时器**，
+      //    别让它到点又跑一遍（`flushPersist` 也是这个顺序）。
+      pendingPersistRef.current = null
+      clearTimeout(p.timer)
+    }
+    baseSeqRef.current++
+    resetEditor()
+  }, [resetEditor])
 
   const send = useCallback(async (text: string) => {
     const canvas = canvasElRef.current
@@ -2047,6 +2095,9 @@ export default function App() {
         <SessionsPage
           onOpen={(id) => { go({ kind: 'edit' }); void loadSession(id, 'open') }}
           onNew={() => { startNew(); go({ kind: 'edit' }) }}
+          // ★ 删掉**正在改的那条**时，App 这边也得知道（2026-10-02 用户报的
+          //   "删了对话，修图里那张照片还在"）。理由和取舍见 `onSessionDeleted`。
+          onDeleted={onSessionDeleted}
         />
       )}
       {view.kind === 'gallery' && <GalleryPage onOpen={(id) => go({ kind: 'work', id })} />}

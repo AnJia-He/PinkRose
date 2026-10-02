@@ -15,9 +15,20 @@ const PAGE = 60
  * ⚠️ 分组和分页**复用作品页那一套**（`groupByDay` + `visibleGroups`）：
  *    复制一份出来的话，同一天会在两页里显示成两个名字，而且没人会同时看着两页。
  */
-export function SessionsPage({ onOpen, onNew }: {
+export function SessionsPage({ onOpen, onNew, onDeleted }: {
   onOpen: (id: number) => void
   onNew: () => void
+  /**
+   * 删成功之后把 id 交回去。
+   *
+   * ⚠️ **这一页自己不知道"现在正在改的是哪条"**，也不知道 App 手上有多少东西挂在
+   *   那条会话上（照片、对话、每一步的快照）。删掉**正在改的那条**时，那些东西
+   *   必须跟着走 —— 不听这一声的话，`sessionId` 会一直指着一条已经不存在的会话，
+   *   用户之后再改什么都打在 404 上（屏幕上只有一句"刚才那一步没存下来"），
+   *   刷新一看全没。所以这一声是**必须**的，不是可选的礼节。
+   *   要不要动、动什么，由 App 判（它才知道删的是不是手上那条）。
+   */
+  onDeleted: (id: number) => void
 }) {
   /** null = 还没拿到。**它和"一条都没有"是两件事** —— 混在一起的话，
    *  还没加载完的那一瞬间会显示"还没改过照片"，用户会以为东西没了。 */
@@ -69,6 +80,8 @@ export function SessionsPage({ onOpen, onNew }: {
       await deleteSession(id)
       // 当场从名单里拿掉。等下次刷新才消失的话，用户会以为没删掉。
       setRows((rs) => rs?.filter((r) => r.id !== id) ?? null)
+      // ★ 删**成功之后**才告诉外面（失败那次什么都没发生，更不该去动 App 手上的活儿）
+      onDeleted(id)
     } catch (e) {
       // 说"不行"的地方都要说"那怎么办"（§3.7）——"再试一次"就是那句出路
       setDelFailed(e instanceof Error ? e.message : '没删掉，再试一次？')
