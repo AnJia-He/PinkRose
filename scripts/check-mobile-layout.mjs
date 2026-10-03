@@ -850,8 +850,9 @@ function judgeWelcome(label, m, view) {
  *      是每张图跳出来都把后面的行推一下；
  *   ⑤ 左栏三支 = 「修图 / 对话 / 作品」（§6.1），而且亮的是「对话」。
  *      ⚠️ 顺带钉住"这一页有没有自己的入口"：Task 6 之前它**根本没有来源**。
- *   ⑥ ★ 2026-10-03：左栏底下那颗「首页」（回门面）在，而且**贴在最下面**
- *      —— 它不是第四支，见上面 `homeBox` 那一段。
+ *   ⑥ ★ 2026-10-03：左栏底下那**两颗**（「首页」回门面、「个人设置」= 用户管理）
+ *      在，而且**推到边上、和上面三支隔开** —— 它们不是第四、第五支，
+ *      见下面 `homeBox` / `meBox` 那一段。
  */
 async function measureSessions(page, targetName = null) {
   return page.evaluate((want) => {
@@ -887,16 +888,25 @@ async function measureSessions(page, targetName = null) {
     const dels = confirming ? [...confirming.querySelectorAll('.session-del')] : []
     return {
       onPage: !!document.querySelector('.sessions'),
-      nav: [...document.querySelectorAll('.nav button:not(.nav-home)')].map(b => b.textContent.trim()),
+      nav: [...document.querySelectorAll('.nav button:not(.nav-home):not(.nav-me)')]
+        .map(b => b.textContent.trim()),
       navOn: document.querySelector('.nav-item.on')?.textContent?.trim() ?? '',
-      // ★ 2026-10-03：左栏底下那颗「首页」（回门面）**单独量** —— 它不是第四支
-      //   （理由写在 Nav.tsx / styles.css 的 `.nav-home` 上），所以上面那三支
-      //   照旧按"只有三支"守，它自己这几格管"在不在、推没推到边上"。
+      // ★ 2026-10-03：左栏底下那**两颗**（「首页」回门面、「个人设置」= 用户管理，
+      //   见 Nav.tsx）**单独量** —— 它们不是第四、第五支，所以上面那三支照旧按
+      //   "只有三支"守，这一组自己管"在不在、推没推到边上、和那三支隔开没有"。
+      //   ⚠️ auto 外边距挂在组里的**第一颗**（`.nav-home`）身上，所以：
+      //   "贴边"要看组里**最后一颗**（`.nav-me`），"隔开"要看**第一颗**离三支多远。
       // ⚠️ 窄屏上左栏是**横排**（styles.css 的 `@media (max-width: 640px)`），
       //   所以"推到边上"在那边是**最右**、不是最底下 —— `navRow` 就是给判据
       //   分轴用的，见 judgeSessions 里那一段。
       navRow: getComputedStyle(document.querySelector('.nav')).flexDirection === 'row',
       homeBox: box(document.querySelector('.nav-home')),
+      meText: document.querySelector('.nav-me')?.textContent?.trim() ?? '',
+      meBox: box(document.querySelector('.nav-me')),
+      lastTabBox: (() => {
+        const tabs = [...document.querySelectorAll('.nav button:not(.nav-home):not(.nav-me)')]
+        return box(tabs[tabs.length - 1])
+      })(),
       navBox: box(document.querySelector('.nav')),
       rows: rows.length,
       emptyTitle: document.querySelector('.sessions-empty-title')?.textContent?.trim() ?? '',
@@ -940,10 +950,13 @@ const NAV_THREE = ['修图', '对话', '作品']
 function judgeSessions(label, m, view, mode) {
   console.log(`── ${label}`)
   console.log(`     左栏 ${m.nav.join(' / ')}（亮的是「${m.navOn}」）` +
-    (m.homeBox && m.navBox
-      ? `　「首页」${m.navRow ? '贴右' : '贴底'} ` +
-        `${m.homeBox[m.navRow ? 'right' : 'bottom']}/${m.navBox[m.navRow ? 'right' : 'bottom']}`
-      : '　**「首页」不在 DOM 里**'))
+    (m.homeBox && m.navBox && m.meBox
+      ? `　尾部那两颗「首页 / ${m.meText}」${m.navRow ? '贴右' : '贴底'} ` +
+        `${m.meBox[m.navRow ? 'right' : 'bottom']}/${m.navBox[m.navRow ? 'right' : 'bottom']}` +
+        `　隔上面三支 ${m.lastTabBox
+          ? (m.navRow ? m.homeBox.left - m.lastTabBox.right : m.homeBox.top - m.lastTabBox.bottom)
+          : '?'}px`
+      : '　**左栏尾部那两颗不在 DOM 里**'))
   if (mode === 'empty') {
     console.log(`     空态「${m.emptyTitle}」 ` +
       `按钮 ${m.goBtn ? `${m.goBtn.w}x${m.goBtn.h} @${m.goBtn.top}` : '不在'}`)
@@ -971,23 +984,48 @@ function judgeSessions(label, m, view, mode) {
     fails.push(`${label}：左栏是「${m.nav.join(' / ')}」——` +
       `§6.1 要的是「${NAV_THREE.join(' / ')}」三支，顺序也是这个`)
   }
-  // ★ 2026-10-03：「首页」那颗（回门面）在不在、**推没推到边上**。
+  // ★ 2026-10-03：左栏底下那**两颗**（「首页」= 回门面、「个人设置」= 用户管理）
+  //   在不在、**推没推到边上**、**和上面三支隔开没有**。
   //   位置这条只能在这儿守 —— vitest 没有排版引擎，`.nav-home` 那两条 auto
-  //   外边距被谁删掉的话那边一条都不会红，而这颗按钮会**悄悄**变成和「作品」
-  //   挤在一起的第四支（用户看不出它是"出门"，只当又一个栏目）。
+  //   外边距被谁删掉的话那边一条都不会红，而这两颗会**悄悄**变成和「作品」
+  //   挤在一起的第四、第五支（用户看不出它们是"出门"和"设置"，只当又两个栏目）。
   //   ⚠️ 判据**分横竖两种**：手机上左栏收成了横排，那边推的是**最右**。
   //      只按"最底下"判的话，手机那几档会**假绿**（横排里 item 的底边本来就
   //      贴着横条的底）—— 实测过：把手机上那条规则删掉，只按纵轴判，它一声不吭。
   //   实测贴边后离容器边 10~12px（内边距），两个方向都留 40px 的余量。
-  if (!m.homeBox || !m.navBox) {
-    fails.push(`${label}：左栏那颗「首页」不在 —— 从操作页回门面的路又断了`)
+  //
+  //   ★ 2026-10-03 傍晚（「个人设置」搬进来之后）拆成两条：
+  //     ① **组贴边** —— 量组里**最后一颗**（`.nav-me`）：auto 外边距挂在「首页」
+  //        身上，但它推的是整组，所以贴边要看尾巴；
+  //     ② **和上面三支隔开** —— 量组里**第一颗**（`homeBox`）和三支里最后那颗
+  //        （`lastTabBox`）之间空多远。这条才是真正的闸：把 auto 外边距删掉时，
+  //        ①可能还碰巧过（这一组本来就在末尾），②当场就红。
+  if (!m.homeBox || !m.meBox || !m.navBox || !m.lastTabBox) {
+    fails.push(`${label}：左栏尾部那两颗（「首页」/「个人设置」）不在 —— ` +
+      '回门面的路、或者用户管理那一页的入口又断了')
   } else {
     const axis = m.navRow ? 'right' : 'bottom'
-    const 离边 = m.navBox[axis] - m.homeBox[axis]
+    const 离边 = m.navBox[axis] - m.meBox[axis]
     if (离边 > 40) {
-      fails.push(`${label}：左栏的「首页」没推到${m.navRow ? '最右边' : '最底下'}` +
-        `（它离容器边 ${离边}px，左栏 ${m.navBox.w}x${m.navBox.h}${m.navRow ? '（横排）' : ''}）` +
-        '—— 它会和上面三支挤在一起，被看成"第四支导航"，而不是"出门"')
+      fails.push(`${label}：左栏尾部那两颗没推到${m.navRow ? '最右边' : '最底下'}` +
+        `（离容器边 ${离边}px，左栏 ${m.navBox.w}x${m.navBox.h}${m.navRow ? '（横排）' : ''}）` +
+        '—— 它们会和上面三支挤在一起，被看成"第四支导航"')
+    }
+    const 空隙 = m.navRow
+      ? m.homeBox.left - m.lastTabBox.right
+      : m.homeBox.top - m.lastTabBox.bottom
+    // 门槛取 20：三支之间**正常**的间隙就是 `--sp-1`（4px）上下，而这里实测
+    // 390px 宽时只有 40px（这一行本来就挤，320px 的小屏上会缩到几乎贴着）——
+    // 所以别拿 40 当门槛，那样"刚好不红"全看运气。20 已经足够说明
+    // "那句 auto 外边距还在干活"（它被删掉时这里是 4px）。
+    if (空隙 < 20) {
+      fails.push(`${label}：左栏尾部那两颗贴着上面三支（只隔 ${空隙}px，` +
+        `${m.navRow ? '横排' : '竖列'}）—— 那句 auto 外边距被删了？` +
+        '它们看上去就变成第四、第五个栏目了')
+    }
+    if (m.meText !== '个人设置') {
+      fails.push(`${label}：左栏尾部那颗写的是「${m.meText}」而不是「个人设置」—— ` +
+        '用户管理那一页的入口（2026-10-03 从顶栏右上角那颗 👤 搬下来的）')
     }
   }
   if (m.navOn !== '对话') {

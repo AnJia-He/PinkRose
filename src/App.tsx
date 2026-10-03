@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { User } from 'lucide-react'
 import { Btn } from './ui/kit/Btn.tsx'
 import Canvas from './ui/Canvas'
 import Uploader from './ui/Uploader'
@@ -13,9 +12,6 @@ import { AccountPage } from './ui/AccountPage'
 import { ModelSettings } from './ui/ModelSettings'
 import LandingPage from './ui/LandingPage'
 import { Nav } from './ui/Nav'
-// ★ 2026-10-03：标志换成用户选的那版 —— **黑底 + 粉圆 + 侧脸剪影 + 蓝蝴蝶结**
-//   （原来那朵粉玫瑰用户说不要了）。它是位图（模型出的），不是 SVG。
-import logoMark from './assets/logo/profile.webp'
 import { FRONT_PAGE, askedForFrontPage, pathOf, viewFromPath, type View } from './ui/view'
 import { me, type AccountUser } from './api/account'
 import {
@@ -1529,19 +1525,16 @@ export default function App() {
 
       {view.kind === 'edit' && (
         <div className="app">
-          <header className="topbar">
-            {/* 玫瑰标志 + 名字。**`alt=""` 是有意的** —— 旁边就是 "RuiXing" 这行字，
-                读屏的人听一遍名字就够了，图片再报一次等于同一个名字念两遍。
-                （图片本身是 2026-09-29 用户拍板的粉玫瑰，源文件在 src/assets/logo/。）
-
-                ⚠️ 用的是**彩色版**，不是单色版：顶栏是深底，单色深版（墨色）在上面
-                根本看不见，而单色浅版（白色）会把品牌唯一的颜色丢掉。
-                26px 是试出来的 —— 再小粉色就糊成一个点。 */}
-            <span className="brand wordmark">
-              <img className="brand-mark" src={logoMark} alt="" width={26} height={26} />
-              PinkRose
-            </span>
-            {image && (
+          {/* 顶栏现在**只在有照片的时候才有**（★ 2026-10-03）。
+              它原来是一条常驻的横杠：左边品牌名、右边一颗 👤、中间这四颗按钮。
+              用户指着那一屏说「**这个一行都不要**，个人设置放到首页下面」——
+              品牌名整个下线（顶栏不再挂名字；门面和登录页那两处还都在），
+              👤 搬去了左栏（见 `ui/Nav.tsx` 的「个人设置」）。
+              这条横杠当场就只剩这四颗按钮了 —— 那就没有理由在**还没有照片**的
+              时候摆一条空杠占着地方：它们本来就只在有照片可操作的那一刻才有用。
+              于是它现在**不是"顶栏"了，是"这张照片的操作条"**。 */}
+          {image && (
+            <header className="topbar">
               <div className="actions">
                 <button onClick={() => setShowPanel(v => !v)}>调色</button>
                 {/* 这一格是**"把图给我"**，只是给法分两种，按这个设备认不认
@@ -1572,31 +1565,15 @@ export default function App() {
                        history 里写一步，而那时候这张照片早就不在屏幕上了。 */}
                 <button onClick={startNew} disabled={busy !== null}>新的一张</button>
               </div>
-            )}
-            {/* 用户管理收在右上角（§3.2）—— 它一辈子点几次，不配占一个一级位置。
-                ⚠️ aria-label 是**必须**的，不是装饰：按钮里只有一颗 emoji，
-                读屏软件要么念不出来、要么念成一串莫名其妙的外文名，用户
-                根本不知道这个按钮是干什么的。（品牌名那边的 `alt=""` 是同一件
-                事的另一面：旁边已经有字，就不必让读屏的人听两遍。）
-
-                ⚠️ 它**是 `.actions` 的兄弟，不在 `.actions` 里**。两条理由：
-                · `.actions` 是"这张图能拿去哪儿"（分享/下载/保存），只在**有图**
-                  的时候出现；用户管理没有图也在，混在一起会让它跟着一起消失；
-                · 有两条测试按结构钉着 `.actions button` 恰好是哪几颗
-                  （见 App.test.tsx 的 topbarButtons；2026-10-01 Task 6 起是
-                  **四颗**——末尾多了「新的一张」§6.4），混进去等于改了一个
-                  没人说要改的界面。
-                放**最后一个**子节点是为了让它钉住右上角：`.topbar` 是
-                space-between，第三个孩子会被排到正中间去。 */}
-            <button className="user-btn" onClick={() => go({ kind: 'account' })}
-                    aria-label="用户管理"><User size={17} aria-hidden="true" /></button>
-          </header>
+            </header>
+          )}
 
           {/* 通报条（取代了原来的 window.alert）。它和下面那两条横幅是**三种东西**：
               这条是"这件事没成"的通报、可以收走；`.ask` 是**在问用户一句话**；
               `.save-fail` 是"图还在，先拿到手"（自带下载按钮，而且不许关）。
-              三块都住在顶栏下面、都按"一整条横幅"排，所以它们并排出现时读起来
-              是一列消息，不是三坨按钮。 */}
+              三块都排在最上面（有照片时在操作条底下、没有时自己就是第一条）、
+              都按"一整条横幅"排，所以它们并排出现时读起来是一列消息，
+              不是三坨按钮。 */}
           {notice && (
             <div className={notice.tone === 'ok' ? 'notice ok' : 'notice'}>
               <p>{notice.text}</p>
@@ -1605,10 +1582,9 @@ export default function App() {
           )}
 
           {/* 「上次那张要替换掉吗？」（§3.4）—— 同一张照片存第二次才会出现。
-              ⚠️ **不放进 `.topbar`**：那一条是 `justify-content: space-between`
-              的一行，塞进去会把品牌名和那两个按钮挤成一团（`check:layout` 量的
-              正是顶栏会不会被挤爆）。贴在顶栏**下面**也就贴在用户刚按的那个
-              按钮的正下方 —— 问他话的地方就是他按的地方。 */}
+              ⚠️ **不放进 `.topbar`**：那一条是那四颗按钮的操作条，塞进去会把它们
+              挤成一团（`check:layout` 量的正是这条会不会被挤爆）。贴在它**下面**
+              也就贴在用户刚按的那个按钮的正下方 —— 问他话的地方就是他按的地方。 */}
           {asking && (
             <div className="ask">
               <p>上次那张要替换掉吗？</p>

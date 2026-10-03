@@ -970,8 +970,9 @@ describe('导出：分享还是存下来，用户自己选', () => {
     await renderApp()
     await uploadPhoto()
     // ⚠️ 2026-10-01（Task 6）末尾多了一颗「新的一张」（§6.4）—— 两条清单都跟着加，
-    //    它们钉的是"那一格的两种长相"和"有没有混进别的东西"（`.user-btn` 是兄弟、
-    //    不在 `.actions` 里），不是"永远只有三颗"。
+    //    它们钉的是"那一格的两种长相"和"有没有混进别的东西"，不是"永远只有三颗"。
+    //    （2026-10-03 起 `.actions` 里真的只剩这四颗了：品牌名和那颗 👤 撤出顶栏
+    //    之后，这里不用再解释"谁是谁的兄弟"。）
     expect(topbarButtons()).toEqual(['调色', '分享', '保存', '新的一张'])
   })
 
@@ -3070,7 +3071,11 @@ describe('保存 = 存进作品集（Task 13）', () => {
 /**
  * 用户管理页（Task 8，spec §3.6 / §3.2）。
  *
- * 它**不占一个一级导航位置**：收在右上角那颗 👤 后面（§3.2）—— 一辈子点几次。
+ * 入口是**左栏最底下那颗「个人设置」**（★ 2026-10-03 搬过去的）——
+ * 在那之前它收在顶栏右上角那颗 👤 后面（§3.2，一辈子点几次，不占一级导航）。
+ * 搬家的原因：用户指着顶栏那条说「**这个一行都不要**，个人设置放到首页下面」，
+ * 那条横杠整个撤了（品牌名也一起下线）。顺带治好一个旧毛病 —— 顶栏
+ * **只有修图页有**，所以站在作品页/对话页的人原来根本进不去设置。
  * 用户名 / 使用情况 / 模型 / 退出登录，四个都真能用。
  *
  * ⚠️ **「模型」那一行是 Task 9 补上的**（2026-09-30）：`{ kind: 'models' }` 那一页
@@ -3083,9 +3088,15 @@ describe('保存 = 存进作品集（Task 13）', () => {
  * "这一页真的开着"，见下面那一条的注释。
  */
 describe('用户管理页', () => {
-  /** 从右上角那颗 👤 进去 —— 用户真会走的那一条路。 */
+  /** 左栏那颗「个人设置」—— 按**文字**找，和 `goNav` 同一个路数。 */
+  function accountNav(): HTMLButtonElement | null {
+    return [...container.querySelectorAll('.nav button')]
+      .find(b => (b.textContent ?? '').trim() === '个人设置') as HTMLButtonElement | null
+  }
+
+  /** 从左栏那颗「个人设置」进去 —— 用户真会走的那一条路。 */
   async function openAccount() {
-    const btn = container.querySelector('.user-btn') as HTMLButtonElement | null
+    const btn = accountNav()
     expect(btn).toBeTruthy()
     await act(async () => {
       btn?.click()
@@ -3240,7 +3251,7 @@ describe('用户管理页', () => {
     await renderApp()
     // 这里**不走 openAccount()** —— 它会把那两个滴答放过去，而这一条要的就是
     // "还在路上"的那一瞬间。
-    const btn = container.querySelector('.user-btn') as HTMLButtonElement
+    const btn = accountNav() as HTMLButtonElement
     await act(async () => { btn.click() })
 
     expect(container.querySelector('.account')).toBeTruthy()

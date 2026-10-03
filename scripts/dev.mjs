@@ -26,17 +26,29 @@ console.log('')
 // ── 端口上跑的到底是不是我们 ────────────────────────────────
 // **不去查进程命令行**：那要拉一次 PowerShell（慢），而且像 `node server/index.ts`
 // 这种写法里根本没有项目路径，认不出来。
-// 改成**直接问端口上的东西**：后端会答 /api/health，前端首页里写着 "RuiXing"。
-// 答不上来的一律当成别人的 —— 那种绝对不碰。
+// 改成**直接问端口上的东西** —— 两个口问的是同一个地址 `/api/health`：
+// 8787 由后端自己答，5173 由 vite 的 `/api` 代理转给后端（见 vite.config.ts）。
+//
+// ⚠️ **2026-10-03 修过一个真 bug**：5173 那一条原来认的是**首页 HTML 里有没有
+//   "RuiXing" 四个字**，而产品当天改名 PinkRose（`index.html` 的 title / og:*
+//   全换了）—— 于是它**从此永远认不出自己人**：上次的服务还开着时，再双击
+//   「启动」会打一句"端口被别的程序占着"然后退出，**根本启动不起来**，
+//   而屏幕上那句报信看起来还挺合理，很难怀疑到它头上。
+//   教训和 `styles.css` 里那条一样：**探针里的字符串会跟着产品改名腐烂，
+//   而且不声不响**。`/api/health` 的答案不跟着名字走，所以现在认它。
 async function isOurs(port) {
-  const url = port === 8787
-    ? 'http://127.0.0.1:8787/api/health'
-    : 'http://127.0.0.1:5173/'
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(1500) })
-    if (!res.ok) return false
-    const body = await res.text()
-    return port === 8787 ? /"ok"\s*:\s*true/.test(body) : /RuiXing/.test(body)
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`,
+      { signal: AbortSignal.timeout(1500) })
+    if (res.ok && /"ok"\s*:\s*true/.test(await res.text())) return true
+  } catch { /* 掉到下面那条兜底 */ }
+  if (port !== 5173) return false
+  // 兜底：vite 还在、**后端已经死了**（代理会报 500 或干脆连不上）——
+  // 那种也是自己人，该清掉重来。认的是 vite 往每个页面里注入的**入口脚本**，
+  // 它跟着项目走、不跟着产品名走。
+  try {
+    const res = await fetch('http://127.0.0.1:5173/', { signal: AbortSignal.timeout(1500) })
+    return res.ok && (await res.text()).includes('/src/main.tsx')
   } catch {
     return false
   }

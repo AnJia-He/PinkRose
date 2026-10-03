@@ -295,18 +295,30 @@ body {
    ⚠️ 字色跟着 `--accent-ink` 走。2026-10-01 第二次定色之后那**是白的**
    （主色从浅粉换成了深玫瑰）—— 换色时这一行不用动，但心里得知道它现在是白字。 */
 .nav-item {
+  /* ★ 2026-10-03：左右内边距从按钮默认的 14px 收到 4px —— 只为**四字那颗**
+     （「个人设置」）放得下：92px 的窄栏去掉内边距只有 76px，再扣掉默认那 28px，
+     只剩 48px，而四个字大约 52px —— 实测它会在中间断成"个人设 / 置"（真难看，
+     而且左栏会因此高一截）。收到 4px 之后可用 68px，四字一行放得下。
+     两字的那几颗本来就居中，看着一点没变（按钮在列里是拉伸到整栏宽的，
+     内边距只影响里面那行字）。
+     `nowrap` 是**不让它有机会再断**：窄屏那行横排上挤一挤也不会换行
+     （320px 宽的小屏量过：一行放得下，而且那一组照样被推到最右）。 */
+  padding-left: var(--sp-1); padding-right: var(--sp-1);
+  white-space: nowrap;
   border-color: transparent; background: transparent;
   color: var(--muted);
   transition: background-color var(--dur-1) ease, color var(--dur-1) ease;
 }
 .nav-item:hover { background: var(--hover); color: var(--text); }
 .nav-item.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-/* ★ 2026-10-03：左栏最底下那颗「首页」（回门面，见 Nav.tsx）。
-   `margin-top: auto` 把它推到底 —— `.nav` 是一列 flex，上面三支排完剩下的
-   空当全归它，于是它贴在最下面、和那三支隔着一整片空白。
-   **那片空白就是"它不是第四支"这句话**（上面三支是 App 里的三个地方，
-   这一颗是出门），所以别把它挪到三支中间、也别在这儿加分割线之类的装饰 ——
-   一个 92px 宽的窄栏，多一条线只会更吵。 */
+/* ★ 2026-10-03：左栏最底下那两颗（回门面的「首页」和「个人设置」，见 Nav.tsx）。
+   `margin-top: auto` 把它们推到底 —— `.nav` 是一列 flex，上面三支排完剩下的
+   空当全归它们，于是这两颗贴在最下面、和那三支隔着一整片空白。
+   **那片空白就是"它们不是第四支"这句话**（上面三支是 App 里的三个地方，
+   这两颗一个是出门、一个是设置），所以别把它们挪到三支中间、
+   也别在这儿加分割线之类的装饰 —— 一个 92px 宽的窄栏，多一条线只会更吵。
+   ⚠️ auto 外边距挂在**这一颗**（组里第一个）身上就够：它下面那颗
+   「个人设置」在同一个 flex 列里，自然跟着走到最底下。 */
 .nav-home { margin-top: auto; }
 
 /* 改（Task 10）：高度不再自己写 100vh —— 它现在住在 .shell 里，"一屏"由上面管。
@@ -317,7 +329,12 @@ body {
 .app { flex: 1; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 
 .topbar {
-  display: flex; align-items: center; justify-content: space-between;
+  /* ★ 2026-10-03：它**只在有照片的时候才渲染**（见 App.tsx），而且里面只剩
+     那四颗按钮了 —— 品牌名和右上角那颗 👤 都撤了（👤 搬去了左栏的
+     「个人设置」）。所以它不再是"左右两头"的一条：内容整体靠右，
+     `space-between` + `.actions` 的 `margin-left: auto` 是给三个孩子排队用的，
+     现在只剩一个孩子，那套自动外边距已经没有意义了。 */
+  display: flex; align-items: center; justify-content: flex-end;
   flex: none; gap: var(--sp-4);
   height: 56px; padding: 0 var(--sp-5);
   border-bottom: 1px solid var(--line);
@@ -333,8 +350,9 @@ body {
      curl -A "Mozilla/5.0" "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&text=PinkRose" \
        → 里面的 woff2 地址 curl 下来，存成 src/assets/fonts/pinkrose-wordmark.woff2
 
-   ⚠️ **只给"标志"用**（顶栏、落地页品牌、页脚）。正文和按钮仍然走 `--font`：
+   ⚠️ **只给"标志"用**（落地页的品牌名、页脚）。正文和按钮仍然走 `--font`：
    衬线体排中文小字会糊，而且它本来就是个 logotype，不是正文字体。
+   （2026-10-03 之前顶栏也用它，那一处跟着品牌名一起撤了。）
    ⚠️ `unicode-range` 是子集自带的那九个字母。写上它，别的字就不会来用这个
    字体（少了它，浏览器会拿这九个字形去凑中文，凑不出来的地方会掉字）。 */
 @font-face {
@@ -345,37 +363,23 @@ body {
 }
 .wordmark { font-family: 'PinkRose Wordmark', var(--font); font-weight: 600; }
 
-/* 顶栏那一格：玫瑰标志 + 名字（★ 2026-10-03 起名字走上面的品牌字）。 */
-.brand { font-weight: 600; font-size: 15px; letter-spacing: .02em;
-  /* 2026-09-29 起品牌名旁边挂了个玫瑰标志，所以这一格从"一段字"变成了"图 + 字"。
-     `flex` + `gap` 让图自己占位；`align-items: center` 让图和字的中线对齐
-     （按基线对齐的话，图的底边会跟字的基线齐平，整个标志会被顶高一截）。 */
-  display: flex; align-items: center; gap: var(--sp-2); }
-/* 图**不带 `flex: none` 的话会被压扁**：flex 项默认 `flex-shrink: 1`，
-   顶栏窄的时候它会先缩，26px 的方图缩成一条竖缝。 */
-.brand-mark { display: block; flex: none; }
-/* ⚠️ `margin-left: auto` 是 2026-09-30 加 👤 时补的，不是装饰：
-   `.topbar` 是 `justify-content: space-between` 的一行，**两个孩子时**是
-   "品牌贴左、按钮贴右"；多出第三个孩子（👤）之后，中间那个会被排到**正中心** ——
-   也就是「调色/分享/保存」会从右边跳到中间去。
-   auto 外边距把这组东西重新按在右边，👤 自然落在最右（§3.2 那张图里它就在右上角）。
-   ⚠️ 别反过来把 auto 给 `.user-btn`：那样按钮组会被留在品牌名屁股后面。
-   `.actions` 全项目只有顶栏这一处在用（别的叫 `.bubble-actions` / `.detail-actions`）。 */
-.actions { display: flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
+/* 顶栏那一格：玫瑰标志 + 名字 —— **2026-10-03 撤了**（连同下面那条
+   `.brand-mark`）。用户指着那一屏说「这个一行都不要，个人设置放到首页下面」：
+   品牌名不再挂在 App 里（落地页顶栏和页脚那两处还在，走 `.lp-brand`），
+   右上角那颗 👤 搬成了左栏最底下的「个人设置」（见 `.nav-home` 那一段）。
+   ⚠️ 别跟着把 `.wordmark`（上面那条）删掉 —— 落地页还在用它。 */
+/* `.actions` = 操作条上那四颗按钮（调色 / 分享或下载 / 保存 / 新的一张）。
+   2026-10-03 起它们**只在有照片的时候**才渲染，而且左右两个邻居（品牌名、👤）
+   都没了 —— 那就不必再靠 `margin-left: auto` 把自己推到右边：
+   `.topbar` 那条 `justify-content: flex-end` 就够了。
+   （那条 auto 外边距是 2026-09-30 加 👤 时补的，见 git 历史。） */
+.actions { display: flex; align-items: center; gap: var(--sp-2); }
 
-/* 右上角那颗 👤（§3.2，Task 8）。它是 `.actions` 的**兄弟**、不是其中一员 ——
-   理由在 App.tsx 那段注释里（那组按钮只在有图时出现，而用户管理没有图也在）。
-   做成一颗**方块**而不是带文字的胶囊：顶栏宽度是这套版面上最紧的一条链，实测
-   （.superpowers/scratch/probe-topbar-task8.mjs）390px 宽 + 三个按钮时只剩 27px，
-   而多一颗 👤 + 一个间距要 50px —— 下面窄屏那一段把内边距收窄一档（省 24px）
-   之后是 373/390。留一颗 ≥34px 的方钮是"让人点得中"的下限。 */
-.user-btn {
-  flex: none;                     /* 和 .brand-mark 同理：宁可挤爆也不许被压扁 */
-  width: 34px; height: 34px; padding: 0;
-  display: grid; place-items: center;
-  font-size: 15px; line-height: 1;
-  border-radius: var(--r-pill);
-}
+/* ★ 2026-10-03：右上角那颗 👤（`.user-btn`，§3.2 的用户管理入口）撤了 ——
+   用户说「这个一行都不要，个人设置放到首页下面」，它搬成了左栏最底下那颗
+   `.nav-me`（就是一个普通的 `.nav-item`，不需要单独的长相）。
+   原来那笔宽度账（390px 宽时顶栏只剩 27px、方钮 ≥34px 是"点得中"的下限）
+   跟着一起作废 —— 那三样东西现在两样都不在顶栏里了。 */
 
 /* ── 顶栏下面那三条横幅 ──────────────────────────────────────────────
    三块都住在顶栏**下面**、修图页最上面那几行，都按"一整条横幅"排：
@@ -866,10 +870,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    断点取 640：再宽一点（768 的竖屏平板）对话 340 + 画布 388 + 内边距 40
    仍然放得下；再窄就一定会挤坏。 */
 @media (max-width: 640px) {
-  /* 顶栏在窄屏上收窄一档内边距（Task 8 量的）：390px 宽 + 三个按钮时，
-     品牌 93 + 按钮组 190 + 两颗按钮之间的间距 32 + 左右各 24 = 363，只剩 27px，
-     而右上角那颗 👤 连间距要 50px —— 24 变 12 省出 24px，正好是 373 < 390。
-     再窄的屏（320px）本来就放不下，那是另一件事，别拿这一条去兜。 */
+  /* 操作条在窄屏上收窄一档内边距。它原来是 Task 8 为"品牌 + 四颗按钮 + 👤"
+     挤出来的（390px 宽时只剩 27px）；2026-10-03 那两样撤掉之后已经不挤了 ——
+     留着是因为少留白在手机上本来就顺眼，而且这一档不必再改来改去。 */
   .topbar { padding: 0 var(--sp-3); }
   /* 左栏收成**顶部一行**（Task 10）。竖着放会直接吃掉 92px 宽度，而手机上
      这张照片本来就是被宽度卡住的（390 − 40 内边距 = 350，高度那条链根本
@@ -883,11 +886,14 @@ button:where(:disabled) { opacity: .45; cursor: default; }
     padding: 8px 10px;
   }
   /* 「首页」在窄屏上推到**最右边** —— 和桌面那条（`.nav-home` 的 `margin-top:auto`）
-     是同一个意思：让这颗"出门"的按钮离上面那三支远一点，一眼看得出它不是第四
-     个栏目。只是**轴换了** —— 左栏在这儿收成了横排（见上），auto 外边距加到
-     **左边**才推得动它（横排里 `margin-top` 是纵轴上的事，一点用都没有）。
-     ⚠️ 这一条和桌面那条**必须成对**：只留桌面那条的话，手机上「首页」就紧挨着
-     「作品」变成第四格 —— 而 `check:layout` 里那条判据是按横竖两种分别量的。 */
+     是同一个意思：让它和它下面那颗「个人设置」离上面那三支远一点，一眼看得出
+     它们不是第四、第五个栏目（那两颗是"出门"和"设置"）。只是**轴换了** ——
+     左栏在这儿收成了横排（见上），auto 外边距加到**左边**才推得动它
+     （横排里 `margin-top` 是纵轴上的事，一点用都没有）。
+     2026-10-03 起它**推的是一组两颗**（它自己 +「个人设置」）—— auto 外边距挂在
+     组里第一个身上，后面那颗自然跟着走到最右边。
+     ⚠️ 这一条和桌面那条**必须成对**：只留桌面那条的话，手机上这两颗就紧挨着
+     「作品」变成第四、第五格 —— 而 `check:layout` 里那条判据是按横竖两种分别量的。 */
   .nav-home { margin-top: 0; margin-left: auto; }
 
   .workspace { flex-direction: column; }

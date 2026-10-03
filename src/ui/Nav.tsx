@@ -6,9 +6,21 @@ import type { View } from './view'
  * ★ 2026-10-01（Task 6，§6.1）：三支 = **修图 / 对话 / 作品**，顺序就是这个
  * —— 修图是主入口，作品在最后。三样是三件事：现在是「修图」（这次在改的照片）、
  * 「对话」是过程（改过哪些），「作品」是结果。别合并。
+ *
+ * ★ 2026-10-03：**下面还钉着两颗**，和上面三支隔着一整片空白（`.nav-home`
+ * 那条 auto 外边距）—— 隔开是**有意的**，它们是另一个层次的东西：
+ *   · 「首页」 —— **出门**（回门面），见下面那段；
+ *   · 「个人设置」 —— 用户管理那一页（§3.6），**从顶栏右上角那颗 👤 搬来的**。
+ *     用户原话：「**这个一行都不要，个人设置放到首页下面**」—— 那一行（顶栏）
+ *     连品牌名一起撤了，👤 落在这一列的最底下。搬过来还顺手治好一个旧毛病：
+ *     👤 原来只住在顶栏，而顶栏**只有修图页有** —— 站在作品页/对话页的人
+ *     根本进不去设置，得先绕回修图页。
  */
 export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
   const here = view.kind === 'work' ? 'gallery' : view.kind
+  /** 站在用户管理那两页（账号 / 模型设置）时，「个人设置」是亮的 ——
+   *  模型设置是它底下一格（§7.4），不是第五个地方。 */
+  const atAccount = view.kind === 'account' || view.kind === 'models'
   return (
     <nav className="nav">
       <button className={`nav-item${here === 'edit' ? ' on' : ''}`}
@@ -28,6 +40,11 @@ export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
           "这一趟是特意来的"，自动跳转认得出它。 */}
       <button className="nav-item nav-home"
               onClick={() => onGo({ kind: 'landing' })}>首页</button>
+      {/* 用户管理（§3.6）—— 2026-10-03 从顶栏那颗 👤 搬下来的，就在「首页」下面
+          （用户指定的位置）。它排在 `.nav-home` **后面**，所以跟着一起被那条
+          auto 外边距推到底 —— 这两颗是一组"和上面三支不一样的东西"。 */}
+      <button className={`nav-item nav-me${atAccount ? ' on' : ''}`}
+              onClick={() => onGo({ kind: 'account' })}>个人设置</button>
     </nav>
   )
 }
