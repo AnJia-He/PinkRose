@@ -8,12 +8,12 @@
          下载完的那一下**不会先闪一帧白底（深色模式下那一帧很扎眼）。
          `theme-color`：手机浏览器地址栏/状态栏那一圈的颜色。**必须带 media** ——
          一个值只能对应一种模式（MDN 上写明 `media` 匹配时那条才生效）。
-         ⚠️ 这两个值跟的是 **App** 的底色（浅 #f7ddf6 / 深 #170b16）。落地页浅色
-         那档和它**同一个值**；深色那档（#241223）比它亮一档 —— 差得不多，
+         ⚠️ 这两个值跟的是 **App** 的底色（2026-10-03 起：浅 #f5f5f7 / 深 #151517）。
+         落地页浅色那档和它**同一个值**；深色那档比它亮一档 —— 差得不多，
          地址栏和页面之间看不出接缝，所以没为它单开一套。 -->
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#f7ddf6" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#170b16" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#151517" media="(prefers-color-scheme: dark)" />
 
     <!-- ★ 2026-10-01 补：标题和简介**写死在 HTML 里**，不再只靠 JS 注入。
         为什么：`src/main.tsx` 是纯客户端渲染（`createRoot().render()`），
