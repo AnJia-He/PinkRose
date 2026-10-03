@@ -622,39 +622,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    **不是报错**（不红、不抖），只是告诉他这句话不会白打。 */
 .composer-nag { margin: var(--sp-3) 0 0; font-size: 12.5px; color: var(--rose-300); }
 
-/* "也可以拖进来"是**桌面才成立**的一句话。触屏上没有拖放这回事，摆着只会让人
-   去找一个不存在的手势。（按 `hover: none` 判，不按宽度判 —— 触摸屏笔记本
-   两条都有，那种设备上这句话是对的。） */
-.composer-drop { margin: var(--sp-3) 0 0; font-size: 12.5px; color: var(--muted-2); }
-@media (hover: none) { .composer-drop { display: none; } }
-
-/* 三个示范句 —— 现在**可以点**（点一下填进上面的输入框，然后自己按发送）。
-   ★ 用户原话是"一句话示范怎么用"，做成按钮之后它顺手变成了"填空"，
-   门槛比"照着这句话打一遍"低得多。 */
-.welcome-egs {
-  display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
-  gap: var(--sp-2); margin-top: var(--sp-5);
-}
-.welcome-egs-lead { font-size: 12.5px; color: var(--muted-2); }
-.eg-chip {
-  padding: 5px 12px; border-radius: var(--r-pill);
-  font-size: 12.5px; color: var(--muted);
-  background: var(--raised); border: 1px solid var(--line-2);
-}
-.eg-chip:hover { color: var(--rose-300); border-color: var(--rose-300); }
-/* 一天能做多少 —— 写在示范句下面的一句"底注"（★ 2026-09-30 用户定案）。
-   **不写"免费额度"**（那种话读着像营销，而且额度策略本身还没定），
-   只提示**一天大概能改多少张**，而且**单位是照片、不是 tokens**。
-   数从设计文档 §6.6 防滥用那一栏来（每人每天 20 次生成）。
-   ⚠️ 写"大概"不写"最多"：那道闸门**还没做**（后端现在是串行队列 + 上游 429 退避，
-   没有按人计数），所以这句话说的是**预期**，不是已经生效的规矩。
-
-   样式上和上面那三个示范句（`.welcome-egs-lead`）同档（都是 12.5px 的 `--muted-2`），
-   靠间距分成两条独立的句子 —— 它们说的是两件事：一句教怎么开口，一句说能做多少。
-   ⚠️ 别再加重它（加底色、加边框、放大）：用户要的是"提示"，不是一条横幅。 */
-.welcome-note {
-  margin: var(--sp-4) 0 0; font-size: 12.5px; color: var(--muted-2); line-height: 1.75;
-}
+/* ★ 2026-10-03 用户看过这一屏之后说「这些全都不要」—— 这里原本有三块，
+   一起下线了。**别顺手加回来**（来龙去脉见 src/ui/Uploader.tsx 顶上那段）：
+   · `.composer-drop` —— "也可以把照片直接拖到这一块上。"（桌面才显示的一句话）；
+   · `.welcome-egs` / `.welcome-egs-lead` / `.eg-chip` —— 三个**可点**的示范句胶囊；
+   · `.welcome-note` —— "一天大概能改二十来张照片。"
+   注意：拖放这个**能力**没删，删的只是那句话 —— 接住照片时输入框亮起来的
+   反馈（`.composer.over`）还在上面一条，别跟着一起删。 */
 
 /* 还没选图时的"正在忙"（正在解码、或者正在看这张照片）。
    配一个转圈 —— 空舞台上就一句干字，看着像卡住了。 */

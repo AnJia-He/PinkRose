@@ -791,15 +791,15 @@ function judgeSaveFail(label, m, view) {
  * 登录之后看到的**第一张脸**，在这之前它一次都没被量过（`.welcome` 只在
  * `!image` 时渲染，而这条检查登录完就直接 `setInputFiles` 过去了）。
  *
- * ★ 2026-09-30 往后它多了一句「一天大概能改二十来张照片。」（`.welcome-note`）——
- *   而 `.app` 是 **overflow: hidden**：这一列比 `.stage` 高的话，超出去的部分
- *   是被**静静地切掉**的（不出滚动条、不横向溢出、别的判据全绿）。上面那条
- *   "画布必须完整落在视口里"就是同一个病在修图页的样子 —— 这里是它在首屏的样子。
+ * ★ 2026-09-30 当时它是为了一句新文案加的（「一天大概能改二十来张照片。」——
+ *   `.welcome-note`）：而 `.app` 是 **overflow: hidden**，这一列比 `.stage` 高的话，
+ *   超出去的部分是被**静静地切掉**的（不出滚动条、不横向溢出、别的判据全绿）。
+ *   上面那条"画布必须完整落在视口里"就是同一个病在修图页的样子 —— 这里是首屏的样子。
  *
- * 判据两条，都不钉措辞：
- *   ① 整列完整落在视口里（没被切）；
- *   ② 那句提示真的在、真的有字、真的看得见，而且**说的是"多少张"**
- *      （用户要的就是这个 —— 写在了一半等于没写）。
+ * ★ 2026-10-03：那句话连同三个示范句被用户拿掉了（「这些全都不要」），
+ *   于是第二、三条判据（那句话在不在、说没说"多少张"）跟着撤。
+ *   **留下的一条反而更重要**：这一屏现在矮了一截，但它是"往里加东西会不会被切"
+ *   的唯一哨兵 —— 哪天有人再往 `.welcome` 里塞东西，这里会红。
  */
 async function measureWelcome(page) {
   return page.evaluate(() => {
@@ -812,45 +812,18 @@ async function measureWelcome(page) {
         bottom: Math.round(b.bottom), right: Math.round(b.right),
       }
     }
-    const note = document.querySelector('.welcome-note')
-    const st = note ? getComputedStyle(note) : null
-    return {
-      welcome: box(document.querySelector('.welcome')),
-      note: box(note),
-      noteText: note ? note.textContent.trim() : '',
-      // 「看得见」的判据照抄键盘走查那一段，不自创一套
-      noteVisible: !!st && st.display !== 'none' && st.visibility !== 'hidden' &&
-        Number(st.opacity) > 0.05,
-    }
+    return { welcome: box(document.querySelector('.welcome')) }
   })
 }
-
-/** 「多少张」的判据：二十来张 / 20 张 / 二十张 都算。**不钉具体数字** ——
- *  那个数会随额度策略变，钉死了以后改文案会莫名其妙地红。 */
-const SAYS_HOW_MANY = /[0-9一二三四五六七八九十百]+\s*来?\s*张/
 
 function judgeWelcome(label, m, view) {
   console.log(`── ${label}`)
   console.log(`     上传前那一屏 ${m.welcome ? `${m.welcome.w}x${m.welcome.h} @${m.welcome.left},${m.welcome.top}` : '不在 DOM 里'}`)
-  console.log(`     那句提示「${m.noteText}」${m.note ? ` @top ${m.note.top}~${m.note.bottom}` : ''}`)
   if (!m.welcome) { fails.push(`${label}：找不到 .welcome —— 上传前那一屏整个不见了`); return }
   if (m.welcome.top < -TOL || m.welcome.bottom > view.height + TOL) {
     fails.push(`${label}：上传前那一屏没完整落在视口里（${m.welcome.h}px 高 @${m.welcome.top}，` +
       `视口 ${view.height}）—— .app 是 overflow: hidden，超出去的是被切掉的，` +
       '用户看到的是"少了半截"，而别的判据一条都不会红')
-  }
-  if (!m.note || !m.noteVisible || !m.noteText) {
-    fails.push(`${label}：上传前那一屏上没有那句提示（.welcome-note）—— ` +
-      '用户要的是"提示一下一天大概能做多少"，它不在就等于没写')
-    return
-  }
-  if (!SAYS_HOW_MANY.test(m.noteText)) {
-    fails.push(`${label}：那句提示里没说"多少张"（现在写的是「${m.noteText}」）—— ` +
-      '额度是用照片张数说的，不是用 tokens，别把单位丢了')
-  }
-  if (m.note.top < -TOL || m.note.bottom > view.height + TOL) {
-    fails.push(`${label}：那句提示没落在视口里（@top ${m.note.top}~${m.note.bottom}，` +
-      `视口 ${view.height}）—— 写了却看不见，等于没写`)
   }
 }
 
@@ -1669,8 +1642,8 @@ if (fails.length) {
   console.log('详情页的排版在 src/styles.css 的 .detail 那一段（同一条 overflow-y: auto）。')
   console.log('存失败横幅的排版在 src/styles.css 的 `.ask, .save-fail` 那一段（`flex-wrap` 就是')
   console.log('窄屏上换不换行那一句）；那个按钮在 src/App.tsx 的 `.save-fail` 那一段里。')
-  console.log('上传前那一屏在 src/ui/Uploader.tsx（那句"一天大概多少张"是 `.welcome-note`），')
-  console.log('它的排版在 src/styles.css 的 `.welcome` 那一段。')
+  console.log('上传前那一屏在 src/ui/Uploader.tsx（2026-10-03 起它上面只剩标志、')
+  console.log('一句话说清这是什么、那条对话输入框），它的排版在 src/styles.css 的 `.welcome` 那一段。')
   process.exitCode = 1
 } else {
   console.log(`✅ ${VIEWS.length} 档 × 3 种状态都过（刚传完照片 / 打开调色面板 / 存失败之后）：` +
@@ -1686,6 +1659,6 @@ if (fails.length) {
     '两栏配方都在屏内、详情页自己滚而整页不滚（左栏还钉在原地）')
   console.log(`   外加落地页（${VIEWS.length} 档，**不带登录态的访客视角**）：13 张图全解得出、不横向溢出、` +
     '大标题和「免费开始」都在首屏里')
-  console.log(`   外加上传前那一屏（${VIEWS.length} 档）：整列不被切、那句「一天大概多少张」真的看得见、` +
-    '而且单位是**张**不是 tokens')
+  console.log(`   外加上传前那一屏（${VIEWS.length} 档）：整列不被切（这屏现在矮，` +
+    '正因如此它是"再往里加东西会不会被切"的唯一哨兵）')
 }

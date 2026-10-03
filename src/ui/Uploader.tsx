@@ -8,9 +8,6 @@ type Props = {
   onPick: (file: File, wish: string) => void
 }
 
-/** 三个示范句。和落地页那三句**同一个口径**（措辞一个字没改）。 */
-const EXAMPLES = ['天空再蓝一点', '后面那个人去掉', '脸太暗了']
-
 /**
  * 上传前那一屏 —— **登录之后看到的第一张脸**。
  *
@@ -22,10 +19,19 @@ const EXAMPLES = ['天空再蓝一点', '后面那个人去掉', '脸太暗了']
  *     和 ChatGPT / 豆包那一排长一样。**照片仍然是前提**（产品就是改照片的），
  *     所以按「发送」时如果还没选照片，对话框会弹出来，同时说一句"这句话我先记着"。
  *
- * 三条老规矩一条没丢（它们是这一屏的价值所在，别在改版里丢掉）：
+ * ★ 2026-10-03 当天又减了一轮：用户看过这一屏之后说「**这些全都不要**」，
+ *   **三样一起下线**（别再顺手加回来）——
+ *   · 示范句那三个胶囊（连带前面那句"不知道从哪说起？点一个试试"）；
+ *   · 「也可以把照片直接拖到这一块上。」；
+ *   · 「一天大概能改二十来张照片。」
+ *   现在这一屏只剩三样东西：标志、一句话说清这是什么、那条对话输入框。
+ *   （额度那句为什么被拿掉，见 docs/文案规范.md「额度怎么说」那一节。）
+ *
+ * 还留着的那两条老规矩（它们是这一屏的价值所在）：
  *   · **一句话说清这是什么** —— 「说句话，照片就修好了」，和落地页 h1 是同一句；
- *   · **一个动作**（选一张照片 / 拖进来）—— 手机上点相册、桌面上拖进来，两条路都要有；
- *   · **一句话示范怎么用** —— 三个例子，现在做成了**可以点的**（点一下填进输入框）。
+ *   · **一个动作**（选一张照片 / 拖进来）—— 手机上点相册、桌面上拖进来，两条路都要有。
+ *     拖进来那句**提示**虽然下线了，**能力还在**（三个拖放事件仍旧挂在整块 `.welcome` 上）：
+ *     桌面用户随手拖一张进来，输入框会亮起来接住它。
  *
  * ⚠️ 拖放那三个事件挂在**整块 `.welcome`** 上（不是只挂在输入框那一行）：
  * 一行输入框太窄，而"拖到哪儿算数"要和"看着能不能放"对得上 —— 所以拖进这一块
@@ -43,7 +49,6 @@ export default function Uploader({ onPick }: Props) {
   /** 打了字、但还没选照片就按了发送 —— 提示一句，别让人以为按钮坏了。 */
   const [nag, setNag] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
-  const textRef = useRef<HTMLInputElement>(null)
 
   const take = (files: FileList | null | undefined) => {
     const f = files?.[0]
@@ -88,7 +93,6 @@ export default function Uploader({ onPick }: Props) {
           onChange={e => take(e.target.files)}
         />
         <input
-          ref={textRef}
           className="composer-text"
           value={wish}
           onChange={e => { setWish(e.target.value); setNag(false) }}
@@ -107,36 +111,6 @@ export default function Uploader({ onPick }: Props) {
       {nag && (
         <p className="composer-nag">选一张照片，这句话会一起带过去。</p>
       )}
-
-      {/* 拖放是**桌面才成立**的一句话（触屏上没有拖放这回事）。 */}
-      <p className="composer-drop">也可以把照片直接拖到这一块上。</p>
-
-      <div className="welcome-egs">
-        <span className="welcome-egs-lead">不知道从哪说起？点一个试试</span>
-        {EXAMPLES.map(s => (
-          <button
-            key={s}
-            type="button"
-            className="eg-chip"
-            onClick={() => { setWish(s); textRef.current?.focus() }}
-          >{s}</button>
-        ))}
-      </div>
-
-      {/* ★ 2026-09-30 用户定案：**不写"免费额度"**（那种话读着像营销，
-          而且额度策略本身还没定），只**提示一天大概能做多少** ——
-          而且**单位是照片张数，不是 tokens**（用户的原话是"一次能改动多少照片"）。
-
-          数从哪来：设计文档 §6.6 防滥用那一栏写的是「每人每天 **20 次**生成」，
-          这里就照它说"二十来张"。
-
-          ⚠️ 写"大概"、不写"最多"，是因为**这道闸门还没做** —— 真要拦是后端的事
-          （现在是串行队列 + 上游 429 退避，没有计数）。文案说的是**预期**，
-          不是已经生效的规矩。等哪天真加了闸门，这句再改成"今天还能改 N 张"。
-          ⚠️ 也别在这儿写"免费"两个字（用户明确说了不写）：这句话里
-          一个字都没提钱，是故意留的白。
-          ⚠️ 类名 `.welcome-note` **别改**：`check:layout` 靠它量这一屏。 */}
-      <p className="welcome-note">一天大概能改二十来张照片。</p>
     </div>
   )
 }
