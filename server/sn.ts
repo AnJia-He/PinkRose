@@ -1,3 +1,13 @@
+/**
+ * **OpenAI 兼容协议的上游客户端。** 这个名字是历史（写它的时候只有商汤一家）。
+ *
+ * ⚠️ ★ 2026-10-03 起它**同时伺候两家**：`chat`（看图 / 路由 / 建议卡）走 Agnes、
+ *    `image`（改图）走商汤 —— 谁走谁由 `config.ts` 的两条通道和 `clientFor.ts`
+ *    决定，这个文件只负责"把 OpenAI 那套请求发对"。
+ *    所以：**别再从这里推断"现在用的是哪家"**，去看启动时打的那行 `describeConfig`。
+ *    （类名和文件名一起改是另一刀：`SnError` / `sn.ts` / 十几个 import 都要动，
+ *      单独一个 commit 做，别混在功能改动里。）
+ */
 import { OUTBOUND_LIMITS, readTextCapped } from './http.ts'
 import type { AppErrorCode } from '../shared/protocol.ts'
 import type { Size } from '../shared/size.ts'

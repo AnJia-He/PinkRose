@@ -7,8 +7,11 @@ import { resolveClients, type ClientDeps } from './clientFor.ts'
 
 const USER = { id: 1, username: 'a', email: 'a@b.c' }
 const CONFIG = {
-  apiKey: 'sk-default-key', baseUrl: 'https://token.sensenova.cn/v1',
-  imageModel: 'sensenova-u1.5-fast', vlmModel: 'sensenova-6.8-flash-lite',
+  // ★ 2026-10-03：两条通道**不是同一家**（chat 走 Agnes、image 走商汤）。
+  //   故意让两边的地址、钥匙、模型名**三个都不一样** —— 这样"取错了一条"
+  //   在下面对每一处断言里都会立刻现形，不会因为两边长得像而蒙混过去。
+  chat: { apiKey: 'sk-chat-default', baseUrl: 'https://apihub.agnes-ai.com/v1', model: 'agnes-2.5-flash' },
+  image: { apiKey: 'sk-img-default', baseUrl: 'https://token.sensenova.cn/v1', model: 'sensenova-u1.5-fast' },
   port: 8787, dbPath: ':memory:', photoDir: '/tmp', sessionSecret: 's',
 }
 
@@ -20,10 +23,15 @@ function fresh(): ClientDeps {
 }
 
 describe('按用户取客户端', () => {
-  it('没配 → 两个都用默认那个', () => {
+  it('没配 → 两个都用默认那个，而且**各用各的那一条通道**', () => {
     const c = resolveClients(USER, fresh())
-    expect(c.chat.baseUrl).toBe(CONFIG.baseUrl)
-    expect(c.image.apiKey).toBe(CONFIG.apiKey)
+    // ★ 2026-10-03：这一条现在钉的是"chat 走 Agnes、image 走商汤"这件事本身。
+    //   三样（地址 / 钥匙 / 模型名）一起比 —— 只比一样的话，"两条通道接错但
+    //   恰好有一处相同"这种错法会溜过去。
+    expect([c.chat.baseUrl, c.chat.apiKey, c.chat.vlmModel])
+      .toEqual([CONFIG.chat.baseUrl, CONFIG.chat.apiKey, CONFIG.chat.model])
+    expect([c.image.baseUrl, c.image.apiKey, c.image.imageModel])
+      .toEqual([CONFIG.image.baseUrl, CONFIG.image.apiKey, CONFIG.image.model])
   })
 
   it('★ 只配了对话 → 对话换掉，图片一个字不变', () => {
@@ -37,8 +45,8 @@ describe('按用户取客户端', () => {
     const c = resolveClients(USER, d)
     expect(c.chat.apiKey).toBe('sk-chat-only')
     expect(c.chat.baseUrl).toBe('https://chat.example.com/v1')
-    expect(c.image.apiKey).toBe(CONFIG.apiKey)
-    expect(c.image.baseUrl).toBe(CONFIG.baseUrl)
+    expect(c.image.apiKey).toBe(CONFIG.image.apiKey)
+    expect(c.image.baseUrl).toBe(CONFIG.image.baseUrl)
   })
 
   it('★ 只配了图片 → 图片换掉，对话一个字不变', () => {
@@ -51,7 +59,7 @@ describe('按用户取客户端', () => {
 
     const c = resolveClients(USER, d)
     expect(c.image.apiKey).toBe('sk-img-only')
-    expect(c.chat.apiKey).toBe(CONFIG.apiKey)
+    expect(c.chat.apiKey).toBe(CONFIG.chat.apiKey)
   })
 
   it('★ 两边都配了 → 各走各的，绝不串（§7.4 四条必测里最要紧的一条）', () => {
@@ -73,8 +81,8 @@ describe('按用户取客户端', () => {
 
     const broken: ClientDeps = { ...d, vault: createVault('another-secret') }
     const c = resolveClients(USER, broken)
-    expect(c.image.apiKey).toBe(CONFIG.apiKey)   // 回默认
-    expect(c.chat.apiKey).toBe(CONFIG.apiKey)
+    expect(c.image.apiKey).toBe(CONFIG.image.apiKey)   // 回默认
+    expect(c.chat.apiKey).toBe(CONFIG.chat.apiKey)
   })
 
   it('★ 模型名用的是用户填的那个', () => {
@@ -85,15 +93,17 @@ describe('按用户取客户端', () => {
   })
 
   /**
-   * ★ 上面六条钉的都是"用户配了的那一条"，**默认那一份的两个模型名没人钉** ——
-   * 把默认分支里 `chat ? vlmModel : imageModel` 写反，六条照样全绿，
-   * 而后果是"什么都没配的人，改图走的是看图的模型"。
-   * 现在用户一个都没配，所有请求走的都是这一格。
+   * ★ 上面六条钉的都是"用户配了的那一条"。这一条盯的是**默认那一份的模型名** ——
+   * 2026-10-03 之前这里写的是 `kind === 'chat' ? vlmModel : imageModel`，
+   * 写反了上面六条照样全绿，后果是"什么都没配的人，改图走的是看图的模型"。
+   * 现在两条通道各带一个 `model`，"串了"这件事由上面第一条（三样一起比）接住；
+   * 这里留着是因为**模型名最容易在重构里被漏掉**：地址和钥匙改对了、模型名忘了，
+   * 表现是"请求发到了对的家、却点了一个不存在的模型"。
    */
-  it('★ 默认那一份：chat 拿 vlm、image 拿 image model，不能串', () => {
+  it('★ 默认那一份：两边各拿自己那个模型名，不能串', () => {
     const c = resolveClients(USER, fresh())
-    expect(c.chat.vlmModel).toBe(CONFIG.vlmModel)
-    expect(c.image.imageModel).toBe(CONFIG.imageModel)
+    expect(c.chat.vlmModel).toBe(CONFIG.chat.model)
+    expect(c.image.imageModel).toBe(CONFIG.image.model)
   })
 
   /**

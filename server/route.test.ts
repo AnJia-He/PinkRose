@@ -8,8 +8,11 @@ import { ZERO } from '../shared/adjustments.ts'
 import type { Config } from './config.ts'
 
 const cfg: Config = {
-  apiKey: 'sk-test', baseUrl: 'https://x.cn/v1',
-  imageModel: 'm', vlmModel: 'v', port: 0,
+  // ★ 2026-10-03：两条通道分开之后各有自己的默认连接（chat 走 Agnes、image 走商汤）。
+  //   这个文件走的是**chat 那一路**，所以看的是 `cfg.chat`。
+  chat: { apiKey: 'sk-test', baseUrl: 'https://x.cn/v1', model: 'v' },
+  image: { apiKey: 'sk-img', baseUrl: 'https://img.example.cn/v1', model: 'm' },
+  port: 0,
   dbPath: ':memory:',
   // 这两个是 Config 上的必填字段（起服务要它），这个文件既不碰账号也不碰图
   photoDir: 'unused',
@@ -18,7 +21,7 @@ const cfg: Config = {
 
 // sn.ts 收窄之后，客户端吃的是「一条连接 + 一个模型名」，不再是整份 Config（Task 6）。
 // cfg 本身照旧按 Config 用，这里只是把这一条连接显式拼出来 —— 走的是 chat 那一路。
-const conn = { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, modelId: cfg.vlmModel }
+const conn = { apiKey: cfg.chat.apiKey, baseUrl: cfg.chat.baseUrl, modelId: cfg.chat.model }
 
 const IMG = 'data:image/jpeg;base64,AAAA'
 const body = { imageDataUrl: IMG, text: '天太灰了', params: ZERO }

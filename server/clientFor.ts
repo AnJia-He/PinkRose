@@ -62,14 +62,14 @@ function clientOf(kind: 'chat' | 'image', user: PublicUser, deps: ClientDeps): S
   if (secret) assertModelHostAllowed(secret.baseUrl)
 
   // 用户没配（或配了用不了）→ 用我们自己的那一套。
-  // 模型名取 config 里对应的那一个：chat 用 vlm、image 用 image model。
+  // ⚠️ ★ 2026-10-03：**两个类别各有自己的默认通道**（chat 走 Agnes、image 走商汤，
+  //    见 config.ts 顶上那段）。所以这里取的是一整条通道（钥匙 + 地址 + 模型），
+  //    不是"一份默认 + 两个模型名" —— 写成后者的话，两个类别会一起串到同一家去，
+  //    而且**不报错**，只是悄悄换了个模型在干活。
+  const fallback = kind === 'chat' ? deps.config.chat : deps.config.image
   const conn: ModelConnection = secret
     ? { apiKey: secret.apiKey, baseUrl: secret.baseUrl, modelId: secret.modelId }
-    : {
-      apiKey: deps.config.apiKey,
-      baseUrl: deps.config.baseUrl,
-      modelId: kind === 'chat' ? deps.config.vlmModel : deps.config.imageModel,
-    }
+    : { apiKey: fallback.apiKey, baseUrl: fallback.baseUrl, modelId: fallback.model }
 
   const make = deps.clientFactory ?? ((c: ModelConnection) => new SenseNovaClient(c))
   return make(conn)

@@ -42,10 +42,11 @@ vi.mock('node:fs', async importOriginal => {
 })
 
 const cfg: Config = {
-  apiKey: 'sk-secret-must-not-leak',
-  baseUrl: 'https://x.cn/v1',
-  imageModel: 'm',
-  vlmModel: 'v',
+  // ★ 2026-10-03：两条通道各有自己的默认连接（chat 走 Agnes、image 走商汤）。
+  //   两条都填上真东西 —— 这个文件里"没配过的用户"走的就是这两条，
+  //   而它同时钉着"钥匙绝不泄漏到日志/响应里"那几条。
+  chat: { apiKey: 'sk-chat-secret-must-not-leak', baseUrl: 'https://chat.x.cn/v1', model: 'v' },
+  image: { apiKey: 'sk-secret-must-not-leak', baseUrl: 'https://x.cn/v1', model: 'm' },
   port: 0,
   // 这个测试不碰数据库文件。写 :memory: 是为了明说"不会在磁盘上开文件"
   dbPath: ':memory:',
@@ -1119,10 +1120,12 @@ describe('★ 两套 key 彻底分开（§7.4，用户点名要的四条；⑤ �
 
     expect((await post(base, '/api/route', askBody, cookie)).status).toBe(200)
 
-    // ★ 上游 URL 是**默认那个**、Authorization 是**默认那把钥匙**。
+    // ★ 上游 URL 是**默认那条通道**的、Authorization 是**它自己那把钥匙**。
     //   一个"顺手拿用户配的那一套去打对话"的实现，这里出现的是
     //   img.example.com / sk-img，当场红。
-    expect(calls).toEqual([{ url: `${cfg.baseUrl}/chat/completions`, auth: `Bearer ${cfg.apiKey}` }])
+    //   ⚠️ 2026-10-03 起默认的**对话**通道走 Agnes（`cfg.chat`）—— 看的是 chat 那一格，
+    //   不是 image 那一格（写错的话这条会指到商汤去，而它照样"像个正常配置"）。
+    expect(calls).toEqual([{ url: `${cfg.chat.baseUrl}/chat/completions`, auth: `Bearer ${cfg.chat.apiKey}` }])
   })
 
   it('② 只配了对话 → 图片照常能用（走默认那一套）', async () => {
@@ -1131,7 +1134,9 @@ describe('★ 两套 key 彻底分开（§7.4，用户点名要的四条；⑤ �
 
     expect((await post(base, '/api/edit', editBody, cookie)).status).toBe(200)
 
-    expect(calls).toEqual([{ url: `${cfg.baseUrl}/images/edits`, auth: `Bearer ${cfg.apiKey}` }])
+    // ⚠️ 默认的**改图**通道仍然是商汤（`cfg.image`）—— 和上面那一条**不是同一家**，
+    //   两条摆在一起就说明了这件事：对话去 chat 那个地址，改图去 image 这个地址。
+    expect(calls).toEqual([{ url: `${cfg.image.baseUrl}/images/edits`, auth: `Bearer ${cfg.image.apiKey}` }])
   })
 
   it('③ 两边都配了 → 各走各的，绝不串', async () => {

@@ -1,10 +1,30 @@
 import { resolve } from 'node:path'
 
-export type Config = {
+/**
+ * 一条默认上游通道（**我们自己的**钥匙，不是用户自带的那套）。
+ *
+ * ★ 2026-10-03：**两条通道从此不是同一家** ——
+ *   · `chat`  —— 看懂照片 + 听懂人话（`/api/route`、`/api/suggest`）→ **Agnes**
+ *      （`agnes-2.5-flash`：实测 1.0~2.1 秒，商汤那条是 4~8.5 秒；判断也准）
+ *   · `image` —— 真去改图（`/api/edit`）→ 仍然是**商汤**（`sensenova-u1.5-fast`）
+ *
+ *   为什么**只换了一半**（这是量出来的，不是挑的）：Agnes 的图片模型有两类活会
+ *   翻车 —— 换天空时**把背对镜头的人转过来画了张没五官的脸**、修痘印时**顺手
+ *   磨平皮肤还梳了头发**；同一刀商汤都不犯。加硬约束能压住这两条，却又把
+ *   "换背景"那张的脸改动从 53% 顶到 91.5%（负面清单越长越是在提醒它）。
+ *   证据 `.superpowers/scratch/audit/_verify_agnes*.py`、`_probe_agnes_prompt*.py`，
+ *   对照图在 `shots/V-*.png` / `sn-SN-*.png`。
+ */
+export type Channel = {
   apiKey: string
   baseUrl: string
-  imageModel: string
-  vlmModel: string
+  /** 这条通道用哪个模型 id */
+  model: string
+}
+
+export type Config = {
+  chat: Channel
+  image: Channel
   port: number
   dbPath: string
   /** 图片文件放哪 —— Storage 那一层的根目录。和 dbPath 一样，默认落在仓库根的 data/ 下 */
@@ -13,17 +33,43 @@ export type Config = {
   sessionSecret: string
 }
 
+export const DEFAULT_CHAT_BASE_URL = 'https://apihub.agnes-ai.com/v1'
+export const DEFAULT_CHAT_MODEL = 'agnes-2.5-flash'
+export const DEFAULT_IMAGE_BASE_URL = 'https://token.sensenova.cn/v1'
 export const DEFAULT_IMAGE_MODEL = 'sensenova-u1.5-fast'
-export const DEFAULT_VLM_MODEL = 'sensenova-6.8-flash-lite'
-export const DEFAULT_BASE_URL = 'https://token.sensenova.cn/v1'
 export const DEFAULT_PORT = 8787
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const apiKey = env.SN_API_KEY?.trim()
+type ChannelEnv = { key: string; base: string; model: string }
+
+/**
+ * 读一条通道。**缺钥匙就抛**，而且只说缺了哪个变量、绝不回显任何值
+ * （这个错误信息会被打日志）。
+ */
+function readChannel(
+  env: NodeJS.ProcessEnv, names: ChannelEnv, fallback: { base: string; model: string },
+): Channel {
+  const apiKey = env[names.key]?.trim()
   if (!apiKey) {
-    // 只说缺了哪个变量，绝不回显任何值——错误信息会被打日志
-    throw new Error('缺少环境变量 SN_API_KEY，请复制 .env.example 为 .env 并填入')
+    throw new Error(`缺少环境变量 ${names.key}，请复制 .env.example 为 .env 并填入`)
   }
+  return {
+    apiKey,
+    baseUrl: (env[names.base]?.trim() || fallback.base).replace(/\/+$/, ''),
+    model: env[names.model]?.trim() || fallback.model,
+  }
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  // ★ **两条通道都要有钥匙才起得来。** 少哪一条，产品就缺一半：chat 缺了路由
+  //   直接废掉，image 缺了点「生成」就废掉。宁可启动时把话说清楚，也不要等用户
+  //   按下去、才在上游那边变成一个看不懂的 401。
+  const chat = readChannel(env,
+    { key: 'AGNES_API_KEY', base: 'AGNES_BASE_URL', model: 'AGNES_CHAT_MODEL' },
+    { base: DEFAULT_CHAT_BASE_URL, model: DEFAULT_CHAT_MODEL })
+  const image = readChannel(env,
+    { key: 'SN_API_KEY', base: 'SN_BASE_URL', model: 'SN_IMAGE_MODEL' },
+    { base: DEFAULT_IMAGE_BASE_URL, model: DEFAULT_IMAGE_MODEL })
+
   const sessionSecret = env.SESSION_SECRET?.trim()
   if (!sessionSecret) {
     // 没配就**拒绝启动**，绝不用一个写死在代码里的默认值 —— 那等于没有签名，
@@ -36,10 +82,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // 换成 import.meta.url 的话，从别处启动就会另开一个空库 ——
   // "用户数据在哪"一旦有两个答案，排查起来很贵。
   return {
-    apiKey,
-    baseUrl: (env.SN_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, ''),
-    imageModel: env.SN_IMAGE_MODEL?.trim() || DEFAULT_IMAGE_MODEL,
-    vlmModel: env.SN_VLM_MODEL?.trim() || DEFAULT_VLM_MODEL,
+    chat,
+    image,
     port: Number.isInteger(portRaw) && portRaw > 0 ? portRaw : DEFAULT_PORT,
     dbPath: env.DB_PATH?.trim() || resolve(process.cwd(), 'data', 'ruixing.db'),
     photoDir: env.PHOTO_DIR?.trim() || resolve(process.cwd(), 'data', 'photos'),
@@ -49,5 +93,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
 /** 给人看的配置摘要。**故意不包含 apiKey 和 sessionSecret**，因为这个字符串会被打日志。 */
 export function describeConfig(c: Config): string {
-  return `base=${c.baseUrl} image=${c.imageModel} vlm=${c.vlmModel} port=${c.port} key=已设置 secret=已设置`
+  return `chat=${c.chat.baseUrl} (${c.chat.model}) ` +
+    `image=${c.image.baseUrl} (${c.image.model}) port=${c.port} key=已设置 secret=已设置`
 }
