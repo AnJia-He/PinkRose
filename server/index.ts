@@ -71,7 +71,7 @@ const server = createApp({
 // 写 127.0.0.1 而不是 localhost：后者在 Windows 上可能先解析成 IPv6 的 ::1，
 // 而这里绑的是 IPv4，会连不上。同一个理由，vite 的代理目标也写成 127.0.0.1。
 server.listen(config.port, '127.0.0.1', () => {
-  console.log(`RuiXing server  http://127.0.0.1:${config.port}`)
+  console.log(`PinkRose server  http://127.0.0.1:${config.port}`)
   console.log(`  ${describeConfig(config)}`)
   console.log(`  （只听本机。手机要访问的话，从前端的 ${'5173'} 端口走代理进来）`)
 })

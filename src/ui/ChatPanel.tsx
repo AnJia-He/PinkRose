@@ -20,6 +20,12 @@ type Props = {
    *  只在 `busy` 时会出现：那一格平时是「发送」。 */
   onStop: () => void
   onCard: (card: SuggestCard) => void
+  /** ★ 2026-10-03：用户**在欢迎页的对话区里先打的那句话**（没有就是空串）。
+   *  它只做一件事：把它填进下面那个输入框，用户按一下发送就行 ——
+   *  这也是为什么输入框是**受控之外的**（uncontrolled）：填值靠 `defaultValue` +
+   *  `key`（draft 一变就重挂一次），用户打字之后 DOM 里的值不归 React 管，
+   *  和这个 form 原来的写法一致。 */
+  draft?: string
   /** 点「回到这一步」。只在 jumpableIds 里的消息上出现。 */
   onJump: (id: number) => void
   /** 点「再来一版」—— 同一句话重掷一次（见 App.tsx 的 onRerun）。 */
@@ -39,7 +45,7 @@ type Props = {
 
 export default function ChatPanel({
   messages, cards, busy, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
-  jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark,
+  jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
 }: Props) {
   return (
     <aside className="chat">
@@ -145,7 +151,11 @@ export default function ChatPanel({
             ⚠️ 它**必须继续叫 `name="text"` 且待在这个 `<form>` 里** ——
             上面那段取值用它（`elements.namedItem('text')`），
             `App.test.tsx` 里的 `say()` 辅助也按 `form.chat-input` + `input[name="text"]` 找它。 */}
-        <input name="text" placeholder="说说想怎么改…" autoComplete="off"
+        {/* ⚠️ `key` 挂的是 draft：它变了（用户在欢迎页打了话、又选了一张新照片）
+            就重挂一次输入框，`defaultValue` 才会重新生效。用户自己打字不会触发
+            重挂（那期间根本没有重渲染），所以不会打到一半被清掉。 */}
+        <input name="text" defaultValue={draft} key={draft ?? ''}
+               placeholder="说说想怎么改…" autoComplete="off"
                aria-label="说说想怎么改" />
         {/* ★ 2026-09-30：这一格**平时是「发送」，生成中是「停止」**。
             为什么值得专门做一个按钮（而不是让发送键继续 disabled 着）：

@@ -1,77 +1,127 @@
-import { useState } from 'react'
-import { Image as ImageIcon } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Btn } from './kit/Btn.tsx'
 import logoMark from '../assets/logo/rose.svg'
 
-type Props = { onPick: (file: File) => void }
-
-/** 「选一张照片」那个框里的图。画的是一张照片（方框 + 山 + 太阳），
- *  不是"上传箭头"：用户要做的动作是"挑一张照片"，不是"上传"——
- *  这一屏上"上传"这个词一次都没出现过。
- *
- *  ★ 2026-10-01：换成 lucide 的 `Image`（同一个东西：方框 + 山 + 太阳）。
- *  原来是自己画的内联 SVG，理由是"零新依赖"—— 那条规矩已被用户推翻
- *  （见 docs/superpowers/specs/2026-10-01-frontend-component-library.md）。
- *  `strokeWidth` 给 1.5（不是默认的 2），和原来那笔画出来的粗细一致。 */
-function PhotoIcon() {
-  return <ImageIcon className="uploader-icon" size={30} strokeWidth={1.5} aria-hidden="true" />
+type Props = {
+  /** 选好照片了。`wish` 是用户**在对话区里先打的那句话**（没打就是空串）——
+   *  它会被带进对话输入框里，用户按一下发送就行。 */
+  onPick: (file: File, wish: string) => void
 }
+
+/** 三个示范句。和落地页那三句**同一个口径**（措辞一个字没改）。 */
+const EXAMPLES = ['天空再蓝一点', '后面那个人去掉', '脸太暗了']
 
 /**
  * 上传前那一屏 —— **登录之后看到的第一张脸**。
  *
- * 2026-09-30 重做。原来这里只有一个虚线框、里面四个字「选一张照片」，浮在
- * 一整片黑里：不说这是什么产品、不说能拿它干嘛、也不说该怎么做。用户看完
- * 整套界面的评语是「设计是不是过于简化了」—— 这一屏是那句话最直白的地方
- * （首屏投入的每一分都在这里回本，别处都没有它值钱）。
+ * ★ 2026-10-03 重做（用户原话：「这边直接设立对话区，就像主流的 AI 软件对话一样，
+ * 显示欢迎使用 PinkRose」）。改的是**形状**，不是内容：
+ *   · 原来是一个大虚线框（`<label>` 当按钮）+ 三句提示；
+ *   · 现在中间是一条**对话输入框**（`.composer`）：左边是话、右边是「选照片」，
+ *     输入框空着时那颗按钮就叫「选照片」，打了字之后叫「发送」——
+ *     和 ChatGPT / 豆包那一排长一样。**照片仍然是前提**（产品就是改照片的），
+ *     所以按「发送」时如果还没选照片，对话框会弹出来，同时说一句"这句话我先记着"。
  *
- * 三个元素各管一件事，缺一个都能说出缺了会怎样：
- *   · **一句话说清这是什么**（「说句话，照片就修好了」）—— 和落地页 h1 是
- *     同一句，用户在门口读到的和进门读到的是同一句，不是一个门里一个说法；
- *   · **一个动作**（选一张照片 / 拖进来）—— 手机上点开相册、桌面上拖进来，
- *     两条路都要有：目标用户是手机党，但**他自己**是在桌面上试的；
- *   · **一句话示范怎么用**（那三个例子）—— 对话式修图是这产品最不一样的地方，
- *     而"可以对着一张照片说话"这件事不是自明的。三个例子照抄落地页那句，
- *     措辞一个字都没改。
+ * 三条老规矩一条没丢（它们是这一屏的价值所在，别在改版里丢掉）：
+ *   · **一句话说清这是什么** —— 「说句话，照片就修好了」，和落地页 h1 是同一句；
+ *   · **一个动作**（选一张照片 / 拖进来）—— 手机上点相册、桌面上拖进来，两条路都要有；
+ *   · **一句话示范怎么用** —— 三个例子，现在做成了**可以点的**（点一下填进输入框）。
  *
- * ⚠️ **拖放那三个事件挂在 `<label>` 上**，不是挂在外层容器：拖到哪儿算数，
- * 得和"点到哪儿算数"是同一块地方，否则框外一圈"看着能放、其实不认"。
+ * ⚠️ 拖放那三个事件挂在**整块 `.welcome`** 上（不是只挂在输入框那一行）：
+ * 一行输入框太窄，而"拖到哪儿算数"要和"看着能不能放"对得上 —— 所以拖进这一块
+ * 的任何地方都算，并且此时输入框自己亮起来给反馈（`over`）。
  * ⚠️ `onDragOver` 必须 `preventDefault()`，否则浏览器不认这是一次放置
  * （HTML 规范：默认行为是"不接收"），`onDrop` 根本不会触发。
+ * ⚠️ 那个 `input[type=file]` **必须留在 DOM 里**（藏起来、由按钮去点它）：
+ * `check:layout` 靠 `waitForSelector('input[type="file"]')` 判断"这一屏到了没有"。
  */
 export default function Uploader({ onPick }: Props) {
-  /** 拖到了框里没有。纯视觉 —— 不参与任何判断，所以它可以什么都不影响。 */
+  /** 拖到了这一块里没有。纯视觉 —— 不参与任何判断。 */
   const [over, setOver] = useState(false)
+  /** 对话区里先打的那句话。 */
+  const [wish, setWish] = useState('')
+  /** 打了字、但还没选照片就按了发送 —— 提示一句，别让人以为按钮坏了。 */
+  const [nag, setNag] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const textRef = useRef<HTMLInputElement>(null)
 
   const take = (files: FileList | null | undefined) => {
     const f = files?.[0]
-    if (f) onPick(f)
+    if (f) onPick(f, wish.trim())
+  }
+
+  /** 「发送」和「选照片」是**同一颗按钮**，只是输入框里有没有话决定了它叫什么。
+   *  两条路都要开文件框 —— 照片是前提，话可以先说。 */
+  const start = () => {
+    setNag(wish.trim().length > 0)
+    fileRef.current?.click()
   }
 
   return (
-    <div className="welcome">
+    <div
+      className="welcome"
+      onDragOver={e => { e.preventDefault(); setOver(true) }}
+      onDragLeave={() => setOver(false)}
+      onDrop={e => { e.preventDefault(); setOver(false); take(e.dataTransfer?.files) }}
+    >
       {/* 56px：44 的时候这朵花只是一团粉色（花瓣的层次全糊掉了），
           而它下面是这屏最大的一行字 —— 标志比标题还小会显得没底气。 */}
       <img className="welcome-mark" src={logoMark} alt="" width={56} height={56} />
-      <h1 className="welcome-title">说句话，照片就修好了</h1>
+      <h1 className="welcome-title">欢迎使用 PinkRose</h1>
       <p className="welcome-lede">
-        旅游拍的、路上随手拍的都行。传一张上来，想怎么改就用大白话说。
+        说句话，照片就修好了。旅游拍的、路上随手拍的都行。
       </p>
 
-      <label
-        className={`uploader${over ? ' over' : ''}`}
-        onDragOver={e => { e.preventDefault(); setOver(true) }}
-        onDragLeave={() => setOver(false)}
-        onDrop={e => { e.preventDefault(); setOver(false); take(e.dataTransfer?.files) }}
+      {/* ── 对话区 ─────────────────────────────────────────────────────
+          它长成对话输入框的样子，但**不是**聊天入口：这一屏还没有照片，
+          能做的第一步永远是"选一张"。所以它是一颗**会改名的按钮** ——
+          空着叫「选照片」，打了字叫「发送」，按下去都是开文件框。 */}
+      <form
+        className={`composer${over ? ' over' : ''}`}
+        onSubmit={e => { e.preventDefault(); start() }}
       >
-        <input type="file" accept="image/*" onChange={e => take(e.target.files)} />
-        <PhotoIcon />
-        <span className="uploader-cta">选一张照片</span>
-        <span className="uploader-hint">或者把照片拖到这里</span>
-      </label>
+        <input
+          ref={fileRef}
+          className="composer-file"
+          type="file"
+          accept="image/*"
+          onChange={e => take(e.target.files)}
+        />
+        <input
+          ref={textRef}
+          className="composer-text"
+          value={wish}
+          onChange={e => { setWish(e.target.value); setNag(false) }}
+          placeholder="想怎么改，说一句…"
+          aria-label="想怎么改"
+          autoComplete="off"
+        />
+        {/* ⚠️ 主按钮**走 `<Btn>`**（全站只有一份长相那条规矩），
+            这里只给它尺寸/圆角（`.composer-go` 在 styles.css 里）。 */}
+        <Btn type="submit" className="composer-go">
+          {wish.trim() ? '发送' : '选照片'}
+        </Btn>
+      </form>
 
-      <p className="welcome-eg">
-        不知道从哪说起？试试「天空再蓝一点」「后面那个人去掉」「脸太暗了」。
-      </p>
+      {/* 打了字却没选照片 → 说一句。**不是报错**，是告诉他这句话不会白打。 */}
+      {nag && (
+        <p className="composer-nag">选一张照片，这句话会一起带过去。</p>
+      )}
+
+      {/* 拖放是**桌面才成立**的一句话（触屏上没有拖放这回事）。 */}
+      <p className="composer-drop">也可以把照片直接拖到这一块上。</p>
+
+      <div className="welcome-egs">
+        <span className="welcome-egs-lead">不知道从哪说起？点一个试试</span>
+        {EXAMPLES.map(s => (
+          <button
+            key={s}
+            type="button"
+            className="eg-chip"
+            onClick={() => { setWish(s); textRef.current?.focus() }}
+          >{s}</button>
+        ))}
+      </div>
 
       {/* ★ 2026-09-30 用户定案：**不写"免费额度"**（那种话读着像营销，
           而且额度策略本身还没定），只**提示一天大概能做多少** ——
@@ -84,7 +134,8 @@ export default function Uploader({ onPick }: Props) {
           （现在是串行队列 + 上游 429 退避，没有计数）。文案说的是**预期**，
           不是已经生效的规矩。等哪天真加了闸门，这句再改成"今天还能改 N 张"。
           ⚠️ 也别在这儿写"免费"两个字（用户明确说了不写）：这句话里
-          一个字都没提钱，是故意留的白。 */}
+          一个字都没提钱，是故意留的白。
+          ⚠️ 类名 `.welcome-note` **别改**：`check:layout` 靠它量这一屏。 */}
       <p className="welcome-note">一天大概能改二十来张照片。</p>
     </div>
   )

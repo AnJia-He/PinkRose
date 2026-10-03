@@ -151,7 +151,7 @@ export default function LandingPage({ onEnter }: Props) {
     const root = document.documentElement
     root.classList.add('lp-on')
     const prevTitle = document.title
-    document.title = 'RuiXing —— 说句话，照片就修好了'
+    document.title = 'PinkRose —— 说句话，照片就修好了'
 
     return () => {
       root.classList.remove('lp-on')
@@ -172,7 +172,7 @@ export default function LandingPage({ onEnter }: Props) {
 
       <header className="lp-nav">
         <div className="lp-wrap">
-          <span className="lp-brand"><img src={logo} alt="" />RuiXing</span>
+          <span className="lp-brand"><img src={logo} alt="" />PinkRose</span>
           {/* 导航那三个词。★ **2026-10-03 换过一次**（用户：「落地页还是用专用名词吧」，
               整页过一遍）—— 上一版是「怎么改 / 效果对比 / 不怕改错」，用户 2026-09-30
               挑的"别太口语、也别太专业"那一档。
@@ -241,7 +241,7 @@ export default function LandingPage({ onEnter }: Props) {
                   不然里面那张图会多出一截行高。 */}
               <picture>
                 <source srcSet={appWindowDark} media="(prefers-color-scheme: dark)" />
-                <img src={appWindow} alt="RuiXing 修图界面，左边是照片，右边是对话和建议卡片" />
+                <img src={appWindow} alt="PinkRose 修图界面，左边是照片，右边是对话和建议卡片" />
               </picture>
             </div>
             <div className="lp-prod-float">
@@ -353,7 +353,7 @@ export default function LandingPage({ onEnter }: Props) {
         </Reveal>
         <footer className="lp-footer">
           <div className="lp-wrap">
-            <span>RuiXing</span>
+            <span>PinkRose</span>
             <span>一句话，把旅途中的照片修好</span>
           </div>
         </footer>

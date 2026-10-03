@@ -547,36 +547,64 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   margin: var(--sp-3) 0 0; color: var(--muted); font-size: 14px; line-height: 1.75;
 }
 
-/* 那个虚线框。**它是整屏唯一的动作**，所以给足体量（不然一屏字配一个小框，
-   视线落不到该落的地方），并在悬停/拖入时整个变粉 —— 拖进来那一刻要有反馈，
-   否则用户松手前不知道"这里收不收"。 */
-.uploader {
-  display: flex; flex-direction: column; align-items: center; gap: var(--sp-2);
+/* ── 对话区（★ 2026-10-03 用户要的"像主流 AI 软件那样"）─────────────────
+   这一屏原来是一个大虚线框，现在收成**一条对话输入框**：左边是话、右边一颗按钮。
+   它长成聊天输入框的样子，但**不是**聊天入口 —— 这一屏还没有照片，
+   能做的第一步永远是"选一张"，所以那颗按钮会**改名**（空着叫「选照片」/打了字叫
+   「发送」，两下都是开文件框）。见 `Uploader.tsx` 顶上那段。
+   ⚠️ 体量别往下调：这是整屏**唯一能点**的地方，视线得落得到
+   （虚线框那版就是靠 `--sp-6` 的上下留白把它撑起来的）。 */
+.composer {
+  display: flex; align-items: center; gap: var(--sp-2);
   width: 100%; margin-top: var(--sp-6);
-  padding: var(--sp-6) var(--sp-5) var(--sp-5);
-  border: 1.5px dashed var(--line-2); border-radius: var(--r-lg);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-5);
+  border: 1.5px solid var(--line-2); border-radius: var(--r-pill);
   background: var(--panel);
-  cursor: pointer; color: var(--muted);
   transition: border-color var(--dur-2) ease, background-color var(--dur-2) ease,
-              color var(--dur-2) ease;
+              box-shadow var(--dur-2) ease;
 }
-.uploader input { display: none; }
-.uploader:hover, .uploader.over {
-  border-color: var(--accent); background: var(--rose-tint); color: var(--rose-300);
+/* 焦点落在这一格里 → 整条框亮起来（`.focus-within`，不用 JS）。
+   拖照片进来时（`.over`）也是同一套反馈 —— 用户松手前得知道"这里收不收"。 */
+.composer:focus-within, .composer.over {
+  border-color: var(--accent); box-shadow: var(--ring);
 }
-.uploader-icon { display: block; color: var(--muted); transition: color var(--dur-2) ease; }
-.uploader:hover .uploader-icon, .uploader.over .uploader-icon { color: var(--accent); }
-.uploader-cta { font-size: 15px; font-weight: 600; color: var(--text); }
-.uploader-hint { font-size: 12.5px; color: var(--muted); }
-/* "拖到这里"是**桌面才成立**的一句话。触屏上没有拖放这回事，摆着只会让人
+.composer.over { background: var(--rose-tint); }
+/* 那个 file input 必须**留在 DOM 里**（藏起来、由按钮去点它）——
+   `check:layout` 靠 `waitForSelector('input[type="file"]')` 判断这一屏到了没有。 */
+.composer-file { display: none; }
+.composer-text {
+  flex: 1; min-width: 0; padding: 11px 0;
+  border: 0; background: transparent; font: inherit; font-size: 14.5px; color: var(--text);
+}
+.composer-text:focus { outline: none; }
+.composer-text::placeholder { color: var(--muted-2); }
+/* 那颗按钮的**长相**来自 `<Btn>`（全站只有一份），这里只管它的尺寸和圆角。 */
+.composer-go { flex: none; border-radius: var(--r-pill); padding: 9px 20px; font-size: 14px; }
+
+/* 「选一张照片，这句话会一起带过去」—— 打了字却没选照片时冒一句。
+   **不是报错**（不红、不抖），只是告诉他这句话不会白打。 */
+.composer-nag { margin: var(--sp-3) 0 0; font-size: 12.5px; color: var(--rose-300); }
+
+/* "也可以拖进来"是**桌面才成立**的一句话。触屏上没有拖放这回事，摆着只会让人
    去找一个不存在的手势。（按 `hover: none` 判，不按宽度判 —— 触摸屏笔记本
    两条都有，那种设备上这句话是对的。） */
-@media (hover: none) { .uploader-hint { display: none; } }
+.composer-drop { margin: var(--sp-3) 0 0; font-size: 12.5px; color: var(--muted-2); }
+@media (hover: none) { .composer-drop { display: none; } }
 
-.welcome-eg {
-  margin: var(--sp-5) 0 0; font-size: 12.5px; color: var(--muted-2); line-height: 1.75;
+/* 三个示范句 —— 现在**可以点**（点一下填进上面的输入框，然后自己按发送）。
+   ★ 用户原话是"一句话示范怎么用"，做成按钮之后它顺手变成了"填空"，
+   门槛比"照着这句话打一遍"低得多。 */
+.welcome-egs {
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+  gap: var(--sp-2); margin-top: var(--sp-5);
 }
-
+.welcome-egs-lead { font-size: 12.5px; color: var(--muted-2); }
+.eg-chip {
+  padding: 5px 12px; border-radius: var(--r-pill);
+  font-size: 12.5px; color: var(--muted);
+  background: var(--raised); border: 1px solid var(--line-2);
+}
+.eg-chip:hover { color: var(--rose-300); border-color: var(--rose-300); }
 /* 一天能做多少 —— 写在示范句下面的一句"底注"（★ 2026-09-30 用户定案）。
    **不写"免费额度"**（那种话读着像营销，而且额度策略本身还没定），
    只提示**一天大概能改多少张**，而且**单位是照片、不是 tokens**。
@@ -584,8 +612,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    ⚠️ 写"大概"不写"最多"：那道闸门**还没做**（后端现在是串行队列 + 上游 429 退避，
    没有按人计数），所以这句话说的是**预期**，不是已经生效的规矩。
 
-   样式上和 `.welcome-eg` 同档（都是 12.5px 的 `--muted-2`），靠上面那段间距分成
-   两条独立的句子 —— 它们说的是两件事：一句教怎么开口，一句说能做多少。
+   样式上和上面那三个示范句（`.welcome-egs-lead`）同档（都是 12.5px 的 `--muted-2`），
+   靠间距分成两条独立的句子 —— 它们说的是两件事：一句教怎么开口，一句说能做多少。
    ⚠️ 别再加重它（加底色、加边框、放大）：用户要的是"提示"，不是一条横幅。 */
 .welcome-note {
   margin: var(--sp-4) 0 0; font-size: 12.5px; color: var(--muted-2); line-height: 1.75;

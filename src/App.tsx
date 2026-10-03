@@ -145,6 +145,13 @@ export default function App() {
   const [canShare] = useState(canShareImage)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [cards, setCards] = useState<SuggestCard[]>([])
+  /** ★ 2026-10-03：用户**在欢迎页那条对话输入框里先打的字**。
+   *  它不是"待发送"的队列，只是一份**一次性的草稿**：选照片时由 `onPick` 接住，
+   *  交给 `ChatPanel` 填进输入框（`draft`），用户自己按发送。
+   *  ⚠️ 故意**不自动发**：自动发要和"照片解码完 / 画布挂上 / 建议卡还在路上"
+   *  这几件事排队，稍微错一点就是"话发出去了、照片还没准备好"的静默失败。
+   *  填进输入框只差用户按一下，而按一下是看得见的。 */
+  const [draft, setDraft] = useState('')
   /** 正在等建议卡片。**它不拦任何人** —— 发送键照常能按、话照常能说，
    *  它只负责在卡片那一格上挂一句"正在看这张照片能改什么…"。
    *  （`busy` 是"现在什么都做不了"，这个不是。两件事，别合并。） */
@@ -754,7 +761,7 @@ export default function App() {
     })
 
 
-  const onPick = useCallback(async (file: File) => {
+  const onPick = useCallback(async (file: File, wish = '') => {
     // ★ **进门第一件事**，在下面两趟 await 之前：从这一刻起"用户自己动手了"。
     //   恢复那道闸门看的就是它（`baseSeqRef` 要等解码完才动，等它太晚 ——
     //   理由写在 `pickStartedRef` 的注释里）。这行必须在第一句 `await` 上面。
@@ -794,6 +801,10 @@ export default function App() {
       setParams(ZERO)
       setMessages([])
       setCards([])
+      // ★ 2026-10-03：用户在**欢迎页的对话区**里先打的那句话 —— 带进对话输入框
+      //   （`ChatPanel` 的 `draft`）。走的是"先说要改什么、再选照片"那条路；
+      //   从修图页里换图（没有欢迎页）时它是空串，等于什么都不做。
+      setDraft(wish)
       // 点选那套状态跟对话是同一趟的东西：换张照片就该一起归零，
       // 否则上一张照片的红圈和"原来那句话"会跟到新照片上。
       setPending(null)
@@ -1475,7 +1486,7 @@ export default function App() {
    * （`LandingPage.tsx` 里那个 prevTitle）。
    */
   useEffect(() => {
-    if (view.kind !== 'landing') document.title = 'RuiXing'
+    if (view.kind !== 'landing') document.title = 'PinkRose'
   }, [view.kind])
 
   // 还没问出"我是谁"之前什么都别显示 —— 认出没登录的访客是**一次网络往返**，
@@ -1526,7 +1537,7 @@ export default function App() {
                 26px 是试出来的 —— 再小粉色就糊成一个点。 */}
             <span className="brand">
               <img className="brand-mark" src={logoMark} alt="" width={26} height={26} />
-              RuiXing
+              PinkRose
             </span>
             {image && (
               <div className="actions">
@@ -1676,6 +1687,7 @@ export default function App() {
                 cards={cards}
                 busy={busy}
                 suggesting={suggesting}
+                draft={draft}
                 onSend={send}
                 onStop={stopGeneration}
                 onCard={onCard}
