@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { Btn } from './kit/Btn.tsx'
+import WelcomeGlobe from './WelcomeGlobe.tsx'
 import logoMark from '../assets/logo/profile.webp'
 
 type Props = {
@@ -26,6 +27,14 @@ type Props = {
  *   · 「一天大概能改二十来张照片。」
  *   现在这一屏只剩三样东西：标志、一句话说清这是什么、那条对话输入框。
  *   （额度那句为什么被拿掉，见 docs/文案规范.md「额度怎么说」那一节。）
+ *
+ * ★ 2026-10-03 同一天第三样：**背景多了一颗图片球**。用户原话「在这个对话框的
+ *   背景我想做成一个背景为多个图片朝一个方向转动的图片球体」。它是纯背景 ——
+ *   组件 `WelcomeGlobe.tsx`、样式在 styles.css 的 `.globe` 那一段、
+ *   那 8 张小图在 `src/assets/welcome/`（一共 31KB，出图脚本写在 `.gitignore`
+ *   那条例外旁边的注释里）。
+ *   ⚠️ 它挂在 `.welcome` **外面**（这个组件现在返回一个 fragment），
+ *   两个理由写在下面那段 JSX 里。
  *
  * 还留着的那两条老规矩（它们是这一屏的价值所在）：
  *   · **一句话说清这是什么** —— 「说句话，照片就修好了」，和落地页 h1 是同一句；
@@ -63,54 +72,63 @@ export default function Uploader({ onPick }: Props) {
   }
 
   return (
-    <div
-      className="welcome"
-      onDragOver={e => { e.preventDefault(); setOver(true) }}
-      onDragLeave={() => setOver(false)}
-      onDrop={e => { e.preventDefault(); setOver(false); take(e.dataTransfer?.files) }}
-    >
-      {/* 56px：44 的时候这朵花只是一团粉色（花瓣的层次全糊掉了），
-          而它下面是这屏最大的一行字 —— 标志比标题还小会显得没底气。 */}
-      <img className="welcome-mark" src={logoMark} alt="" width={56} height={56} />
-      <h1 className="welcome-title">欢迎使用 PinkRose</h1>
-      <p className="welcome-lede">
-        说句话，照片就修好了。旅游拍的、路上随手拍的都行。
-      </p>
-
-      {/* ── 对话区 ─────────────────────────────────────────────────────
-          它长成对话输入框的样子，但**不是**聊天入口：这一屏还没有照片，
-          能做的第一步永远是"选一张"。所以它是一颗**会改名的按钮** ——
-          空着叫「选照片」，打了字叫「发送」，按下去都是开文件框。 */}
-      <form
-        className={`composer${over ? ' over' : ''}`}
-        onSubmit={e => { e.preventDefault(); start() }}
+    <>
+      {/* 背景那颗**图片球**（★ 2026-10-03 用户要的，见 WelcomeGlobe.tsx）。
+          ⚠️ 它挂在 `.welcome` **外面**、`.stage` 里面，两个原因：
+          ① 球要铺满**整块舞台**，而 `.welcome` 是一条 560px 的窄列；
+          ② `.welcome` 挂着进场动画（带 transform），而**带 transform 的元素会被
+             绝对定位的孩子当成包含块** —— 挂在里面的话，球就只铺满那 560px，
+             而且动画那 0.5 秒里还会跟着一起位移。 */}
+      <WelcomeGlobe />
+      <div
+        className="welcome"
+        onDragOver={e => { e.preventDefault(); setOver(true) }}
+        onDragLeave={() => setOver(false)}
+        onDrop={e => { e.preventDefault(); setOver(false); take(e.dataTransfer?.files) }}
       >
-        <input
-          ref={fileRef}
-          className="composer-file"
-          type="file"
-          accept="image/*"
-          onChange={e => take(e.target.files)}
-        />
-        <input
-          className="composer-text"
-          value={wish}
-          onChange={e => { setWish(e.target.value); setNag(false) }}
-          placeholder="想怎么改，说一句…"
-          aria-label="想怎么改"
-          autoComplete="off"
-        />
-        {/* ⚠️ 主按钮**走 `<Btn>`**（全站只有一份长相那条规矩），
-            这里只给它尺寸/圆角（`.composer-go` 在 styles.css 里）。 */}
-        <Btn type="submit" className="composer-go">
-          {wish.trim() ? '发送' : '选照片'}
-        </Btn>
-      </form>
+        {/* 56px：44 的时候这朵花只是一团粉色（花瓣的层次全糊掉了），
+            而它下面是这屏最大的一行字 —— 标志比标题还小会显得没底气。 */}
+        <img className="welcome-mark" src={logoMark} alt="" width={56} height={56} />
+        <h1 className="welcome-title">欢迎使用 PinkRose</h1>
+        <p className="welcome-lede">
+          说句话，照片就修好了。旅游拍的、路上随手拍的都行。
+        </p>
 
-      {/* 打了字却没选照片 → 说一句。**不是报错**，是告诉他这句话不会白打。 */}
-      {nag && (
-        <p className="composer-nag">选一张照片，这句话会一起带过去。</p>
-      )}
-    </div>
+        {/* ── 对话区 ─────────────────────────────────────────────────────
+            它长成对话输入框的样子，但**不是**聊天入口：这一屏还没有照片，
+            能做的第一步永远是"选一张"。所以它是一颗**会改名的按钮** ——
+            空着叫「选照片」，打了字叫「发送」，按下去都是开文件框。 */}
+        <form
+          className={`composer${over ? ' over' : ''}`}
+          onSubmit={e => { e.preventDefault(); start() }}
+        >
+          <input
+            ref={fileRef}
+            className="composer-file"
+            type="file"
+            accept="image/*"
+            onChange={e => take(e.target.files)}
+          />
+          <input
+            className="composer-text"
+            value={wish}
+            onChange={e => { setWish(e.target.value); setNag(false) }}
+            placeholder="想怎么改，说一句…"
+            aria-label="想怎么改"
+            autoComplete="off"
+          />
+          {/* ⚠️ 主按钮**走 `<Btn>`**（全站只有一份长相那条规矩），
+              这里只给它尺寸/圆角（`.composer-go` 在 styles.css 里）。 */}
+          <Btn type="submit" className="composer-go">
+            {wish.trim() ? '发送' : '选照片'}
+          </Btn>
+        </form>
+
+        {/* 打了字却没选照片 → 说一句。**不是报错**，是告诉他这句话不会白打。 */}
+        {nag && (
+          <p className="composer-nag">选一张照片，这句话会一起带过去。</p>
+        )}
+      </div>
+    </>
   )
 }

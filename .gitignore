@@ -34,6 +34,13 @@ test-photos/
 !src/assets/logo/*.webp
 !src/assets/logo/png/*.png
 
+# 例外：欢迎页那颗**图片球**的小图要入库（★ 2026-10-03 补的）。
+# 和上面两批同理：**它就是那一屏的背景本身**，少一张球上就缺一块。
+# ⚠️ 这 8 张是从 `src/assets/landing/` 那批大图裁出来压小的（每张 1~7KB，
+#    一共 31KB）—— **别直接引落地页那批**：单张就 100~350KB，球上要摆几十格，
+#    首屏会白多下 1.8MB。出图脚本：`.superpowers/scratch/landing-art/_globe_thumbs.py`。
+!src/assets/welcome/*.webp
+
 # Python
 __pycache__/
 *.py[cod]

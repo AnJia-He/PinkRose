@@ -98,6 +98,10 @@
      细线（下面深色块里改了值）—— 因为深底上"会糊进底里"的变成了**夜景、
      暗调**那类照片，而那正是这个产品的常客。 */
   --photo-edge: var(--panel);
+  /* 欢迎页那颗**图片球**中间那层柔光（★ 2026-10-03）。字要压在照片上，就得先
+     把中段洗干净 —— 不然「欢迎使用 PinkRose」正好落在一张夜景上。
+     用的是**底色的 rgba**：压在照片上相当于"把中间那一块擦淡"。 */
+  --globe-scrim: rgba(245, 245, 247, .93);
 
   --text:      #1c1c1e;
   /* 这两档都是**量过的**，不是挑好看的（WCAG 对比度，正文要 4.5:1）：
@@ -217,6 +221,8 @@
        城市夜景"正是这个产品的典型素材）。深底上要分开的换成了暗照片，
        所以这里反过来用一道浅色细线。 */
     --photo-edge: rgba(255, 255, 255, .22);
+    /* 那颗图片球中间那层柔光（浅色版是同一个做法，见上面那段的理由）。 */
+    --globe-scrim: rgba(21, 21, 23, .9);
 
     --text:      #f2f2f5;  /* 压面板 14.88:1 */
     --muted:     #b9b9c3;  /* 8.54:1 */
@@ -498,6 +504,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .stage {
   flex: 1; display: flex; align-items: center; justify-content: center;
   padding: var(--sp-5);
+  /* ★ 2026-10-03：`position: relative` 是给欢迎页那颗**图片球**当包含块用的
+     （它铺满整块舞台，见 `.globe`）。舞台自己不用剪裁 —— 球自己会剪。 */
+  position: relative;
   background: radial-gradient(120% 70% at 50% 0%, rgba(255, 255, 255, .55), transparent 72%);
 }
 /* ⚠️ 深色模式下那层顶光要**收到几乎看不见**：它是照着"粉底 + 白卡纸"设计的，
@@ -590,6 +599,58 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   display: flex; flex-direction: column; align-items: center; text-align: center;
   max-width: 560px; padding: 0 var(--sp-4);
   animation: welcome-in .5s var(--ease) both;
+  /* ★ 2026-10-03：把它抬到图片球**上面**。球是绝对定位的，而定位元素默认画在
+     普通内容之上 —— 少了这两行，标题和输入框会被那 40 张照片盖住。 */
+  position: relative; z-index: 1;
+}
+
+/* ── 欢迎页背景：那颗**图片球**（★ 2026-10-03 用户要的）─────────────────
+   用户原话：「在这个对话框的背景我想做成一个背景为多个图片朝一个方向转动的
+   图片球体」。组件是 `src/ui/WelcomeGlobe.tsx` —— 每格摆在哪由它算好、写在
+   内联的 `transform` 里；这里只管"怎么摆、转多快、多淡"。
+
+   ⚠️ **没有引任何 3D 库**：`.globe-spin` 里每一格用
+   `rotateY(经度) rotateX(纬度) translateZ(半径)` 摆在球面上，外层挂一条
+   `rotateY(360deg)` 的无限动画 —— 整颗球就绕竖轴**朝一个方向**转。
+   ⚠️ `backface-visibility: hidden` 是这颗球成立的关键：背面那些格子直接不画，
+      所以看到的是"正面一层"，而不是一圈半透明的重影。
+   ⚠️ **别给格子加 `filter` / `backdrop-filter`** —— 那会把 3D 打平
+      （preserve-3d 在这一格失效），整颗球会塌成一张平面图。`opacity` 可以。
+   ⚠️ 它是背景，所以 `pointer-events: none`：往这一屏拖照片时球不能挡住落点
+      （拖放那三个事件挂在 `.welcome` 上）。
+   ⚠️ 停转不用另外写 —— 文件末尾那条 `prefers-reduced-motion` 把全站动画
+      都关了。 */
+.globe {
+  position: absolute; inset: 0; overflow: hidden;
+  display: grid; place-items: center;
+  perspective: 1400px;
+  pointer-events: none; user-select: none;
+  /* 球的半径。**组件里那个 `translateZ` 引的就是它** —— 换半径只该改这一处。
+     44vmin：球大概占满舞台的九成（再大就被上下切掉，看着不像一颗球了）。 */
+  --globe-r: 36vmin;
+}
+.globe-spin {
+  position: relative; width: 0; height: 0;
+  transform-style: preserve-3d;
+  animation: globe-spin 64s linear infinite;
+}
+/* 一分钟出头转一圈 —— 是"背景在慢慢动"，不是一转就晕。
+   ⚠️ 只转 Y 轴（一个方向）。加上 rotateX / rotateZ 就变成"翻跟头"了。 */
+@keyframes globe-spin { to { transform: rotateY(360deg) } }
+.globe-tile {
+  position: absolute; left: 0; top: 0;
+  width: 88px; height: 59px; margin: -29px 0 0 -44px;
+  border-radius: 6px; object-fit: cover;
+  backface-visibility: hidden;
+  /* 它是**背景**，不许抢照片的戏：先压淡一档，中间那层柔光再洗一遍。 */
+  opacity: .82;
+  box-shadow: var(--shadow-1);
+}
+/* 中间那层柔光（颜色是 `--globe-scrim`，两种模式各一档）—— 让字压得住。
+   形状跟着内容走：标题 + 输入框那一块在正中间，所以中心最实、四周放开。 */
+.globe::after {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(34% 34% at 50% 48%, var(--globe-scrim), transparent 100%);
 }
 @keyframes welcome-in { from { opacity: 0; transform: translateY(10px) } }
 
@@ -908,6 +969,22 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      ⚠️ 这一条和桌面那条**必须成对**：只留桌面那条的话，手机上这两颗就紧挨着
      「作品」变成第四、第五格 —— 而 `check:layout` 里那条判据是按横竖两种分别量的。 */
   .nav-home { margin-top: 0; margin-left: auto; }
+
+  /* 图片球在窄屏上整套收小一档：格子小一点、球小一点（手机这块舞台又窄又矮，
+     桌面那档的球会左右顶到边、看着就不像一颗球了）。 */
+  /* ★ 窄屏上这颗球**换的是打法，不是尺寸**：手机竖屏里那一列字（346px）几乎
+     和球一样宽，字和球必然重叠 —— 想"整颗球露出来 + 字还读得清"是做不到的。
+     所以让球**铺满整块舞台**（比屏幕还大一点，58vmin），再拿一条**又宽又扁**
+     的柔光带只洗中间那一条横带：于是四边四角是照片、中间那一条是干净的。
+     桌面是"一颗看得清的球"，手机是"一圈照片围着"——两种都成立。
+     ⚠️ 光带要**比字宽**（150%）才盖得住标题两端：实拍过 78% 那版，
+        "欢"和"e"正好压在一张照片上。 */
+  .globe { --globe-r: 58vmin; }
+  .globe-tile { width: 76px; height: 51px; margin: -26px 0 0 -38px; }
+  .globe::after {
+    background: radial-gradient(150% 40% at 50% 50%,
+      var(--globe-scrim) 0%, var(--globe-scrim) 55%, transparent 100%);
+  }
 
   .workspace { flex-direction: column; }
   .workspace .stage { flex: 1 1 auto; }
