@@ -148,3 +148,20 @@ export async function postSuggest(o: SuggestRequest): Promise<SuggestResponse> {
 export async function postEdit(o: EditRequest, signal?: AbortSignal): Promise<EditResponse> {
   return post<EditResponse>('/api/edit', o, signal)
 }
+
+/**
+ * 这一趟失败，是不是"票不管用了"（而不是"这次编辑没成"）？
+ *
+ * 票会中途失效，而且不止一条路：30 天到期、**在别的设备改了密码**（签名里掺着
+ * 密码哈希，老票自己就验不过了）、`.env` 里换了 SESSION_SECRET、库被重建、
+ * 或者被 CSRF 打一次 `/api/logout`。这些情形后端回的都是 UNAUTHORIZED。
+ *
+ * ⚠️ **认出来之后必须把人放回登录页**，不能只在聊天里说一句「先登录一下」：
+ * 这一段界面上没有"退出"按钮、也没有用户管理页，说了那句话而界面上没有任何
+ * 回到登录页的路，用户就只剩**刷新页面**这一条出路 —— 那和 2d333bb 修掉的是
+ * 同一个形状的死胡同（"只能靠刷新脱身"）。
+ *
+ * 置空 `user` 而不是整页重载：App 不卸载，用户重新登录之后**修图状态原样还在**。
+ */
+export const isUnauthorized = (e: unknown): boolean =>
+  e instanceof ApiError && e.code === 'UNAUTHORIZED'
