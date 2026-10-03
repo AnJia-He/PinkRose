@@ -309,6 +309,27 @@ body {
      （照片永远该是主角 —— 修图工具里界面比照片抢眼就是没修好的设计。） */
   background: var(--bg);
 }
+/* ── 品牌字（★ 2026-10-03）─────────────────────────────────────────────
+   「PinkRose」这九个字母用的字：**Playfair Display 600**（SIL OFL 授权，
+   可以随产品一起分发）。文件是 Google Fonts 的 `&text=PinkRose` **子集**，
+   **1848 字节** —— 整包是几十 KB，而我们只要这九个字形。
+   要换字/换字体，用这条命令重新拿一份（`text=` 后面就是要的那几个字母）：
+     curl -A "Mozilla/5.0" "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600&text=PinkRose" \
+       → 里面的 woff2 地址 curl 下来，存成 src/assets/fonts/pinkrose-wordmark.woff2
+
+   ⚠️ **只给"标志"用**（顶栏、落地页品牌、页脚）。正文和按钮仍然走 `--font`：
+   衬线体排中文小字会糊，而且它本来就是个 logotype，不是正文字体。
+   ⚠️ `unicode-range` 是子集自带的那九个字母。写上它，别的字就不会来用这个
+   字体（少了它，浏览器会拿这九个字形去凑中文，凑不出来的地方会掉字）。 */
+@font-face {
+  font-family: 'PinkRose Wordmark';
+  src: url('./assets/fonts/pinkrose-wordmark.woff2') format('woff2');
+  font-weight: 600; font-style: normal; font-display: swap;
+  unicode-range: U+50, U+52, U+65, U+69, U+6b, U+6e-6f, U+73;
+}
+.wordmark { font-family: 'PinkRose Wordmark', var(--font); font-weight: 600; }
+
+/* 顶栏那一格：玫瑰标志 + 名字（★ 2026-10-03 起名字走上面的品牌字）。 */
 .brand { font-weight: 600; font-size: 15px; letter-spacing: .02em;
   /* 2026-09-29 起品牌名旁边挂了个玫瑰标志，所以这一格从"一段字"变成了"图 + 字"。
      `flex` + `gap` 让图自己占位；`align-items: center` 让图和字的中线对齐

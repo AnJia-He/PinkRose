@@ -172,7 +172,7 @@ export default function LandingPage({ onEnter }: Props) {
 
       <header className="lp-nav">
         <div className="lp-wrap">
-          <span className="lp-brand"><img src={logo} alt="" />PinkRose</span>
+          <span className="lp-brand wordmark"><img src={logo} alt="" />PinkRose</span>
           {/* 导航那三个词。★ **2026-10-03 换过一次**（用户：「落地页还是用专用名词吧」，
               整页过一遍）—— 上一版是「怎么改 / 效果对比 / 不怕改错」，用户 2026-09-30
               挑的"别太口语、也别太专业"那一档。
@@ -353,7 +353,7 @@ export default function LandingPage({ onEnter }: Props) {
         </Reveal>
         <footer className="lp-footer">
           <div className="lp-wrap">
-            <span>PinkRose</span>
+            <span className="wordmark">PinkRose</span>
             <span>一句话，把旅途中的照片修好</span>
           </div>
         </footer>

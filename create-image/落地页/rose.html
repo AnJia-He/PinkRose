@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>RuiXing 标志 · 粉玫瑰</title>
+<title>PinkRose 标志 · 粉玫瑰 + 蓝蝴蝶结</title>
 <style>
 /* ═══════════════════════════════════════════════════════════════════
    RuiXing 标志 —— 粉玫瑰
@@ -72,7 +72,7 @@ h2{font-size:15px;font-weight:500;letter-spacing:.06em;color:var(--ink3);
 <body>
 <div class="wrap">
 
-  <h1>RuiXing 标志 · 粉玫瑰</h1>
+  <h1>PinkRose 标志 · 粉玫瑰 + 蓝蝴蝶结</h1>
   <p class="sub">三层花瓣由浅入深，中心留一条螺旋。**每片花瓣大小都略有出入** —— 完全对称会立刻变回"卡通小花"。</p>
 
   <h2>主标</h2>
@@ -116,6 +116,48 @@ let uid = 0;
 
 const P0='#fbe4ec', P1='#f2b9cc', P2='#e78ea9', P3='#d0668a', P4='#a8466a';
 const LEAF='#6f8c6a', LEAFD='#4e6b4b';
+
+/* ── 蝴蝶结（★ 2026-10-03）──────────────────────────────────────────
+   用户给了一张照片（`D:\Downloads\0e2442a7d933c895ad0d2aec66af43e283020000.webp`，
+   一个戴**蓝色蝴蝶结**的女生），要"基于这张图再设计一个 LOGO"。
+   玫瑰是原来那朵（用户 09-29 拍板的，一片花瓣都没动），**加的是那只蓝色蝴蝶结** ——
+   照片里最认得出来的那个元素，也正好和"粉玫瑰"凑成一对颜色。
+
+   ⚠️ 它系在花的**下面**（像一束花绑了根丝带），**别挪到花上面** ——
+   那读成"花戴了个发卡"；而她那张照片里的蝴蝶结是戴在头上的，搬到一个
+   花的标志上，只有"系在花束上"这层意思立得住。
+   画法：两条飘带 → 两个环 → 结压在环上；整朵玫瑰最后盖上去（花坐在丝带上）。 */
+const B1='#e3eef9', B2='#a9c9e6', B3='#6f95b8';
+
+function bow(cx, cy, k, loopFill = B2, tailFill = B3, innerFill = B1) {
+  const loops = [-1, 1].map(sx => {
+    const ex = cx + sx * 11.5 * k, ey = cy - 1.8 * k;
+    return `<ellipse cx="${ex}" cy="${ey}" rx="${11 * k}" ry="${7.4 * k}" ` +
+             `transform="rotate(${sx * 14} ${ex} ${ey})" fill="${loopFill}"/>` +
+           `<ellipse cx="${ex + sx * 1.4 * k}" cy="${ey + 0.4 * k}" rx="${5.6 * k}" ry="${3.5 * k}" ` +
+             `transform="rotate(${sx * 14} ${ex} ${ey})" fill="${innerFill}" opacity=".8"/>`;
+  }).join('');
+  const tails = [-1, 1].map(sx => {
+    const d = `M${cx + sx * 1.6 * k} ${cy + 2 * k} ` +
+      `C${cx + sx * 8 * k} ${cy + 9 * k} ${cx + sx * 12 * k} ${cy + 12.5 * k} ${cx + sx * 14.5 * k} ${cy + 17 * k} ` +
+      `L${cx + sx * 7 * k} ${cy + 15 * k} ` +
+      `C${cx + sx * 5.4 * k} ${cy + 9.5 * k} ${cx + sx * 3.2 * k} ${cy + 6 * k} ${cx + sx * 1.6 * k} ${cy + 2 * k} Z`;
+    return `<path d="${d}" fill="${tailFill}"/>`;
+  }).join('');
+  // ⚠️ 结这一笔原来写死了 B3 —— 于是**单色版里它还是蓝的**（'currentColor' 传不进去）。
+  //    颜色一律走参数，别在这里写死任何色号。
+  return tails + loops +
+    `<ellipse cx="${cx}" cy="${cy}" rx="${4.8 * k}" ry="${5.6 * k}" fill="${tailFill}"/>` +
+    `<ellipse cx="${cx}" cy="${cy - 1.3 * k}" rx="${2.7 * k}" ry="${2.7 * k}" fill="${innerFill}" opacity=".9"/>`;
+}
+
+/* ★ 新主标 = 蝴蝶结 + 玫瑰（花坐在丝带上）。原来的"玫瑰 + 两片叶子"那一版
+   **还在**（`rose(..., leaves=true)`），只是不再当主标用 —— 留着是因为
+   单色版和"花在气泡里"那两格还在用它。 */
+function mark(cx, cy, k, seed = 0, withBow = true) {
+  const bowPart = withBow ? bow(cx, cy + 36 * k, k * 0.98) : '';
+  return bowPart + rose(cx, cy, k, seed, RINGS, !withBow);
+}
 
 /* 一片花瓣：根在原点，往外长。 */
 function petalPath(len, wid) {
@@ -172,7 +214,7 @@ function rose(cx, cy, k, seed = 0, rings = RINGS, leaves = false) {
    ✅ 正解：**外圈不挖（保住一个干净的剪影，跟粉色版的形状一致），
       里面两层"逐片缩 6%"** —— 每一片花瓣画实，再盖一片缩小版把它边缘吃掉。
       缝跟着花瓣的形状走，所以是有机的，不是几何的。 */
-function roseMono(cx, cy, k, seed = 0, shrink = 0.94) {
+function roseMono(cx, cy, k, seed = 0, shrink = 0.94, withBow = false) {
   const id = 'rm' + (++uid);
   let cut = '';
   RINGS.forEach((r, ri) => {
@@ -186,10 +228,17 @@ function roseMono(cx, cy, k, seed = 0, shrink = 0.94) {
   // 花心那条螺旋：单色版里它是"这是玫瑰不是卷心菜"的唯一信号，不能省
   cut += `<path d="${spiralPath(cx, cy, 3 * k, 10 * k, 1.8)}" fill="none" stroke="#000"
             stroke-width="${3.2 * k}" stroke-linecap="round"/>`;
+  // ⚠️ 蝴蝶结**不进遮罩**：那个 mask 是"白色=保留、黑色=挖掉"，
+  //    把它塞进 cut 等于把它挖掉（它在花瓣外面，本来就没东西，于是"消失"——
+  //    第一版就是这么错的）。它应该画在**内容**那一层（见下面 content）。
+  // 内容是"整朵花瓣 + 蝴蝶结"，一律 currentColor —— 单色版里蝴蝶结是**一个实心
+  // 剪影**（环里那点层次在单色下会糊成脏点）。
+  const content = (withBow ? bow(cx, cy + 36 * k, k * 0.98,
+    'currentColor', 'currentColor', 'currentColor') : '') + petalsFill(cx, cy, k, seed);
   return `<defs><mask id="${id}">
       <rect x="0" y="0" width="100" height="100" fill="#fff"/>${cut}
     </mask></defs>
-    <g mask="url(#${id})">${petalsFill(cx, cy, k, seed)}</g>`;
+    <g mask="url(#${id})">${content}</g>`;
 }
 
 /* 整朵的所有花瓣（只管形状，颜色由外面给） */
@@ -207,24 +256,26 @@ function petalsFill(cx, cy, k, seed = 0) {
    一个"只在某个尺寸成立"的版本不值得维护。主标在 32px 以上都成立，
    再小就用单色版（那个到 18px 还认得出）。 */
 
-document.getElementById('big').innerHTML = S(rose(50, 48, 1, 0, RINGS, true), 260);
-document.getElementById('bigdark').innerHTML = S(rose(50, 48, 0.95, 1, RINGS, true), 150);
+document.getElementById('big').innerHTML = S(mark(50, 44, 0.98, 0), 260);
+document.getElementById('bigdark').innerHTML = S(mark(50, 44, 0.93, 1), 150);
 
 document.getElementById('sizes').innerHTML =
-  [150, 96, 64, 40, 32].map(s => `<figure>${S(rose(50, 48, 1, 0, RINGS, true), s)}<figcaption>${s}px</figcaption></figure>`).join('');
+  [150, 96, 64, 40, 32].map(s => `<figure>${S(mark(50, 44, 0.98, 0), s)}<figcaption>${s}px</figcaption></figure>`).join('');
 
 document.getElementById('mono').innerHTML = `
-  <div class="cell"><div class="box">${S(roseMono(50, 50, 1, 0), 130)}</div>
+  <div class="cell"><div class="box">${S(roseMono(50, 46, 0.96, 0, 0.94, true), 130)}</div>
     <div class="lb"><b>单色 · 深</b>刻章、传真、黑白印刷</div></div>
-  <div class="cell"><div class="box dk"><div style="color:#fff">${S(roseMono(50, 50, 1, 1), 130)}</div></div>
+  <div class="cell"><div class="box dk"><div style="color:#fff">${S(roseMono(50, 46, 0.96, 1, 0.94, true), 130)}</div></div>
     <div class="lb"><b>单色 · 浅</b>深色底上用这个。缝是透的，不会露馅</div></div>
-  <div class="cell"><div class="box">${S(roseMono(50, 50, 1, 2, 0.86), 40)}</div>
+  <div class="cell"><div class="box">${S(roseMono(50, 46, 0.96, 2, 0.86, true), 40)}</div>
     <div class="lb"><b>单色 · 小</b>缩小时把缝放宽（0.94 → 0.86）。这一版到 18px 还认得出</div></div>`;
 
 document.getElementById('pal').innerHTML =
   [['#fbe4ec', P0, '辉光'], ['#f2b9cc', P1, '外圈'], ['#e78ea9', P2, '中圈'],
-   ['#d0668a', P3, '内圈'], ['#a8466a', P4, '花心'], ['#6f8c6a', LEAF, '叶']]
-   .map(([c, , name]) => `<div style="background:${c};color:${c === P0 || c === P1 ? '#8a6a75' : '#fff'}">${name}<br>${c}</div>`).join('');
+   ['#d0668a', P3, '内圈'], ['#a8466a', P4, '花心'],
+   ['#6f8c6a', LEAF, '叶'], ['#e3eef9', B1, '结·亮'], ['#a9c9e6', B2, '结·环'],
+   ['#6f95b8', B3, '结·深']]
+   .map(([c, , name]) => `<div style="background:${c};color:${[P0, P1, B1, B2].includes(c) ? '#8a6a75' : '#fff'}">${name}<br>${c}</div>`).join('');
 
 const BUB = 'M21 15 H79 A14 14 0 0 1 93 29 V55 A14 14 0 0 1 79 69 H50 L28 87 L33 69 ' +
             'H21 A14 14 0 0 1 7 55 V29 A14 14 0 0 1 21 15 Z';

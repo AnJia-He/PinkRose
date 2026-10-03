@@ -1535,7 +1535,7 @@ export default function App() {
                 ⚠️ 用的是**彩色版**，不是单色版：顶栏是深底，单色深版（墨色）在上面
                 根本看不见，而单色浅版（白色）会把品牌唯一的颜色丢掉。
                 26px 是试出来的 —— 再小粉色就糊成一个点。 */}
-            <span className="brand">
+            <span className="brand wordmark">
               <img className="brand-mark" src={logoMark} alt="" width={26} height={26} />
               PinkRose
             </span>
