@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { viewFromPath, pathOf } from './view'
+import { FRONT_PAGE, askedForFrontPage, viewFromPath, pathOf } from './view'
 
 /**
  * ⚠️ 2026-09-30 起分了两层：**`/` 是落地页**（门面），**App 住在 `/app` 底下**。
@@ -71,5 +71,22 @@ describe('网址 ↔ 界面', () => {
 
   it('★ 作品详情页的网址里**没有名字**，只有 id（§3.5.1）', () => {
     expect(pathOf({ kind: 'work', id: 7 })).toBe('/app/works/7')
+  })
+
+  it('★ 门面另外有一个「特意来看」的网址 —— 左栏那颗「首页」走它（2026-10-03）', () => {
+    // 登录着的人一打开 `/` 就会被送去 `/app`（App.tsx 里那条），所以从 App 里
+    // **主动**回门面得走一条能表明"这一趟是特意来的"的网址。它和 `/` 是同一页。
+    //
+    // ⚠️ 这两条要**一起**守：① 它指的确实是落地页那一支；② `askedForFrontPage`
+    //    认得的就是 `FRONT_PAGE` 自己带的那个参数。只守 ① 的话，把参数名从
+    //    `home` 改成别的，两处会**各自安静地**错开 —— 那颗按钮当场变回"点了没反应"。
+    expect(new URL(FRONT_PAGE, 'http://x').pathname).toBe('/')
+    expect(askedForFrontPage(new URL(FRONT_PAGE, 'http://x').search)).toBe(true)
+    // 正身仍然是 `/`：直接输网址、发出去的链接走的都是它（`go()` 那一侧才用 FRONT_PAGE）
+    expect(pathOf({ kind: 'landing' })).toBe('/')
+
+    expect(askedForFrontPage('')).toBe(false)
+    expect(askedForFrontPage('?home=0')).toBe(false)
+    expect(askedForFrontPage('?x=1')).toBe(false)
   })
 })

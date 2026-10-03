@@ -14,7 +14,7 @@ import { ModelSettings } from './ui/ModelSettings'
 import LandingPage from './ui/LandingPage'
 import { Nav } from './ui/Nav'
 import logoMark from './assets/logo/rose.svg'
-import { pathOf, viewFromPath, type View } from './ui/view'
+import { FRONT_PAGE, askedForFrontPage, pathOf, viewFromPath, type View } from './ui/view'
 import { me, type AccountUser } from './api/account'
 import {
   createSession, getSession, listSessions, sessionOriginalUrl, sessionStepUrl,
@@ -1415,8 +1415,17 @@ export default function App() {
    *  会留下一条 `/`，用户按后退 → 又跳回来 → **按几次都出不去**。
    */
   const go = useCallback((v: View, opts?: { replace?: boolean }) => {
-    const p = pathOf(v)
-    if (location.pathname !== p) {
+    // ★ 去**门面**那一页时走 `FRONT_PAGE`（= `/?home=1`），不是 `pathOf` 给的
+    //  `/`（2026-10-03）。差别只在"谁走过去"：`/` 是这一页的正身（直接输网址、
+    //  发链接都走它），而**从 App 里主动走过去**得带上那个参数 —— 不带的话
+    //  下面那条自动跳转立刻把人送回 `/app`，点「首页」像是没反应。
+    //  ⚠️ 判断要写在**这一处**（写网址只有这一处），别在 Nav 里另开一条 pushState
+    //   —— 那样"哪一屏对应哪个网址"就有了两份，迟早对不上。
+    const p = v.kind === 'landing' ? FRONT_PAGE : pathOf(v)
+    // ⚠️ "是不是已经在这一页上了"比的是 **`pathOf`**（不带参数的那个网址），
+    // 不是上面那个 `p`：站在 `/?home=1` 上再点一次「首页」，地址栏已经是它了，
+    // 不该再压一条 —— 压了的话后退要按好几下才出得去。
+    if (location.pathname !== pathOf(v)) {
       if (opts?.replace) window.history.replaceState(null, '', p)
       else window.history.pushState(null, '', p)
     }
@@ -1439,9 +1448,19 @@ export default function App() {
    * ⚠️ 它**只认自己人**：没登录的访客停在落地页上（那正是这一页存在的意义）。
    * `checking` 那一段要等 —— 还没问出"我是谁"就跳，会把每个登录着的人
    * 先闪一下落地页再走。
+   *
+   * ★ 2026-10-03：**特意来的不算**（`?home=1`，见 `ui/view.ts` 的 `FRONT_PAGE`）。
+   * 左栏底下那颗「首页」把人送到 `/?home=1`，这一条认出来就得让路 —— 不让的话
+   * 那颗按钮会"点了没反应"（推过去、立刻被撵回来），而且地址栏还会被改回 `/app`。
+   * 它守的仍然是原来那句话：**回访**的人不必每次打开都撞上营销页。
+   *
+   * ⚠️ 判据读的是 **`location.search`**，不是 `view` 上挂一个字段：按后退/前进
+   * 回来时 `view` 是 `viewFromPath(pathname)` 拼的（它看不见 `?` 后面那截），
+   * 挂在 view 上的话，从门面点「免费开始」进 App 再按后退 —— 人会被撵回来。
    */
   useEffect(() => {
-    if (!checking && user && view.kind === 'landing') go({ kind: 'edit' }, { replace: true })
+    if (!checking && user && view.kind === 'landing' && !askedForFrontPage(location.search))
+      go({ kind: 'edit' }, { replace: true })
   }, [checking, user, view, go])
 
   /**

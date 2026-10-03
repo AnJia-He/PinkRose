@@ -877,6 +877,8 @@ function judgeWelcome(label, m, view) {
  *      是每张图跳出来都把后面的行推一下；
  *   ⑤ 左栏三支 = 「修图 / 对话 / 作品」（§6.1），而且亮的是「对话」。
  *      ⚠️ 顺带钉住"这一页有没有自己的入口"：Task 6 之前它**根本没有来源**。
+ *   ⑥ ★ 2026-10-03：左栏底下那颗「首页」（回门面）在，而且**贴在最下面**
+ *      —— 它不是第四支，见上面 `homeBox` 那一段。
  */
 async function measureSessions(page, targetName = null) {
   return page.evaluate((want) => {
@@ -912,8 +914,17 @@ async function measureSessions(page, targetName = null) {
     const dels = confirming ? [...confirming.querySelectorAll('.session-del')] : []
     return {
       onPage: !!document.querySelector('.sessions'),
-      nav: [...document.querySelectorAll('.nav button')].map(b => b.textContent.trim()),
+      nav: [...document.querySelectorAll('.nav button:not(.nav-home)')].map(b => b.textContent.trim()),
       navOn: document.querySelector('.nav-item.on')?.textContent?.trim() ?? '',
+      // ★ 2026-10-03：左栏底下那颗「首页」（回门面）**单独量** —— 它不是第四支
+      //   （理由写在 Nav.tsx / styles.css 的 `.nav-home` 上），所以上面那三支
+      //   照旧按"只有三支"守，它自己这几格管"在不在、推没推到边上"。
+      // ⚠️ 窄屏上左栏是**横排**（styles.css 的 `@media (max-width: 640px)`），
+      //   所以"推到边上"在那边是**最右**、不是最底下 —— `navRow` 就是给判据
+      //   分轴用的，见 judgeSessions 里那一段。
+      navRow: getComputedStyle(document.querySelector('.nav')).flexDirection === 'row',
+      homeBox: box(document.querySelector('.nav-home')),
+      navBox: box(document.querySelector('.nav')),
       rows: rows.length,
       emptyTitle: document.querySelector('.sessions-empty-title')?.textContent?.trim() ?? '',
       goBtn: box(document.querySelector('.sessions-empty button')),
@@ -955,7 +966,11 @@ const NAV_THREE = ['修图', '对话', '作品']
 
 function judgeSessions(label, m, view, mode) {
   console.log(`── ${label}`)
-  console.log(`     左栏 ${m.nav.join(' / ')}（亮的是「${m.navOn}」）`)
+  console.log(`     左栏 ${m.nav.join(' / ')}（亮的是「${m.navOn}」）` +
+    (m.homeBox && m.navBox
+      ? `　「首页」${m.navRow ? '贴右' : '贴底'} ` +
+        `${m.homeBox[m.navRow ? 'right' : 'bottom']}/${m.navBox[m.navRow ? 'right' : 'bottom']}`
+      : '　**「首页」不在 DOM 里**'))
   if (mode === 'empty') {
     console.log(`     空态「${m.emptyTitle}」 ` +
       `按钮 ${m.goBtn ? `${m.goBtn.w}x${m.goBtn.h} @${m.goBtn.top}` : '不在'}`)
@@ -982,6 +997,25 @@ function judgeSessions(label, m, view, mode) {
   if (m.nav.join('/') !== NAV_THREE.join('/')) {
     fails.push(`${label}：左栏是「${m.nav.join(' / ')}」——` +
       `§6.1 要的是「${NAV_THREE.join(' / ')}」三支，顺序也是这个`)
+  }
+  // ★ 2026-10-03：「首页」那颗（回门面）在不在、**推没推到边上**。
+  //   位置这条只能在这儿守 —— vitest 没有排版引擎，`.nav-home` 那两条 auto
+  //   外边距被谁删掉的话那边一条都不会红，而这颗按钮会**悄悄**变成和「作品」
+  //   挤在一起的第四支（用户看不出它是"出门"，只当又一个栏目）。
+  //   ⚠️ 判据**分横竖两种**：手机上左栏收成了横排，那边推的是**最右**。
+  //      只按"最底下"判的话，手机那几档会**假绿**（横排里 item 的底边本来就
+  //      贴着横条的底）—— 实测过：把手机上那条规则删掉，只按纵轴判，它一声不吭。
+  //   实测贴边后离容器边 10~12px（内边距），两个方向都留 40px 的余量。
+  if (!m.homeBox || !m.navBox) {
+    fails.push(`${label}：左栏那颗「首页」不在 —— 从操作页回门面的路又断了`)
+  } else {
+    const axis = m.navRow ? 'right' : 'bottom'
+    const 离边 = m.navBox[axis] - m.homeBox[axis]
+    if (离边 > 40) {
+      fails.push(`${label}：左栏的「首页」没推到${m.navRow ? '最右边' : '最底下'}` +
+        `（它离容器边 ${离边}px，左栏 ${m.navBox.w}x${m.navBox.h}${m.navRow ? '（横排）' : ''}）` +
+        '—— 它会和上面三支挤在一起，被看成"第四支导航"，而不是"出门"')
+    }
   }
   if (m.navOn !== '对话') {
     fails.push(`${label}：人站在对话页上，左栏亮的却是「${m.navOn}」`)

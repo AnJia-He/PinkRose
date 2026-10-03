@@ -483,6 +483,20 @@ beforeEach(() => {
   ioObservers.length = 0
   vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
 
+  // ★ 2026-10-03：`matchMedia` 也是 jsdom 没有的一个浏览器能力。
+  //   **上面那个假的 IntersectionObserver 把它勾出来了**：落地页的 `Reveal`
+  //   只有在"没有 IntersectionObserver"时才短路返回，现在有了假的，它就会往下走
+  //   到 `matchMedia('(prefers-reduced-motion: reduce)')` —— 不铺这一行，
+  //   「回门面」那几条一渲染落地页就抛 `matchMedia is not a function`。
+  //   （`LandingPage.test.tsx` 里没铺，是因为那边**没有**假的 IntersectionObserver，
+  //    于是它走的是短路那一支 —— 两边的差别在这儿，不是在组件的行为上。）
+  //   一律回 `matches: false` = "用户没关动效"，也就是最普通的那个浏览器。
+  vi.stubGlobal('matchMedia', (q: string) => ({
+    matches: false, media: q, onchange: null,
+    addEventListener: () => {}, removeEventListener: () => {},
+    addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false,
+  }))
+
   vi.mocked(api.postSuggest).mockResolvedValue({ cards: [], degraded: false })
 
   container = document.createElement('div')
@@ -2285,6 +2299,94 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(container.querySelector('.gallery')).toBeTruthy()   // 落在作品页
     expect(container.querySelector('.workspace')).toBeNull()       // 不是修图页
     expect(container.querySelector('.nav-item.on')?.textContent).toBe('作品')
+  })
+})
+
+/**
+ * ★ 2026-10-03：**从操作页回门面**（用户要的那一个操作）。
+ *
+ * 在这一版之前这件事**做不到**：`/` 是落地页，而登录着的人一打开 `/` 就被那条
+ * 自动跳转送去 `/app` —— 地址栏里敲 `/` 也进不去，自己人被关在 App 里。
+ * 左栏最底下那颗「首页」现在走 `/?home=1`，那条自动跳转认这个参数、让路。
+ *
+ * 四条一起守（少守哪一条，那颗按钮都会变成"点了没反应"）：
+ *   ① 点它**真的到得了**门面（不是推过去又被撵回来）；
+ *   ② 地址里留着那个参数 —— 收藏 / F5 回来还站在门面上；
+ *   ③ 按后退回来也站得住（判据读的是**此刻的地址**，不是点的那一下记的标记）；
+ *   ④ 没有参数时老规矩照旧：回访的人不该每次打开都撞上营销页。
+ */
+describe('回门面：左栏那颗「首页」', () => {
+  it('★ 点「首页」→ 真的到得了落地页，没被那条自动跳转撵回来', async () => {
+    await renderApp()
+    expect(container.querySelector('.stage')).toBeTruthy()   // 起点：修图页
+
+    await goNav('首页')
+    // 正面确认是**落地页那一支**（不是"两边都没有"）：用那一页自己的外壳
+    expect(container.querySelector('.lp')).toBeTruthy()
+    expect(container.querySelector('.lp-hero h1')?.textContent).toContain('说句话')
+    expect(location.pathname).toBe('/')
+    expect(location.search).toBe('?home=1')
+
+    // ⚠️ 自动跳转那条是 effect（异步）—— 再让出一轮，它要是没让路，上面那三句
+    //    里最后两句会红：地址会被改回 /app、落地页会被卸掉。少了这一轮，
+    //    "刚渲染出来还没跳"那一瞬间也可能让这条测试假绿。
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    expect(container.querySelector('.lp')).toBeTruthy()
+    expect(location.pathname).toBe('/')
+  })
+
+  it('★ 那个参数得留在**网址里** —— 收藏 / F5 回来还站在门面上', async () => {
+    // 守的是"特意来看"这件事记在网址上、不是内存里一个开关（见 view.ts 的
+    // FRONT_PAGE）。换成内存开关的话，看完门面顺手按一下 F5 就被踢回 App ——
+    // 而刷新是这一步里最自然的动作。
+    history.replaceState(null, '', '/?home=1')
+    await renderApp()
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    expect(container.querySelector('.lp')).toBeTruthy()
+    expect(location.pathname).toBe('/')
+  })
+
+  it('★ 从门面进了 App 再按后退 —— 人回到门面上，不是又被打回 /app', async () => {
+    // 这条钉的是"判据读**此刻地址栏里**那个参数"（`location.search`）。
+    // 把它改成"点「首页」那一下记在 `view` 上的一个标记"，日常用起来一模一样 ——
+    // 只有按后退时不一样：那一步没有点击，标记是空的，人明明按了后退却被
+    // 自动跳转送回 App。**这条测试是唯一能咬住它的地方。**
+    await renderApp()
+    await goNav('首页')
+    expect(container.querySelector('.lp')).toBeTruthy()
+
+    // 演一次"从门面点「免费开始」进了 App"（先把地址摆好，再递 popstate ——
+    // 和上面「浏览器后退 / 前进」那条同一种演法）
+    history.replaceState(null, '', '/app')
+    await act(async () => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelector('.lp')).toBeNull()
+
+    // 按后退：地址回到**带着参数**的那一条
+    history.replaceState(null, '', '/?home=1')
+    await act(async () => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelector('.lp')).toBeTruthy()
+    expect(location.pathname).toBe('/')
+  })
+
+  it('★ 没有那个参数时老规矩照旧：登录着的人打开 `/` 就被送去 App（而且**不压历史**）', async () => {
+    // 那条自动跳转是 2026-09-30 定的：营销页是给访客看的，回访的人每次打开
+    // 都撞上它是打扰。加了「首页」之后它不能被顺手删掉。
+    const before = history.length
+    history.replaceState(null, '', '/')
+    await renderApp()
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+
+    expect(container.querySelector('.lp')).toBeNull()
+    expect(location.pathname).toBe('/app')
+    // ⚠️ 得是 **replace**：压一条的话历史栈里会留下一条 `/`，用户一按后退
+    //    又回到门面、又被打回来 —— 按几次都出不去。
+    expect(history.length).toBe(before)
   })
 })
 

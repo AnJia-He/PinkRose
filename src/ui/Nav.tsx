@@ -17,6 +17,17 @@ export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
               onClick={() => onGo({ kind: 'sessions' })}>对话</button>
       <button className={`nav-item${here === 'gallery' ? ' on' : ''}`}
               onClick={() => onGo({ kind: 'gallery' })}>作品</button>
+      {/* ★ 2026-10-03：**回门面**（用户要的："能从操作页回到落地页"）。
+          上一版里这件事**做不到** —— `/` 是落地页，而登录着的人一打开 `/` 就被
+          送去 `/app`（见 App.tsx 那条自动跳转），自己人被关在 App 里出不去。
+
+          ⚠️ 它**不是第四支导航**：上面那三支是 App 里的三个地方，这一颗是
+          **出门**（去门面）。所以它钉在最底下、和上面隔着一整片空白
+          （`.nav-home` 那条规则），别顺手挪到三支中间去。
+          走的是 `ui/view.ts` 的 `FRONT_PAGE`（`/?home=1`）—— 那个参数就是
+          "这一趟是特意来的"，自动跳转认得出它。 */}
+      <button className="nav-item nav-home"
+              onClick={() => onGo({ kind: 'landing' })}>首页</button>
     </nav>
   )
 }

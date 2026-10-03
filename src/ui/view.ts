@@ -41,6 +41,27 @@ export type View =
 /** App 的地盘。写在这儿是为了让"它挪过窝"这件事只有一处要说。 */
 const APP = '/app'
 
+/**
+ * ★ 2026-10-03：**自己人也回得去门面**（左栏最底下那颗「首页」走的就是它）。
+ *
+ * 它和落地页是**同一页**，只多带一个 `?home=1` —— App 里那条"登录着的人打开
+ * `/` 就送去 `/app`"认这个参数，认出来就**不撵人**。
+ *
+ * ⚠️ 为什么是**网址参数**、不是内存里一个开关：得扛得住 F5。看完门面顺手
+ * 刷新一下就被踢回 App，是这套里最容易踩的一脚 —— 参数跟着地址栏走，
+ * 刷新、收藏、开新标签、发给别人（对方多半是访客，本来就看得到这一页）
+ * 都不会变味。
+ *
+ * ⚠️ **`/` 仍然是这一页的正身**（`pathOf` 给的就是它）：直接输网址、发出去的
+ * 链接走的都是它。这个参数只说一件事 —— "这一趟是**特意**来的"。
+ */
+export const FRONT_PAGE = '/?home=1'
+
+/** 这一趟是不是**特意**来看门面的（`search` 直接给 `location.search`）。 */
+export function askedForFrontPage(search: string): boolean {
+  return new URLSearchParams(search).get('home') === '1'
+}
+
 export function viewFromPath(path: string): View {
   // 详情页：新老两种形态都认
   const m = /^\/works\/(\d+)$/.exec(path) ?? /^\/app\/works\/(\d+)$/.exec(path)

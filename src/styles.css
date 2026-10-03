@@ -285,6 +285,13 @@ body {
 }
 .nav-item:hover { background: var(--hover); color: var(--text); }
 .nav-item.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+/* ★ 2026-10-03：左栏最底下那颗「首页」（回门面，见 Nav.tsx）。
+   `margin-top: auto` 把它推到底 —— `.nav` 是一列 flex，上面三支排完剩下的
+   空当全归它，于是它贴在最下面、和那三支隔着一整片空白。
+   **那片空白就是"它不是第四支"这句话**（上面三支是 App 里的三个地方，
+   这一颗是出门），所以别把它挪到三支中间、也别在这儿加分割线之类的装饰 ——
+   一个 92px 宽的窄栏，多一条线只会更吵。 */
+.nav-home { margin-top: auto; }
 
 /* 改（Task 10）：高度不再自己写 100vh —— 它现在住在 .shell 里，"一屏"由上面管。
    flex:1 吃掉左栏之外的全部；那两个 0 是"里面再宽再高，也不许把左栏挤没、
@@ -836,6 +843,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
     border-bottom: 1px solid var(--line);
     padding: 8px 10px;
   }
+  /* 「首页」在窄屏上推到**最右边** —— 和桌面那条（`.nav-home` 的 `margin-top:auto`）
+     是同一个意思：让这颗"出门"的按钮离上面那三支远一点，一眼看得出它不是第四
+     个栏目。只是**轴换了** —— 左栏在这儿收成了横排（见上），auto 外边距加到
+     **左边**才推得动它（横排里 `margin-top` 是纵轴上的事，一点用都没有）。
+     ⚠️ 这一条和桌面那条**必须成对**：只留桌面那条的话，手机上「首页」就紧挨着
+     「作品」变成第四格 —— 而 `check:layout` 里那条判据是按横竖两种分别量的。 */
+  .nav-home { margin-top: 0; margin-left: auto; }
 
   .workspace { flex-direction: column; }
   .workspace .stage { flex: 1 1 auto; }
