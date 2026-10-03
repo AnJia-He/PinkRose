@@ -13,7 +13,9 @@ import { AccountPage } from './ui/AccountPage'
 import { ModelSettings } from './ui/ModelSettings'
 import LandingPage from './ui/LandingPage'
 import { Nav } from './ui/Nav'
-import logoMark from './assets/logo/rose.svg'
+// ★ 2026-10-03：标志换成用户选的那版 —— **黑底 + 粉圆 + 侧脸剪影 + 蓝蝴蝶结**
+//   （原来那朵粉玫瑰用户说不要了）。它是位图（模型出的），不是 SVG。
+import logoMark from './assets/logo/profile.webp'
 import { FRONT_PAGE, askedForFrontPage, pathOf, viewFromPath, type View } from './ui/view'
 import { me, type AccountUser } from './api/account'
 import {

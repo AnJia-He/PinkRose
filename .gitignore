@@ -23,6 +23,17 @@ test-photos/
 !src/assets/landing/*.jpg
 !src/assets/landing/*.webp
 
+# 例外：标志要入库（★ 2026-10-03 补的）。
+# 它和落地页那批同理：**它就是界面本身**，少一个文件顶栏/登录页/标签页就空一块。
+# ⚠️ 这条是补上的一个老坑：在这之前 `src/assets/logo/` 是**被 `*.png` 吃掉的**，
+#    当年只有 `rose-tile-*.png` 靠 `git add -f` 挤了进去，其余 png 一直没进 git
+#    —— 也就是说**换台机器 clone 下来标志是残的**，而且不会有任何报错。
+#    2026-10-03 换标志时又踩了一次（新加的 profile.webp 直接 add 不进去），
+#    这才补成规则。**以后往这个目录里导出新文件，不用再加 `-f`。**
+!src/assets/logo/*.svg
+!src/assets/logo/*.webp
+!src/assets/logo/png/*.png
+
 # Python
 __pycache__/
 *.py[cod]

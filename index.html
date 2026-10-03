@@ -34,24 +34,22 @@
     <meta property="og:title" content="PinkRose —— 说句话，照片就修好了" />
     <meta property="og:description" content="上传一张照片，说句话就能改：「天空再蓝一点」「后面那个人去掉」。不用装软件，打开就能用。" />
 
-    <!-- 标签页上那朵小玫瑰（2026-09-29）。用 SVG：一个文件吃到 16px 到视网膜屏，
-         不用像 ICO 那样同一个图案塞好几档尺寸。
-         ⚠️ 用**带圆角方框那版**（rose-tile），不是光秃秃的 rose：
-         花本身只占画布 70%、四周 15% 是空白，当 16px 的图标用、真正有画的只有 11px，
-         用户原话「标签页的图标太小了，用圆角方框给它框起来」。
-         rose-tile 把 viewBox 收紧到「花 + 11% 的边」，花就填满了整块方框；
-         底色是这朵花自己最深的那层粉，白色花形在浅色/深色标签栏上都立得住。
-         导出脚本：.superpowers/scratch/product-test/export_logo.py
+    <!-- 标签页上那枚小标志（★ 2026-10-03 换的：**黑底 + 粉圆 + 侧脸剪影 + 蓝蝴蝶结**，
+         用户挑的那版；原来那朵粉玫瑰他说不要了）。
+         ⚠️ 现在是**位图**，不是 svg —— Safari 不认 webp 图标，所以这一处必须是 png。
+         那一版是**裁到圆盘、四周只留 4% 的边**做的：图标这一档要把画占满才认得出
+         （老玫瑰那版就吃过这个亏 —— 花只占画布 70%，16px 上真正有画的只有 11px，
+         用户当时原话「标签页的图标太小了」）。
+         图是从 `create-image/落地页/logo候选/侧脸V4-黑底粉圆+蓝结（我推荐）.png`
+         裁出来的，脚本见 2026-10-03 日记。
 
-         ★ 2026-10-01 补的两行 PNG（同一个脚本导出来的，别手改）：
          · `apple-touch-icon`：iOS「加到主屏幕」用的是它，而且**苹果完全不读
            `rel="icon"`** —— 少了它，主屏图标会是页面的一张截图。
            180×180 是不透明 PNG，这是苹果定的那一档。
-         · 32px 的 PNG 是给**搜索引擎**的：Google 站点图标的支持格式清单里
+         · 单独那个 32px 的 PNG 是给**搜索引擎**的：Google 站点图标的支持格式清单里
            没有 SVG，只有它自家的 SVG favicon 不进搜索结果。 -->
-    <link rel="icon" type="image/svg+xml" href="/src/assets/logo/rose-tile.svg" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/src/assets/logo/png/rose-tile-32.png" />
-    <link rel="apple-touch-icon" href="/src/assets/logo/png/rose-tile-180.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/src/assets/logo/png/profile-32.png" />
+    <link rel="apple-touch-icon" href="/src/assets/logo/png/profile-180.png" />
   </head>
   <body>
     <div id="root"></div>

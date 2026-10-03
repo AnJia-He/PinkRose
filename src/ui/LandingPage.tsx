@@ -3,7 +3,7 @@ import { ArrowUp } from 'lucide-react'
 // ⚠️ 样式表**不在这儿 import** —— 它在 `src/main.tsx` 里、排在 `styles.css` 后面。
 // 这一页有几条规则要盖掉全局的（body 底色、文档滚动条、color-scheme），
 // 而那份顺序是有讲究的，理由写在那边的导入语句上。
-import logo from '../assets/logo/rose.svg'
+import logo from '../assets/logo/profile.webp'
 import seaRoad from '../assets/landing/sea-road.jpg'
 import nightView from '../assets/landing/night-view.jpg'
 import oldTown from '../assets/landing/old-town.jpg'

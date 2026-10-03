@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { Btn } from './kit/Btn.tsx'
-import logoMark from '../assets/logo/rose.svg'
+import logoMark from '../assets/logo/profile.webp'
 
 type Props = {
   /** 选好照片了。`wish` 是用户**在对话区里先打的那句话**（没打就是空串）——

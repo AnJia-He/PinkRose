@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 import { login, signup } from '../api/account'
-import logoMark from '../assets/logo/rose.svg'
+import logoMark from '../assets/logo/profile.webp'
 import { Field, TextInput } from './kit/Field.tsx'
 import { Btn } from './kit/Btn.tsx'
 import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../../shared/account.ts'
