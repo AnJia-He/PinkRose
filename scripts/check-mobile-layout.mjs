@@ -1355,8 +1355,13 @@ try {
         c.width = cfg.w
         c.height = cfg.h
         const g = c.getContext('2d')
-        g.fillStyle = '#c3417e'; g.fillRect(0, 0, cfg.w, cfg.h)
-        g.fillStyle = '#ae376f'; g.fillRect(0, Math.round(cfg.h / 3), cfg.w, Math.round(cfg.h / 3))
+        // ⚠️ 这两块**故意用中性灰**，不用界面的强调色（2026-10-03 改）。
+        //   原来写的是当年那两档品牌粉 `#c3417e` / `#ae376f` —— 换色之后它们
+        //   变成了"探针里留着的旧色号"，而且这条会话是**真的建在 dev 库里**的：
+        //   对话页第一行会挂着一块粉方块，看着像个界面 bug（实拍撞到过）。
+        //   灰的不跟着调色板走，以后换多少次色都不会再出现这种事。
+        g.fillStyle = '#8b8b93'; g.fillRect(0, 0, cfg.w, cfg.h)
+        g.fillStyle = '#4a4a52'; g.fillRect(0, Math.round(cfg.h / 3), cfg.w, Math.round(cfg.h / 3))
         const r = await fetch('/api/sessions', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'content-type': 'application/json' },

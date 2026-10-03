@@ -300,7 +300,13 @@ body {
    overflow 管；而作品页是个**长列表**，它得自己 overflow-y: auto 地滚。
    写在壳子上的话，作品页会被整个裁掉（列表明明 500 条、屏上只见一屏，
    不报错也不滚 —— 这种"安静地少了一半"最难查）。 */
-.shell { height: 100vh; display: flex; }
+/* ★ 2026-10-03（taste 审查）：`100vh` 后面跟一行 `100dvh`。
+   手机浏览器（iOS Safari 最明显）的地址栏会盖住视口底部 —— `100vh` 算的是
+   **地址栏收起来时**那一屏，于是页面底边永远被压在地址栏下面。这一条对我们是
+   实打实的：`.shell` 里装的是修图页，被盖住的正是**最下面那条对话输入框**。
+   `dvh` = 动态视口高（地址栏伸缩时它跟着变）。**两行是有意的** ——
+   老浏览器不认 `dvh` 会忽略那一行，退回上面的 `100vh`。 */
+.shell { height: 100vh; height: 100dvh; display: flex; }
 
 .nav {
   flex: none;
@@ -632,6 +638,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .globe-spin {
   position: relative; width: 0; height: 0;
   transform-style: preserve-3d;
+  /* `will-change` 只给**真的会一直动**的东西 —— 这颗球就是（每时每刻都在转），
+     提前把它提成一个合成层，免得每一帧再问一次。⚠️ 别顺手给别的元素也加上。 */
+  will-change: transform;
   animation: globe-spin 64s linear infinite;
 }
 /* 一分钟出头转一圈 —— 是"背景在慢慢动"，不是一转就晕。
@@ -1038,7 +1047,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    （手机竖屏 + 注册那三格）要能撑开让页面滚，写死 height 会把下面截掉。 */
 .login {
   display: flex; align-items: center; justify-content: center;
-  min-height: 100vh; padding: var(--sp-5);
+  /* 同 `.shell`：两行是有意的，老的退回 vh（见那一段的理由）。 */
+  min-height: 100vh; min-height: 100dvh; padding: var(--sp-5);
   /* ⚠️ 2026-10-01 翻粉底时这两层光晕**换了角色**：粉底上再加粉光是看不见的
      （原来深底上"加一层粉"才看得见），所以顶上那层改成白光（把卡片上方提亮），
      底下那层留一点品牌玫瑰压住角落。位置、大小一个字没动。
@@ -1172,7 +1182,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    一句干字在整片空屏上看着像卡住了，而这一屏往往只有几百毫秒。 */
 .app-loading {
   display: flex; align-items: center; justify-content: center; gap: var(--sp-3);
-  height: 100vh; color: var(--muted); font-size: 14px;
+  height: 100vh; height: 100dvh; color: var(--muted); font-size: 14px;
 }
 .app-loading::before { width: 16px; height: 16px; }
 

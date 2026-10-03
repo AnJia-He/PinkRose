@@ -74,9 +74,15 @@
     --lp-bg: #151517;
     --lp-surface: #1e1e21;
     --lp-line: #33333a; --lp-line-2: #43434c;
-    /* 深色模式里那一段仍然是"更深的一块"，只是整页都暗下来了，
-       所以底往**亮**走了一点、深带留在最暗处，两块才分得开。 */
-    --lp-deep: #0c0c0e;
+    /* ⚠️ ★ 2026-10-03（taste 审查抓到的一处）：深色模式下这条带子**要往亮走**，
+       不能再往暗走。原来写的是"底往亮走一点、深带留在最暗处"—— 那是**粉底
+       年代**的账（当时的页面底是 `#241223`，比深带亮得多，压得下去）。
+       换成中性色之后页面底本身就压在 `#151517`，深带再压到 `#0c0c0e`，
+       两者只差 **1.14:1** —— 实拍出来那一整段**看不见边界**，只剩几行字浮在
+       黑里（浅色版那块"关灯章节"的劲儿全丢了）。
+       现在的做法是**同一条意思换一种设备**：浅色版靠"比页面暗一大截"分块，
+       深色版靠"比页面亮一档 + 上下各一道发丝线"分块（见下面 `.lp-deep` 那条）。 */
+    --lp-deep: #1e1e21;
     --lp-deep-ink: #f7f7f9; --lp-deep-ink-2: #b9b9c3;
     --lp-nav-bg: rgba(8, 8, 10, .66);
   }
@@ -93,7 +99,9 @@
   -webkit-font-smoothing: antialiased;
   font-variant-numeric: tabular-nums;
   overflow-x: hidden;
-  min-height: 100vh;
+  /* 同 App 的 `.shell`：`dvh` 那一行给会伸缩地址栏的手机浏览器，
+     老浏览器忽略它、退回上面那行（理由写在 styles.css 的 `.shell` 上）。 */
+  min-height: 100vh; min-height: 100dvh;
 }
 /* 归零那几样的默认外边距。
    ⚠️ **必须用 `:where()`**（特异性为 0），而且必须写在最前面：
@@ -209,6 +217,15 @@
 .lp-deep h2 { color: var(--lp-deep-ink) }
 .lp-deep .lp-lede { color: var(--lp-deep-ink-2) }
 @media (max-width: 900px) { .lp-deep { padding: 92px 0 } }
+/* ⚠️ 深色模式给这条带子补**上下两道发丝线**：那边的 `--lp-deep` 只比页面底亮
+   一档（1.12:1，和 App 里"面板压底"同一档），单靠色差不够"这是一块"，
+   加上线就清楚了。浅色模式不需要 —— 那边是深底压浅底，差着一大截。 */
+@media (prefers-color-scheme: dark) {
+  .lp-deep {
+    border-top: 1px solid rgba(255, 255, 255, .07);
+    border-bottom: 1px solid rgba(255, 255, 255, .07);
+  }
+}
 
 /* ── Before / After ───────────────────────────────────────────────── */
 .lp-ba { position: relative; margin-top: 64px; aspect-ratio: 2.05 / 1; overflow: hidden; border-radius: var(--lp-r);
