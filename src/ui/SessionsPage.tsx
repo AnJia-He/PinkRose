@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Btn } from './kit/Btn.tsx'
 import { listSessions, deleteSession, sessionThumbUrl } from '../api/sessions'
 import { groupByDay } from '../../shared/works.ts'
 import { visibleGroups } from '../core/gallery'
@@ -112,7 +113,7 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
         <div className="sessions-empty empty-state">
           {/* 空态那两句话的分工照作品页：主句说现状，下面那句（或者那颗按钮）说"那怎么办"（§3.7） */}
           <p className="sessions-empty-title empty-state-title">还没改过照片。</p>
-          <button className="btn-primary" onClick={onNew}>去改一张</button>
+          <Btn onClick={onNew}>去改一张</Btn>
         </div>
       </section>
     )

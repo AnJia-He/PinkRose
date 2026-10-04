@@ -8,8 +8,6 @@ export type Route = 'params' | 'generate' | 'both'
 /** 八个参数的增量，单位与 Adjustments 相同（[-100,100]）。缺的键视为 0。 */
 export type ParamDeltas = Partial<Adjustments>
 
-export type ParamKey = keyof Adjustments
-
 /**
  * 一句话被理解之后的结果。
  *
@@ -101,5 +99,3 @@ export type AppErrorCode =
   //   在它之前是"两次都回 200，先写的那一步静默消失" —— 这个项目最恨的那一类。
   | 'CONFLICT'
   | 'INTERNAL'
-
-export type AppError = { error: { code: AppErrorCode; message: string } }

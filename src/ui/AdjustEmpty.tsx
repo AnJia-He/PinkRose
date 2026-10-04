@@ -49,7 +49,7 @@ export default function AdjustEmpty({ onPick }: Props) {
           e.target.value = ''
         }}
       />
-      <p className="adjust-empty-title empty-state-title">还没有照片。</p>
+      <p className="empty-state-title">还没有照片。</p>
       <Btn className="primary" onClick={() => fileRef.current?.click()}>选一张照片</Btn>
     </div>
   )

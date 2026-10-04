@@ -1,4 +1,12 @@
-import { defineConfig } from 'vitest/config'
+/// <reference types="vitest/config" />
+// ★ 2026-10-04：从 `vitest/config` 换成 `vite` + 上面那条三斜线引用。
+//   原因：`vitest/config` 的 `defineConfig` 是按 **vitest 自己那份 vite**（npm 嵌套
+//   在 node_modules/vitest/node_modules/vite，版本和根目录这份不一样）的类型签的，
+//   而 `@vitejs/plugin-react` 是按根目录那份 —— 两份 Plugin 类型对不上，
+//   `tsc -p tsconfig.node.json` 会报一长串"参数类型不兼容"。换成 `vite` 的
+//   `defineConfig` + `vitest` 的类型引用之后，两边都落在根目录这一份上，
+//   这个文件才第一次真的被类型检查管到（以前它谁也不管）。
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({

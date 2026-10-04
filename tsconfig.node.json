@@ -6,7 +6,15 @@
     "moduleResolution": "bundler",
     "skipLibCheck": true,
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+    // ★ 2026-10-04：把 'vite' 钉到**根目录这一份**（6.x）。
+    //   vitest 在 node_modules/vitest/node_modules 里嵌了自己那份 vite 5 ——
+    //   vitest 自己的类型文件 import 'vite' 时会解析到它，于是出现"两份 vite 的
+    //   Plugin 类型互不兼容"，`vitest/config` 的 defineConfig 和 @vitejs/plugin-react
+    //   对不上（报一长串参数类型不兼容）。钉死之后两边都落在根这份上，
+    //   顺带让 vitest 那条 `declare module 'vite'`（给 UserConfig 加 `test` 字段）
+    //   真的加到我们用的这份上。
+    "paths": { "vite": ["./node_modules/vite"] }
   },
   "include": ["vite.config.ts"]
 }
