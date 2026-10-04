@@ -191,6 +191,8 @@ async function measure(page) {
       canvasPixels: c ? `${c.width}x${c.height}` : null,
       input: box(document.querySelector('form.chat-input')),
       buttons: [...document.querySelectorAll('.actions button')].map(b => b.textContent),
+      // ★ 2026-10-04：左栏有哪几格 —— **有照片时「调色」必须在**（见 judge 那条）。
+      nav: [...document.querySelectorAll('.nav-item')].map(b => b.textContent.trim()),
       topbarOverflow: bar ? bar.scrollWidth > bar.clientWidth : false,
       scrollW: document.documentElement.scrollWidth,
       clientW: document.documentElement.clientWidth,
@@ -205,13 +207,20 @@ function judge(label, m, view) {
   const short = Math.min(c.w, c.h)
   console.log(`── ${label}`)
   console.log(`     画布（屏幕上） ${c.w}x${c.h} @${c.left},${c.top}   （内部像素 ${m.canvasPixels}）`)
-  console.log(`     顶栏按钮 ${m.buttons.join(' / ')}`)
+  console.log(`     顶栏按钮 ${m.buttons.join(' / ')}　左栏 ${(m.nav ?? []).join(' / ')}`)
   if (long < MIN_LONG || short < MIN_SHORT) {
     fails.push(`${label}：照片在屏幕上只有 ${c.w}x${c.h} —— 用户看不见（至少要 ${MIN_LONG}x${MIN_SHORT}）`)
   }
   // 顶栏挤爆过一次（一个按钮就能挤），所以按**最坏情况**量：见下面注入的那段。
   if (m.topbarOverflow) {
     fails.push(`${label}：顶栏放不下这些按钮（${m.buttons.join(' / ')}）`)
+  }
+  // ★ 2026-10-04：**有照片 → 左栏必须有「调色」那一格。**
+  //   它是这一屏唯一的"手动微调"入口（原来在顶栏，那天搬进来的）——
+  //   少一格，用户就没有任何地方能拖那八条滑块了，而屏幕上什么都不说。
+  //   （反面那条判据在 `judgeWelcome`：没有照片时它**不许**在。）
+  if (!m.nav.includes('调色')) {
+    fails.push(`${label}：手上有照片，左栏却没有「调色」那一格（现在是「${m.nav.join(' / ')}」）`)
   }
   // 输入框被隐藏时尺寸是 0，这时候不该判它 —— 否则是拿"存在"当"可见"
   if (m.input && m.input.w > 0 && m.input.bottom > view.height + 1) {
@@ -812,7 +821,10 @@ async function measureWelcome(page) {
         bottom: Math.round(b.bottom), right: Math.round(b.right),
       }
     }
-    return { welcome: box(document.querySelector('.welcome')) }
+    return {
+      welcome: box(document.querySelector('.welcome')),
+      nav: [...document.querySelectorAll('.nav-item')].map(b => b.textContent.trim()),
+    }
   })
 }
 
@@ -824,6 +836,17 @@ function judgeWelcome(label, m, view) {
     fails.push(`${label}：上传前那一屏没完整落在视口里（${m.welcome.h}px 高 @${m.welcome.top}，` +
       `视口 ${view.height}）—— .app 是 overflow: hidden，超出去的是被切掉的，` +
       '用户看到的是"少了半截"，而别的判据一条都不会红')
+  }
+  // ★ 2026-10-04：**没有照片时，左栏不许有「调色」。**
+  //   这条判据是用户当场撞出来的：「这怎么还是这个，进来就是图片加微调按钮」——
+  //   他点「调色」时手上没有照片，于是出来的还是这一屏，屏幕上唯二的变化是
+  //   左栏亮点挪了一格、地址栏多了一截。**看着就像点了没反应。**
+  //   规矩和顶栏那三颗一样：关于这张照片的东西，照片在才有。
+  //   ⚠️ 上面 `judge` 里那条是它的另一半（有照片 → 必须在）。两条要**成对**：
+  //     只留一条的话，"那一格干脆永远不出现"或"永远出现"都能蒙混过去。
+  if (m.nav.includes('调色')) {
+    fails.push(`${label}：手上没有照片，左栏却有「调色」那一格（现在是「${m.nav.join(' / ')}」）` +
+      '—— 点进去还是这一屏，用户看到的是"点了没反应"')
   }
 }
 
@@ -848,7 +871,9 @@ function judgeWelcome(label, m, view) {
  *   ③ 该看得见的东西**完整落在视口里**（行、缩略图、问句、两颗按钮）；
  *   ④ 缩略图是个**方块**（`.session-thumb` 定死了宽高）—— 不定的后果不是难看，
  *      是每张图跳出来都把后面的行推一下；
- *   ⑤ 左栏那几支 = 「修图 / 调色 / 对话 / 作品」，而且亮的是「对话」。
+ *   ⑤ 左栏那几支 = 「修图 / 对话 / 作品」（手上有照片时中间还夹着「调色」），
+ *      而且亮的是「对话」。⚠️ 这一页量不了"调色该不该在"（整页重开 + 异步恢复，
+ *      见判据那段的注释），那条归 `judge` / `judgeWelcome`。
  *      ⚠️ 顺带钉住"这一页有没有自己的入口"：Task 6 之前它**根本没有来源**。
  *   ⑥ ★ 2026-10-03：左栏底下那**两颗**（「首页」回门面、「个人设置」= 用户管理）
  *      在，而且**推到边上、和上面那几支隔开** —— 它们不属于这一列栏目，
@@ -949,7 +974,11 @@ async function measureSessions(page, targetName = null) {
  *  ★ 2026-10-04：原来是三支（`NAV_THREE`），「调色」从顶栏搬进来成为第四支 ——
  *  那次改名不是补个字：下面 `lastTabBox` 那条"和上面那几支隔开"的判据靠的就是
  *  这份清单的**最后一项**，清单少一项，那颗「首页」就会和「作品」挨着量。 */
-const NAV_TABS = ['修图', '调色', '对话', '作品']
+/** 左栏**总在**的那三支，顺序就是这个。 */
+const NAV_TABS = ['修图', '对话', '作品']
+/** 手上有照片时多出来的那一支：「调色」（2026-10-04 从顶栏搬进来的），
+ *  夹在「修图」后面 —— 上面三支说的是"三个地方"，它和前两支是同一张照片的两种改法。 */
+const NAV_WITH_ADJUST = ['修图', '调色', '对话', '作品']
 
 function judgeSessions(label, m, view, mode) {
   console.log(`── ${label}`)
@@ -984,9 +1013,16 @@ function judgeSessions(label, m, view, mode) {
       '（网址改了？组件改名了？探针烂掉的时候就是这个形状）')
     return
   }
-  if (m.nav.join('/') !== NAV_TABS.join('/')) {
+  // ⚠️ 两种都收（有照片 / 没照片）—— 这一页是 `page.goto()` **整页重开**进来的，
+  //   而登录着的账号会**异步**接回上次那条会话：那一格在不在，取决于量的这一下
+  //   恢复跑完了没有。**这一页量不了"该不该有"** —— 那条判据归 `judge`
+  //   （有照片 → 必须有）和 `judgeWelcome`（没照片 → 必须没有）那两处，
+  //   那两处的照片状态是探针自己控制的，判据才是确定的。
+  //   这里守的是另一件事：**顺序**（「调色」只能夹在「修图」后面）和"三支一个不少"。
+  if (m.nav.join('/') !== NAV_TABS.join('/') &&
+      m.nav.join('/') !== NAV_WITH_ADJUST.join('/')) {
     fails.push(`${label}：左栏是「${m.nav.join(' / ')}」——` +
-      `要的是「${NAV_TABS.join(' / ')}」，顺序也是这个`)
+      `要么是「${NAV_TABS.join(' / ')}」，要么是手上有照片时多出「调色」（紧挨着「修图」）`)
   }
   // ★ 2026-10-03：左栏底下那**两颗**（「首页」= 回门面、「个人设置」= 用户管理）
   //   在不在、**推没推到边上**、**和上面那几支隔开没有**。
@@ -1278,10 +1314,21 @@ try {
       //   而且它**没有对话栏**（用户：「调色就是对图片微调的界面区不是对话区」）——
       //   所以图上点选那件事只能在这之前发起：到了这一屏，对话区不在了，
       //   也就没有「就改这里」那条路。（开之前它是顶栏里的一颗按钮。）
-      await page.locator('.nav-item', { hasText: '调色' }).click()
-      await page.waitForTimeout(500)
-      judgeMarker(`${view.name} · 开着调色面板，圈还得钉在照片上`, await measurePick(page), null)
-      judge(`${view.name} · 打开调色面板后`, await measure(page), view)
+      //
+      // ⚠️ **点之前先问它在不在**。少了这一句，那一格一旦没了，整个探针会**崩在
+      //   这里**（`locator.click` 超时 30 秒抛出去）—— 后面每一屏、每一条判据
+      //   全部不再跑，而报出来的是一句 `TimeoutError`，读的人得自己猜是哪一格没了。
+      //   （负向测试时实测就是这个形状。）
+      const navAdjust = page.locator('.nav-item', { hasText: '调色' })
+      if (!(await navAdjust.count())) {
+        fails.push(`${view.name}：手上有照片，左栏却没有「调色」那一格 ——` +
+          '那八条滑块就没有入口了（这一屏的下面两条判据先跳过）')
+      } else {
+        await navAdjust.first().click()
+        await page.waitForTimeout(500)
+        judgeMarker(`${view.name} · 开着调色面板，圈还得钉在照片上`, await measurePick(page), null)
+        judge(`${view.name} · 打开调色面板后`, await measure(page), view)
+      }
 
       // 一路走下来，花钱的那条路一次都不该被碰过。
       if (editCalls.length > 0) {

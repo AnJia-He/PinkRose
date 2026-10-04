@@ -22,8 +22,29 @@ import type { View } from './view'
  *     👤 原来只住在顶栏，而顶栏**只有修图页有** —— 站在作品页/对话页的人
  *     根本进不去设置，得先绕回修图页。
  */
-export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
-  const here = view.kind === 'work' ? 'gallery' : view.kind
+export function Nav({ view, onGo, hasImage }: {
+  view: View
+  onGo: (v: View) => void
+  /** 手上有没有一张照片 —— 「调色」那一格要不要出现就看它（见下面 `here` 那段）。 */
+  hasImage: boolean
+}) {
+  // ★ 2026-10-04（当天第二遍）：**没有照片时，「调色」不在，而且那一格算「修图」。**
+  //
+  // 用户当场撞上的原话：「这怎么还是这个，进来就是图片加微调按钮」——
+  // 他点「调色」的时候手上没有照片，于是出来的还是那张"选一张照片"的欢迎页，
+  // 屏幕上唯二的变化是左栏亮点挪了一格、地址栏多了一截。**看上去就像点了没反应。**
+  //
+  // 它和顶栏那三颗（分享 / 保存 / 新的一张）**是同一条规矩**：关于**这张照片**
+  // 的东西，照片在才有 —— 而那一条正是用户 10-03 自己定的。
+  //
+  // ⚠️ 所以 `here` 要跟着一起改：站在 `/app/adjust` 而手上没有照片时，亮的必须是
+  //   「修图」（用户看到的确实就是修图页那一屏）。地址栏里那个 `adjust` **只在
+  //   真有照片时才作数** —— 也正因为如此，从这个地址**选一张照片进来**会落回
+  //   「调色」那一屏（那是他要的：他本来就是奔着微调去的），而这一点不需要任何
+  //   跳转或重定向：`hasImage` 一变真，这一格和那种亮法一起回来。
+  const here = view.kind === 'work' ? 'gallery'
+    : (view.kind === 'adjust' && !hasImage) ? 'edit'
+      : view.kind
   /** 站在用户管理那两页（账号 / 模型设置）时，「个人设置」是亮的 ——
    *  模型设置是它底下一格（§7.4），不是第五个地方。 */
   const atAccount = view.kind === 'account' || view.kind === 'models'
@@ -41,9 +62,15 @@ export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
 
           ⚠️ 紧挨着「修图」、**不是**挪到「作品」后面：这两支说的是同一张照片
           （修图 = 说话改、调色 = 手动改），另外两支说的是别的照片
-          （对话 = 改过的那些、作品 = 存下来的那些）。*/}
-      <button className={`nav-item${here === 'adjust' ? ' on' : ''}`}
-              onClick={() => onGo({ kind: 'adjust' })}>调色</button>
+          （对话 = 改过的那些、作品 = 存下来的那些）。
+
+          ⚠️ **没有照片时它整个不渲染**（当天第二遍加的，`hasImage`）——
+          理由和那条 `here` 的注释是同一件事，别把 `hasImage` 那道判断删了：
+          删了之后它在欢迎页上就是一格**点了没反应**的按钮（点进去还是欢迎页）。*/}
+      {hasImage && (
+        <button className={`nav-item${here === 'adjust' ? ' on' : ''}`}
+                onClick={() => onGo({ kind: 'adjust' })}>调色</button>
+      )}
       <button className={`nav-item${here === 'sessions' ? ' on' : ''}`}
               onClick={() => onGo({ kind: 'sessions' })}>对话</button>
       <button className={`nav-item${here === 'gallery' ? ' on' : ''}`}

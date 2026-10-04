@@ -1519,8 +1519,10 @@ export default function App() {
 
   return (
     <div className="shell">
-      {/* 左栏在**所有**界面里都在：作品页、详情页是同一个壳，换的只是右边那一格。 */}
-      <Nav view={view} onGo={go} />
+      {/* 左栏在**所有**界面里都在：作品页、详情页是同一个壳，换的只是右边那一格。
+          `hasImage` 给的是"手上有没有一张照片" —— 「调色」那一格按它出现 / 消失
+          （没有照片时点它就是"点了没反应"，见 Nav.tsx 里 `here` 那段）。 */}
+      <Nav view={view} onGo={go} hasImage={image !== null} />
 
       {/* 修图页和调色页**共用这一块壳**（★ 2026-10-04）。
           `adjust` 不是另一套界面：同一张照片、同一个舞台、同一根操作条 ——

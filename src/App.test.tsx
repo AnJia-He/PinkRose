@@ -2306,7 +2306,7 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(container.querySelector('.nav-item.on')?.textContent).toBe('作品')
   })
 
-  it('★ 「调色」是左栏里的一支 —— 点它面板开着、对话让位，F5 之后还开着（2026-10-04）', async () => {
+  it('★ 「调色」是左栏里的一支 —— 点它面板开着、对话让位（2026-10-04）', async () => {
     // 用户原话：「那个微调照片的放在导航栏单列出来」（他说的「微调」是 09-30
     // 改名前的旧词，同一件事 —— 见《文案规范》里「调色」那一条）。
     //
@@ -2342,18 +2342,18 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(container.querySelector('.chat')).toBeNull()          // 对话不在了
     expect(container.querySelector('form.chat-input')).toBeNull()
 
-    // ★ 按 F5 / 从收藏夹打开：面板**还开着**。这正是"给它一个网址"换来的东西 ——
-    //   以前那版（state）刷新之后就自己合上了，而用户正想接着调。
-    history.replaceState(null, '', '/app/adjust')
-    await renderApp()
-    expect(container.querySelector('.panel')).toBeTruthy()
-    expect(container.querySelector('.nav-item.on')?.textContent).toBe('调色')
-
-    // 点「修图」= 回到对话区：面板收起来、对话栏回来，而且**那句话还在**。
+    // ★ **点「修图」= 回到对话区**：面板收起来、对话栏回来，而且**那句话还在**。
     // 面板自己没有关闭钮，这是唯一的关法 —— 所以它得真的关得上。
     // ⚠️ 后半句（话还在）是这条测试里唯一能抓住"顺手把 messages 清了"的地方：
     //    §1 那句承诺是"切界面不丢工作"，而"这一屏不显示对话"和"把对话删了"
     //    在屏幕上**长得一模一样**。
+    //
+    // ⚠️ **"按 F5 面板还开着"这条不在这里测**（原来这儿有个 `root.render()`
+    //    第二次的写法，那是**假绿**：同一个实例不重跑 `useState` 的初始化器，
+    //    `view` 还是老的，量到的根本不是"从网址进来"）。jsdom 里也做不到 ——
+    //    重挂之后照片是内存里的、没地方恢复，面板本来就该是收着的。
+    //    真 F5 归 `.superpowers/scratch/audit/adjust_flow.py`（真浏览器、
+    //    真 reload，那条断言就在里面）。这一条只管"导航切来切去"。
     await goNav('修图')
     expect(container.querySelector('.panel')).toBeNull()
     expect(location.pathname).toBe('/app')
@@ -2361,6 +2361,45 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(container.querySelector('.chat')).toBeTruthy()
     expect(container.textContent).toContain('亮一点')
     expect(canvasProps.props.at(-1)?.params.exposure).toBe(20)
+  })
+
+  it('★ 还没有照片时，左栏**没有「调色」那一格**（2026-10-04 用户当场撞上的）', async () => {
+    // 用户原话：「**这怎么还是这个，进来就是图片加微调按钮**」——
+    // 他点「调色」的时候手上没有照片，于是出来的还是那张"选一张照片"的欢迎页，
+    // 屏幕上唯二的变化是左栏亮点挪了一格、地址栏多了一截。看上去就像点了没反应。
+    //
+    // ⚠️ 规矩和顶栏那三颗**是同一条**：关于**这张照片**的东西，照片在才有
+    //   （而那一条是用户 2026-10-03 自己定的）。所以这条测试钉两处：
+    //   ① 那一格不在；② 站在 `/app/adjust` 而没有照片时，亮的是**「修图」**
+    //      —— 用户看到的确实就是修图页那一屏，亮点不能和他眼睛里的东西对不上。
+    await renderApp()
+    const 格子 = () => [...container.querySelectorAll('.nav-item')].map(b => b.textContent)
+    expect(格子()).toEqual(['修图', '对话', '作品', '首页', '个人设置'])
+    expect(格子()).not.toContain('调色')
+
+    // 地址栏里直接写着 /app/adjust（收藏夹 / F5）而手上没有照片 —— 同上。
+    // ⚠️ 这里**必须真换一个 root 重挂**（和本文件别处"重开一次页面"同一个写法）：
+    //   `root.render()` 第二次不会重跑 `useState` 的初始化器，同一个实例还用着
+    //   老的 `view`，那样量到的是假的。
+    history.replaceState(null, '', '/app/adjust')
+    await act(async () => root.unmount())
+    container.remove()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await renderApp()
+    expect(container.querySelector('input[type="file"]')).toBeTruthy()   // 还是"选一张照片"那一屏
+    expect(container.querySelector('.panel')).toBeNull()
+    expect(格子()).not.toContain('调色')
+    expect(container.querySelector('.nav-item.on')?.textContent).toBe('修图')
+
+    // ★ 而从这个地址**选一张照片进来**，落回的就是「调色」那一屏 ——
+    //   那正是他点这一格时想要的（他本来就是奔着微调去的）。
+    //   实现上不需要任何跳转：`hasImage` 一变真，这一格和那种亮法一起回来。
+    await uploadPhoto()
+    expect(格子()).toContain('调色')
+    expect(container.querySelector('.panel')).toBeTruthy()
+    expect(container.querySelector('.nav-item.on')?.textContent).toBe('调色')
   })
 })
 
