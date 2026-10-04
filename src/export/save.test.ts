@@ -2,20 +2,20 @@ import { afterEach, describe, it, expect, vi } from 'vitest'
 import { buildFilename, canShareImage, shareImage } from './save'
 
 describe('buildFilename', () => {
-  it('在原文件名后加 _ruixing 后缀', () => {
-    expect(buildFilename('IMG_1234.JPG', 'image/jpeg')).toBe('IMG_1234_ruixing.jpg')
+  it('在原文件名后加 _pinkrose 后缀', () => {
+    expect(buildFilename('IMG_1234.JPG', 'image/jpeg')).toBe('IMG_1234_pinkrose.jpg')
   })
 
   it('PNG 用 .png 后缀', () => {
-    expect(buildFilename('photo.png', 'image/png')).toBe('photo_ruixing.png')
+    expect(buildFilename('photo.png', 'image/png')).toBe('photo_pinkrose.png')
   })
 
   it('没有扩展名也能处理', () => {
-    expect(buildFilename('weird', 'image/jpeg')).toBe('weird_ruixing.jpg')
+    expect(buildFilename('weird', 'image/jpeg')).toBe('weird_pinkrose.jpg')
   })
 
   it('多个点只替换最后一段扩展名', () => {
-    expect(buildFilename('a.b.c.jpeg', 'image/jpeg')).toBe('a.b.c_ruixing.jpg')
+    expect(buildFilename('a.b.c.jpeg', 'image/jpeg')).toBe('a.b.c_pinkrose.jpg')
   })
 })
 
@@ -67,9 +67,9 @@ describe('shareImage', () => {
   it('把图交给系统面板，文件名要带过去', async () => {
     const share = vi.fn(async (_data: { files?: File[] }) => {})
     vi.stubGlobal('navigator', { share, canShare: () => true })
-    await shareImage(new Blob(['x'], { type: 'image/jpeg' }), 'a_ruixing.jpg')
+    await shareImage(new Blob(['x'], { type: 'image/jpeg' }), 'a_pinkrose.jpg')
     const arg = share.mock.calls[0][0]
-    expect(arg.files?.[0].name).toBe('a_ruixing.jpg')
+    expect(arg.files?.[0].name).toBe('a_pinkrose.jpg')
     expect(arg.files?.[0].type).toBe('image/jpeg')
   })
 

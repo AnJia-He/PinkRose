@@ -5,7 +5,7 @@ export type ExportFormat = 'image/jpeg' | 'image/png'
 export function buildFilename(original: string, format: ExportFormat): string {
   const ext = format === 'image/png' ? 'png' : 'jpg'
   const stem = original.replace(/\.[^.]+$/, '')
-  return `${stem}_ruixing.${ext}`
+  return `${stem}_pinkrose.${ext}`
 }
 
 /**

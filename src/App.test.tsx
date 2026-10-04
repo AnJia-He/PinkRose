@@ -1005,7 +1005,7 @@ describe('导出：分享还是存下来，用户自己选', () => {
     await click('下载')
 
     expect(saveMod.downloadImage).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(saveMod.downloadImage).mock.calls[0][1]).toBe('p_ruixing.jpg')
+    expect(vi.mocked(saveMod.downloadImage).mock.calls[0][1]).toBe('p_pinkrose.jpg')
     // ★ 它是"把图给我"，不是"存进作品集"—— 两条路不许串。
     //   变异：把 onDownload 接成 onSave → 这里红。
     expect(fetchMock.mock.calls.some(
@@ -1021,7 +1021,7 @@ describe('导出：分享还是存下来，用户自己选', () => {
     expect(saveMod.shareImage).toHaveBeenCalledTimes(1)
     expect(saveMod.downloadImage).not.toHaveBeenCalled()
     // 文件名要带过去（微信那边可能用得上）
-    expect(vi.mocked(saveMod.shareImage).mock.calls[0][1]).toBe('p_ruixing.jpg')
+    expect(vi.mocked(saveMod.shareImage).mock.calls[0][1]).toBe('p_pinkrose.jpg')
   })
 
   it('⚠️ 点「保存」→ 不偷偷下载，也不偷偷变成分享（§3.4）', async () => {
@@ -3166,7 +3166,7 @@ describe('保存 = 存进作品集（Task 13）', () => {
     const dl = container.querySelector('.save-fail button.download') as HTMLButtonElement | null
     expect(dl).toBeTruthy()
     await act(async () => { dl?.click(); await new Promise(r => setTimeout(r, 0)) })
-    expect(saveMod.downloadImage).toHaveBeenCalledWith(failedBlob, 'p_ruixing.jpg')
+    expect(saveMod.downloadImage).toHaveBeenCalledWith(failedBlob, 'p_pinkrose.jpg')
   })
 
   it('★ 图根本没能导出来的时候，屏幕上不许出现「图还在」（那是骗人）', async () => {
@@ -3833,12 +3833,12 @@ describe('恢复：打开就接着上次那条', () => {
     // ⑦ ★★ 「保存 / 分享 / 下载」三条路还活着。它们共同的开头要一个**真 File**
     //    （`originalFileRef`），恢复出来的会话原来没有它 —— 三颗按钮会一起
     //    "点了没反应"，不报错、也不提示。名字还必须来自**用户上传时那个名字**：
-    //    兜一个空名字的话 `buildFilename` 给出的是 `_ruixing.jpg` 这种没法看的。
+    //    兜一个空名字的话 `buildFilename` 给出的是 `_pinkrose.jpg` 这种没法看的。
     //    变异：恢复时不重建那个 File（或者不传名字）→ 这两句红。
     const dl = downloadBtn()
     expect(dl).toBeTruthy()
     await act(async () => { dl!.click(); await new Promise(r => setTimeout(r, 0)) })
-    expect(saveMod.downloadImage).toHaveBeenCalledWith(expect.anything(), '古镇_ruixing.jpg')
+    expect(saveMod.downloadImage).toHaveBeenCalledWith(expect.anything(), '古镇_pinkrose.jpg')
     expect(saveMod.buildExportBlob).toHaveBeenCalledWith(
       expect.anything(), expect.objectContaining({ name: '古镇.jpg' }), 'image/jpeg', 0.95)
 

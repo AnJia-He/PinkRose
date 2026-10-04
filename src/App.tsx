@@ -574,7 +574,7 @@ export default function App() {
       //   ⚠️ 别去松那三处的守卫（那是治症状）：`exportCurrent` 要这个 File 是
       //   做两件**真事** —— `buildExportBlob(canvas, file, …)` 拿它写回 EXIF，
       //   `buildFilename(file.name, …)` 决定下载下来的文件叫什么。松掉守卫换来
-      //   的是"导出能成，但没 EXIF、名字还叫 `_ruixing.jpg`" —— 比"没反应"更坏，
+      //   的是"导出能成，但没 EXIF、名字还叫 `_pinkrose.jpg`" —— 比"没反应"更坏，
       //   因为它不报错、也不明显。这里补上真正的那个 File，那三处从"错的"变成
       //   "对的"，一个字都不用改。
       //
@@ -602,7 +602,7 @@ export default function App() {
           oi.close()
         }
         // 名字用用户上传时那个（spec §6.3 / §6.4）。没有名字就兜一个 ——
-        // 空名字会让 `buildFilename` 产出 `_ruixing.jpg` 这种没法看的文件名。
+        // 空名字会让 `buildFilename` 产出 `_pinkrose.jpg` 这种没法看的文件名。
         originalFileRef.current = new File(
           [ob], detail.originalName?.trim() || '照片.jpg', { type: ob.type || 'image/jpeg' })
       } catch (e) {

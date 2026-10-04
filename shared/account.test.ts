@@ -104,7 +104,8 @@ describe('checkUsername', () => {
   })
 
   it('保留名不让注册', () => {
-    for (const n of ['admin', 'root', 'system', 'administrator', 'ADMIN']) {
+    // `pinkrose` 是 2026-10-04 换上的（产品改名，原来这格里写的是 ruixing）
+    for (const n of ['admin', 'root', 'system', 'administrator', 'ADMIN', 'pinkrose', 'PinkRose']) {
       expect(checkUsername(n).ok).toBe(false)
     }
   })

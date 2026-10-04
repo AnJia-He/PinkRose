@@ -19,7 +19,7 @@ import { PARAM_LABELS, PARAM_KEYS, isChanged, type Adjustments } from '../../sha
  * Windows 上根本写不出去（而且斜杠、引号这些在别的系统上也不行）。
  * 别名是用户手打的，同样可能要过这一关 —— 一并换成 `_`。
  *
- * ⚠️ 用的是**和编辑页同一个** `buildFilename`（`_ruixing` 那个后缀、扩展名从格式推），
+ * ⚠️ 用的是**和编辑页同一个** `buildFilename`（`_pinkrose` 那个后缀、扩展名从格式推），
  * 不另造一套命名规则。
  */
 export function downloadName(w: WorkMeta): string {

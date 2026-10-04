@@ -21,7 +21,7 @@ export const PASSWORD_MAX = 128
  * 不是为了防谁攻击，是为了**防冒充** —— 有个用户叫 "admin"，别人会以为他是官方。
  */
 export const RESERVED_USERNAMES: readonly string[] = [
-  'admin', 'administrator', 'root', 'system', 'official', 'ruixing', 'support', 'help',
+  'admin', 'administrator', 'root', 'system', 'official', 'pinkrose', 'support', 'help',
 ]
 
 export type Check =
