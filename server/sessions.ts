@@ -349,7 +349,17 @@ export async function handleUpdateSession(
     }
   }
 
-  const t = nowMs(deps)
+  // ★ 2026-10-05：**「只改名字」这一趟不动 `updated_at`**。
+  //   列表按 `updated_at DESC` 排、按天分组 —— 那个日期说的是"**什么时候改的照片**"。
+  //   改名是**整理**不是修图：让它跳到"今天"最前，用户会吓一跳（"我就改个名，
+  //   这条怎么飞顶上去了"）。判据：这一趟 PUT **只有 `title` 这一个字段**（string）。
+  //   ⚠️ 并发守卫（下面的 `AND updated_at = ?`）不受影响：没改它就没变，
+  //      "读到的还是写时的那个"照样成立；缩略图的缓存钥匙同理（图本来也没变）。
+  //   ⚠️ 客户端落盘（App 改照片）永远带 params —— 那条路照旧 bump，别把判据放宽。
+  const titleOnly = typeof o.title === 'string'
+    && o.base === undefined && o.thumb === undefined
+    && o.messages === undefined && o.steps === undefined && o.params === undefined
+  const t = titleOnly ? row.updated_at : nowMs(deps)
   // ★ 2026-10-04：被换掉的那个旧缩略图会**从盘上删掉**（下面那两处 remove）——
   //   所以它的字节要**从账里减掉**，不然每换一次缩略图就多算一份（越攒越虚）。
   //   读不到就当 0（保守：宁可多算，也别把账算少）。

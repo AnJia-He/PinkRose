@@ -1359,14 +1359,18 @@ describe('会话接口', () => {
 
     // 相 1：动**先建**的甲 —— 它必须顶到最前（时间倒序 = [甲, 乙]）。
     // 这一相专门逼红 `id DESC` / `created_at DESC`（它们在相 2 里恰好和答案一致）。
+    // ⚠️ "动"用的是 `params`（= 用户拖了滑块），**不是** `title` —— 2026-10-05 起
+    //    "只改名字"那一趟**故意不动 `updated_at`**（改名是整理不是修图，不许让
+    //    一条旧会话跳到"今天"；见 `handleUpdateSession` 的 `titleOnly`）。
+    //    拿 title 当 touch 手段的写法会在这条用例里当场红 —— 那正是它改对的样子。
     await new Promise(r => setTimeout(r, 5))
-    await call(base, 'PUT', `/api/sessions/${idA1}`, { title: '刚改过' }, cookieA)
+    await call(base, 'PUT', `/api/sessions/${idA1}`, { params: { exposure: 5 } }, cookieA)
     expect((await listed()).sessions.map(r => r.id)).toEqual([idA1, idA2])
 
     // 相 2：接着动**后建**的乙 —— 现在轮到它顶到最前（时间倒序 = [乙, 甲]）。
     // 这一相专门逼红 `id ASC` / `created_at ASC`（它们在相 1 里恰好和答案一致）。
     await new Promise(r => setTimeout(r, 5))
-    await call(base, 'PUT', `/api/sessions/${idA2}`, { title: '也改过了' }, cookieA)
+    await call(base, 'PUT', `/api/sessions/${idA2}`, { params: { contrast: 5 } }, cookieA)
     const last = await listed()
     const rows = last.sessions
     expect(rows.map(r => r.id)).toEqual([idA2, idA1])   // 倒序 + 只有自己的
@@ -1506,7 +1510,11 @@ describe('会话接口', () => {
     // ⚠️ 光 `await` 不保证时钟往前走（同一毫秒内两次调用是常事），所以显式等一格 ——
     //    否则这条测试会**偶发地红**，比没有更糟。
     await new Promise(r => setTimeout(r, 5))
-    const put = await call(base, 'PUT', `/api/sessions/${id}`, { title: '改过了' }, cookieA)
+    // ⚠️ "改一次"用的是 `params`（= 用户拖了滑块）—— 2026-10-05 起**纯改名**
+    //    那一趟**故意**不 bump（改名不改图，缓存钥匙不用换；见 `handleUpdateSession`
+    //    的 `titleOnly`）。拿 `title` 当"改"的写法在这条用例里会当场红 ——
+    //    "改名不 bump"和"改图必须 bump"两件事各有自己的用例守着。
+    const put = await call(base, 'PUT', `/api/sessions/${id}`, { params: { exposure: 5 } }, cookieA)
     const t1 = await at()
     expect(t1).toBeGreaterThan(t0)                                  // ★ 列表上那个数往前走了
     // ★ 落库那一半：库里那一行必须**就是**列表给你的那个数（响应好看不算数）。

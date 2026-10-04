@@ -155,7 +155,11 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
                  aria-label="作品名字"
                  onBlur={e => void doRename(e.target.value)}
                  onKeyDown={e => {
-                   if (e.key === 'Enter') void doRename((e.target as HTMLInputElement).value)
+                   // ⚠️ `isComposing`：中文输入法**选词**也是回车 —— 不挡的话
+                   //    用户打"海边"选词，名字会半截存成"海"（一声不吭）。
+                   //    （2026-10-05 补；对话列表那颗「改名」自带这一条和它的测试）
+                   if (e.key === 'Enter' && !e.nativeEvent.isComposing)
+                     void doRename((e.target as HTMLInputElement).value)
                    if (e.key === 'Escape') setRenaming(false)
                  }} />
         ) : (

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Btn } from './kit/Btn.tsx'
-import { listSessions, deleteSession, sessionThumbUrl } from '../api/sessions'
+import { listSessions, deleteSession, updateSession, sessionThumbUrl } from '../api/sessions'
 import { groupByDay } from '../../shared/works.ts'
 import { visibleGroups } from '../core/gallery'
 import { sessionTitle, type SessionMeta } from '../../shared/sessions.ts'
@@ -46,6 +46,11 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
   const [limit, setLimit] = useState(PAGE)
   /** 正在问"这条要删掉吗"的是哪一条。**就地确认，不弹系统框**（这个产品的规矩） */
   const [confirming, setConfirming] = useState<number | null>(null)
+  /** 正在改名字的是哪一条。**手势和作品详情页那颗「改名」同一套**：
+   *  回车 / 点走保存，Esc 取消（见 `WorkDetailPage.doRename`）。 */
+  const [renaming, setRenaming] = useState<number | null>(null)
+  /** 改名失败。⚠️ 和 `delFailed` 同一套：列表上面加一句，**名单原样不动** */
+  const [renameFailed, setRenameFailed] = useState<string | null>(null)
   /** 「现在」只取一次：显示名要判断"是不是今年"，一次会话里不会跨年 */
   const now = useMemo(() => Date.now(), [])
 
@@ -89,6 +94,37 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
     }
   }
 
+  /**
+   * 改名。**和作品详情页那颗「改名」同一条形状**（`WorkDetailPage.doRename`）：
+   * 先退出编辑态；显示名没变就什么都不发；空串 = 清空（服务端存成 null，
+   * 显示回退到照片名 /「还没说话」）。
+   *
+   * ⚠️ 保存有两条路（回车走 `onKeyDown`、点走别处走 `onBlur`），所以"只发一次"
+   *    靠的是**回车后输入框被卸载、浏览器不补 blur**（作品页顶了四天的那条，
+   *    测试用"请求计数 === 1"把这份不确定变成当场可观察）。
+   * ⚠️ 替换那一行用的是**服务端回来的 meta**：`updatedAt` 也在里面（缩略图 URL
+   *    的 `v` 靠它）；而且"只改名字"那一趟服务端**不动 `updatedAt`**（列表按它
+   *    排序分组，改名不该让这条跳到"今天"，见 `server/sessions.ts` 的 `titleOnly`）
+   *    —— 拿回什么存什么，别自己造时间。
+   */
+  async function doRename(id: number, raw: string) {
+    setRenaming(null)
+    setRenameFailed(null)
+    const next = raw.trim()
+    const cur = rows?.find((r) => r.id === id)
+    // 显示名没变就什么都不发。⚠️ 比的是**显示名**（`sessionTitle`，可能是回退
+    // 出来的照片名），不是 `title` 字段 —— 比字段的话，一条"还没起过名"的会话
+    // 会被这趟"没改的改名"**静默实化**（title 从 null 变成照片名）。
+    if (cur && next === sessionTitle(cur)) return
+    try {
+      const meta = await updateSession(id, { title: next })
+      setRows((rs) => rs?.map((r) => (r.id === id ? meta : r)) ?? null)
+    } catch (e) {
+      // 同上：失败了列表原样，只在上面加一句
+      setRenameFailed(e instanceof Error ? e.message : '没改成，再试一次')
+    }
+  }
+
   // ⚠️ 四种状态**都包在 `.sessions` 里**（照 GalleryPage：它那个 `.gallery` 也是
   //    四种状态都在里面）—— 那一层既是"自己滚"的那一格，也是空态居中所要的宽度。
   //    不包的话，空态是 `.shell` 的一个 flex 孩子，宽度按内容收缩，会**贴到左上角**去，
@@ -121,13 +157,16 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
   return (
     <section className="sessions">
       {delFailed && <p className="gallery-error">{delFailed}</p>}
+      {renameFailed && <p className="gallery-error">{renameFailed}</p>}
       {shown.map(g => (
         <div key={g.day} className="sessions-day">
           {/* 标题上的条数是**这一天的全部条数**，和下面摆出来的数量一致 ——
               这也是 visibleGroups 按天取整的理由 */}
           <h2 className="gallery-day-title">{g.label} · {g.works.length} 条</h2>
           {g.works.map(s => (
-            <div key={s.id} className={confirming === s.id ? 'session-row confirming' : 'session-row'}>
+            <div key={s.id} className={
+              renaming === s.id ? 'session-row renaming'
+                : confirming === s.id ? 'session-row confirming' : 'session-row'}>
               <button className="session-open" onClick={() => onOpen(s.id)}>
                 {/* `alt` 给名字：图上没字，读屏软件只能靠它 */}
                 <img className="session-thumb" src={sessionThumbUrl(s.id, s.updatedAt)}
@@ -135,7 +174,26 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
                 <span className="session-name">{sessionTitle(s)}</span>
                 <span className="session-steps">{s.stepCount} 步</span>
               </button>
-              {confirming === s.id ? (
+              {renaming === s.id ? (
+                /* 改名 —— 和作品详情页那颗同名按钮**同一套手势**：回车 / 点走保存、
+                   Esc 取消，没有「好/取消」按钮。预填**显示名**（非受控），清空提交
+                   = 回退；`placeholder` 就是那时候露出来的"会变回这个名字"。 */
+                <input
+                  className="session-rename"
+                  autoFocus
+                  defaultValue={sessionTitle(s)}
+                  placeholder={sessionTitle(s)}
+                  maxLength={60}
+                  aria-label="对话名字"
+                  onBlur={(e) => void doRename(s.id, e.target.value)}
+                  onKeyDown={(e) => {
+                    // ⚠️ `isComposing`：中文输入法**选词**也是回车 —— 不挡的话
+                    //    用户打个"海边"选词，名字会半截存成"海"（一声不吭）。
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing)
+                      void doRename(s.id, (e.target as HTMLInputElement).value)
+                    if (e.key === 'Escape') setRenaming(null)
+                  }} />
+              ) : confirming === s.id ? (
                 <>
                   <span className="session-ask">删掉这条？</span>
                   {/* ⚠️ 「删掉」要自己的类（`danger`），**别靠 DOM 位置选**：
@@ -147,8 +205,14 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
                   <button className="session-del" onClick={() => setConfirming(null)}>取消</button>
                 </>
               ) : (
-                <button className="session-del"
-                        onClick={() => { setConfirming(s.id); setDelFailed(null) }}>删除</button>
+                <>
+                  {/* ⚠️ 「改名」挂 `.session-act` 而**不是** `.session-del`：后者的
+                      悬停是红色的（危险的语言），改名不危险。见 styles.css。 */}
+                  <button className="session-act"
+                          onClick={() => { setRenameFailed(null); setRenaming(s.id) }}>改名</button>
+                  <button className="session-del"
+                          onClick={() => { setConfirming(s.id); setDelFailed(null) }}>删除</button>
+                </>
               )}
             </div>
           ))}

@@ -202,6 +202,35 @@ describe('更新', () => {
     expect(after).toBe(before)
     expect(JSON.parse(after).length).toBe(1)
   })
+
+  // ★ 2026-10-05：列表按 `updated_at DESC` 排、按天分组 —— 那个日期说的是
+  //   "什么时候改的照片"。**改名是整理不是修图**：不把这一条挡住的话，用户给
+  //   一条上周的会话改个名字，它会**当场跳到"今天"最前**（这个项目的规矩里，
+  //   "静默的位置变化"和"静默丢东西"一样吓人）。判据：这一趟 PUT 只有 title。
+  it('★ 只改名字 → 名字存进去、updated_at 一点不动', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, { db, storage, now: () => 1000 })
+    await handleUpdateSession(id, { steps: [step(1)] }, user, { db, storage, now: () => 2000 })
+    const at = () => (db.raw.prepare('SELECT updated_at FROM sessions WHERE id = ?').get(id) as any).updated_at
+    expect(at()).toBe(2000)
+
+    const meta = await handleUpdateSession(id, { title: '换个名字' }, user, { db, storage, now: () => 3000 })
+
+    expect(at()).toBe(2000)              // 没被 3000 顶掉
+    expect(meta.updatedAt).toBe(2000)    // 返回的 meta 也得是旧时间戳（前端拿它替换那一行）
+    expect(meta.title).toBe('换个名字')   // 名字本身要真的存进去（别把整趟都吞了）
+  })
+
+  it('★ 名字和别的字段一起送 → updated_at 照动（判据只认"只有 title"那一趟）', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, { db, storage, now: () => 1000 })
+    // 客户端落盘（App 改照片）永远带 params 一起上来 —— 那条路不许被这条例外误伤
+    await handleUpdateSession(
+      id, { title: '换个名字', params: { ...ZERO, exposure: 20 } }, user,
+      { db, storage, now: () => 3000 })
+
+    const row = db.raw.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as any
+    expect(row.updated_at).toBe(3000)
+    expect(row.title).toBe('换个名字')
+  })
 })
 
 /**

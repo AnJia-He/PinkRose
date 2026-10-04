@@ -1589,6 +1589,35 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 确认态里「取消」的悬停：只给形状，不给危险色 */
 .session-row.confirming .session-del:not(.danger):hover:not(:disabled) { color: var(--text); border-color: var(--line-2); }
 
+/* 行尾的中性操作（「改名」）——和「删除」同一副骨架，只有悬停不同色：
+   「删除」悬停变红（它危险），它只给形状。
+   ⚠️ 加行内按钮时**别顺手挂 `.session-del` 的类**：上面那条 `:not(.confirming)`
+   会把悬停染红 —— 一颗「改名」按钮上一抹红，用户以为点下去要出事。 */
+.session-act {
+  flex: none; padding: var(--sp-1) var(--sp-2);
+  font-size: 12px; color: var(--muted);
+  background: none; border-color: transparent;
+}
+.session-act:hover:not(:disabled) { color: var(--text); border-color: var(--line-2); }
+
+/* 改名编辑框 —— 照 `.rename-input`（作品详情页那颗）的**同一个语言**：底色
+   `--bg`、边框 `--accent` + `--ring`（它一出现就 autoFocus、失焦即提交退出，
+   所以"常态"就画成聚焦相）。字号跟这一行（14px），不是详情页的 18。 */
+.session-rename {
+  flex: 1; min-width: 0;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 14px;
+  border: 1px solid var(--accent); border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
+  box-shadow: var(--ring);
+}
+.session-rename:focus { outline: none; }
+.session-rename::placeholder { color: var(--muted-2); }
+
+/* 改名态让位（和确认态同一条理由：窄屏一行塞不下"缩略图 + 名字 + 输入框"，
+   见上面 `.session-row.confirming` 那段）。 */
+.session-row.renaming { justify-content: flex-end; padding: var(--sp-2) var(--sp-3); }
+.session-row.renaming .session-open { display: none; }
+
 /* 就地确认（**不弹系统框**，这个产品的规矩）。
    ⚠️ 确认态是**这一行换了个问题问**：照片、名字、步数让位给那句问话和两颗按钮。
    位置不动（还是列表里的那一行），所以"问的是哪一条"一眼看得出来。
