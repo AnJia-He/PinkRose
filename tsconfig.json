@@ -15,5 +15,5 @@
     "noEmit": true,
     "types": ["vitest/globals"]
   },
-  "include": ["src", "shared"]
+  "include": ["src", "shared", "scripts/prerender-entry.tsx"]
 }

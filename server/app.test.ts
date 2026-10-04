@@ -1891,3 +1891,44 @@ describe('★ 注销账号 / /api/me 的用量（2026-10-04）', () => {
     expect(body.usage.limit).toBe(5 * 1024 ** 3)
   })
 })
+
+/**
+ * ★ 2026-10-04：**静态兜底从此有两份壳**（预渲染那件事的服务器那一半）。
+ *
+ * `dist/index.html` 是**预渲染过的落地页**（爬虫读的就是这一份），
+ * `dist/app.html` 是空壳 —— `/app` 和 `/works` 底下走它。
+ * 反过来的话，App 那几屏会先闪一帧落地页的内容、再被 React 清掉，那是新的闪屏。
+ * ⚠️ `app.html` 不在时（没跑预渲染那一步、或者 dist 是旧的）**退回 index.html**：
+ *    少一份壳也要能用，别让分发这一层变成"构建顺序错了就打不开"。
+ */
+describe('★ 静态兜底的两份壳（预渲染之后）', () => {
+  it('/ 给的是预渲染过的落地页那一份', async () => {
+    // ⚠️ 目录**在用例里现建**（别在 describe 体里建）：这个文件的 afterEach 会把
+    //    登记过的临时目录全删掉，建在外面的话第一条用例跑之前它就没了。
+    const twoShells = mkdtempSync(join(tmpdir(), 'ruixing-two-shells-'))
+    openedDirs.push(twoShells)
+    writeFileSync(join(twoShells, 'index.html'), 'LANDING-MARKUP-IN-ROOT')
+    writeFileSync(join(twoShells, 'app.html'), 'EMPTY-ROOT-SHELL')
+    const base = await boot({ staticDir: twoShells })
+
+    const home = await (await fetch(`${base}/`)).text()
+    expect(home).toContain('LANDING-MARKUP-IN-ROOT')
+
+    // /app 和 /works 底下（含子路径）都该是空壳
+    for (const p of ['/app', '/app/account', '/works', '/works/7']) {
+      const res = await (await fetch(`${base}${p}`)).text()
+      expect(res, p).toContain('EMPTY-ROOT-SHELL')
+    }
+
+    // 别的未知路径照旧走 index.html（SPA 兜底的老口径没变）
+    expect(await (await fetch(`${base}/whatever`)).text()).toContain('LANDING-MARKUP-IN-ROOT')
+  })
+
+  it('★ app.html 不在（没跑预渲染）时退回 index.html —— 少一份壳也要能用', async () => {
+    const oneShell = mkdtempSync(join(tmpdir(), 'ruixing-one-shell-'))
+    openedDirs.push(oneShell)
+    writeFileSync(join(oneShell, 'index.html'), 'ONLY-INDEX')
+    const base = await boot({ staticDir: oneShell })
+    expect(await (await fetch(`${base}/app`)).text()).toContain('ONLY-INDEX')
+  })
+})

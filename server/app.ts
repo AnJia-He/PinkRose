@@ -706,6 +706,14 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
  * 静态托管。生产用 `npm run build` 出来的 dist；开发时前端在 5173，
  * 走 Vite 的 proxy 打到 /api，这个分支根本不会命中。
  */
+/** 见上面那句：未知路径该用哪一份壳（`app.html` 优先给 App 那几屏，缺了就退 index）。 */
+function shellFor(root: string, path: string): string {
+  const appPath = path === '/app' || path.startsWith('/app/') ||
+    path === '/works' || path.startsWith('/works/')
+  const appShell = join(root, 'app.html')
+  return appPath && existsSync(appShell) ? appShell : join(root, 'index.html')
+}
+
 async function serveStatic(dir: string | undefined, path: string,
                            res: ServerResponse): Promise<void> {
   if (!dir) {
@@ -723,7 +731,13 @@ async function serveStatic(dir: string | undefined, path: string,
   }
   const file = existsSync(target) && statSync(target).isFile()
     ? target
-    : join(root, 'index.html')   // SPA 兜底：未知路径交给前端路由
+    // SPA 兜底：未知路径交给前端路由。
+    // ★ 2026-10-04：**两份壳**。`index.html` 是**预渲染过的落地页**（爬虫要读的
+    //   就是这一份），`/app` 和 `/works` 底下走 `app.html`（空壳）—— 反过来的话
+    //   App 那几屏会先闪一帧落地页的内容、再被 React 清掉。
+    //   ⚠️ `app.html` 不在时（没跑预渲染、或者 dist 是旧的）退回 index.html：
+    //   **少一份壳也要能用**，别让分发这一层变成"构建顺序错了就打不开"。
+    : shellFor(root, path)
   if (!existsSync(file)) {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
     res.end('没有构建产物，先跑 npm run build')

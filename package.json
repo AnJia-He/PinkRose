@@ -7,7 +7,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "dev:server": "node server/index.ts",
-    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "build": "tsc -p tsconfig.json --noEmit && vite build && node scripts/prerender.mjs",
     "start": "node server/index.ts",
     "preview": "vite preview",
     "test": "vitest run",
