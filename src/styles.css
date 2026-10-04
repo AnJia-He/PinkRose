@@ -614,7 +614,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    修图工具里照片永远是主角，界面交给它的是一块安静的底。 */
 .stage {
   flex: 1; display: flex; align-items: center; justify-content: center;
-  padding: var(--sp-5);
+  /* ★ 2026-10-04（晚）：上下留白**不再和左右一样**。用户传了一张 1080×2048 的
+     竖图说「看着是不是太别扭了」—— 量出来：竖图上下只剩 **24px** 就顶到顶栏和
+     窗口底，而左右各有 487px 空着，读起来是"竖着挤死、横着空荡"。
+     竖向这条线跟着窗口高走：矮窗口不至于被吃掉太多，高窗口给足呼吸
+     （24 ~ 48px；1440 高的屏上是 48）。（横向维持 `--sp-5`：舞台的宽是给横图用的，
+     竖图本来就够不到。） */
+  padding: clamp(var(--sp-5), 7vh, var(--sp-7)) var(--sp-5);
   /* ★ 2026-10-03：`position: relative` 是给欢迎页那颗**图片球**当包含块用的
      （它铺满整块舞台，见 `.globe`）。舞台自己不用剪裁 —— 球自己会剪。 */
   position: relative;
