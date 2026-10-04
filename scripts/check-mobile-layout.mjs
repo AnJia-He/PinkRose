@@ -828,7 +828,7 @@ async function measureWelcome(page) {
   })
 }
 
-async function judgeWelcome(label, m, view) {
+async function judgeWelcome(page, label, m, view) {
   console.log(`── ${label}`)
   console.log(`     上传前那一屏 ${m.welcome ? `${m.welcome.w}x${m.welcome.h} @${m.welcome.left},${m.welcome.top}` : '不在 DOM 里'}`)
   if (!m.welcome) { fails.push(`${label}：找不到 .welcome —— 上传前那一屏整个不见了`); return }
@@ -1299,7 +1299,7 @@ try {
 
       // ★ 趁照片还没传、`.welcome` 还在，先量它 —— 传完它就没了。
       await page.waitForTimeout(400)   // 让那条进场动画走完（.welcome 是 translateY 进来的）
-      await judgeWelcome(`${view.name} · 上传前那一屏`, await measureWelcome(page), view)
+      await judgeWelcome(page, `${view.name} · 上传前那一屏`, await measureWelcome(page), view)
 
       // ── 对话页 · 空态（Task 6）──────────────────────────────────────
       // 趁这个账号**一条会话都没有**（照片还没传）—— 那是新用户点进「对话」看到

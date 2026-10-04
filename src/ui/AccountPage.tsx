@@ -93,70 +93,66 @@ export function AccountPage({
 
   return (
     <div className="account">
-      {/* 这一层是**内容的宽度**（★ 2026-10-04，见 styles.css 里 `.account-inner`）：
-          那之前每一行都是满宽的，1440 的屏上「模型」那一条有 1308px。 */}
-      <div className="account-inner">
-        {/* ★ 2026-10-04：**给这个名字加了个「用户名」的标签**。用户看完这一页说
-            「用户名没显示出来」—— 屏幕上本来只有孤零零一个名字（他那个测试账号
-            就叫 111），读起来像个编号，看不出它是"你的用户名"。
+      {/* ★ 2026-10-04：**给这个名字加了个「用户名」的标签**。用户看完这一页说
+          「用户名没显示出来」—— 屏幕上本来只有孤零零一个名字（他那个测试账号
+          就叫 111），读起来像个编号，看不出它是"你的用户名"。
 
-            ⚠️ 标签**必须另起一格**，不能塞进 `.account-name` 里面：
-            `App.test.tsx` 是按 `.account-name` 的 **textContent 恰好等于用户名**
-            来钉这一格的（两条）。塞进去的话，那两条会红成"用户名变成『用户名111』"
-            —— 看着像数据错了，其实只是标签放错了地方。 */}
-        <p className="account-label">用户名</p>
-        <h1 className="account-name">{user.username}</h1>
+          ⚠️ 标签**必须另起一格**，不能塞进 `.account-name` 里面：
+          `App.test.tsx` 是按 `.account-name` 的 **textContent 恰好等于用户名**
+          来钉这一格的（两条）。塞进去的话，那两条会红成"用户名变成『用户名111』"
+          —— 看着像数据错了，其实只是标签放错了地方。 */}
+      <p className="account-label">用户名</p>
+      <h1 className="account-name">{user.username}</h1>
 
-        {/* 使用情况（§3.6 那两格）。**拿不到就整格不出现** —— 见上面 Usage 那段。 */}
-        {usage.state !== 'unavailable' && (
-          <div className="account-stats">
-            {usage.state === 'loading' ? (
-              // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
-              // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
-              <div className="stat"><b>…</b><span>张作品</span></div>
-            ) : (
-              <>
-                <div className="stat"><b>{usage.count}</b><span>张作品</span></div>
-                {/* 体积：只有算得出来、而且确实存着东西的时候才画（0 张时
-                    「0 KB」是句没用的话）。服务端没给全就算不出来 —— 那就不说。 */}
-                {usage.count > 0 && usage.bytes !== null && (
-                  <div className="stat"><b>{formatSize(usage.bytes)}</b><span>占的空间</span></div>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        <div className="account-rows">
-          {/* 模型那一行（§3.6）。显示的是**别名或者「默认」**，绝不是型号（§7.3）——
-              点进去是模型设置那一页（`{ kind: 'models' }`）。
-              ⚠️ 那一格写别名：用户一眼认出"就是我起的那套"；写型号名不只是难读，
-                 还等于把他用的是谁家摊在屏幕上。 */}
-          <button className="account-row" onClick={() => onGo({ kind: 'models' })}>
-            <span className="account-row-label">模型</span>
-            {/* 拿不到名单时这一格整个不出现（见上面那个 effect 的注释）——
-                「默认」两个字在那种情况下是一句没根据的话。 */}
-            {models !== null && <span className="account-row-value">{modelValue(models)}</span>}
-            <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
-          </button>
+      {/* 使用情况（§3.6 那两格）。**拿不到就整格不出现** —— 见上面 Usage 那段。 */}
+      {usage.state !== 'unavailable' && (
+        <div className="account-stats">
+          {usage.state === 'loading' ? (
+            // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
+            // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
+            <div className="stat"><b>…</b><span>张作品</span></div>
+          ) : (
+            <>
+              <div className="stat"><b>{usage.count}</b><span>张作品</span></div>
+              {/* 体积：只有算得出来、而且确实存着东西的时候才画（0 张时
+                  「0 KB」是句没用的话）。服务端没给全就算不出来 —— 那就不说。 */}
+              {usage.count > 0 && usage.bytes !== null && (
+                <div className="stat"><b>{formatSize(usage.bytes)}</b><span>占的空间</span></div>
+              )}
+            </>
+          )}
         </div>
+      )}
 
-        <button
-          className="account-signout"
-          disabled={leaving}
-          onClick={() => {
-            setLeaving(true)
-            // 退出用 `api/account.ts` 里那个现成的 `logout()` —— 「会话在 cookie 里、
-            // 由哪一条路去清」只有那一处说了算，别在界面里再拼一次同样的请求。
-            // 失败也放人走：退出是幂等的、服务端只清一个 cookie，而用户要的是离开。
-            // 变异：删掉这个 `.catch` → 「请求失败也要放人走」那条测试会红
-            //      （`.then(onSignedOut)` 挂在一条已经 reject 的链上，永远不会执行）。
-            logout().catch(() => {}).then(onSignedOut)
-          }}
-        >{leaving ? '正在退出…' : '退出登录'}</button>
-        {/* ⚠️ 注销账号**这一版不做**：它会连带删掉作品和文件，
-            而"删了什么、能不能后悔"还没有定案（§11）。不留一个点了会出事的按钮。 */}
+      <div className="account-rows">
+        {/* 模型那一行（§3.6）。显示的是**别名或者「默认」**，绝不是型号（§7.3）——
+            点进去是模型设置那一页（`{ kind: 'models' }`）。
+            ⚠️ 那一格写别名：用户一眼认出"就是我起的那套"；写型号名不只是难读，
+               还等于把他用的是谁家摊在屏幕上。 */}
+        <button className="account-row" onClick={() => onGo({ kind: 'models' })}>
+          <span className="account-row-label">模型</span>
+          {/* 拿不到名单时这一格整个不出现（见上面那个 effect 的注释）——
+              「默认」两个字在那种情况下是一句没根据的话。 */}
+          {models !== null && <span className="account-row-value">{modelValue(models)}</span>}
+          <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
+        </button>
       </div>
+
+      <button
+        className="account-signout"
+        disabled={leaving}
+        onClick={() => {
+          setLeaving(true)
+          // 退出用 `api/account.ts` 里那个现成的 `logout()` —— 「会话在 cookie 里、
+          // 由哪一条路去清」只有那一处说了算，别在界面里再拼一次同样的请求。
+          // 失败也放人走：退出是幂等的、服务端只清一个 cookie，而用户要的是离开。
+          // 变异：删掉这个 `.catch` → 「请求失败也要放人走」那条测试会红
+          //      （`.then(onSignedOut)` 挂在一条已经 reject 的链上，永远不会执行）。
+          logout().catch(() => {}).then(onSignedOut)
+        }}
+      >{leaving ? '正在退出…' : '退出登录'}</button>
+      {/* ⚠️ 注销账号**这一版不做**：它会连带删掉作品和文件，
+          而"删了什么、能不能后悔"还没有定案（§11）。不留一个点了会出事的按钮。 */}
     </div>
   )
 }
