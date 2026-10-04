@@ -134,38 +134,77 @@ export function AccountPage({
 
   return (
     <div className="account">
-      {/* ★ 2026-10-04：**给这个名字加了个「用户名」的标签**。用户看完这一页说
-          「用户名没显示出来」—— 屏幕上本来只有孤零零一个名字（他那个测试账号
-          就叫 111），读起来像个编号，看不出它是"你的用户名"。
+      {/* ★★ 2026-10-04（晚）：用户看完这一页说「**布局看着都不合理**」——
+          病是三处：**没有标题**（上来就是"用户名"+一个名字，像资料卡不像一页设置）、
+          **几张卡宽度参差**（fit-content 让每一块各长各的）、全挤在左上角。
+          改成一页标准的"设置页"：**页面标题 + 一张列表卡（一行一件事）+ 底下一颗退出**。
+          这个结构就是组件库那种设置页模板的形状（标题 → 列表 → 行），
+          皮还是我们自己的（磨砂面 / 发丝线 / 大圆角，见 styles.css 那几段）。 */}
+      <h1 className="account-title">个人设置</h1>
 
-          ⚠️ 标签**必须另起一格**，不能塞进 `.account-name` 里面：
-          `App.test.tsx` 是按 `.account-name` 的 **textContent 恰好等于用户名**
-          来钉这一格的（两条）。塞进去的话，那两条会红成"用户名变成『用户名111』"
-          —— 看着像数据错了，其实只是标签放错了地方。 */}
-      <p className="account-label">用户名</p>
-      <h1 className="account-name">{user.username}</h1>
+      <div className="account-rows">
+        {/* 用户名：它不是一个"可点的设置"，但放在这张列表的最上面最自然
+            （设置页的第一行十有八九就是"你是谁"）。
 
-      {/* 使用情况（§3.6 那两格）。**拿不到就整格不出现** —— 见上面 Usage 那段。 */}
-      {usage.state !== 'unavailable' && (
-        <div className="account-stats">
-          {usage.state === 'loading' ? (
-            // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
-            // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
-            <div className="stat"><b>…</b><span>张作品</span></div>
-          ) : (
-            <>
-              <div className="stat"><b>{usage.count}</b><span>张作品</span></div>
-              {/* 体积：只有算得出来、而且确实存着东西的时候才画（0 张时
-                  「0 KB」是句没用的话）。 */}
-              {usage.count > 0 && (
-                <div className={usageWarn ? 'stat stat-warn' : 'stat'}>
-                  <b>{formatSize(usage.bytes)}</b><span>占的空间</span>
-                </div>
-              )}
-            </>
-          )}
+            ⚠️ `.account-label` / `.account-name` 这两个类**是测试的锚点，改版也不许删**：
+            `App.test.tsx` 有两条断言钉着「用户名这三个字在」和「`.account-name`
+            恰好等于用户名」（后者是防"标签被塞进名字里"的那种错法）。 */}
+        <div className="account-row account-row-static">
+          <span className="account-row-label account-label">用户名</span>
+          <span className="account-row-value account-name">{user.username}</span>
         </div>
-      )}
+
+        {/* 使用情况（§3.6）。**拿不到就这一行整个不出现** —— 见上面 Usage 那段。 */}
+        {usage.state !== 'unavailable' && (
+          <div className="account-row account-row-static">
+            <span className="account-row-label">使用情况</span>
+            <div className="account-stats">
+              {usage.state === 'loading' ? (
+                // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
+                // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
+                <div className="stat"><b>…</b><span>张作品</span></div>
+              ) : (
+                <>
+                  <div className="stat"><b>{usage.count}</b><span>张作品</span></div>
+                  {/* 体积：只有算得出来、而且确实存着东西的时候才画（0 张时
+                      「0 KB」是句没用的话）。 */}
+                  {usage.count > 0 && (
+                    <div className={usageWarn ? 'stat stat-warn' : 'stat'}>
+                      <b>{formatSize(usage.bytes)}</b><span>占的空间</span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 模型那一行（§3.6）。显示的是**别名或者「默认」**，绝不是型号（§7.3）——
+            点进去是模型设置那一页（`{ kind: 'models' }`）。
+            ⚠️ 那一格写别名：用户一眼认出"就是我起的那套"；写型号名不只是难读，
+               还等于把他用的是谁家摊在屏幕上。 */}
+        <button className="account-row" onClick={() => onGo({ kind: 'models' })}>
+          <span className="account-row-label">模型</span>
+          {/* 拿不到名单时这一格整个不出现（见上面那个 effect 的注释）——
+              「默认」两个字在那种情况下是一句没根据的话。 */}
+          {models !== null && <span className="account-row-value">{modelValue(models)}</span>}
+          <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
+        </button>
+
+        {/* 账号那两件（§3.6 那张图上的 改密码／注销账号）。
+            ⚠️ 「退出登录」**不在这张卡里**（见下面那颗按钮的注释）—— 它是"离开这一页"，
+            不是这一页上的一项设置，收进来就把两种东西混成一种了。 */}
+        <button className="account-row" aria-expanded={pwOpen}
+          onClick={() => setPwOpen((o) => !o)}>
+          <span className="account-row-label">改密码</span>
+          <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
+        </button>
+        <button className="account-row account-row-danger" aria-expanded={delOpen}
+          onClick={() => setDelOpen((o) => !o)}>
+          <span className="account-row-label">注销账号</span>
+          <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
+        </button>
+      </div>
 
       {/* ★ 2026-10-04（§6.6）：用到 80% 就**主动说** —— 不能等用户存不进去了才告诉
           他"满了"（那一刻他正想保存，等于把他堵在门口）。张数才有感觉，
@@ -178,34 +217,6 @@ export function AccountPage({
           <button className="account-quota-go" onClick={() => onGo({ kind: 'gallery' })}>去作品集删几张</button>
         </p>
       )}
-
-      <div className="account-rows">
-        {/* 模型那一行（§3.6）。显示的是**别名或者「默认」**，绝不是型号（§7.3）——
-            点进去是模型设置那一页（`{ kind: 'models' }`）。
-            ⚠️ 那一格写别名：用户一眼认出"就是我起的那套"；写型号名不只是难读，
-               还等于把他用的是谁家摊在屏幕上。 */}
-        <button className="account-row" onClick={() => onGo({ kind: 'models' })}>
-          <span className="account-row-label">模型</span>
-          {/* 拿不到名单时这一格整个不出现（见上面那个 effect 的注释）——
-              「默认」两个字在那种情况下是一句没根据的话。 */}
-          {models !== null && <span className="account-row-value">{modelValue(models)}</span>}
-          <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
-        </button>
-      </div>
-
-      {/* 账号那三件（§3.6 那张图上的 改密码／退出登录／注销账号）。 */}
-      <div className="account-rows">
-        <button className="account-row" aria-expanded={pwOpen}
-          onClick={() => setPwOpen((o) => !o)}>
-          <span className="account-row-label">改密码</span>
-          <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
-        </button>
-        <button className="account-row account-row-danger" aria-expanded={delOpen}
-          onClick={() => setDelOpen((o) => !o)}>
-          <span className="account-row-label">注销账号</span>
-          <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
-        </button>
-      </div>
 
       {/* 改密码的表单（§6.5）。⚠️ 服务端改完会发一张新票 —— 所以这一改等于把
           **所有设备**踢下线；当前这台拿到新票、不会掉，别在界面里吓唬人。 */}

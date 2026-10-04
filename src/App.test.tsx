@@ -3546,15 +3546,16 @@ describe('用户管理页', () => {
     await renderApp()
     await openAccount()
 
-    const row = container.querySelector('.account-row') as HTMLButtonElement | null
-    expect(row?.querySelector('.account-row-label')?.textContent).toBe('模型')
+    // ⚠️ 按**行上的字**找，别拿 `.account-row` 里的第一个 —— 2026-10-04 晚改版之后
+    //    列表的第一行是「用户名」（只读行），不再保证「模型」是第一个。
+    const row = rowByLabel('模型')
     // ★ 右边那格写的是**别名**（§7.3 / §7.4）—— 型号名只在设置里翻开来才露。
     //   写型号名不只是难读，还等于把他用的是谁家摊在这一页上。
-    expect(row?.querySelector('.account-row-value')?.textContent).toBe('我的便宜货')
+    expect(row.querySelector('.account-row-value')?.textContent).toBe('我的便宜货')
     expect(container.textContent).not.toContain('deepseek-chat')
 
     await act(async () => {
-      row?.click()
+      row.click()
       await new Promise(r => setTimeout(r, 0))   // 切页那一次渲染
       await new Promise(r => setTimeout(r, 0))   // 新页挂载时那一次"拉清单"
     })
@@ -3573,8 +3574,7 @@ describe('用户管理页', () => {
     await renderApp()
     await openAccount()
 
-    const row = container.querySelector('.account-row') as HTMLButtonElement
-    expect(row.querySelector('.account-row-label')?.textContent).toBe('模型')
+    const row = rowByLabel('模型')
     expect(row.querySelector('.account-row-value')).toBeNull()
     // 少一格不挡路：这一行照样点得进去
     expect(row.disabled).toBe(false)

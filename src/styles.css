@@ -1673,21 +1673,28 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    那么大**，不是"窄一点的横条"。那一行改成按内容收紧之后，这层壳就没有任何
    可见作用了，留着是块死代码（下面 `.account-rows` 那段写着为什么不许再拉满宽）。 */
 
-/* ★ 2026-10-04：**「用户名」这三个字**（用户：「用户名没显示出来」）。
-   这一页本来上来就是一个孤零零的名字 —— 他那个测试账号正好叫「111」，
-   看着像个编号，读不出"这是你的用户名"。
-   ⚠️ 它是**另起的一格**，不是塞进 `.account-name` 里的：`App.test.tsx` 有两条
-   断言钉着 `.account-name` 的 textContent **恰好等于**用户名。 */
-.account-label { margin: var(--sp-6) 0 0; font-size: 13px; color: var(--muted); }
-/* 用户名的字号不变（它仍是这一页最大的那行字），只是顶上的留白让给了上面那个标签。 */
-.account-name { margin: var(--sp-1) 0 0; font-size: 26px; font-weight: 600; letter-spacing: -.01em; }
+/* ★ 2026-10-04（晚）：这一页**第一次有了标题**。用户看完这一页说
+   「布局看着都不合理」—— 原来第一行是「用户名」+ 一个名字，像张资料卡、
+   不像一页设置。补上标题之后，这一页和「模型设置」那一页是同一套说话方式
+   （同一个字号、同一个位置）。 */
+.account-title { margin: var(--sp-6) 0 0; font-size: 26px; font-weight: 600; letter-spacing: -.01em; }
 
-/* 使用情况。数字是重点、说明是注解：数字大一号、用正文色；「张作品」那半句
-   跟 `.gallery` 的日期一样是**分组线的角色**，所以用 --muted 压下去。
-   `baseline` 对齐：按底边对齐的话 22px 的数字和 13px 的字会看着差半行。 */
-.account-stats { display: flex; gap: var(--sp-6); margin-top: var(--sp-5); }
+/* ⚠️ 下面这个类**从"页面大标题"降成了列表里的第一行**（2026-10-04 晚改版）。
+   类名本身是**测试的锚点**，改版也不许删：`App.test.tsx` 有两条断言钉着
+   「用户名这三个字在」和「`.account-name` 的 textContent 恰好等于用户名」。
+   现在它不需要自己的字号了：跟着行里的字走，只留一个加粗 ——
+   它是这一行的"值"，和「模型」那行右边的别名同一个角色。
+   （`.account-label` 那条独立的规则已经删掉：它和 `.account-row-label` 是
+   同一个元素上的两个类，字号由后者说了算。类名留着，理由同上。） */
+.account-name { font-weight: 600; }
+
+/* 使用情况（列表里的一行，右边挂着两个数）。
+   数字是值、说明是注解：「张作品」那半句跟 `.gallery` 的日期一样是
+   **分组线的角色**，所以用 --muted 压下去。
+   `baseline` 对齐：按底边对齐的话 15px 的数字和 13px 的字会看着差半行。 */
+.account-stats { display: flex; gap: var(--sp-5); }
 .stat { display: flex; align-items: baseline; gap: var(--sp-2); }
-.stat b { font-size: 22px; font-variant-numeric: tabular-nums; }
+.stat b { font-size: 15px; font-variant-numeric: tabular-nums; }
 .stat span { font-size: 13px; color: var(--muted); }
 
 /* 设置那几行（今天是「模型」一行，§12 还排着默认导出尺寸 / 默认风格 / 本地文件夹 /
@@ -1696,14 +1703,15 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    `text-align: left` 是必须的：按钮里的字默认居中，不写的话「模型」会飘到中间，
    看着像不是同一栏里的东西。
 
-   ★ 2026-10-04（当天第三遍）：**它的长度就是内容的长度**（用户第二次指着它说
-   「模型选择条跟这个长度差不多就行」，配的是左栏那颗按钮的截图）。
-   第一版是 `width: 100%`（1440 的屏上 1308px，一条横幅）；我先收成 720px 的一栏，
-   用户还是嫌长 —— 他要的不是"窄一点的横条"，是**一颗按钮那么大**。
-   现在靠 `width: fit-content` 让**整张卡**按内容收紧：一行就是"模型 ＋ 别名 ＋ ›"
-   那么宽（十来字的别名也放得下），和下面那颗「退出登录」是同一种东西。
-   ⚠️ 别再把它拉回满宽 —— 这一页因此也**不再需要**宽度上限那一层壳
-   （原来那层 `.account-inner` 已经删了：它本来就是为这一行加的）。
+   ★ 2026-10-04（当天第三遍）：用户嫌它太长（第一版 `width: 100%`，1440 的屏上
+   1308px 一条横幅）→ 收成 `fit-content`「按内容收紧」。
+
+   ★★ 2026-10-04（晚，第五遍）：用户看完这一页说「**布局看着都不合理**」——
+   病不在一行多长，在**几张卡宽度参差**（`fit-content` 让每一块各长各的）+
+   没有标题 + 全挤在左上角。现在给整张卡一个**共同的宽度**（`min(420px, 100%)`）：
+   它既不是横幅、也不是"一颗按钮那么大"的碎片，是一张**设置卡的正常宽度**；
+   下面展开的表单 / 确认块跟着它走，宽度才是齐的。
+   ⚠️ 别再退回 `fit-content` —— "参差"就是这么来的。
 
    ★ 2026-10-04（当天第四遍，就是这一版）：用户发来一张别人家的产品截图说
    「**人家的好有质感**」。那张图里"贵"的是四件小事，这一版全落在这儿：
@@ -1716,7 +1724,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    "主框架一律无色"（照片旁边能不能铺，是另一个问题）。 */
 .account-rows {
   display: flex; flex-direction: column;
-  width: fit-content;
+  width: min(420px, 100%);
   margin-top: var(--sp-5);
   background: var(--glass);
   -webkit-backdrop-filter: blur(14px);
@@ -1743,6 +1751,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 悬停那层底比全局 `--hover` 淡得多：`--hover` 是给"一整块面"用的，
    这是"面上的一行"，整块面那样变色就太重了。 */
 .account-row:where(:hover):where(:not(:disabled)) { background: var(--glass-hover); }
+/* 列表里的**只读行**（用户名、使用情况）：它们没有去处，所以没有悬停反馈。
+   ⚠️ 这条必须排在上面悬停那条**后面**才压得住（两边同权重，后写的赢）。
+   别的长相和可点的行一字不差 —— 一张卡里别有两种排版。 */
+.account-row-static:where(:hover) { background: transparent; }
 /* 焦点环往**里**收 2px：卡片会把往外扩的那一圈裁掉（`overflow: hidden`），
    照全局那套（offset +2px）走，键盘用户只看得到半圈。 */
 .account-row:focus-visible { outline-offset: -2px; }
@@ -1780,7 +1792,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .account-form,
 .account-danger {
   display: flex; flex-direction: column; gap: var(--sp-3);
-  width: fit-content; max-width: 100%;
+  width: min(420px, 100%);
   margin-top: var(--sp-3);
   padding: var(--sp-4);
   background: var(--glass);
