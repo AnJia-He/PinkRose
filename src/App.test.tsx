@@ -14,7 +14,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteDecision, SuggestResponse } from '../shared/protocol.ts'
-import { ZERO } from '../shared/adjustments.ts'
+import { ZERO, type Adjustments } from '../shared/adjustments.ts'
 import type {
   SessionDetail, SessionMessage, SessionMeta, SessionStep,
 } from '../shared/sessions.ts'
@@ -2886,6 +2886,51 @@ describe('作品详情页：这张图怎么来的', () => {
     expect(confirm!.textContent).not.toContain('你电脑')
     expect(confirm!.textContent).not.toContain('下载的')
   })
+
+  it('★ 老作品的配方只有八根：表里只列真改过的那一行，一个 undefined 都不许有', async () => {
+    // 2026-10-04「专业面板」那一轮 Task 6（预检裁定的 Step 2b）—— 会话那条支线的孪生。
+    //
+    // 作品是 2026-10-04 之前存的：`recipe.params` 里**只有那八根**，新加的那七条
+    // （自然饱和度 / 色彩平衡三轴 / 分离色调）在那种行里根本不存在，取出来是
+    // `undefined`。而这张表是按 `isChanged` 列的，判据是 `a[k] !== 0` ——
+    // `undefined !== 0` 为真，于是**七条新参数全被判成"改过"**，每一行渲染出
+    // 一个「自然饱和度 undefined」。真改过的那一行淹没在七行幽灵里，
+    // 而那些字用户根本读不懂（这一页要回答的是"这张图是怎么来的"）。
+    //
+    // ⚠️ 夹具里的键**故意只有八个** —— 类型上 `Recipe['params']` 要十五个键，
+    //    可**库里老数据真就是这个形状**，老的代码写进去的行不会自己长出七个新键。
+    //    `openWork` 收的是 `unknown`，要演的正是这个"类型系统拦不住"的样子。
+    const legacyRecipe = {
+      params: {
+        exposure: 20, contrast: 0, highlights: 0, shadows: 0,
+        saturation: 0, temperature: 0, clarity: 0, vignette: 0,
+      },
+      edits: ['把后面那个人去掉'],
+    }
+    await renderApp()
+    await uploadPhoto()          // 先让修图页有图 —— 没有它「套用」是灰的（下面 ③ 要按它）
+    await openWork(legacyRecipe)
+
+    // ① 表里**只有真改过的那一行**（亮度 +20）—— 幽灵行一多，这一句就红
+    const rows = [...container.querySelectorAll('.recipe-params li')]
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.textContent).toContain('亮度')
+    expect(rows[0]?.textContent).toContain('+20')
+    // ② 屏幕上不许出现 undefined / NaN —— 幽灵行渲染出来就是「… undefined」这种字
+    expect(container.textContent ?? '').not.toContain('undefined')
+    expect(container.textContent ?? '').not.toContain('NaN')
+
+    // ③ ★ 「套用」带走的也必须是**归一化过的那一份**：`onApply(params)` 直接进
+    //    App 的 `setParams` —— 缺着七个键进状态，调色面板和色轮当场就坏
+    //    （和上面那条用例（会话恢复）一模一样的病，只是入口不同）。
+    const apply = container.querySelector('.recipe-apply') as HTMLButtonElement | null
+    expect(apply?.disabled).toBe(false)
+    await act(async () => {
+      apply?.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 20 })
+  })
 })
 
 /**
@@ -4843,5 +4888,48 @@ describe('恢复：打开就接着上次那条', () => {
     // ② 用户手上的活儿还在：重新登录之前说的那句、和接回来的对话，都还在
     expect(container.textContent).toContain('亮一点')
     expect(bubbleTexts()).toContain('S7第 0 步')
+  })
+
+  it('★ 老格式的会话（params 只有八根）接回来：15 根滑块都在、一个 NaN 都没有', async () => {
+    // 2026-10-04「专业面板」那一轮 Task 6。会话是之前存进库里的：那一步的 `params`
+    // **只有那八根**，新加的那七条（自然饱和度 / 色彩平衡三轴 / 分离色调）在那种行里
+    // 根本不存在 —— 取出来是 `undefined`。不归一化的话它一路飘到底：
+    //   · 面板上七根滑块落不到 0（四条量程到 -100 的停在最小端、数字那格空空）；
+    //   · 色轮的三根轴算出来是 `NaN`（`data-x="NaN"`，圆点画不出来）；
+    //   · 这一份还会被当成"当前参数"接着用，下次落盘照旧缺着七个键。
+    // —— 全都是"不报错"的那种坏。
+    //
+    // ⚠️ 那两个 `as` 是**故意的**：类型上 `SessionStep['params']` 要十五个键，
+    //    可**库里老数据真就是这个形状** —— 夹具要演的是"类型系统拦不住"的
+    //    那个样子，不是一份合法的 `Adjustments`。`messages: []` 只是把类型补全
+    //    （brief 的夹具没写这一栏），不影响这条用例要量的东西。
+    const legacyParams = {
+      exposure: 0, contrast: 0, highlights: 0, shadows: 0,
+      saturation: 0, temperature: 0, clarity: 0, vignette: 0,
+    } as unknown as Adjustments
+    const legacy: SessionDetail = {
+      id: 9001, title: null, originalName: '老照片.jpg',
+      createdAt: 0, updatedAt: 0, hasThumb: false, stepCount: 1,
+      messages: [],
+      steps: [{ id: 1, label: '原图', at: 0, reusesPrev: false, params: legacyParams }],
+    }
+    withSessions([legacy])
+    await renderApp()
+    // 恢复落在修图页；面板在「调色」那一屏 —— 照本组别处用例的走法切过去
+    await goNav('调色')
+
+    // ① 面板上 15 根都在（新键缺失 → 落成 0，而不是消失）
+    expect(container.querySelectorAll('.slider').length).toBe(15)
+    // ② 而且每一根都**真的显示 0** —— 缺的新键不许是空数字：`undefined` 交给滑块，
+    //    数字那格什么都不渲染、拇指停在量程最小端（"四条 -100"就是这么来的）。
+    expect([...container.querySelectorAll('.slider-value')].map(e => e.textContent))
+      .toEqual(Array<string>(15).fill('0'))
+    // ③ 色轮上不许是 NaN：三根轴里任何一个 `undefined`，算出来就是 `NaN`
+    //    （`data-x="NaN"` —— 真机库里那条老会话实测就是这个样子）。
+    const wheel = container.querySelector('.color-wheel')
+    expect(wheel?.getAttribute('data-x')).toBe('0')
+    expect(wheel?.getAttribute('data-y')).toBe('0')
+    // ④ 屏幕上不许出现 NaN（`undefined` 一路飘到底时渲染出来的就是这个字样）
+    expect(container.textContent ?? '').not.toContain('NaN')
   })
 })

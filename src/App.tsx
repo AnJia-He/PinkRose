@@ -24,7 +24,7 @@ import { resizeBitmap } from './image/resize'
 import { samplePixels } from './image/sample'
 import { matchToReference } from './core/colorMatch'
 import { fitToLimit, probeLimit } from './render/limits'
-import { applyDeltas, ZERO, type Adjustments } from '../shared/adjustments.ts'
+import { applyDeltas, clampAdjustments, ZERO, type Adjustments } from '../shared/adjustments.ts'
 import { canShareImage, downloadImage } from './export/save'
 import { prepareForRouting } from './image/prepare'
 import { ApiError, isUnauthorized, postRoute } from './api/client'
@@ -557,19 +557,26 @@ export default function App() {
       }
       // 每一步都要解码回位图。⚠️ `reusesPrev` 是真的能省一次下载 + 一次解码：
       // 拖十次滑块就是十步，一步步全下就是十个一模一样的文件。
+      //
+      // ★ `params` 必须过 `clampAdjustments`（2026-10-04，「专业面板」Task 6）——
+      //   **老数据缺新键**：今天之前存进库里的步骤只有那八根，新加的七条取出来是
+      //   `undefined`。归一化是唯一入口，别让 `undefined` 进状态 —— 进了就是面板
+      //   七根滑块落不到 0、色轮算成 `NaN`、落盘照旧缺着七个键（全都不报错）。
+      //   两条 `push` 是同一批数据的两个入口（`reusesPrev` 那条也一样），都要走。
       for (const s of detail.steps) {
         const prev = steps.at(-1)
         if (s.reusesPrev && prev) {
           // 和上一步是**同一张图**，小图直接接着用（重做一遍只会得到像素级不同、
           // 肉眼一样的两张 —— 而这正是"刷新前后长得不一样"里最没必要的一种）。
-          steps.push({ id: s.id, label: s.label, base: prev.base, params: s.params,
+          steps.push({ id: s.id, label: s.label, base: prev.base,
+                       params: clampAdjustments(s.params),
                        isOriginal: false, thumb: prev.thumb, prompt: s.prompt })
           continue
         }
         const blob = await (await fetch(sessionStepUrl(detail.id, s.id))).blob()
         const bitmap = await createImageBitmap(blob)
         if (stale()) { bitmap.close(); return discard('恢复：这次接回来的已经不作数了（页面换了，或者用户自己动手了）') }
-        steps.push({ id: s.id, label: s.label, params: s.params,
+        steps.push({ id: s.id, label: s.label, params: clampAdjustments(s.params),
                      base: { bitmap, width: bitmap.width, height: bitmap.height },
                      isOriginal: steps.length === 0, thumb: thumbOf(bitmap), prompt: s.prompt })
       }

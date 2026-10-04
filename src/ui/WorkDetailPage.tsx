@@ -4,7 +4,7 @@ import { BtnLink } from './kit/Btn.tsx'
 import { getWork, renameWork, deleteWork, fullUrl } from '../api/works'
 import { workName, type WorkMeta, type WorkDetail } from '../../shared/works.ts'
 import { buildFilename } from '../export/save'
-import { PARAM_LABELS, PARAM_KEYS, isChanged, type Adjustments } from '../../shared/adjustments.ts'
+import { PARAM_LABELS, PARAM_KEYS, clampAdjustments, isChanged, type Adjustments } from '../../shared/adjustments.ts'
 
 /**
  * 详情页那个「下载到我的电脑」下下来叫什么。
@@ -118,7 +118,18 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
   if (!work) return <section className="detail"><p className="detail-loading">正在打开…</p></section>
 
   const name = workName(work, now)
-  const { params, edits } = work.recipe
+  const { params: rawParams, edits } = work.recipe
+  /** ★ **老数据缺新键 —— 归一化是唯一入口**（2026-10-04，「专业面板」Task 6）。
+   *
+   *  2026-10-04 之前存下来的作品，`recipe.params` 里只有那八根，新加的那七条
+   *  （自然饱和度 / 色彩平衡三轴 / 分离色调）取出来是 `undefined`。不归一化的话
+   *  两处一起坏，而且都不报错：
+   *   · 下面那张表按 `isChanged`（判据是 `!== 0`）列 —— `undefined !== 0` 为真，
+   *     七条新参数**全被判成"改过"**，每一行渲染出一个「… undefined」；
+   *   · `onApply(params)` 那一按把它们直接送进 App 的 `setParams` —— 缺着键
+   *     进状态，调色面板和色轮当场就是坏的（和会话恢复那条支线同一个病）。
+   *  一行归一化把两处一起治好；缺的键落成 0（中立值），正好是"没动过"该有的样子。 */
+  const params = clampAdjustments(rawParams)
   /** 这一张**真的改过**的那几个参数。
    *
    *  ⚠️ 原来八条全列，没动过的显示一个「—」。那条注释自己写着"0 就不列了 ——
