@@ -400,6 +400,18 @@ function ModelForm({
     >
       <h3 className="models-form-title">{config ? `编辑「${config.alias}」` : '添加一套'}</h3>
 
+      {/* ★ 2026-10-05：用户发来别家的配置表单截图说「你看人家的引导」——
+          学来这一句"点题"。它回答的是打开表单后的第一个问题：**我在填什么**。
+          两截都不能少：「兼容 OpenAI 协议」告诉用户"接口地址"该填哪种服务的；
+          「哪一家都行」是关键 —— 少了它，用户以为只能填 OpenAI 官方
+          （那口子在国内根本用不了），这个功能就白做了。
+          ⚠️ 这**不违反** §7.3（那条禁的是写出**我们自己**用的服务商）——
+          这句说的是"你可以接什么"，正是不写型号名之后最该给的那块信息。
+          编辑态不显示：他早懂了，不重复唠叨。 */}
+      {config === null && (
+        <p className="models-form-lede">填一个兼容 OpenAI 协议的服务 —— 哪一家都行。</p>
+      )}
+
       <Field className="models-field" label="别名" hintClassName="models-hint"
              hint="别名是给你自己认的，名单里显示的就是它。">
         {/* 别名是**给用户自己认的**（§7.4）：名单里到处显示的都是它，型号名藏在下面。
@@ -416,17 +428,27 @@ function ModelForm({
       <Field className="models-field" label="接口地址" hintClassName="models-hint"
              hint="填域名也行，我们会补上 /v1">
         {/* 那句注解说的是**服务端**会做的归一化（`normalizeBaseUrl`）。
-            前端一个字都不自作聪明地补 —— 两处各补各的，规则迟早走岔。 */}
+            前端一个字都不自作聪明地补 —— 两处各补各的，规则迟早走岔。
+
+            ★ 2026-10-05：placeholder 给了个人家那种**中性示例**。它不违反
+            "不许预填我们自己的地址"那一条（那条防的是把**我们用的哪家**写在
+            用户脸上）：`example.com` 是 RFC 2606 的保留域名，谁都注册不了，
+            它**永远不可能是**我们自己或任何真实服务商的地址 —— 它只教
+            "这一格填什么样"。判据在测试里跟着改成了"只许是这个值"。 */}
         <TextInput id="model-url" value={baseUrl} autoComplete="off" inputMode="url" spellCheck={false}
+                   placeholder="https://api.example.com/v1"
                    onChange={(e) => setBaseUrl(e.target.value)} />
       </Field>
 
       <Field className="models-field" label="模型名" hintClassName="models-hint"
              hint="能从「测一下」带回来的名单里选，也能自己打。">
         {/* 下拉里的名单来自"测一下"（上游那把钥匙能看见的型号）。**同时允许手打**：
-            商汤那份名单就不全，我们自己在用的那个不在里面。 */}
+            商汤那份名单就不全，我们自己在用的那个不在里面。
+            ★ 2026-10-05 placeholder：照人家那句「例如 deepseek」学的 ——
+            示例只教"填一截短标识符"这个**形态**；deepseek 是**用户侧**常见的
+            选择，和我们自己用什么（§7.3）没有任何关系。 */}
         <TextInput id="model-name" value={modelId} autoComplete="off" spellCheck={false}
-                   list="model-names"
+                   list="model-names" placeholder="例如 deepseek"
                    onChange={(e) => setModelId(e.target.value)} />
         <datalist id="model-names">
           {options.map((n) => <option key={n} value={n} />)}
@@ -453,8 +475,13 @@ function ModelForm({
           )}
         </div>
       ) : (
+        /* ★ 2026-10-05：编辑态的注解前面加了「不换就留空」—— 照人家那句
+           「内置服务可留空」学的那层安心感：我们的对应物不是"可以不填钥匙"，
+           而是"**编辑时不动它就不用填**"（空 = 库里那一把原样留着）。 */
         <Field className="models-field" label="钥匙" hintClassName="models-hint"
-               hint="只存在我们的服务器上，页面上只会显示头尾两位。">
+               hint={config
+                 ? '不换就留空。它只存在我们的服务器上，页面上只会显示头尾两位。'
+                 : '只存在我们的服务器上，页面上只会显示头尾两位。'}>
           <TextInput id="model-key" type="password" value={apiKey} autoComplete="off"
                      placeholder={config ? '粘贴新的一把，换掉现在这个' : ''}
                      onChange={(e) => setApiKey(e.target.value)} />

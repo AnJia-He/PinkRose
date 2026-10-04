@@ -2030,6 +2030,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .models-form { display: flex; flex-direction: column; gap: var(--sp-4); margin-top: var(--sp-4);
   padding: var(--sp-4); border-radius: var(--r-md); border: 1px solid var(--line); background: var(--panel); }
 .models-form-title { margin: 0; font-size: 15px; font-weight: 600; }
+/* 新建表单顶部那句"我在填什么"的点题（★ 2026-10-05 照别家的引导学的）。
+   负 margin 是让标题和它贴成一组：表单的 flex gap 是 16px，
+   标题-副标题之间收成 8px，副标题-第一个字段之间保持 16px。 */
+.models-form-lede { margin: calc(-1 * var(--sp-2)) 0 0; font-size: 14px; color: var(--muted); line-height: 1.6; }
 /* 字段下面那行小字、还有「测一下」旁边那句。和 `.gallery-hint` / `.detail-hint`
    同一套观感 —— 同一类话在两个页面上不该长得像两件事。
    ⚠️ `margin: 0`：这几处都坐在 flex 列里，间距由 gap 给。 */

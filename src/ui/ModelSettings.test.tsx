@@ -275,16 +275,35 @@ describe('模型设置', () => {
     // 变异：前端自己补上 https:// 或 /v1 再发 → 这一条红
   })
 
-  it('★ 接口地址新建时**是空的** —— 不许预填我们自己的地址，连 placeholder 都不许', async () => {
-    // §7.3：不暴露我们自己用的是哪家。预填（或者拿我们的地址当提示文字）等于
+  it('★ 接口地址新建时是空的；placeholder 只许是「保留示例域名」', async () => {
+    // §7.3：不暴露我们自己用的是哪家。预填（或者拿**我们的地址**当提示文字）等于
     // 把"我们用的是谁"写在用户脸上 —— 而且他多半会原样存下来，从此走我们的额度。
+    //
+    // ★ 2026-10-05：用户发来别家的表单说「你看人家的引导」——人家给地址格配了示例。
+    //   我们跟进了，但**只许用 `example.com`**：RFC 2606 的保留域名，谁都注册不了，
+    //   它永远不可能是我们自己或任何真实服务商的地址 —— 教的是"填什么样的"，
+    //   不泄露"我们用的是谁"。判据从"必须为空"改成**钉死这一个值**：比原来更具体，
+    //   防的东西没变（任何真实地址都过不了）。
     await show()
     await openAdd('图片生成')
     const url = field('url')
     expect(url.value).toBe('')
-    expect(url.placeholder).toBe('')
+    expect(url.placeholder).toBe('https://api.example.com/v1')
     expect(document.body.textContent ?? '').not.toContain('sensenova')
-    // 变异：给这一格填上我们自己的地址（value 或 placeholder）→ 这一条红
+    // 变异：placeholder 换成任何真实地址（包括我们自己的）→ 第二条红
+  })
+
+  it('★ 新建表单顶部有一句"我在填什么"的点题（2026-10-05 照别家的引导学的）', async () => {
+    // 列表页那句 lede 讲"要不要配"；这一句讲"这一格一格是在配什么"。
+    store = [CHAT(7, { alias: '出差那套' })]
+    await show()
+    await openAdd('图片生成')
+    expect(container.querySelector('.models-form-lede')?.textContent)
+      .toBe('填一个兼容 OpenAI 协议的服务 —— 哪一家都行。')
+    // 编辑已有的一套时不出现 —— 他早懂了，不重复唠叨
+    await click(inPart(form()!, '取消'))
+    await openEdit('出差那套')
+    expect(container.querySelector('.models-form-lede')).toBeNull()
   })
 
   it('★ 改了接口地址却不重填钥匙 —— 存不下去，而且说的是服务端那句话', async () => {
