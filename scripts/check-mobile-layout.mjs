@@ -903,7 +903,7 @@ async function judgeWelcome(page, label, m, view) {
  *      是每张图跳出来都把后面的行推一下；
  *   ⑤ 左栏那几支 = 「修图 / 调色 / 对话 / 作品」，而且亮的是「对话」。
  *      ⚠️ 顺带钉住"这一页有没有自己的入口"：Task 6 之前它**根本没有来源**。
- *   ⑥ ★ 2026-10-03：左栏底下那**两颗**（「首页」回门面、「个人设置」= 用户管理）
+ *   ⑥ ★ 2026-10-03：左栏底下那**两颗**（「产品介绍」回门面、「个人设置」= 用户管理）
  *      在，而且**推到边上、和上面那几支隔开** —— 它们不属于这一列栏目，
  *      见下面 `homeBox` / `meBox` 那一段。
  */
@@ -944,7 +944,7 @@ async function measureSessions(page, targetName = null) {
       nav: [...document.querySelectorAll('.nav button:not(.nav-home):not(.nav-me)')]
         .map(b => b.textContent.trim()),
       navOn: document.querySelector('.nav-item.on')?.textContent?.trim() ?? '',
-      // ★ 2026-10-03：左栏底下那**两颗**（「首页」回门面、「个人设置」= 用户管理，
+      // ★ 2026-10-03：左栏底下那**两颗**（「产品介绍」回门面、「个人设置」= 用户管理，
       //   见 Nav.tsx）**单独量** —— 它们不属于这一列栏目，所以上面那几支照旧按
       //   "就这几支、顺序也是这个"守，这一组自己管"在不在、推没推到边上、和它们隔开没有"。
       //   ⚠️ auto 外边距挂在组里的**第一颗**（`.nav-home`）身上，所以：
@@ -1004,7 +1004,7 @@ async function measureSessions(page, targetName = null) {
  *  接着是「对话」（改过的那些）、「作品」（存下来的那些）最后。
  *  ★ 2026-10-04：原来是三支（`NAV_THREE`），「调色」从顶栏搬进来成为第四支 ——
  *  那次改名不是补个字：下面 `lastTabBox` 那条"和上面那几支隔开"的判据靠的就是
- *  这份清单的**最后一项**，清单少一项，那颗「首页」就会和「作品」挨着量。 */
+ *  这份清单的**最后一项**，清单少一项，那颗「产品介绍」就会和「作品」挨着量。 */
 /** 左栏那几支，顺序就是这个。
  *  ★ 2026-10-04：「调色」从顶栏搬进来（夹在「修图」后面 —— 这两支说的是同一张照片
  *  的两种改法：说话改 / 手动改）。⚠️ 它**和手上有没有照片无关，一直在** ——
@@ -1015,7 +1015,7 @@ function judgeSessions(label, m, view, mode) {
   console.log(`── ${label}`)
   console.log(`     左栏 ${m.nav.join(' / ')}（亮的是「${m.navOn}」）` +
     (m.homeBox && m.navBox && m.meBox
-      ? `　尾部那两颗「首页 / ${m.meText}」${m.navRow ? '贴右' : '贴底'} ` +
+      ? `　尾部那两颗「产品介绍 / ${m.meText}」${m.navRow ? '贴右' : '贴底'} ` +
         `${m.meBox[m.navRow ? 'right' : 'bottom']}/${m.navBox[m.navRow ? 'right' : 'bottom']}` +
         `　隔上面那几支 ${m.lastTabBox
           ? (m.navRow ? m.homeBox.left - m.lastTabBox.right : m.homeBox.top - m.lastTabBox.bottom)
@@ -1051,7 +1051,7 @@ function judgeSessions(label, m, view, mode) {
     fails.push(`${label}：左栏是「${m.nav.join(' / ')}」——` +
       `要的是「${NAV_TABS.join(' / ')}」，顺序也是这个`)
   }
-  // ★ 2026-10-03：左栏底下那**两颗**（「首页」= 回门面、「个人设置」= 用户管理）
+  // ★ 2026-10-03：左栏底下那**两颗**（「产品介绍」= 回门面、「个人设置」= 用户管理）
   //   在不在、**推没推到边上**、**和上面那几支隔开没有**。
   //   位置这条只能在这儿守 —— vitest 没有排版引擎，`.nav-home` 那两条 auto
   //   外边距被谁删掉的话那边一条都不会红，而这两颗会**悄悄**变成和「作品」
@@ -1062,13 +1062,13 @@ function judgeSessions(label, m, view, mode) {
   //   实测贴边后离容器边 10~12px（内边距），两个方向都留 40px 的余量。
   //
   //   ★ 2026-10-03 傍晚（「个人设置」搬进来之后）拆成两条：
-  //     ① **组贴边** —— 量组里**最后一颗**（`.nav-me`）：auto 外边距挂在「首页」
+  //     ① **组贴边** —— 量组里**最后一颗**（`.nav-me`）：auto 外边距挂在「产品介绍」
   //        身上，但它推的是整组，所以贴边要看尾巴；
   //     ② **和上面那几支隔开** —— 量组里**第一颗**（`homeBox`）和它们里最后那颗
   //        （`lastTabBox`）之间空多远。这条才是真正的闸：把 auto 外边距删掉时，
   //        ①可能还碰巧过（这一组本来就在末尾），②当场就红。
   if (!m.homeBox || !m.meBox || !m.navBox || !m.lastTabBox) {
-    fails.push(`${label}：左栏尾部那两颗（「首页」/「个人设置」）不在 —— ` +
+    fails.push(`${label}：左栏尾部那两颗（「产品介绍」/「个人设置」）不在 —— ` +
       '回门面的路、或者用户管理那一页的入口又断了')
   } else {
     const axis = m.navRow ? 'right' : 'bottom'

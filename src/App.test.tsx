@@ -2379,7 +2379,7 @@ describe('左栏导航：切界面不丢工作', () => {
     //   少了前一半，这一格会**静默读成空串**（断言红在最后一项，看着像少了一颗按钮）。
     const 格子 = () => [...container.querySelectorAll('.nav-item')]
       .map(b => b.getAttribute('aria-label') || b.textContent)
-    expect(格子()).toEqual(['修图', '调色', '对话', '作品', '首页', '个人设置'])
+    expect(格子()).toEqual(['修图', '调色', '对话', '作品', '产品介绍', '个人设置'])
 
     await goNav('调色')
     expect(location.pathname).toBe('/app/adjust')
@@ -2425,7 +2425,7 @@ describe('左栏导航：切界面不丢工作', () => {
  *
  * 在这一版之前这件事**做不到**：`/` 是落地页，而登录着的人一打开 `/` 就被那条
  * 自动跳转送去 `/app` —— 地址栏里敲 `/` 也进不去，自己人被关在 App 里。
- * 左栏最底下那颗「首页」现在走 `/?home=1`，那条自动跳转认这个参数、让路。
+ * 左栏最底下那颗「产品介绍」现在走 `/?home=1`，那条自动跳转认这个参数、让路。
  *
  * 四条一起守（少守哪一条，那颗按钮都会变成"点了没反应"）：
  *   ① 点它**真的到得了**门面（不是推过去又被撵回来）；
@@ -2433,12 +2433,12 @@ describe('左栏导航：切界面不丢工作', () => {
  *   ③ 按后退回来也站得住（判据读的是**此刻的地址**，不是点的那一下记的标记）；
  *   ④ 没有参数时老规矩照旧：回访的人不该每次打开都撞上营销页。
  */
-describe('回门面：左栏那颗「首页」', () => {
-  it('★ 点「首页」→ 真的到得了落地页，没被那条自动跳转撵回来', async () => {
+describe('回门面：左栏那颗「产品介绍」', () => {
+  it('★ 点「产品介绍」→ 真的到得了落地页，没被那条自动跳转撵回来', async () => {
     await renderApp()
     expect(container.querySelector('.stage')).toBeTruthy()   // 起点：修图页
 
-    await goNav('首页')
+    await goNav('产品介绍')
     // 正面确认是**落地页那一支**（不是"两边都没有"）：用那一页自己的外壳
     expect(container.querySelector('.lp')).toBeTruthy()
     expect(container.querySelector('.lp-hero h1')?.textContent).toContain('说句话')
@@ -2466,11 +2466,11 @@ describe('回门面：左栏那颗「首页」', () => {
 
   it('★ 从门面进了 App 再按后退 —— 人回到门面上，不是又被打回 /app', async () => {
     // 这条钉的是"判据读**此刻地址栏里**那个参数"（`location.search`）。
-    // 把它改成"点「首页」那一下记在 `view` 上的一个标记"，日常用起来一模一样 ——
+    // 把它改成"点「产品介绍」那一下记在 `view` 上的一个标记"，日常用起来一模一样 ——
     // 只有按后退时不一样：那一步没有点击，标记是空的，人明明按了后退却被
     // 自动跳转送回 App。**这条测试是唯一能咬住它的地方。**
     await renderApp()
-    await goNav('首页')
+    await goNav('产品介绍')
     expect(container.querySelector('.lp')).toBeTruthy()
 
     // 演一次"从门面点「免费开始」进了 App"（先把地址摆好，再递 popstate ——
@@ -2494,7 +2494,7 @@ describe('回门面：左栏那颗「首页」', () => {
 
   it('★ 没有那个参数时老规矩照旧：登录着的人打开 `/` 就被送去 App（而且**不压历史**）', async () => {
     // 那条自动跳转是 2026-09-30 定的：营销页是给访客看的，回访的人每次打开
-    // 都撞上它是打扰。加了「首页」之后它不能被顺手删掉。
+    // 都撞上它是打扰。加了「产品介绍」之后它不能被顺手删掉。
     const before = history.length
     history.replaceState(null, '', '/')
     await renderApp()
