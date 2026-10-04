@@ -15,7 +15,7 @@
 - **老八根一根不动**：`exposure/contrast/highlights/shadows/saturation/temperature/clarity/vignette` 的字段名、界面名、顺序、范围（-100~100）、默认值都不许变。
 - **零值等价（硬验收）**：7 个新参数全为 0 时，渲染结果与改动前**逐像素一致**（Task 2 有基线 diff 的步骤）。
 - **旧数据不许 NaN**：老会话/老作品的 params 里没有新键 —— 入口处归一化，缺键一律当 0（允许"0"、不许 `undefined`/`NaN` 进 shader 和输入框）。
-- **`src/core/tone.ts` 不动**（CPU 模型仍只六个参数：照调返回的 params 是从 `ZERO` 长的，新参数必然是 0，模型与渲染不背离）；**`server/` 全不动**（`server/prompt.ts` 自己有一份写死的列表，不跟着 `PARAM_KEYS` 走 —— 已核实）。
+- **`src/core/tone.ts` 不动**（CPU 模型仍只六个参数）。模型与渲染不背离靠**两条合起来**：拟合本身从 `ZERO` 起跑，**而且照调的合流点（`App.tsx` 的 `matchReference`）把五条参与颜色的新参数（自然饱和度 / 三条色彩平衡 / 分离色调强度）归零** —— 只有前者（"状态里的新参数必然是 0"）是不成立的：用户先拖过色彩平衡再照调就破了（2026-10-04 终审 I1 勘误）；**`server/` 全不动**（`server/prompt.ts` 自己有一份写死的列表，不跟着 `PARAM_KEYS` 走 —— 已核实）。
 - **GLSL 里的注释一律 ASCII 英文**（`src/render/shader.ts` 文件头有理由：中文注释在真实设备驱动上可能编译失败）。
 - 样式**只引用 `src/styles.css` 的令牌**（`--accent` / `--hair` / `--muted` / `--sp-*` / `--r-*`）。⚠️ 例外只有两处"内容色"：滑块上的**渐变轨**（色相/色温/三轴 —— 那是数据不是主题色）。
 - 新文案进 `docs/文案规范.md` 的术语表（Task 8）。
