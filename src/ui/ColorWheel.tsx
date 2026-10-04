@@ -38,6 +38,10 @@ export function ColorWheel(props: {
       data-y={String(y)}
       aria-hidden="true"
       onPointerDown={(e) => {
+        // ⚠️ 只认主键（左键/触摸/笔）：右键（`button === 2`）和中键按下也会派
+        // pointerdown，不拦的话**右键一点就改值** —— 而右键在浏览器里是"要出
+        // 上下文菜单"的意思，用户以为自己只是想了想。
+        if (e.button !== 0) return
         // 按下就跳到这个点（不用先拖一下才动），并捕获指针 ——
         // 捕获之后指针移出圆盘也继续跟；到角上仍然只到圆边（wheelToAxes 会钳半径）。
         e.currentTarget.setPointerCapture(e.pointerId)

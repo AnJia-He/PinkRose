@@ -19,7 +19,7 @@ describe('PRESETS', () => {
     }
   })
 
-  it('每个预设有完整的八个字段，且都在 [-100, 100] 内', () => {
+  it('每个预设的每个字段都是数，且都在 [-100, 100] 内（条数不写死 —— 表里有几根就查几根）', () => {
     for (const p of PRESETS) {
       for (const k of PARAM_KEYS) {
         expect(typeof p.adjustments[k]).toBe('number')
