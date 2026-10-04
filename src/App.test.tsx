@@ -2306,7 +2306,7 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(container.querySelector('.nav-item.on')?.textContent).toBe('作品')
   })
 
-  it('★ 「调色」是左栏里的一支 —— 点它面板开着，F5 之后还开着（2026-10-04）', async () => {
+  it('★ 「调色」是左栏里的一支 —— 点它面板开着、对话让位，F5 之后还开着（2026-10-04）', async () => {
     // 用户原话：「那个微调照片的放在导航栏单列出来」（他说的「微调」是 09-30
     // 改名前的旧词，同一件事 —— 见《文案规范》里「调色」那一条）。
     //
@@ -2316,6 +2316,10 @@ describe('左栏导航：切界面不丢工作', () => {
     //      "手动调色"这件事在界面上连名字都没有了。
     await renderApp()
     await uploadPhoto()
+    // 先在修图页说一句 —— 待会儿要用它证明"切走再切回来，工作没丢"
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 20 }, reply: '亮了一点。' }))
+    await say('亮一点')
     expect(container.querySelector('.panel')).toBeNull()   // 起点：收着的（修图页）
 
     await goNav('调色')
@@ -2326,9 +2330,17 @@ describe('左栏导航：切界面不丢工作', () => {
     //    一起亮 —— 而左栏那颗亮点回答的是"我在哪"，它不能同时有两个答案。
     expect([...container.querySelectorAll('.nav-item.on')].map(b => b.textContent))
       .toEqual(['调色'])
-    // 工作区还在原处：它和修图页是**同一屏**（照片、对话都在），
-    // 不同的只有底下那条面板开着 —— 不是另做了一页。
-    expect(container.querySelector('.workspace')).toBeTruthy()
+    // ★ **这一屏没有对话区**（用户 2026-10-04 看完第一版补的那句：
+    //   「调色就是对图片微调的界面区不是对话区」）。第一版把对话栏留在了右边 ——
+    //   于是这一屏读起来仍然是"对话页底下多了条东西"，而他要的是**两个区**：
+    //   修图页 = 对话区（说话改），调色这一屏 = 微调区（拖滑块改）。
+    //   ⚠️ 判据钉在**这里**而不是 CSS 里（窄屏原来有一条 `.app:has(> .panel)
+    //   .chat{display:none}` 就是干这件事的，现在删了）—— jsdom 不套样式表，
+    //   写成 CSS 的话这条断言量不到任何东西；而且"不渲染"是结构上的，
+    //   比"渲染了再藏起来"硬。
+    expect(container.querySelector('.workspace')).toBeTruthy()   // 舞台还在
+    expect(container.querySelector('.chat')).toBeNull()          // 对话不在了
+    expect(container.querySelector('form.chat-input')).toBeNull()
 
     // ★ 按 F5 / 从收藏夹打开：面板**还开着**。这正是"给它一个网址"换来的东西 ——
     //   以前那版（state）刷新之后就自己合上了，而用户正想接着调。
@@ -2337,12 +2349,18 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(container.querySelector('.panel')).toBeTruthy()
     expect(container.querySelector('.nav-item.on')?.textContent).toBe('调色')
 
-    // 点「修图」= 收起来。面板自己没有关闭钮，这是唯一的关法 ——
-    // 所以它得真的关得上，不然用户只能靠刷新。
+    // 点「修图」= 回到对话区：面板收起来、对话栏回来，而且**那句话还在**。
+    // 面板自己没有关闭钮，这是唯一的关法 —— 所以它得真的关得上。
+    // ⚠️ 后半句（话还在）是这条测试里唯一能抓住"顺手把 messages 清了"的地方：
+    //    §1 那句承诺是"切界面不丢工作"，而"这一屏不显示对话"和"把对话删了"
+    //    在屏幕上**长得一模一样**。
     await goNav('修图')
     expect(container.querySelector('.panel')).toBeNull()
     expect(location.pathname).toBe('/app')
     expect(container.querySelector('.nav-item.on')?.textContent).toBe('修图')
+    expect(container.querySelector('.chat')).toBeTruthy()
+    expect(container.textContent).toContain('亮一点')
+    expect(canvasProps.props.at(-1)?.params.exposure).toBe(20)
   })
 })
 

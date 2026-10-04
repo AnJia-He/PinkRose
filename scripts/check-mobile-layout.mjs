@@ -1274,9 +1274,11 @@ try {
         { x: clickX, y: clickY })
 
       // 开调色面板之后版面会变（画布被缩放）—— 圈必须还钉在**照片上的同一个点**。
-      // 窄屏这一档更狠：面板一开，对话栏整个 `display: none`（所以点选只能在这
-      // 之前发起），而画布要跟着缩放，圈不能跟着飘。
-      await page.getByRole('button', { name: '调色' }).click()
+      // ★ 2026-10-04：这一屏现在是**独立的一支**（左栏「调色」，网址 /app/adjust），
+      //   而且它**没有对话栏**（用户：「调色就是对图片微调的界面区不是对话区」）——
+      //   所以图上点选那件事只能在这之前发起：到了这一屏，对话区不在了，
+      //   也就没有「就改这里」那条路。（开之前它是顶栏里的一颗按钮。）
+      await page.locator('.nav-item', { hasText: '调色' }).click()
       await page.waitForTimeout(500)
       judgeMarker(`${view.name} · 开着调色面板，圈还得钉在照片上`, await measurePick(page), null)
       judge(`${view.name} · 打开调色面板后`, await measure(page), view)
@@ -1296,11 +1298,16 @@ try {
       // —— 所以"它完整在不在视口里"是**真判据**（见 measureSaveFail 那段）。
       //
       // **放在这里的原因**：① 照片、对话、画布都在（前面那一趟没动过它们）；
-      //   ② 面板要**先关掉** —— 窄屏上开着面板时对话栏是 `display: none`，
+      //   ② 面板要**先关掉** —— 调色那一屏**没有对话栏**（2026-10-04 起），
       //   量的会是"面板开着的那一屏"，而那多半是最宽松的一档；
       //   ③ **必须在作品页那一段之前** —— 那一段也要 POST /api/works（放作品），
       //   两条路是同一个地址，靠 `saveFails` 这个开关分开。
-      await page.getByRole('button', { name: '调色' }).click()   // 收掉面板
+      //
+      // ⚠️ 收面板的动作**不是"再点一次「调色」"** —— 它现在是一支导航，
+      //   再点一次只是"又走到这一支"，面板照旧开着（第一版就是这么写的，
+      //   而它**静默地**把后面每一屏都量成"面板开着"的样子）。
+      //   收面板 = 走回「修图」那一支。
+      await page.locator('.nav-item', { hasText: '修图' }).click()
       await page.waitForTimeout(300)
       saveFails = true
       await page.getByRole('button', { name: '保存' }).click()

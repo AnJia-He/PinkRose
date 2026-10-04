@@ -189,7 +189,10 @@ async function main() {
     await page.route('**/api/edit', r => r.abort())
 
     await page.waitForTimeout(2000)
-    await page.click('.actions button:has-text("调色")')
+    // ★ 2026-10-04：「调色」不再挂在顶栏那排按钮里了，它是**左栏的一支**
+    //   （用户：「那个微调照片的放在导航栏单列出来」）。选择器照别处的写法
+    //   按文字找 `.nav-item`，别再写 `.actions button` —— 那颗按钮已经不在了。
+    await page.click('.nav-item:has-text("调色")')
     await page.waitForTimeout(600)
     await grab(page, 'App · 调色面板')
 

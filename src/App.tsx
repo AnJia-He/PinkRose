@@ -1522,13 +1522,13 @@ export default function App() {
       {/* 左栏在**所有**界面里都在：作品页、详情页是同一个壳，换的只是右边那一格。 */}
       <Nav view={view} onGo={go} />
 
-      {/* 修图页和调色页是**同一屏**（★ 2026-10-04）。
-          `adjust` 不是另一套界面：同一个工作区、同一张照片、同一列对话 ——
-          区别只有底下那条八滑块的面板开着。所以它俩共用这一块，靠下面
-          `showPanel` 那一个布尔分开（那一条有它自己的注释）。
-          ⚠️ 写成"两个 kind 一起渲染"而不是把面板挪出这个条件：挪出去的话，
-          停在作品页 / 对话页时那块面板也会跟着挂载 —— 而它是按"这张照片"
-          来的东西，那些页面上照片根本不在。*/}
+      {/* 修图页和调色页**共用这一块壳**（★ 2026-10-04）。
+          `adjust` 不是另一套界面：同一张照片、同一个舞台、同一根操作条 ——
+          区别在**右边那一区**（对话 还是 八条滑块），见下面 `workspace` 里那两处。
+          ⚠️ 写成"两个 kind 一起渲染"而不是把整块复制一份：复制一份等于把
+          "这张照片怎么排版"这件事变成两份，改一边忘一边是迟早的事。
+          ⚠️ 也别顺手把面板挪到这个条件**外面**：挪出去，停在作品页 / 对话页
+          时它也会跟着挂载 —— 而它是按"这张照片"来的东西，那些页面上照片根本不在。*/}
       {(view.kind === 'edit' || view.kind === 'adjust') && (
         <div className="app">
           {/* 顶栏现在**只在有照片的时候才有**（★ 2026-10-03）。
@@ -1670,29 +1670,53 @@ export default function App() {
                   onFail={noticeBad}
                 />
               </div>
-              <ChatPanel
-                messages={messages}
-                cards={cards}
-                busy={busy}
-                suggesting={suggesting}
-                draft={draft}
-                onSend={send}
-                onStop={stopGeneration}
-                onCard={onCard}
-                onJump={onJump}
-                onRerun={onRerun}
-                // 只有"记着当初那句话"的步骤才给「再来一版」——
-                // 原图没有那句话（`prompt` 缺席），所以它那颗按钮不会出现。
-                rerunnable={history.filter(s => s.prompt).map(s => s.id)}
-                jumpableIds={history.map(s => s.id)}
-                thumbs={Object.fromEntries(history.map(s => [s.id, s.thumb]))}
-                // marker 非空必然 picking 为真（两者出自同一个对象），所以这里
-                // 不必再 or 一次 —— 从 `pending` 推出来的东西不可能互相打架。
-                marking={picking}
-                canConfirmMark={!!marker && !!pendingText}
-                onConfirmMark={confirmMark}
-                onCancelMark={cancelPick}
-              />
+              {/* ★ 2026-10-04：**调色那一屏没有对话栏。**
+
+                  用户看完第一版（面板在底下开着、对话还杵在右边）说：
+                  「**调色就是对图片微调的界面区不是对话区**」——
+                  他把界面上这两块看成两个**区**：修图页是对话区（说话改），
+                  调色那一屏是微调区（拖滑块改）。两个区同时摆在眼前，
+                  调色那一屏读起来仍然是"对话页底下多了条东西"。
+
+                  ⚠️ **这条规矩窄屏上早就有了**（`styles.css` 里那条
+                  `.app:has(> .panel) .chat { display: none }` 在的地方）——
+                  当时只对手机生效，因为那边是三样东西抢竖向空间。现在是同一个
+                  道理放到所有屏上，所以那条 CSS **已经删了**（见它原来那处的注释）。
+
+                  ⚠️ 代价记在这儿：对话输入框是**非受控**的（`defaultValue` +
+                  `key={draft}`，见 ChatPanel 里那段），所以在这一屏切走时
+                  **打在输入框里还没发出去的那半句会没**。接受它的理由是
+                  这一屏本来就不是打字的当口 —— 真想说话，点左栏「修图」就回去了，
+                  而消息、历史、照片这些**归 App 管的**一样都不丢。
+
+                  判据是 `view.kind`，不是"面板开没开"：面板开着的**唯一**地方
+                  就是这一屏（见上面 `view.kind === 'adjust'` 那条），所以
+                  这一个条件已经把 "有没有 .chat" 和 "有没有 .panel" 绑成同一件事。 */}
+              {view.kind !== 'adjust' && (
+                <ChatPanel
+                  messages={messages}
+                  cards={cards}
+                  busy={busy}
+                  suggesting={suggesting}
+                  draft={draft}
+                  onSend={send}
+                  onStop={stopGeneration}
+                  onCard={onCard}
+                  onJump={onJump}
+                  onRerun={onRerun}
+                  // 只有"记着当初那句话"的步骤才给「再来一版」——
+                  // 原图没有那句话（`prompt` 缺席），所以它那颗按钮不会出现。
+                  rerunnable={history.filter(s => s.prompt).map(s => s.id)}
+                  jumpableIds={history.map(s => s.id)}
+                  thumbs={Object.fromEntries(history.map(s => [s.id, s.thumb]))}
+                  // marker 非空必然 picking 为真（两者出自同一个对象），所以这里
+                  // 不必再 or 一次 —— 从 `pending` 推出来的东西不可能互相打架。
+                  marking={picking}
+                  canConfirmMark={!!marker && !!pendingText}
+                  onConfirmMark={confirmMark}
+                  onCancelMark={cancelPick}
+                />
+              )}
             </main>
           )}
 
