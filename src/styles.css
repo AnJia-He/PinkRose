@@ -935,11 +935,17 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    这是整个产品的心脏（卖点是"对话式修图"，不是"更多滤镜"），
    而它原来只是**一列灰气泡 + 一个输入框**。
 
-   ⚠️ 宽度 340px 是量出来的，不是挑的：再宽，手机以外的窄屏上画布会被挤
-   （历史上真出过"画布只剩 10px 宽、用户说没有照片"）。改它之前先跑
-   `node scripts/check-mobile-layout.mjs`。 */
+   ⚠️ 340px 这个**下限**是量出来的，不是挑的：比它再窄的窗口上画布会被挤
+   （历史上真出过"画布只剩 10px 宽、用户说没有照片"）。
+   ★ 2026-10-04（晚）：用户看着一张竖图说「**可以向左扩大一下聊天范围，
+   因为照片本身占用不了太多的空间**」—— 于是它从**写死的 340** 变成
+   **跟着窗口走的 `clamp(340px, 26vw, 440px)`**：
+     · 1280 及以下**和以前一模一样**（26vw 到不了 340，下限接住）；
+     · 1440 的屏上 ~374、1800 的屏上 440 —— 大屏上照片左右本来全是空地
+       （竖图够不到那么宽），把那一截分给它，照片**一个像素都不损失**。
+   ⚠️ 改它之前/之后都要跑 `node scripts/check-mobile-layout.mjs`。 */
 .chat {
-  width: 340px; flex: none; display: flex; flex-direction: column; min-height: 0;
+  width: clamp(340px, 26vw, 440px); flex: none; display: flex; flex-direction: column; min-height: 0;
   border-left: 1px solid var(--line); background: var(--panel);
 }
 .chat-log {
