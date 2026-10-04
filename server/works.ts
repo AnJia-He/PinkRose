@@ -3,6 +3,7 @@ import type { Storage } from './storage.ts'
 import type { PublicUser } from './account.ts'
 import { HttpError, asObject, str } from './http.ts'
 import { decodeDataUrl, mimeOf, MAX_THUMB_BYTES } from './imagedata.ts'
+import { assertRoomFor } from './quota.ts'
 import { ZERO, applyDeltas, type Adjustments } from '../shared/adjustments.ts'
 import type { Recipe, WorkDetail, WorkMeta } from '../shared/works.ts'
 
@@ -56,6 +57,9 @@ export async function handleCreateWork(
   const thumbRaw = str(o.thumb)
   const recipe = readRecipe(o.recipe)
 
+  // ★ 2026-10-04（§6.6，5 GB 配额）：**先看配额再落盘**。缩略图那点字节先按 0 算
+  //   （≤1 MB，5 GB 量级上它是零头），和 sessions 那边同一个口径。
+  assertRoomFor(deps.db, user.id, image.bytes.byteLength, 'work')
   const storedName = await deps.storage.save(image.bytes, image.ext)
   let thumbName: string | null = null
   if (thumbRaw) {
@@ -286,6 +290,11 @@ export async function handleReplaceWork(
     throw new HttpError('BAD_REQUEST', '这张图太大了，存不下', 413)
   }
   const thumbRaw = str(o.thumb)
+
+  // ★ 2026-10-04（§6.6，5 GB 配额）：替换也是**写一份新的**，要过配额 ——
+  //   但旧文件随后会被删掉，所以把它那份字节**先扣掉**（freeing）：
+  //   不扣的话，一个人在 99.9% 的时候连"换一张更小的"都做不了。
+  assertRoomFor(deps.db, user.id, image.bytes.byteLength, 'work', row.bytes)
 
   const newName = await deps.storage.save(image.bytes, image.ext)
   // ⚠️ **解码和落盘在同一个 try 里**，和 handleCreateWork 一字不差的理由（裁定 ②）：

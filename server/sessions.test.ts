@@ -6,6 +6,7 @@ import { openDb, type Db } from './db.ts'
 import { createStorage, type Storage } from './storage.ts'
 import {
   handleCreateSession, handleGetSession, handleUpdateSession, handleDeleteSession,
+  backfillSessionBytes,
 } from './sessions.ts'
 // ⚠️ `handleListSessions` / `handleSessionFile` / `handleSessionStepFile` 这三条这里**故意不 import**：
 // 它们的入口是 HTTP 那几条路由（Task 2），在本文件的用例里一条都用不上 ——
@@ -14,6 +15,7 @@ import { HttpError } from './http.ts'
 // ⚠️ 「删了会话，作品还在」那一条要用到作品那一层 —— 它守的正是**两层互不牵连**
 import { handleCreateWork, handleGetWork, handleWorkFile } from './works.ts'
 import { ZERO } from '../shared/adjustments.ts'
+import { QUOTA_BYTES } from './quota.ts'
 import { b64Of, jpegBytes, jpegUrl } from './testImages.ts'
 
 let dir: string; let db: Db; let storage: Storage
@@ -384,5 +386,49 @@ describe('★ 同一条会话被两条路同时改', () => {
     }
     // 盘上只该多出**成功那条**写的那个文件（失败那条的已经收回）
     expect(readdirSync(photos).length).toBe(before.length + 1)
+  })
+})
+
+/**
+ * ★ 2026-10-04（spec §6.6）：每人 5 GB —— 作品**和会话**一起算。
+ * 会话才是真正会长的地方（每上传一张照片都要存原图 + 每一步的底），
+ * 只卡作品等于把审计那条"可无限写"原样留着。
+ * ⚠️ 不去真存 5 GB：配额只读库里那一列，把它的 `bytes` 写成上限就行。
+ */
+describe('★ 5 GB 配额（会话）', () => {
+  const fillUp = (bytes: number) => {
+    db.raw.prepare(
+      `INSERT INTO sessions (user_id, created_at, updated_at, title, original, original_name,
+         base, thumb, messages, steps, files, bytes)
+       VALUES (?, 1, 1, NULL, 'filler.jpg', NULL, 'filler.jpg', NULL, '[]', '[]', '["filler.jpg"]', ?)`,
+    ).run(user.id, bytes)
+  }
+
+  it('满了之后：新的会话建不起来 —— 而且先看配额、后落盘', async () => {
+    fillUp(QUOTA_BYTES)
+    await expect(handleCreateSession({ image: JPEG }, user, deps()))
+      .rejects.toThrow(/空间满了/)
+    expect(readdirSync(photos)).toEqual([])   // 盘上一个字节都没写
+  })
+
+  it('★ 加一张新的底也是净增（旧文件不会因此被删）—— 满了就加不进去', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    fillUp(QUOTA_BYTES)   // 现在总数已经越线
+    await expect(handleUpdateSession(id, { base: jpegUrl(600) }, user, deps()))
+      .rejects.toThrow(/空间满了/)
+  })
+
+  it('★ backfill：老行（bytes = 0）按名单里那些文件补出来', async () => {
+    // 迁移第 5 条之前建的会话这一列是 0 —— 由开机时那一次补齐（够不到磁盘的
+    // 迁移串做不到这件事）。不补的话 5 GB 配额对老数据就是睁一只眼。
+    const { id } = await handleCreateSession({ image: jpegUrl(100) }, user, deps())
+    db.raw.prepare('UPDATE sessions SET bytes = 0 WHERE id = ?').run(id)   // 装成老行
+    expect(await backfillSessionBytes(db, storage)).toBe(1)
+    const row = db.raw.prepare('SELECT bytes FROM sessions WHERE id = ?').get(id) as { bytes: number }
+    expect(row.bytes).toBe(100)
+    // 幂等：再跑一次没有可补的（返回 0），也不会把值改坏
+    expect(await backfillSessionBytes(db, storage)).toBe(0)
+    expect((db.raw.prepare('SELECT bytes FROM sessions WHERE id = ?').get(id) as { bytes: number }).bytes)
+      .toBe(100)
   })
 })

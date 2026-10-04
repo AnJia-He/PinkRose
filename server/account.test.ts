@@ -1,7 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { openDb, type Db } from './db.ts'
+import { createStorage, type Storage } from './storage.ts'
 import {
-  handleSignup, handleLogin, handleChangePassword, findUserByCookie, type AccountDeps,
+  handleDeleteAccount, handleSignup, handleLogin, handleChangePassword, findUserByCookie,
+  type AccountDeps,
 } from './account.ts'
 import { SESSION_COOKIE } from './session.ts'
 
@@ -271,5 +276,72 @@ describe('★ 密码不能和名字一样 —— 在**调用点**上真的生效
     await expect(
       handleChangePassword({ oldPassword: 'goodpassword', newPassword: 'ABCDEFGH' }, user, deps),
     ).rejects.toThrow('密码不能和名字一样')
+  })
+})
+
+/**
+ * ★ 2026-10-04（spec §5；表里那行是「注销账号 | 作品全删（记录 + 文件）+ 用量记录全删」）。
+ *
+ * ⚠️ 这一组自己搭一个**真目录**的 storage：要验的正是"盘上的文件也不在了"。
+ * ⚠️ 库里那几行**直接插**（不走 handleCreate*）：这一组要的不是"上传怎么建记录"，
+ *    而是"注销能不能把它们清干净" —— 插出来的形状反而更接近要防的那种历史数据。
+ */
+describe('注销账号', () => {
+  let dir: string
+  let storage: Storage
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ruixing-del-'))
+    storage = createStorage(dir)
+  })
+  afterEach(() => {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const putWork = (userId: number, stored: string, thumb: string | null, bytes: number) => {
+    db.raw.prepare(
+      `INSERT INTO works (user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias, recipe)
+       VALUES (?, ?, ?, ?, 1, 1, NULL, '{"params":{},"edits":[]}')`,
+    ).run(userId, stored, thumb, bytes)
+  }
+  const putSession = (userId: number, file: string) => {
+    db.raw.prepare(
+      `INSERT INTO sessions (user_id, created_at, updated_at, title, original, original_name,
+         base, thumb, messages, steps, files, bytes)
+       VALUES (?, 1, 1, NULL, ?, NULL, ?, NULL, '[]', '[]', ?, 2)`,
+    ).run(userId, file, file, JSON.stringify([file]))
+  }
+
+  it('作品和会话的记录 + 文件全清；**别人的东西一个都不动**', async () => {
+    const me = await handleSignup(GOOD, deps)
+    const other = await handleSignup({ ...GOOD, username: '小红', email: 'b@b.com' }, deps)
+
+    const mine = await storage.save(new Uint8Array([1, 2, 3]), '.jpg')
+    const myThumb = await storage.save(new Uint8Array([4]), '.jpg')
+    putWork(me.user.id, mine, myThumb, 3)
+    const mySessFile = await storage.save(new Uint8Array([5, 6]), '.jpg')
+    putSession(me.user.id, mySessFile)
+    db.raw.prepare(
+      `INSERT INTO model_configs (user_id, kind, provider, base_url, api_key_enc, model_id, alias, created_at)
+       VALUES (?, 'chat', 'custom', 'https://x.test/v1', 'enc', 'm', '甲', 1)`,
+    ).run(me.user.id)
+
+    const theirs = await storage.save(new Uint8Array([9, 9]), '.jpg')
+    putWork(other.user.id, theirs, null, 2)
+
+    expect(await handleDeleteAccount(me.user, { db, storage })).toEqual({ ok: true })
+
+    // 记录全清：works 是手动删的（那一列没写级联），sessions / model_configs 靠级联
+    const count = (sql: string, id: number) =>
+      (db.raw.prepare(sql).get(id) as { n: number }).n
+    expect(count('SELECT COUNT(*) AS n FROM users WHERE id = ?', me.user.id)).toBe(0)
+    expect(count('SELECT COUNT(*) AS n FROM works WHERE user_id = ?', me.user.id)).toBe(0)
+    expect(count('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', me.user.id)).toBe(0)
+    expect(count('SELECT COUNT(*) AS n FROM model_configs WHERE user_id = ?', me.user.id)).toBe(0)
+    // 文件全清（作品的 + 缩略图 + 会话的）
+    expect(readdirSync(dir)).toEqual([theirs])
+    // 别人的东西完好
+    expect(count('SELECT COUNT(*) AS n FROM works WHERE user_id = ?', other.user.id)).toBe(1)
   })
 })

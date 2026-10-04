@@ -122,6 +122,13 @@ export const MIGRATIONS: readonly string[] = [
       files         TEXT NOT NULL
     );
     CREATE INDEX sessions_user_updated ON sessions(user_id, updated_at DESC);`,
+  // 5 —— sessions 的**字节数**（2026-10-04，为 §6.6 的 5 GB 配额）
+  //
+  // ⚠️ 老行是 0，由开机时的 `backfillSessionBytes`（sessions.ts）补齐 ——
+  //    迁移串里只有 SQL，够不到磁盘上的文件大小。
+  // ⚠️ 口径：这一列是"这条会话名下的文件一共多少字节"（原图 + 各步的底 + 缩略图），
+  //    和 `files` 那份名单是一套东西的两面 —— 加文件的地方两个都要动。
+  `ALTER TABLE sessions ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0;`,
 ]
 
 /**

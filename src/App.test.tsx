@@ -173,6 +173,17 @@ let root: Root
 const LOGGED_IN = { id: 1, username: '小明', email: 'a@b.com' }
 /** 后端此刻认不认人。null = 没登录（`/api/me` 回 401）。 */
 let meUser: { id: number; username: string; email: string } | null = LOGGED_IN
+/**
+ * ★ 2026-10-04：`/api/me` 现在还会带 `usage`（作品张数 / 占的空间 / 上限）——
+ * 用户管理页的「使用情况」那一格吃的就是它（数据源从"前端拉整份作品清单自己加"
+ * 换成了这个，因为那边**把会话占的空间也算进去了**）。
+ * `null` = 这一版响应里没有 usage（老后端 / 半坏的响应）。
+ */
+let meUsage: { count: number; bytes: number; limit: number } | null = null
+/** 数过几次 `/api/me` —— 用户管理页挂载时那一次要能单独认出来（挂住它用）。 */
+let meCalls = 0
+/** 把**用户管理页那一次**（第 2 次起的）`/api/me` 挂住不回，演"用量还在路上"。 */
+let meUsageGate: { promise: Promise<void>; open: () => void } | null = null
 /** `/api/me` 这一路单独坏掉（登录成了、但紧接着那一次问不出"我是谁"）。 */
 let meFails = false
 /** 把 `/api/me` 那一次**挂住不回**，用来演"跟随请求还在半路"那一段。 */
@@ -260,19 +271,22 @@ function withWorksError(message: string) {
   })
 }
 
-/** 挂住"取作品列表"这一条（演"请求还在半路"）。返回放行开关。 */
-function withWorksGate() {
+/** ★ 2026-10-04：用户管理页的「使用情况」现在吃 `/api/me` 的 `usage`
+ *  （那边把**会话**占的空间也算进去了）。这一组给它盖上真数；上限默认 5 GB。 */
+function withUsage(u: { count: number; bytes: number }) {
+  meUsage = { limit: 5 * 1024 ** 3, ...u }
+}
+
+/** 用户管理页那一次用量请求失败（500 + 一句服务端的话，用 sentinel 认领它）。 */
+function withUsageError(message: string) {
   const inner = fetchMock.getMockImplementation()!
-  let open: () => void = () => {}
-  const promise = new Promise<void>((r) => { open = r })
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-    if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') {
-      await promise
-      return jsonResponse({ works: [] })
+    // 开机那次（meCalls 还是 0）照常放行，只坏"用户管理页问用量"那一次
+    if (url === '/api/me' && meCalls >= 1) {
+      return jsonResponse({ error: { code: 'INTERNAL', message } }, 500)
     }
     return inner(url, init)
   })
-  return { open }
 }
 
 /** 一套模型配置的**公共形状**（Task 9，§7.4）。
@@ -400,15 +414,23 @@ beforeEach(() => {
   meUser = LOGGED_IN
   meFails = false
   meGate = null
+  // ★ 2026-10-04：用量默认"什么都没存"（0 张 / 0 字节，上限 5 GB）——
+  //   和下面 `/api/works` 默认空列表是同一个口径：绝大多数用例从零开始。
+  meUsage = { count: 0, bytes: 0, limit: 5 * 1024 ** 3 }
+  meCalls = 0
+  meUsageGate = null
   fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/me') {
       // `meGate` 演"跟随请求还在半路"：挂住不回，等测试放行
       if (meGate) await meGate.promise
       // `meFails` 演的是"登录/注册成功之后那一次问不出来"（服务器重启、网络瞬断）
       if (meFails) return jsonResponse({ error: { code: 'UNAUTHORIZED', message: '先登录一下' } }, 401)
-      return meUser
-        ? jsonResponse({ user: meUser })
-        : jsonResponse({ error: { code: 'UNAUTHORIZED', message: '先登录一下' } }, 401)
+      if (!meUser) return jsonResponse({ error: { code: 'UNAUTHORIZED', message: '先登录一下' } }, 401)
+      meCalls++
+      // 用户管理页挂载时会**再问一次**（要 usage）—— `meUsageGate` 只挂那一次，
+      // 开机那一次（第 1 次）照常放行，不然连登录都进不去。
+      if (meUsageGate && meCalls > 1) await meUsageGate.promise
+      return jsonResponse(meUsage ? { user: meUser, usage: meUsage } : { user: meUser })
     }
     // 注册 / 登录：把票（cookie）这件事省掉（jsdom 里没有 cookie 罐），
     // 就用"后端从此认这个人"来代替 —— 下一次 /api/me 会回他。
@@ -462,6 +484,19 @@ beforeEach(() => {
     // （那条兜底本身是对的：网络失败也不该把人困在页面上。）
     if (url === '/api/logout') {
       meUser = null
+      return jsonResponse({ ok: true })
+    }
+    // 注销（2026-10-04）：和退出登录同一个形状 —— 后端那边这个人**整个没了**。
+    // **必须真的接住这一条**：掉进下面那个兜底的 blob 形状的话，`del()` 会炸成
+    // ApiError，而注销那条路上的 `.then(onSignedOut)` 永远不会执行。
+    if (url === '/api/account' && (init?.method ?? 'GET') === 'DELETE') {
+      meUser = null
+      return jsonResponse({ ok: true })
+    }
+    // 改密码（2026-10-04）：成功就回 ok（真服务端会顺带发一张新票，jsdom 这里省掉）。
+    // **必须真的接住这一条**：掉进下面那个兜底的 blob 形状的话 `post()` 会炸成
+    // ApiError，界面显示的就是"没改成"那句 —— 测试绿在一个错误路径上。
+    if (url === '/api/password' && (init?.method ?? 'GET') === 'POST') {
       return jsonResponse({ ok: true })
     }
     // 别的都是生成回来的那张图：fetch(url) -> blob -> createImageBitmap
@@ -3236,6 +3271,21 @@ describe('用户管理页', () => {
     return container.querySelector('.account-stats')?.textContent ?? null
   }
 
+  /** 按**行上那几个字**取一行（现在有三行：模型 / 改密码 / 注销账号）。 */
+  function rowByLabel(label: string): HTMLButtonElement {
+    const row = [...container.querySelectorAll('.account-row')]
+      .find(r => r.querySelector('.account-row-label')?.textContent === label)
+    expect(row, `没有「${label}」那一行`).toBeTruthy()
+    return row as HTMLButtonElement
+  }
+
+  /** 往受控输入框里打字（和「登录这道门」里那个同一个做法）。 */
+  function type(el: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    setter.call(el, value)
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
   it('★ /app/account 打得开，而且不是白屏', async () => {
     // 这一条走**网址**（不是点按钮）：地址栏是可以被直接打开的 —— F5、收藏夹、
     // 别人发来的一条链接。`viewFromPath` 少认一行，打开这里的人拿到的就是
@@ -3327,32 +3377,36 @@ describe('用户管理页', () => {
 
   it('★ 使用情况显示的是**真数** —— 不是写死的 0', async () => {
     // 第一版是 App 传死 `workCount={0}`：这一页对**每个**存过作品的人都说
-    // 「0 张作品」。现在它自己去拉一次（只回元数据，不带图）。
+    // 「0 张作品」。
+    // ★ 2026-10-04：数据源从"前端拉整份作品清单自己加"换成了 `/api/me` 的
+    //   `usage` —— 那边把**会话**占的空间也算进去了（会话里的原图和每一步的底
+    //   也是用户的文件），前端那份只看得见作品。
     // 变异：把那一格改回写死 `0` → 这一条红。
     const MIB = 1024 * 1024
-    withWorks([
-      { ...WORK(1, 1_700_000_000_000), bytes: 6 * MIB },
-      { ...WORK(2, 1_700_000_000_000), bytes: 4 * MIB },
-    ])
+    withUsage({ count: 2, bytes: 10 * MIB })
     await renderApp()
     await openAccount()
 
     expect(statsText()).toMatch(/^2\s*张作品/)
-    expect(statsText()).toContain('10 MB')       // 6 + 4，体积是加出来的，不是编的
+    expect(statsText()).toContain('10 MB')       // 体积是服务端算的，不是编的
     expect(container.querySelectorAll('.stat')).toHaveLength(2)
+    // 10 MB / 5 GB = 0.2% —— 远没到 80%，那条提醒不该出现
+    expect(container.querySelector('.account-quota-warn')).toBeNull()
   })
 
-  it('★ 服务端没给 bytes 时只说张数，不硬凑一个体积出来', async () => {
-    // 「别硬凑」的具体形状：**缺的那几张不许当 0 算** —— 那会把总量报小，
-    // 同样是假话。算不出来就整格不说（§3.6 那两格，少一格不碍事）。
-    withWorks([{ id: 1, alias: null, createdAt: 0, updatedAt: 0, hasThumb: true }])
+  it('★ 服务端没给用量时**那一格整个不出现** —— 不硬凑 0，也不硬凑体积', async () => {
+    // 「别硬凑」的具体形状：拿不到就说不出真话，那就**少说一句**（§3.6）——
+    // 「0 张作品」对着一个存过 128 张的人是一句假话，而这页一进去就能看见。
+    // `meUsage = null` 就是"响应里没有 usage"的形状（老后端、或者半坏的响应）。
+    meUsage = null
     await renderApp()
     await openAccount()
 
-    expect(statsText()).toMatch(/^1\s*张作品/)
-    expect(statsText()).not.toContain('MB')
-    expect(statsText()).not.toContain('KB')
-    expect(container.querySelectorAll('.stat')).toHaveLength(1)
+    // 前提：这一页**真的开着**。少了它，下面"没有数字"会因为整页没渲染而假绿。
+    expect(container.querySelector('.account')).toBeTruthy()
+    expect(container.querySelector('.account-name')?.textContent).toBe(LOGGED_IN.username)
+    expect(statsText()).toBeNull()
+    expect(container.textContent).not.toMatch(/\d+\s*张作品/)
   })
 
   it('★ 拿不到使用情况时**一个数字都不显示** —— 绝不退回 0', async () => {
@@ -3361,7 +3415,7 @@ describe('用户管理页', () => {
     //     而是关于用户数据的一句假话」（《文案规范》§3：写之前先问"这句话在
     //     什么情况下是假的？"）。
     // 变异：把「拿不到就整格不出现」改成画 0（= 第一版的行为）→ 这一条必须红。
-    withWorksError('SENTINEL-数不出来')
+    withUsageError('SENTINEL-数不出来')
     await renderApp()
     await openAccount()
 
@@ -3375,7 +3429,8 @@ describe('用户管理页', () => {
   it('★ 还没拉回来的时候显示占位「…」，也不是 0', async () => {
     // 「0」读起来是关于用户资产的一句**断言** —— 哪怕只闪半秒也不该是假的。
     // 变异：把占位换成写死的 `0` → 这一条红。
-    const gate = withWorksGate()
+    const gate = makeGate()
+    meUsageGate = gate
     await renderApp()
     // 这里**不走 openAccount()** —— 它会把那两个滴答放过去，而这一条要的就是
     // "还在路上"的那一瞬间。
@@ -3386,12 +3441,99 @@ describe('用户管理页', () => {
     expect(statsText()).toContain('…')
     expect(container.textContent).not.toMatch(/\d+\s*张作品/)
 
-    // 放行之后回的是空列表 —— 那时候「0 张作品」就不是假话，而是事实。
+    // 放行之后回的是"什么都没存" —— 那时候「0 张作品」就不是假话，而是事实。
     await act(async () => {
       gate.open()
       await new Promise(r => setTimeout(r, 0))
     })
     expect(statsText()).toMatch(/^0\s*张作品/)
+  })
+
+  /**
+   * ★ 2026-10-04：用户管理页补的三件里的两件（§3.6 那张图上的 改密码／注销账号）
+   * 和 §6.6 的 80% 提醒。这一页原来写着「注销账号**这一版不做**：
+   * 它会连带删掉作品和文件，而"删了什么、能不能后悔"还没有定案」——
+   * 现在定案了：**说清删什么、能不能后悔，再要一次确认**。
+   */
+  it('★ 空间用到 80% → 那一格变色 + 一句带出路的提醒（不能等满了才说）', async () => {
+    // spec §6.6 原话：「等用户存不进去了才告诉他"满了"，是最糟的一种做法 ——
+    // 他那一刻正想保存，你把他堵在门口。」
+    // ⚠️ 张数按每张 2 MB 估（spec 自己写的「5 GB（约 2500 张）」），所以文案说"约"。
+    const GB = 1024 ** 3
+    withUsage({ count: 3, bytes: 4.2 * GB })   // 84%
+    await renderApp()
+    await openAccount()
+
+    const warn = container.querySelector('.account-quota-warn')
+    expect(warn?.textContent).toContain('还能存约')
+    expect(warn?.textContent).toContain('八成')
+    expect(container.querySelector('.stat-warn')).toBeTruthy()   // 那一格数字变色
+
+    // 出路是**一条真走得通的路**：点进去就是作品集（提醒不给出路 = 把人拉进没有门的房间）
+    await act(async () => {
+      (warn?.querySelector('.account-quota-go') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(location.pathname).toBe('/app/works')
+  })
+
+  it('★ 改密码：填完提交 → 真的打 /api/password，成功那句要说清"其他设备"', async () => {
+    // §6.5：改密码 = **所有设备下线**（票的签名里掺着密码哈希），当前这台会被
+    // 服务端发一张新票、不会掉。所以成功那句话必须提"其他设备"—— 不然用户
+    // 在另一台机器上突然被登出，只会以为是自己点错了什么。
+    await renderApp()
+    await openAccount()
+
+    await act(async () => { rowByLabel('改密码').click() })
+    const form = container.querySelector('.account-form') as HTMLFormElement
+    expect(form).toBeTruthy()
+
+    await act(async () => {
+      type(form.querySelector('input[name=oldPassword]') as HTMLInputElement, 'oldpassword1')
+      type(form.querySelector('input[name=newPassword]') as HTMLInputElement, 'newpassword1')
+    })
+    await act(async () => {
+      (form.querySelector('.account-submit') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    const call = fetchMock.mock.calls.find(c => c[0] === '/api/password')
+    expect(call).toBeTruthy()
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+      oldPassword: 'oldpassword1', newPassword: 'newpassword1',
+    })
+    expect(container.querySelector('.account-msg')?.textContent).toContain('其他设备')
+    // 密码框清空了（改完还留着一串密码在屏幕上，是"看着像没成功"的形状）
+    expect((form.querySelector('input[name=oldPassword]') as HTMLInputElement).value).toBe('')
+  })
+
+  it('★ 注销：要**再确认一次**，那句话得说清删什么、能不能后悔', async () => {
+    // 用户管理页原来那句「这一版不做」就是卡在这两件事上（见 AccountPage 的注释）。
+    await renderApp()
+    await openAccount()
+
+    await act(async () => { rowByLabel('注销账号').click() })
+    const danger = container.querySelector('.account-danger')
+    expect(danger?.textContent).toContain('作品和照片会一起删掉')
+    expect(danger?.textContent).toContain('删了就找不回来')
+    // **还没按确认 —— 一个删除请求都没发**（点了会出事的按钮，不能只点一下就出事）
+    expect(fetchMock.mock.calls.some(c => c[1]?.method === 'DELETE')).toBe(false)
+
+    // 「先不注销」把这一块收回去
+    await act(async () => { (danger?.querySelector('.account-cancel') as HTMLButtonElement).click() })
+    expect(container.querySelector('.account-danger')).toBeNull()
+
+    // 再来一次，这回确认
+    await act(async () => { rowByLabel('注销账号').click() })
+    await act(async () => {
+      (container.querySelector('.account-danger-submit') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(fetchMock.mock.calls.some(c => c[0] === '/api/account' && c[1]?.method === 'DELETE'))
+      .toBe(true)
+    // 注销成功 = 人都不在了，和退出登录同一条出口：回登录页
+    expect(container.querySelector('.account')).toBeNull()
+    expect(container.querySelector('.login-box')).toBeTruthy()
   })
 
   it('★ 有「模型」这一项，点了进模型设置（Task 8 挪过来的那一条）', async () => {

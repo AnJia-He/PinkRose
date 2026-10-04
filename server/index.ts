@@ -5,6 +5,7 @@ import { describeConfig, loadConfig } from './config.ts'
 import { openDb } from './db.ts'
 import { createVault } from './keyvault.ts'
 import { SerialQueue } from './queue.ts'
+import { backfillSessionBytes } from './sessions.ts'
 import { redactSecrets } from './sn.ts'
 import { createStorage } from './storage.ts'
 
@@ -47,8 +48,7 @@ const queue = new SerialQueue({
 //   主钥匙"这件事应当看得出来。
 const vault = createVault(config.sessionSecret)
 
-const server = createApp({
-  config,
+const server = createApp({  config,
   staticDir: resolve(process.cwd(), 'dist'),
   // ★ 三个 AI 接口要的**默认那一套**（§7）。客户端**不在这里造** ——
   //   每一次请求由 clientFor.ts 的 `resolveClients` 按登录用户现取：
@@ -63,6 +63,13 @@ const server = createApp({
   storage,
   models: { db, vault },
 })
+
+// ★ 2026-10-04：把**迁移第 5 条之前**的老会话的 `bytes` 补上（那些行是 0）。
+//   §6.6 的 5 GB 配额靠这一列，留 0 等于对老数据睁一只眼。不 await、失败也不挡启动 ——
+//   配额是"防止把盘写满"的防线，不是启动条件。
+backfillSessionBytes(db, storage)
+  .then((n) => { if (n > 0) console.log(`[配额] 补齐了 ${n} 条会话的字节数`) })
+  .catch((e) => console.error('[配额] 补齐会话字节数失败（跳过，不影响启动）：', e))
 
 // ⚠️ 只听本机（127.0.0.1）。手机走 vite 的代理（代理跑在这台电脑上），
 // 所以后端**不需要**出现在局域网上——开出去等于把「没有鉴权、没有限流、

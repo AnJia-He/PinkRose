@@ -1220,7 +1220,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    模型设置那一页的字段跟登录那几格长得一样，是因为它们本来就是同一件事；
    分成两份写，改一处忘一处那天两页就开始不一样了（这一条是那个"别忘了"的锚）。 */
 .login-field,
-.models-field { display: flex; flex-direction: column; gap: var(--sp-2); font-size: 13px; color: var(--muted); }
+.models-field,
+.account-field { display: flex; flex-direction: column; gap: var(--sp-2); font-size: 13px; color: var(--muted); }
 .login-field input,
 .models-field input {
   padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--line-2);
@@ -1770,6 +1771,60 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .account-signout:where(:hover):where(:not(:disabled)) {
   background: var(--panel); color: var(--text);
   border-color: var(--line-2); box-shadow: var(--shadow-2);
+}
+
+/* ── 用户管理页：改密码 / 注销账号（★ 2026-10-04 补的，spec §3.6 / §5 / §6.5）──
+   和上面那张卡同一套语言：磨砂面 + 发丝线 + 大圆角（"形都圆"那条）。
+   ⚠️ 两块的底色都是 `--glass`，但**铺在页面上、不在卡里**：展开的表单/确认
+   是"这一行点开之后的话"，不是又一条设置。 */
+.account-form,
+.account-danger {
+  display: flex; flex-direction: column; gap: var(--sp-3);
+  width: fit-content; max-width: 100%;
+  margin-top: var(--sp-3);
+  padding: var(--sp-4);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1), inset 0 1px 0 var(--glass-hi);
+}
+/* 一行小字的结果/错误。**成不成都是这一句在说** —— 别用 alert。 */
+.account-msg { font-size: 13px; color: var(--danger); }
+.account-msg.ok { color: var(--text); }
+/* 主按钮在 fit-content 的表单里别拉满一行（拉满了比表单还宽，看着像没画完） */
+.account-submit { align-self: flex-start; }
+
+/* 注销那一行：只有**字**是危险色（整行红底太吵），配合下面那段确认。 */
+.account-row-danger .account-row-label { color: var(--danger); }
+.account-danger { border-color: var(--line-2); }
+.account-danger p { font-size: 13px; color: var(--text); line-height: 1.7; }
+.account-danger-actions { display: flex; gap: var(--sp-3); align-items: center; }
+/* 「先不注销」= 用户管理页那颗"退出登录"的亲兄弟：白底药丸、不上颜色。 */
+.account-cancel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-pill);
+  padding: 8px 20px; color: var(--muted); box-shadow: var(--shadow-1);
+}
+.account-cancel:where(:hover) { color: var(--text); border-color: var(--line-2); }
+/* 「确认注销」**不穿主色**：主色是"这件正事"（分享/下载/保存），
+   而它是"删掉一切" —— 用危险色的**淡底 + 描边**，响但不喊。 */
+.account-danger-submit {
+  background: var(--danger-bg); color: var(--danger);
+  border: 1px solid var(--danger); border-radius: var(--r-pill);
+  padding: 8px 20px; box-shadow: none;
+}
+.account-danger-submit:where(:hover):where(:not(:disabled)) {
+  background: var(--danger-bg); color: var(--danger); box-shadow: var(--shadow-1);
+}
+
+/* §6.6「用到 80% 主动说」：那一格数字**变色**，下面跟一句带出路的提醒。
+   ⚠️ 不能等用户存不进去了才说 —— 那一刻他正想保存，等于把他堵在门口。 */
+.stat-warn b { color: var(--danger); }
+.account-quota-warn { margin-top: var(--sp-3); font-size: 13px; color: var(--text); }
+.account-quota-go {
+  padding: 0; background: none; border: 0; border-radius: 0;
+  color: var(--accent); text-decoration: underline; transform: none;
 }
 
 /* ── 模型设置页（Task 9，§7.3 / §7.4） ────────────────────────────────

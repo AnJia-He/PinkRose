@@ -10,6 +10,7 @@ import {
 } from './works.ts'
 import type { PublicUser } from './account.ts'
 import type { HttpError } from './http.ts'
+import { QUOTA_BYTES } from './quota.ts'
 import { b64Of, jpegBytes } from './testImages.ts'
 
 const USER: PublicUser = { id: 1, username: '小明', email: 'a@x.com' }
@@ -655,6 +656,39 @@ describe('handleDeleteWork / handleDeleteWorks / handleReplaceWork', () => {
     // ★ 三条都必须在**动任何东西之前**拒掉：先删后校验的话，多出来的那一个已经是"删了才报错"
     expect(handleListWorks(USER, deps).works.map((w) => w.id)).toEqual([id])
     expect(readdirSync(root).length).toBe(1)
+  })
+})
+
+/**
+ * ★ 2026-10-04（spec §6.6）：每人 5 GB。**不是防用户，是防止一个人把整台服务搞挂** ——
+ * 数据库和图片在**同一块盘**上，盘满之后注册、登录、看作品集全部失败。
+ *
+ * ⚠️ 这里不去真存 5 GB：配额只读库里那一列，所以直接把一行的 `bytes` 写成上限。
+ */
+describe('★ 5 GB 配额（作品）', () => {
+  const fillUp = (bytes: number) => {
+    db.raw.prepare(
+      `INSERT INTO works (user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias, recipe)
+       VALUES (?, 'filler.jpg', NULL, ?, 1, 1, NULL, '{"params":{},"edits":[]}')`,
+    ).run(USER.id, bytes)
+  }
+
+  it('满了之后：新的一张存不进去 —— 而且那句话要给出路（先下载、再删几张）', async () => {
+    fillUp(QUOTA_BYTES)
+    await expect(handleCreateWork({ image: JPEG }, USER, deps))
+      .rejects.toThrow(/空间满了.*下载.*删/)
+    // 盘上**一个字节都没写**（`filler.jpg` 只是库里那一行，本来就不在盘上）——
+    // 先看配额、后落盘，拒掉的时候什么都没留下
+    expect(readdirSync(root)).toEqual([])
+  })
+
+  it('★ 替换算"净增"要扣掉旧的：满仓时换一张更小的仍然可以', async () => {
+    fillUp(QUOTA_BYTES)
+    const { id } = db.raw.prepare('SELECT id FROM works WHERE stored_name = ?')
+      .get('filler.jpg') as { id: number }
+    // 旧的那份字节会被腾出来（freeing）—— 不扣的话，满仓的人连"换张小的"都做不了
+    const meta = await handleReplaceWork(id, { image: `data:image/jpeg;base64,${bytesOf(10)}` }, USER, deps)
+    expect(meta.bytes).toBe(10)
   })
 })
 

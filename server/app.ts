@@ -4,7 +4,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path'
 import { KEY_REQUIRED } from '../shared/copy.ts'
 import { normalizeUsername } from '../shared/account.ts'
 import {
-  findUserByCookie, handleChangePassword, handleLogin, handleSignup,
+  findUserByCookie, handleChangePassword, handleDeleteAccount, handleLogin, handleSignup,
   type AccountDeps, type PublicUser,
 } from './account.ts'
 import { resolveClients, type ClientDeps } from './clientFor.ts'
@@ -16,6 +16,7 @@ import {
   resolveSecretById, updateConfig, type ModelConfigDeps, type ModelKind,
 } from './models.ts'
 import { assertModelHostAllowed, assertResolvedHostAllowed } from './hostGuard.ts'
+import { QUOTA_BYTES, storedBytes } from './quota.ts'
 import { createLimiter, type Limiter } from './ratelimit.ts'
 import { probeConnection } from './modeltest.ts'
 import type { SerialQueue } from './queue.ts'
@@ -313,7 +314,27 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     }
     if (req.method === 'GET' && path === '/api/me') {
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, { user })
+      // ★ 2026-10-04：带上**用量**（作品张数 / 占的空间 / 上限）—— 原来只有 {user}，
+      //   于是「使用情况」那一格只能在前端把整份作品清单拉下来自己加，
+      //   而且**看不见会话占的空间**（那也是用户的文件）。§6.6 那条 80% 提醒
+      //   要的就是这三个数（"还能存几张"由前端按每张 2 MB 估，见 AccountPage）。
+      const count = (deps.auth.db.raw
+        .prepare('SELECT COUNT(*) AS n FROM works WHERE user_id = ?')
+        .get(user.id) as { n: number }).n
+      sendJson(res, 200, {
+        user,
+        usage: { count, bytes: storedBytes(deps.auth.db, user.id), limit: QUOTA_BYTES },
+      })
+      return
+    }
+    if (req.method === 'DELETE' && path === '/api/account') {
+      // ★ 2026-10-04（spec §5）：注销 = 作品全删（记录 + 文件），会话和模型配置
+      //   随用户行级联删。这里只管把票一起清掉 —— 人已经没了，
+      //   那张 cookie 留着只会在下一次请求里撞 401。
+      const user = requireUser(deps, req, res)
+      await handleDeleteAccount(user, { db: deps.auth.db, storage: deps.storage })
+      res.setHeader('set-cookie', clearSessionCookie())
+      sendJson(res, 200, { ok: true })
       return
     }
     if (req.method === 'POST' && path === '/api/password') {

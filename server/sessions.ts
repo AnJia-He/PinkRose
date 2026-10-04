@@ -3,6 +3,7 @@ import type { Storage } from './storage.ts'
 import type { PublicUser } from './account.ts'
 import { HttpError, asObject, str } from './http.ts'
 import { decodeDataUrl, mimeOf, MAX_THUMB_BYTES } from './imagedata.ts'
+import { assertRoomFor } from './quota.ts'
 import { ZERO, applyDeltas, type Adjustments } from '../shared/adjustments.ts'
 import type { SessionDetail, SessionMessage, SessionMeta, SessionStep } from '../shared/sessions.ts'
 
@@ -40,6 +41,8 @@ export type SessionRow = {
   title: string | null; original: string; original_name: string | null
   base: string; thumb: string | null
   messages: string; steps: string; files: string
+  /** ★ 2026-10-04：这条会话名下所有文件的字节数（§6.6 的 5 GB 配额靠它） */
+  bytes: number
 }
 
 /** 服务端自己记的一步 —— 比出门给前端的那个多一样：**这一步用的是哪张图** */
@@ -107,8 +110,12 @@ export async function handleCreateSession(
   // 缩略图可选，坏姿势有两种（解不出来 / 存不下去），都只该让"这条没有缩略图"，
   // 不该让整条会话建不起来 —— 和 handleCreateWork 那条 catch 一字不差的理由。
   const thumbRaw = str(o.thumb)
+  // ★ 2026-10-04（§6.6，5 GB 配额）：**先看配额再落盘** —— 写进来再删是白费。
+  //   缩略图那点字节（≤1 MB）先按 0 算：它随后才解码，而 5 GB 量级上它是零头。
+  assertRoomFor(deps.db, user.id, image.bytes.byteLength, 'session')
   const original = await deps.storage.save(image.bytes, image.ext)
   let thumb: string | null = null
+  let thumbBytes = 0
   if (thumbRaw) {
     try {
       const t = decodeDataUrl(thumbRaw)
@@ -121,6 +128,7 @@ export async function handleCreateSession(
         throw new Error(`缩略图 ${t.bytes.byteLength} 字节，超过上限`)
       }
       thumb = await deps.storage.save(t.bytes, t.ext)
+      thumbBytes = t.bytes.byteLength
     } catch (e) {
       console.error('会话缩略图用不了（解不开或者存不下）：', e)
     }
@@ -129,14 +137,15 @@ export async function handleCreateSession(
   const t = nowMs(deps)
   try {
     const r = deps.db.raw.prepare(
-      `INSERT INTO sessions (user_id, created_at, updated_at, title, original, original_name, base, thumb, messages, steps, files)
-       VALUES (?, ?, ?, NULL, ?, ?, ?, ?, '[]', '[]', ?)`,
+      `INSERT INTO sessions (user_id, created_at, updated_at, title, original, original_name, base, thumb, messages, steps, files, bytes)
+       VALUES (?, ?, ?, NULL, ?, ?, ?, ?, '[]', '[]', ?, ?)`,
     ).run(user.id, t, t, original, name, original, thumb,
       // ⚠️ **缩略图也进名单**。它虽然在 `thumb` 那一列上，但它同样是**这条会话名下的
       //    文件** —— `files` 是"删的时候该删哪些"的唯一依据，漏一样就是每删一条会话
       //    在盘上留一个没人认领的文件，而且**永远没人会知道**。
       //    （2026-10-02 用户在盘上抓到的就是它：3 条删过的会话 = 3 个孤儿缩略图。）
-      JSON.stringify(thumb ? [original, thumb] : [original]))
+      JSON.stringify(thumb ? [original, thumb] : [original]),
+      image.bytes.byteLength + thumbBytes)
     return { id: Number(r.lastInsertRowid) }
   } catch (e) {
     // 插不进库就把刚写的文件收回来 —— 不收的话盘上留下两个**没人知道是什么**的文件。
@@ -156,6 +165,30 @@ export function handleListSessions(user: PublicUser, deps: SessionsDeps): { sess
      FROM sessions WHERE user_id = ? ORDER BY updated_at DESC`,
   ).all(user.id) as unknown as SessionRow[]
   return { sessions: rows.map(toMeta) }
+}
+
+/**
+ * ★ 2026-10-04：把**迁移第 5 条之前**的老会话的 `bytes` 补上（那些行是 0）。
+ *
+ * 开机时跑一次（index.ts）。**不能放进迁移**：迁移串里只有 SQL，够不到磁盘上
+ * 文件的大小。不补的话，§6.6 那个 5 GB 配额对老数据就是睁一只眼。
+ *
+ * 单个文件 stat 失败按 0 算 —— 保守**少算**：宁可账算少一点，
+ * 也不要因为一个坏文件把整次补齐打断（配额是防线，不是账本审计）。
+ * 返回值 = 补了几条（调用方打一行日志）。
+ */
+export async function backfillSessionBytes(db: Db, storage: Storage): Promise<number> {
+  const rows = db.raw
+    .prepare('SELECT id, files FROM sessions WHERE bytes = 0')
+    .all() as { id: number; files: string }[]
+  for (const r of rows) {
+    let total = 0
+    for (const name of JSON.parse(r.files) as string[]) {
+      total += await storage.sizeOf(name).catch(() => 0)
+    }
+    db.raw.prepare('UPDATE sessions SET bytes = ? WHERE id = ?').run(total, r.id)
+  }
+  return rows.length
 }
 
 /** 每一步对外的样子：把 `image` 摘掉，换成一句 `reusesPrev` */
@@ -281,6 +314,8 @@ export async function handleUpdateSession(
 
   // ── 新图（可选）───────────────────────────────────────────────────
   let newFile: string | null = null
+  // ★ 2026-10-04（§6.6）：这一趟**净增加**多少字节（配额和 bytes 列都用它）
+  let addedBytes = 0
   const baseRaw = str(o.base)
   if (baseRaw) {
     const image = decodeDataUrl(baseRaw)
@@ -288,6 +323,10 @@ export async function handleUpdateSession(
     if (image.bytes.byteLength > MAX_IMAGE_BYTES) {
       throw new HttpError('BAD_REQUEST', '这张图太大了，存不下', 413)
     }
+    // ★ 2026-10-04：加一张全尺寸的底也要过配额 —— 旧的那些文件**不会**因此被删
+    //   （`files` 只增不减，见 MAX_STEPS 那段），所以这里没有 `freeing`。
+    assertRoomFor(deps.db, user.id, image.bytes.byteLength, 'session')
+    addedBytes += image.bytes.byteLength
     newFile = await deps.storage.save(image.bytes, image.ext)
   }
   let newThumb: string | null = null
@@ -304,12 +343,19 @@ export async function handleUpdateSession(
         throw new Error(`缩略图 ${t.bytes.byteLength} 字节，超过上限`)
       }
       newThumb = await deps.storage.save(t.bytes, t.ext)
+      addedBytes += t.bytes.byteLength
     } catch (e) {
       console.error('会话缩略图用不了（解不开或者存不下）：', e)
     }
   }
 
   const t = nowMs(deps)
+  // ★ 2026-10-04：被换掉的那个旧缩略图会**从盘上删掉**（下面那两处 remove）——
+  //   所以它的字节要**从账里减掉**，不然每换一次缩略图就多算一份（越攒越虚）。
+  //   读不到就当 0（保守：宁可多算，也别把账算少）。
+  if (newThumb && row.thumb) {
+    addedBytes -= await deps.storage.sizeOf(row.thumb).catch(() => 0)
+  }
   // ⚠️ 从这儿到 UPDATE 成功为止，**任何一步抛出去都必须把刚写的两个文件收回来** ——
   //    所以步骤合并（mergeSteps）、名单校验、消息清洗全在**同一个 try 里**，
   //    不只是那句 UPDATE。这里原本只包了 UPDATE，于是漏了两个口子：
@@ -378,10 +424,10 @@ export async function handleUpdateSession(
     //   `changes === 0` 就抛 —— 抛出去会走上面那个 `catch`，**刚写的文件一起收回**。
     const res = deps.db.raw.prepare(
       `UPDATE sessions SET updated_at = ?, title = ?, base = ?, thumb = COALESCE(?, thumb),
-         messages = ?, steps = ?, files = ?
+         messages = ?, steps = ?, files = ?, bytes = bytes + ?
        WHERE id = ? AND user_id = ? AND updated_at = ?`,
     ).run(t, title, newFile ?? row.base, newThumb, messages,
-      JSON.stringify(steps), JSON.stringify(files), id, user.id, row.updated_at)
+      JSON.stringify(steps), JSON.stringify(files), addedBytes, id, user.id, row.updated_at)
     if (res.changes === 0) {
       // 文案规范 5：哪不对 + 怎么办。**不许说成"没登录"或者"图不对"** ——
       // 那两句会把人指去改一个没错的东西。

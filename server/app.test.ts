@@ -1842,3 +1842,52 @@ describe('★ 全局在途上限', () => {
     expect((await first).status).toBe(200)
   })
 })
+
+/**
+ * ★ 2026-10-04（spec §5 / §3.6）：「改密码」的**界面入口**是靠既有接口接上的
+ * （接口在这里测过了），这两条测的是**新加的那两条路**：
+ *   · `DELETE /api/account` —— 注销（记录 + 文件全清，票跟着清）；
+ *   · `GET /api/me` **带上 `usage`** —— 用户管理页的「使用情况」和 §6.6 的
+ *     80% 提醒都吃它（之前只有 `{user}`，前端只能拉整份作品清单自己加，
+ *     而且看不见会话占的空间）。
+ */
+describe('★ 注销账号 / /api/me 的用量（2026-10-04）', () => {
+  it('DELETE /api/account → 人没了、cookie 清了、拿旧票再问就是 401', async () => {
+    const { base, cookie, auth } = await appWithUser()
+    const count = () => (auth.db.raw.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n
+    expect(count()).toBe(1)
+    expect((await fetch(`${base}/api/me`, { headers: { cookie } })).status).toBe(200)
+
+    const res = await fetch(`${base}/api/account`, { method: 'DELETE', headers: { cookie } })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+
+    // ① 库里没人了
+    expect(count()).toBe(0)
+    // ② 票被清了（不然浏览器那边留着一张死票，下次请求才撞 401）
+    const cleared = res.headers.get('set-cookie') ?? ''
+    expect(cleared).toContain(`${SESSION_COOKIE}=;`)
+    expect(cleared).toContain('Max-Age=0')
+    // ③ 拿旧票再问 → 401（人没了，验签自然过不去）
+    expect((await fetch(`${base}/api/me`, { headers: { cookie } })).status).toBe(401)
+  })
+
+  it('/api/me 回 usage：张数只数作品，空间是**作品 + 会话**加起来，上限 5 GB', async () => {
+    const { base, cookie, auth } = await appWithUser()
+    const uid = (auth.db.raw.prepare('SELECT id FROM users LIMIT 1').get() as { id: number }).id
+    // 只往库里插两行（配额/用量读的就是这两列，不用真文件）
+    auth.db.raw.prepare(
+      `INSERT INTO works (user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias, recipe)
+       VALUES (?, 'a.jpg', NULL, 1000, 1, 1, NULL, '{"params":{},"edits":[]}')`).run(uid)
+    auth.db.raw.prepare(
+      `INSERT INTO sessions (user_id, created_at, updated_at, title, original, original_name,
+         base, thumb, messages, steps, files, bytes)
+       VALUES (?, 1, 1, NULL, 'b.jpg', NULL, 'b.jpg', NULL, '[]', '[]', '["b.jpg"]', 2000)`).run(uid)
+
+    const r = await fetch(`${base}/api/me`, { headers: { cookie } })
+    const body = await r.json() as { usage: { count: number; bytes: number; limit: number } }
+    expect(body.usage.count).toBe(1)                    // 「张作品」只数作品
+    expect(body.usage.bytes).toBe(3000)                 // 占的空间 = 作品 + 会话
+    expect(body.usage.limit).toBe(5 * 1024 ** 3)
+  })
+})

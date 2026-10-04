@@ -1,4 +1,5 @@
 import type { Db } from './db.ts'
+import type { Storage } from './storage.ts'
 import { hashPassword, verifyPassword } from './password.ts'
 import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../shared/account.ts'
 import {
@@ -183,4 +184,43 @@ export async function handleChangePassword(body: unknown, user: PublicUser, deps
   // 而且他会以为"改密码这个功能坏了"。
   // 新票签的是**新哈希** —— 用旧哈希签出来的票同样验不过，等于没发。
   return issue(user, hash, deps)
+}
+
+/**
+ * 注销账号（spec §5；表里那行是「注销账号 | 作品全删（记录 + 文件）+ 用量记录全删」）。
+ *
+ * ⚠️ **顺序：先删记录、再删文件。** 反过来（先删文件）中途炸掉，留下的是
+ *    "记录指向一张不存在的图" —— 那种坏比"盘上多几个没人认领的文件"贵得多：
+ *    用户点开是坏图，而且没有任何线索说明为什么。
+ *
+ * ⚠️ 会话和模型配置随 `users` 行**级联删**（那两张表写了 ON DELETE CASCADE），
+ *    但 **`works` 没写级联** —— 所以它必须手动先删，别以为删用户就都带走了。
+ *
+ * ⚠️ 调用方（app.ts 那条路由）负责把 cookie 清掉 —— 这里只管数据。
+ */
+export async function handleDeleteAccount(
+  user: PublicUser, deps: { db: Db; storage: Storage },
+): Promise<{ ok: true }> {
+  const works = deps.db.raw
+    .prepare('SELECT stored_name, thumb_name FROM works WHERE user_id = ?')
+    .all(user.id) as { stored_name: string; thumb_name: string | null }[]
+  const sessions = deps.db.raw
+    .prepare('SELECT files FROM sessions WHERE user_id = ?')
+    .all(user.id) as { files: string }[]
+
+  const names = [
+    ...works.flatMap((w) => [w.stored_name, w.thumb_name]),
+    ...sessions.flatMap((s) => JSON.parse(s.files) as string[]),
+  ].filter((n): n is string => typeof n === 'string' && n.length > 0)
+
+  deps.db.raw.prepare('DELETE FROM works WHERE user_id = ?').run(user.id)
+  deps.db.raw.prepare('DELETE FROM users WHERE id = ?').run(user.id)
+
+  // 到这儿号已经没了 —— 这一步失败只会留下没人认领的文件。记一笔，**不能静默**。
+  let failed = 0
+  for (const n of names) {
+    await deps.storage.remove(n).catch(() => { failed++ })
+  }
+  if (failed > 0) console.error(`注销：${failed} 个文件没删掉（记录已清，成了孤儿）`)
+  return { ok: true }
 }
