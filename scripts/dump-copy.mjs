@@ -230,6 +230,28 @@ async function main() {
     await grab(page, '详情页 · 改名（输入框态）')
     await page.click('.detail-delete'); await page.waitForTimeout(300)
     await grab(page, '详情页 · 点了删除（确认条）')
+
+    // ── 用户管理 / 模型设置（★ 2026-10-04 补）────────────────────────────
+    // 这两页的文案原来整个在盲区里（探针从没走过它们）。用户管理页尤其要紧：
+    // 注销的确认、改密码的成败那句话，**都是最少被人读过的字**。
+    // ⚠️ 左栏那颗「个人设置」**没有可见文字**（2026-10-04 换成人物图标）——
+    //    按 `aria-label` 找，按文字找会找不到人。
+    await page.click('.nav button[aria-label="个人设置"]')
+    await page.waitForSelector('.account', { timeout: 15_000 })
+    await page.waitForTimeout(800)
+    await grab(page, '个人设置')
+    // 展开态才有字 —— 和"生成中"那两屏同一个道理
+    await page.click('.account-row:has-text("改密码")')
+    await page.waitForTimeout(300)
+    await grab(page, '个人设置 · 点了「改密码」')
+    await page.click('.account-row:has-text("注销账号")')
+    await page.waitForTimeout(300)
+    await grab(page, '个人设置 · 点了「注销账号」')
+
+    await page.click('.account-row:has-text("模型")')
+    await page.waitForSelector('.models', { timeout: 15_000 })
+    await page.waitForTimeout(800)
+    await grab(page, '模型设置')
     await page.close()
   }
 
