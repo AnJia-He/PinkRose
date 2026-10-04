@@ -3,7 +3,7 @@ import type { Config } from './config.ts'
 import type { Db } from './db.ts'
 import type { Vault } from './keyvault.ts'
 import { resolveSecret, type ModelConfigDeps } from './models.ts'
-import { assertModelHostAllowed } from './hostGuard.ts'
+import { assertModelHostAllowed, assertResolvedHostAllowed, type HostLookup } from './hostGuard.ts'
 import { SenseNovaClient, type ModelConnection } from './sn.ts'
 
 export type ClientDeps = {
@@ -19,6 +19,11 @@ export type ClientDeps = {
    * 看不见"它是不是拿对了那一套"。
    */
   clientFactory?: (conn: ModelConnection) => SenseNovaClient
+  /**
+   * 出站前"把域名解析成 IP 再判一次"的注入点（测试用；生产走真实 DNS）。
+   * 要验的行为是"**解析结果**指向内网就拒"，而真去查 DNS 的测试既慢又不稳。
+   */
+  lookupHost?: HostLookup
 }
 
 /**
@@ -38,17 +43,17 @@ export type ClientDeps = {
  * **不抛**：那是"用户配过但现在用不了"，正确答案是照旧能用（走我们的），
  * 而不是让他连图都改不了。
  */
-export function resolveClients(user: PublicUser, deps: ClientDeps): {
+export async function resolveClients(user: PublicUser, deps: ClientDeps): Promise<{
   chat: SenseNovaClient
   image: SenseNovaClient
-} {
+}> {
   return {
-    chat: clientOf('chat', user, deps),
-    image: clientOf('image', user, deps),
+    chat: await clientOf('chat', user, deps),
+    image: await clientOf('image', user, deps),
   }
 }
 
-function clientOf(kind: 'chat' | 'image', user: PublicUser, deps: ClientDeps): SenseNovaClient {
+async function clientOf(kind: 'chat' | 'image', user: PublicUser, deps: ClientDeps): Promise<SenseNovaClient> {
   const modelDeps: ModelConfigDeps = { db: deps.db, vault: deps.vault }
   const secret = resolveSecret(kind, user, modelDeps)
 
@@ -59,7 +64,13 @@ function clientOf(kind: 'chat' | 'image', user: PublicUser, deps: ClientDeps): S
   //   ⚠️ 抛（而不是像别的失败那样安静回落到我们自己的钥匙）：这是"这个地址
   //      不让用"的**政策拒绝**，不是"读不出来"。安静回落的话，用户的图照样改成了
   //      —— 花的是我们的额度，而他以为用的是自己那套。
-  if (secret) assertModelHostAllowed(secret.baseUrl)
+  if (secret) {
+    assertModelHostAllowed(secret.baseUrl)
+    // ★ 2026-10-04：字面量那道上头挡不住**公共通配 DNS**（`127.0.0.1.nip.io` 实测
+    //   可绕，一分钱不花）—— 真正发请求之前，把域名解析成 IP 再判一次。
+    //   只拦用户配的那一条：默认那条是我们自己的地址，不是攻击面。
+    await assertResolvedHostAllowed(secret.baseUrl, { lookup: deps.lookupHost })
+  }
 
   // 用户没配（或配了用不了）→ 用我们自己的那一套。
   // ⚠️ ★ 2026-10-03：**两个类别各有自己的默认通道**（chat 走 Agnes、image 走商汤，

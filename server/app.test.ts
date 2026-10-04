@@ -185,6 +185,9 @@ function stubClients(fetchImpl: typeof fetch): ClientDeps {
   return {
     db: newAuth().db, vault: createVault(cfg.sessionSecret), config: cfg,
     clientFactory: c => new SenseNovaClient(c, fetchImpl),
+    // ★ 2026-10-04：出站前那道"解析成 IP 再判一次"也注入掉 —— 这些用例都在跟
+    //   假上游说话，不该因为多了一道防线而去碰真 DNS。
+    lookupHost: async () => ['93.184.216.34'],
   }
 }
 
@@ -1040,6 +1043,20 @@ describe('/api/models', () => {
       globalThis.fetch = realFetch
     }
   })
+
+  it('★ 出站前按**解析出的 IP** 再判一次 —— 公共通配域名（nip.io 那一类）不再是绕过口', async () => {
+    // 域名看着完全正常（字面量黑名单看不见它），但一解析就指向内网 ——
+    // 原来它会被径直打出去（这是那个"靠失败原因扫端口"的探测器，最不该漏的一条）。
+    const { base, cookie } = await appWithUser({
+      clients: { ...stubClients(async () => { throw new Error('不该发出去') }),
+        lookupHost: async () => ['127.0.0.1'] },
+    })
+    const r = await call(base, 'POST', '/api/models/test',
+      { baseUrl: 'https://looks-fine.example.test/v1', apiKey: 'sk-x' }, cookie)
+    // 没有这一道的话，探活会去连它、回 200 {ok:false,reason:'unreachable'}（还是"探测成功"的样子）
+    expect(r.status).toBe(400)
+    expect((r.body as { error: { message: string } }).error.message).toContain('内网')
+  })
 })
 
 /**
@@ -1100,6 +1117,7 @@ describe('★ 两套 key 彻底分开（§7.4，用户点名要的四条；⑤ �
       clients: {
         db: auth.db, vault: createVault(cfg.sessionSecret), config: cfg,
         clientFactory: c => new SenseNovaClient(c, recordingFetch(calls, opts.reject)),
+        lookupHost: async () => ['93.184.216.34'],
       },
     })
     const r = await handleSignup({ username: '测试用户', email: 't@t.com', password: 'password123' }, auth)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isPrivateHostname, assertModelHostAllowed } from './hostGuard.ts'
+import { isPrivateHostname, assertModelHostAllowed, assertResolvedHostAllowed } from './hostGuard.ts'
 
 /**
  * ★ 2026-10-02 补的（安全审计 S1）。之前 `normalizeBaseUrl` 只要求
@@ -61,5 +61,83 @@ describe('assertModelHostAllowed', () => {
 
   it('解析不出主机名的（不是网址）也拒绝', () => {
     expect(() => assertModelHostAllowed('不是网址', {})).toThrow()
+  })
+})
+
+/**
+ * ★ 2026-10-04 补的一层。上面那条只认**字面量**，而**公共通配 DNS** 能把任意
+ *   内网地址包装成"看着完全正常"的域名：`127.0.0.1.nip.io` / `10.0.0.1.sslip.io`
+ *   —— 免费、开箱即用（本机实测三个全中）。所以真正发请求前要按**解析出来的
+ *   IP** 再判一次。这一组用例全部注入假 lookup，不碰真 DNS。
+ */
+describe('assertResolvedHostAllowed（按解析出的 IP 再判一次）', () => {
+  const PUBLIC_IP = '93.184.216.34'
+
+  it('★ 域名看着正常、解析到内网 → 拒（nip.io 那一类，原来就是从这儿绕的）', async () => {
+    await expect(
+      assertResolvedHostAllowed('https://looks-fine.example.test/v1', {
+        lookup: async () => ['127.0.0.1'],
+      }),
+    ).rejects.toThrow(/内网/)
+  })
+
+  it('★ 解析出多条、只要有一条是内网就拒 —— 不能只看第一条', async () => {
+    await expect(
+      assertResolvedHostAllowed('https://mixed.example.test/v1', {
+        lookup: async () => [PUBLIC_IP, '10.0.0.5'],
+      }),
+    ).rejects.toThrow(/内网/)
+  })
+
+  it('★ 解析出内网 IPv6（DNS 返回不带方括号）→ 也拒', async () => {
+    // 方括号是 URL 的形状，不是 DNS 的形状 —— 漏了归一化这条会静默放行。
+    await expect(
+      assertResolvedHostAllowed('https://v6.example.test/v1', {
+        lookup: async () => ['fd00::1'],
+      }),
+    ).rejects.toThrow(/内网/)
+  })
+
+  it('解析到公网 → 放行', async () => {
+    await expect(
+      assertResolvedHostAllowed('https://api.deepseek.com/v1', {
+        lookup: async () => [PUBLIC_IP],
+      }),
+    ).resolves.toBeUndefined()
+  })
+
+  it('★ 解析不出来就放行 —— 打错字是常事，让真正的请求去报它自己的错', async () => {
+    await expect(
+      assertResolvedHostAllowed('https://nowhere.example.test/v1', {
+        lookup: async () => { throw new Error('ENOTFOUND') },
+      }),
+    ).resolves.toBeUndefined()
+  })
+
+  it('字面量内网：直接拒，**DNS 一次都不查**', async () => {
+    let called = 0
+    await expect(
+      assertResolvedHostAllowed('http://127.0.0.1:11434/v1', {
+        lookup: async () => { called++; return [PUBLIC_IP] },
+      }),
+    ).rejects.toThrow(/内网/)
+    expect(called).toBe(0)
+  })
+
+  it('开关打开（ALLOW_PRIVATE_MODEL_HOSTS=1）→ 放行，且不查 DNS', async () => {
+    let called = 0
+    await expect(
+      assertResolvedHostAllowed('http://127.0.0.1:11434/v1', {
+        env: { ALLOW_PRIVATE_MODEL_HOSTS: '1' },
+        lookup: async () => { called++; return ['127.0.0.1'] },
+      }),
+    ).resolves.toBeUndefined()
+    expect(called).toBe(0)
+  })
+
+  it('不是网址 → 拒', async () => {
+    await expect(
+      assertResolvedHostAllowed('不是网址', { lookup: async () => [PUBLIC_IP] }),
+    ).rejects.toThrow(/网址/)
   })
 })

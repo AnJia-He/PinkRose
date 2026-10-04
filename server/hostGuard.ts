@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises'
 import { HttpError } from './http.ts'
 
 /**
@@ -12,10 +13,15 @@ import { HttpError } from './http.ts'
  *   或者向内网任意主机发盲 POST。
  *
  * ⚠️ **它挡的是"字面量"**（IP 直写、以及那些一看就知道是内部的域名）。
- *   挡不住的是 **DNS 重绑定**：域名先解析到公网、请求那一刻再解析到 127.0.0.1。
- *   真要堵死得在**建立连接时**按解析出来的 IP 判（undici 的 `lookup` 钩子），
- *   而 Node 不公开 undici 的 API（得装依赖）。这个残余风险记在这儿：
- *   它要求攻击者控制一个域名，比"填个 127.0.0.1"贵得多。
+ *
+ * ⚠️⚠️ **2026-10-04 更正了原来写在这儿的一段估计。** 原文说"挡不住的只有 DNS
+ *   重绑定，那要求攻击者控制一个域名，比填个 127.0.0.1 贵得多" —— **错了，实测过**：
+ *   `127.0.0.1.nip.io`、`10.0.0.1.sslip.io` 这类**公共通配 DNS** 免费、开箱即用，
+ *   域名看着完全正常（不是字面量，黑名单看不见它），一解析就指向内网（本机三个全中）。
+ *   一分钱不用花，所以字面量这道单独站着等于没有。
+ *   → 于是补了下头 `assertResolvedHostAllowed`：**发请求前把域名解析成 IP 再判一次**。
+ *   剩下的缝只有真·重绑定（我们解析一次、fetch 自己再解析一次，两次之间 DNS 换答案）——
+ *   那一条才要求攻击者持续控制 DNS 应答，比"捡个公共域名"贵得多。
  *
  * ⚠️ **自建服务（Ollama 那一类）默认被挡**，要有意打开开关才放行 ——
  *   见 `assertModelHostAllowed` 里那段取舍。
@@ -56,6 +62,15 @@ export function isPrivateHostname(hostname: string): boolean {
 /** 开关名。**默认关** —— 理由见 `assertModelHostAllowed`。 */
 export const ALLOW_PRIVATE_HOSTS_ENV = 'ALLOW_PRIVATE_MODEL_HOSTS'
 
+/** 拒绝的话**只有这一份**：同步那道和解析后那道必须说同一句，不然会各自漂。 */
+function deniedByPolicy(): HttpError {
+  return new HttpError(
+    'BAD_REQUEST',
+    '这个地址指向本机或内网，默认不让填 —— 不然别人可以把这里当成跳板去扫你家的网络。' +
+    `要用自己搭的模型服务，让部署的人在环境变量里设 ${ALLOW_PRIVATE_HOSTS_ENV}=1。`,
+  )
+}
+
 /**
  * 不通过就抛 `HttpError`。**两条路都要调它**：
  *   ① 保存配置时（`normalizeBaseUrl`）—— 新填的地址当场拦下；
@@ -76,9 +91,63 @@ export function assertModelHostAllowed(url: string, env: NodeJS.ProcessEnv = pro
   if (!isPrivateHostname(hostname)) return
   if (env[ALLOW_PRIVATE_HOSTS_ENV] === '1') return
 
-  throw new HttpError(
-    'BAD_REQUEST',
-    '这个地址指向本机或内网，默认不让填 —— 不然别人可以把这里当成跳板去扫你家的网络。' +
-    `要用自己搭的模型服务，让部署的人在环境变量里设 ${ALLOW_PRIVATE_HOSTS_ENV}=1。`,
-  )
+  throw deniedByPolicy()
+}
+
+/** 把一个主机名解析成它**实际指向的 IP**（可能多个）。测试注入用。 */
+export type HostLookup = (hostname: string) => Promise<string[]>
+
+const dnsLookup: HostLookup = async (hostname) =>
+  (await lookup(hostname, { all: true })).map(a => a.address)
+
+/**
+ * ★ 2026-10-04：**发请求前的那一道** —— 把域名解析成 IP，按**解析结果**再判一次。
+ *
+ * 为什么必须有它：上面那条黑名单只认字面量，而 `127.0.0.1.nip.io`、
+ * `10.0.0.1.sslip.io` 这类**公共通配 DNS** 免费就能把任意内网地址包装成一个
+ * "看着完全正常"的域名（实测：本机三个全中）。只站字面量那道 = 形同虚设。
+ *
+ * 调用点（**两条都调**，和同步那道同一个规矩）：
+ *   · `clientFor.ts` —— 按用户现取连接时（真正发请求的那两条路都从这里过）；
+ *   · `app.ts` 的「测一下」—— 它本身就是"靠失败原因扫端口"的探测器。
+ *
+ * ⚠️ 解析不出来时**放行**（返回而不是抛）：域名打错字是常见事，
+ *   那种情况让**真正的请求**去报它自己的错（"连不上上游：…"），
+ *   那里的文案是现成的；在这里另起一句只会多一种说法。
+ *
+ * ⚠️ 残余（写清楚，别当成堵死了）：我们解析一次、fetch 再解析一次 ——
+ *   两次之间 DNS 还能换答案（真·重绑定）。彻底堵死要在建立连接那一刻判，
+ *   而 Node 不公开 undici 的 lookup 钩子（得装依赖）。现在这条把
+ *   "捡个免费域名"那一整类堵掉了，剩下的那条缝贵得多。
+ */
+export async function assertResolvedHostAllowed(
+  url: string,
+  opts: { env?: NodeJS.ProcessEnv; lookup?: HostLookup } = {},
+): Promise<void> {
+  const env = opts.env ?? process.env
+  if (env[ALLOW_PRIVATE_HOSTS_ENV] === '1') return
+
+  let hostname: string
+  try {
+    hostname = new URL(url).hostname
+  } catch {
+    throw new HttpError('BAD_REQUEST', '接口地址看起来不是一个网址')
+  }
+  // 字面量先判：不用查 DNS，也别为 `localhost` 这种白查一次
+  if (isPrivateHostname(hostname)) throw deniedByPolicy()
+
+  // IPv6 从 URL 里出来带方括号，`dns.lookup` 不认方括号
+  const bare = hostname.startsWith('[') && hostname.endsWith(']')
+    ? hostname.slice(1, -1)
+    : hostname
+  let addrs: string[]
+  try {
+    addrs = await (opts.lookup ?? dnsLookup)(bare)
+  } catch {
+    return
+  }
+  // 任何一条解析结果落在内网就拒 —— 有的域名会同时给公网和内网地址
+  if (addrs.some(a => isPrivateHostname(a.includes(':') ? `[${a}]` : a))) {
+    throw deniedByPolicy()
+  }
 }

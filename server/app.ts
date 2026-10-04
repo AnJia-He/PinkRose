@@ -14,7 +14,7 @@ import {
   activateConfig, createConfig, deleteConfig, listConfigs, normalizeBaseUrl,
   resolveSecretById, updateConfig, type ModelConfigDeps, type ModelKind,
 } from './models.ts'
-import { assertModelHostAllowed } from './hostGuard.ts'
+import { assertModelHostAllowed, assertResolvedHostAllowed } from './hostGuard.ts'
 import { createLimiter, type Limiter } from './ratelimit.ts'
 import { probeConnection } from './modeltest.ts'
 import type { SerialQueue } from './queue.ts'
@@ -507,6 +507,11 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       }
       // 打的是 `GET {baseUrl}/models` —— 免费的探活，返回的形状见 modeltest.ts。
       // 探不通也回 200：那是"这次探活的结果"，不是"这次请求失败了"。
+      // ★ 2026-10-04：就差真正发出去了 —— 把域名解析成 IP 再判一次。
+      //   上面那两道（normalizeBaseUrl / assertModelHostAllowed）都只认字面量，
+      //   而 `127.0.0.1.nip.io` 这类公共通配 DNS 实测能绕（一分钱不花）。
+      //   这里正是那个"靠失败原因扫端口"的探测器，必须先过这一关。
+      await assertResolvedHostAllowed(conn.baseUrl, { lookup: deps.clients?.lookupHost })
       sendJson(res, 200, await probeConnection(conn))
       return
     }
@@ -543,7 +548,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       // ★ 取客户端放在**读完请求体之后**：读一具 12 MB 的 body 要花时间，
       //   而"该用谁的钥匙"在那一刻之前就已经定了。顺序反过来只是白等。
       //   路由/建议这一路要用**聊天**那一套（§7.4：chat 管 route/suggest）。
-      const { chat } = resolveClients(user, deps.clients)
+      const { chat } = await resolveClients(user, deps.clients)
       sendJson(res, 200, await handleRoute(body, { client: chat, queue: deps.queue }))
       return
     }
@@ -553,7 +558,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
       const body = await readJsonBody(req)
-      const { chat } = resolveClients(user, deps.clients)
+      const { chat } = await resolveClients(user, deps.clients)
       sendJson(res, 200, await handleSuggest(body, { client: chat, queue: deps.queue }))
       return
     }
@@ -587,7 +592,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       // ★ 改图这一路要用**图片**那一套（§7.4）—— 和上面两条是两条独立的路，
       //   所以图片的钥匙填错了，对话完全不受影响。取客户端放在读完请求体之后，
       //   理由同 /api/route（别让读 12 MB 的每一毫秒都白等一次解密 + 查询）。
-      const { image } = resolveClients(user, deps.clients)
+      const { image } = await resolveClients(user, deps.clients)
       sendJson(res, 200, await handleEdit(body, {
         client: image, queue: deps.queue, signal: ac.signal,
       }))
