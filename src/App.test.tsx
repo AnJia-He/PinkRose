@@ -973,7 +973,10 @@ describe('导出：分享还是存下来，用户自己选', () => {
     //    它们钉的是"那一格的两种长相"和"有没有混进别的东西"，不是"永远只有三颗"。
     //    （2026-10-03 起 `.actions` 里真的只剩这四颗了：品牌名和那颗 👤 撤出顶栏
     //    之后，这里不用再解释"谁是谁的兄弟"。）
-    expect(topbarButtons()).toEqual(['调色', '分享', '保存', '新的一张'])
+    //    ★ 2026-10-04：**最左边那颗「调色」搬去了左栏**（用户：「那个微调照片的
+    //    放在导航栏单列出来」）—— 这条清单跟着少一颗，现在只剩**"把图拿走"**
+    //    那三颗。谁要是往这儿再加一颗改图的按钮，这条断言会红。
+    expect(topbarButtons()).toEqual(['分享', '保存', '新的一张'])
   })
 
   it('不能分享的设备上，那一格换成「下载」', async () => {
@@ -988,10 +991,11 @@ describe('导出：分享还是存下来，用户自己选', () => {
     //    同一个动作（"把图给我"）在桌面上的另一种给法。
     //    两半都得守：堵上整条路不行，留一个点了没反应的按钮也不行。
     //    （2026-10-01 Task 6：末尾又多了一颗「新的一张」，清单跟着加。）
+    //    （★ 2026-10-04：「调色」搬去左栏，清单从头上去掉一颗 —— 见上一条。）
     vi.mocked(saveMod.canShareImage).mockReturnValue(false)
     await renderApp()
     await uploadPhoto()
-    expect(topbarButtons()).toEqual(['调色', '下载', '保存', '新的一张'])
+    expect(topbarButtons()).toEqual(['下载', '保存', '新的一张'])
   })
 
   it('点「下载」→ 真的下载一份，文件名和分享那条一样', async () => {
@@ -2301,6 +2305,45 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(container.querySelector('.workspace')).toBeNull()       // 不是修图页
     expect(container.querySelector('.nav-item.on')?.textContent).toBe('作品')
   })
+
+  it('★ 「调色」是左栏里的一支 —— 点它面板开着，F5 之后还开着（2026-10-04）', async () => {
+    // 用户原话：「那个微调照片的放在导航栏单列出来」（他说的「微调」是 09-30
+    // 改名前的旧词，同一件事 —— 见《文案规范》里「调色」那一条）。
+    //
+    // 它原来住在**顶栏**，和「下载 / 保存 / 新的一张」挤一排。搬家有两层理由：
+    //   ① 那三颗是**把图拿走**，它是**改这张图** —— 本来就不该是一排的东西；
+    //   ② 顶栏**只在有照片的时候才存在**（2026-10-03 定的），于是照片一撤，
+    //      "手动调色"这件事在界面上连名字都没有了。
+    await renderApp()
+    await uploadPhoto()
+    expect(container.querySelector('.panel')).toBeNull()   // 起点：收着的（修图页）
+
+    await goNav('调色')
+    expect(container.querySelector('.panel')).toBeTruthy()
+    expect(location.pathname).toBe('/app/adjust')
+    // ⚠️ 亮的**只有一颗**。这条守的是"它是一支导航、不是一颗开关"：
+    //    做成开关（view 不动、只翻一个 showPanel state）的话，「修图」会跟着
+    //    一起亮 —— 而左栏那颗亮点回答的是"我在哪"，它不能同时有两个答案。
+    expect([...container.querySelectorAll('.nav-item.on')].map(b => b.textContent))
+      .toEqual(['调色'])
+    // 工作区还在原处：它和修图页是**同一屏**（照片、对话都在），
+    // 不同的只有底下那条面板开着 —— 不是另做了一页。
+    expect(container.querySelector('.workspace')).toBeTruthy()
+
+    // ★ 按 F5 / 从收藏夹打开：面板**还开着**。这正是"给它一个网址"换来的东西 ——
+    //   以前那版（state）刷新之后就自己合上了，而用户正想接着调。
+    history.replaceState(null, '', '/app/adjust')
+    await renderApp()
+    expect(container.querySelector('.panel')).toBeTruthy()
+    expect(container.querySelector('.nav-item.on')?.textContent).toBe('调色')
+
+    // 点「修图」= 收起来。面板自己没有关闭钮，这是唯一的关法 ——
+    // 所以它得真的关得上，不然用户只能靠刷新。
+    await goNav('修图')
+    expect(container.querySelector('.panel')).toBeNull()
+    expect(location.pathname).toBe('/app')
+    expect(container.querySelector('.nav-item.on')?.textContent).toBe('修图')
+  })
 })
 
 /**
@@ -3451,12 +3494,12 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     // 数组里删掉也照样绿（2026-10-01 评审查出来的）。只有这里这一下能真的红：
     // 删掉 `params` 依赖 → 这次点击没有任何东西再触发副作用 → 第二个 PUT
     // 根本不会发生，而屏幕上什么都不说 —— 用户拖完滑块刷新回到拖之前。
+    // ★ 2026-10-04：这一步原来点的是**顶栏**那颗「调色」，现在它搬去了左栏 ——
+    // 走 `goNav`（按文字找，和别处的导航点击同一个路数），断言一个字不用改。
+    await goNav('调色')
     const click = async (el: HTMLElement) => {
       await act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
     }
-    const topbar = [...container.querySelectorAll('.actions button')]
-      .find(b => (b.textContent ?? '').includes('调色')) as HTMLButtonElement
-    await click(topbar)
     const preset = container.querySelector('.presets button') as HTMLButtonElement
     await click(preset)
     await waitPersist()

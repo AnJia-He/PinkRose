@@ -135,7 +135,6 @@ export default function App() {
 
   const [image, setImage] = useState<DecodedImage | null>(null)
   const [params, setParams] = useState<Adjustments>(ZERO)
-  const [showPanel, setShowPanel] = useState(false)
   /** 非 null 时既是"正在忙"的标志，也是要显示给用户的那句话 */
   const [busy, setBusy] = useState<string | null>(null)
   /** 本设备能不能把图交给系统分享面板。只在挂载时算一次：设备能力不会中途变。
@@ -1523,7 +1522,14 @@ export default function App() {
       {/* 左栏在**所有**界面里都在：作品页、详情页是同一个壳，换的只是右边那一格。 */}
       <Nav view={view} onGo={go} />
 
-      {view.kind === 'edit' && (
+      {/* 修图页和调色页是**同一屏**（★ 2026-10-04）。
+          `adjust` 不是另一套界面：同一个工作区、同一张照片、同一列对话 ——
+          区别只有底下那条八滑块的面板开着。所以它俩共用这一块，靠下面
+          `showPanel` 那一个布尔分开（那一条有它自己的注释）。
+          ⚠️ 写成"两个 kind 一起渲染"而不是把面板挪出这个条件：挪出去的话，
+          停在作品页 / 对话页时那块面板也会跟着挂载 —— 而它是按"这张照片"
+          来的东西，那些页面上照片根本不在。*/}
+      {(view.kind === 'edit' || view.kind === 'adjust') && (
         <div className="app">
           {/* 顶栏现在**只在有照片的时候才有**（★ 2026-10-03）。
               它原来是一条常驻的横杠：左边品牌名、右边一颗 👤、中间这四颗按钮。
@@ -1532,11 +1538,15 @@ export default function App() {
               👤 搬去了左栏（见 `ui/Nav.tsx` 的「个人设置」）。
               这条横杠当场就只剩这四颗按钮了 —— 那就没有理由在**还没有照片**的
               时候摆一条空杠占着地方：它们本来就只在有照片可操作的那一刻才有用。
-              于是它现在**不是"顶栏"了，是"这张照片的操作条"**。 */}
+              于是它现在**不是"顶栏"了，是"这张照片的操作条"**。
+              ★ 2026-10-04：**里面那三颗现在真的是三颗了** —— 原来最左边那颗
+              「调色」也搬去了左栏（用户：「那个微调照片的放在导航栏单列出来」）。
+              它本来就格格不入：这三颗是**把图拿走**（下载 / 保存 / 新的一张），
+              那颗是**改这张图**。搬走之后这一条自己成立了一个说法 ——
+              **"这张照片怎么办"**。 */}
           {image && (
             <header className="topbar">
               <div className="actions">
-                <button onClick={() => setShowPanel(v => !v)}>调色</button>
                 {/* 这一格是**"把图给我"**，只是给法分两种，按这个设备认不认
                     图片分享来选（`canShare` 只在挂载时算一次：设备能力不会中途变）。
                     · 认 → 「分享」：弹系统面板，手机上一步选微信，跳过翻文件管理器。
@@ -1686,7 +1696,18 @@ export default function App() {
             </main>
           )}
 
-          {image && showPanel && (
+          {/* ★ 2026-10-04：这一条**从 state 改成了从网址推出来**。
+              在那之前它是 `const [showPanel, setShowPanel] = useState(false)`，
+              由顶栏那颗按钮翻转。现在「调色」是左栏里的一支（`view.kind ===
+              'adjust'`），而"你在哪一支"本来就只有网址这一个来源 —— 再留一份
+              state 就是同一个事实有两个可以互相打架的答案（停在 `/app/adjust`
+              上按 F5，state 回到 false、地址栏却还写着 adjust）。
+              换成"由网址推"顺带换来两件以前没有的：**按 F5 面板还开着**，
+              以及这一屏能被收藏、能发给别人。
+              ⚠️ 别把这条判据改回 state：`view` 是**页面刷新之后仍然对**的那一份，
+              state 不是 —— 而这个项目已经在这条线上栽过一次（见 Nav.tsx 里
+              「首页」那颗的注释：参数必须留在网址里，不能只记在内存）。*/}
+          {image && view.kind === 'adjust' && (
             <AdjustmentPanel
               value={params}
               onChange={setParams}

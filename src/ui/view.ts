@@ -27,6 +27,14 @@
 export type View =
   | { kind: 'landing' }
   | { kind: 'edit' }
+  // ★ 2026-10-04：**调色（微调）单列成一支**。用户原话：「那个微调照片的放在
+  //   导航栏单列出来」（他叫的还是 09-30 之前的旧名字「微调」，见《文案规范》）。
+  //   在那之前它是顶栏里的一颗开关按钮，和「下载 / 保存 / 新的一张」挤在一排 ——
+  //   那三颗是**把图拿走**，它却是**改这张图**，本来就不是一类东西。
+  //   ⚠️ 它是「修图」的**兄弟，不是它的子页面**：同一个工作区（照片 + 对话都还在），
+  //      区别只有底下那条八滑块的面板开着。所以它拿到自己的网址 —— 在左栏导航里
+  //      每一支都得是个"地方"（亮的只有一个），而一个开关做不到这件事。
+  | { kind: 'adjust' }
   // 会话列表（§6.1，Task 6）。它是「对话」那一支：**过程**的家
   // —— 「修图」是现在这一次，「作品」是结果，三样是三件事，别合并（§3 第 3 条）。
   | { kind: 'sessions' }
@@ -74,6 +82,9 @@ export function viewFromPath(path: string): View {
   // 模型设置也可以直接打开（F5、收藏、别人发来的一条链接）——
   // 少认这一行，用户按 F5 就被扔回修图页，而他明明还在这页上。
   if (path === `${APP}/models`) return { kind: 'models' }
+  // 调色（★ 2026-10-04）—— 和上面几个一样要**认得出来**（F5、收藏、别人发来的
+  // 一条链接）。少认这一行，按 F5 的人会被扔回修图页，而他明明正开着调色面板。
+  if (path === `${APP}/adjust`) return { kind: 'adjust' }
   if (path === APP) return { kind: 'edit' }
   if (path === '/') return { kind: 'landing' }
   return { kind: 'landing' }
@@ -86,5 +97,6 @@ export function pathOf(v: View): string {
   if (v.kind === 'work') return `${APP}/works/${v.id}`
   if (v.kind === 'account') return `${APP}/account`
   if (v.kind === 'models') return `${APP}/models`
+  if (v.kind === 'adjust') return `${APP}/adjust`
   return APP
 }

@@ -52,6 +52,7 @@ describe('网址 ↔ 界面', () => {
     for (const v of [
       { kind: 'landing' } as const,
       { kind: 'edit' } as const,
+      { kind: 'adjust' } as const,
       { kind: 'sessions' } as const,
       { kind: 'gallery' } as const,
       { kind: 'work', id: 7 } as const,
@@ -67,6 +68,20 @@ describe('网址 ↔ 界面', () => {
     // （那种"刷新一下回到别处"最让人以为是自己点错了）。见的另一头在 Nav.tsx。
     expect(viewFromPath('/app/sessions')).toEqual({ kind: 'sessions' })
     expect(pathOf({ kind: 'sessions' })).toBe('/app/sessions')
+  })
+
+  it('★ 「调色」也有自己的网址（2026-10-04 搬进左栏那一步换来的）', () => {
+    // 用户原话：「那个微调照片的放在导航栏单列出来」（他叫的「微调」是 09-30
+    // 改名之前的旧词）。搬进左栏就得给它一个网址，理由和「对话」那条一模一样：
+    // **左栏每一支都得是个"地方"**，而"地方"的判据就是按 F5 之后还站在那儿。
+    // 以前它是顶栏里的一颗开关，翻不翻转只记在内存里 —— 刷新一下就没了。
+    //
+    // ⚠️ 这条**不是**"顺手补个单测"：`/app/adjust` 是用户手动敲/收藏的落点，
+    //    少认一行他就被扔回修图页，而屏幕上什么都不说（面板收起来了而已）。
+    expect(viewFromPath('/app/adjust')).toEqual({ kind: 'adjust' })
+    expect(pathOf({ kind: 'adjust' })).toBe('/app/adjust')
+    // 它和「修图」是**两支**，不能是同一个 kind —— 是同一个的话左栏两颗会一起亮
+    expect(viewFromPath('/app/adjust')).not.toEqual(viewFromPath('/app'))
   })
 
   it('★ 作品详情页的网址里**没有名字**，只有 id（§3.5.1）', () => {
