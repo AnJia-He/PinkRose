@@ -325,10 +325,23 @@ export async function handleReplaceWork(
   // 因为它**没有报错可以看**。将来加新的写接口（换图、换缩略图、批量改图…）时，
   // 这一句是唯一会提醒你的东西。
   try {
-    deps.db.raw.prepare(
+    // ★ 2026-10-04（审计 F3）：`AND updated_at = ?` 是**乐观锁**，和 `sessions.ts`
+    //   那条同一个形状。这一段是「读那一行 → `await` 落盘 → 写回去」，中间那个
+    //   await 让出了事件循环 —— 两个标签页同时保存会**都读到旧行**，后写的把先写
+    //   的整个盖掉（两次都回 200），而先写者刚落盘的文件从此**没人认领**；
+    //   一边 PUT 一边 DELETE 更糟 —— 记录已经没了，UPDATE 影响 0 行却照样回 200，
+    //   新文件变成一个永远查不到主人的孤儿。
+    //   `updated_at` 本来就在这一行上（见上面那段），直接拿来当版本号。
+    const res = deps.db.raw.prepare(
       `UPDATE works SET stored_name = ?, thumb_name = ?, bytes = ?, updated_at = ?, recipe = ?
-       WHERE id = ? AND user_id = ?`,
-    ).run(newName, newThumb, image.bytes.byteLength, t, JSON.stringify(readRecipe(o.recipe)), id, user.id)
+       WHERE id = ? AND user_id = ? AND updated_at = ?`,
+    ).run(newName, newThumb, image.bytes.byteLength, t, JSON.stringify(readRecipe(o.recipe)),
+      id, user.id, row.updated_at)
+    if (res.changes === 0) {
+      // 文案规范 5：哪不对 + 怎么办。不许说成"没登录"或者"图不对" —— 那是另一回事。
+      throw new HttpError('CONFLICT',
+        '这张图刚刚在别的地方改过了，这次没存进去（免得把那边的新内容盖掉）。刷新一下看看。', 409)
+    }
   } catch (e) {
     // 记录没改成功 → 把**新写的**收回来，旧的一动没动：库里和盘上都还是原来那张
     await deps.storage.remove(newName).catch(() => {})

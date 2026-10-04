@@ -112,6 +112,18 @@ async function fitToDevice(
 }
 
 /**
+ * 关掉一批位图（`bitmapsToClose` 的产物）。
+ *
+ * ★ 2026-10-04：这句 `for…close()` 原来在四处各写了一遍（切换会话、换图、
+ *   归零、「回到这一步」）—— 收成一句，理由只有一份：**不关就是"切几次把
+ *   标签页拖垮"**（ImageBitmap 占 GPU 内存，32 MP 一张约 129 MB）。
+ *   `close()` 幂等 —— StrictMode 重放 updater 也安全（见 open 那段的注释）。
+ */
+function closeBitmaps(imgs: readonly DecodedImage[]): void {
+  for (const img of imgs) img.bitmap.close()
+}
+
+/**
  * 正在等用户在图上点一下（spec §6.3 的歧义兜底）。null = 没在等。
  * 刻意做成**一个**对象而不是三个平行 state：这两轮审查连续抓到的两条钱类漏洞
  * （onCard、onJump 各漏清一行）根因都是这个形状 —— 三个 state 散在七个写入点上，
@@ -625,7 +637,7 @@ export default function App() {
         // ⚠️ 用 updater 里那个 `prev`，不用外面那个 `history`：这里要的是**真正被
         //   换掉的那一份**，而且 updater 里的写法不依赖闭包抓到的是哪一轮的 history。
         //    （`close()` 幂等，StrictMode 重放这个 updater 也安全。）
-        for (const s of bitmapsToClose(prev, [])) s.bitmap.close()
+        closeBitmaps(bitmapsToClose(prev, []))
         return steps
       })
       setImage(lastStep.base)
@@ -781,7 +793,7 @@ export default function App() {
       // 要关的是**整份旧 history**——除了原图，还有每条生成式快照的 base
       // （2048 长边，最多 6 条）。只关原图会漏掉它们，换几次图就能把标签页拖垮。
       // 副作用留在状态更新外面，别塞进 updater（updater 可能被重放）。
-      for (const s of bitmapsToClose(history, [])) s.bitmap.close()
+      closeBitmaps(bitmapsToClose(history, []))
 
       originalFileRef.current = file
       setImage(img)
@@ -896,7 +908,7 @@ export default function App() {
    *    副作用留在状态更新外面，别塞进 updater（updater 可能被重放）。
    */
   const resetEditor = useCallback(() => {
-    for (const s of bitmapsToClose(history, [])) s.bitmap.close()
+    closeBitmaps(bitmapsToClose(history, []))
     setImage(null)
     setHistory([])
     setMessages([])
@@ -1148,9 +1160,7 @@ export default function App() {
     cancelPick()
     setHistory(prev => {
       const next = jumpTo(prev, id)
-      for (const s of bitmapsToClose(prev, next, { protectOriginal: true })) {
-        s.bitmap.close()
-      }
+      closeBitmaps(bitmapsToClose(prev, next, { protectOriginal: true }))
       return next
     })
     setImage(target.base)

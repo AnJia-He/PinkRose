@@ -9,6 +9,7 @@ import {
   handleListWorks, handleRenameWork, handleReplaceWork, handleWorkFile, handleWorkThumb,
 } from './works.ts'
 import type { PublicUser } from './account.ts'
+import type { HttpError } from './http.ts'
 import { b64Of, jpegBytes } from './testImages.ts'
 
 const USER: PublicUser = { id: 1, username: '小明', email: 'a@x.com' }
@@ -654,5 +655,55 @@ describe('handleDeleteWork / handleDeleteWorks / handleReplaceWork', () => {
     // ★ 三条都必须在**动任何东西之前**拒掉：先删后校验的话，多出来的那一个已经是"删了才报错"
     expect(handleListWorks(USER, deps).works.map((w) => w.id)).toEqual([id])
     expect(readdirSync(root).length).toBe(1)
+  })
+})
+
+/**
+ * ★★ 2026-10-04（审计 F3）。和 `sessions.test.ts` 那条**同一个形状**：
+ * `handleReplaceWork` 整段是「读那一行 → `await` 落盘 → 写回去」，中间那个 await
+ * 让出了事件循环 —— 两个标签页同时保存会都读到旧行，后写的把先写的整个盖掉
+ * （**两次都回 200**），先写者刚落盘的文件从此没人认领（永久孤儿）；
+ * 一边 PUT 一边 DELETE 更糟 —— UPDATE 影响 0 行却照样回 200。
+ * 修法照会话那份：`AND updated_at = ?` 乐观锁 + `changes === 0` 报 409。
+ */
+describe('★ 同一张作品被两条路同时改', () => {
+  it('★★ 后到的那条要**报出来**（409），不许把先到的那次静默盖掉', async () => {
+    const { id } = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    const before = readdirSync(root)
+
+    const results = await Promise.allSettled([
+      handleReplaceWork(id, { image: `data:image/jpeg;base64,${bytesOf(999)}` }, USER, { ...deps, now: () => 500 }),
+      handleReplaceWork(id, { image: `data:image/jpeg;base64,${bytesOf(888)}` }, USER, { ...deps, now: () => 600 }),
+    ])
+
+    // 判据写"**恰好一条成功**"：只钉"有一条成功"的话，两条都成功照样绿 —— 而那正是 bug 的形状
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
+    const rejected = results.find(r => r.status === 'rejected') as PromiseRejectedResult
+    expect((rejected.reason as HttpError).status).toBe(409)
+    // ★ 失败那一次刚落盘的文件**必须被收回去** —— 不收就是一个没人认领的孤儿
+    expect(readdirSync(root)).toHaveLength(1)
+    expect(readdirSync(root)[0]).not.toBe(before[0])
+  })
+
+  it('★ 把"另一条路已经改过"夹在读与写之间 → 409（确定性版：不赌两次 I/O 的先后）', async () => {
+    // 用一层 storage 包装**精确注入**那个夹缝：这一次落盘之后、UPDATE 之前，
+    // 让"另一条路"把版本号推走 —— 于是这次 UPDATE 拿着旧版本，影响 0 行。
+    // 少了 `AND updated_at = ?` 的话它会照样回 200（旧内容被静默盖掉）。
+    const { id } = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    const racing: typeof deps = {
+      ...deps,
+      now: () => 500,
+      storage: {
+        ...storage,
+        save: async (b: Uint8Array, e: string) => {
+          const name = await storage.save(b, e)
+          db.raw.prepare('UPDATE works SET updated_at = ? WHERE id = ?').run(999, id)
+          return name
+        },
+      },
+    }
+    await expect(handleReplaceWork(id, { image: JPEG }, USER, racing)).rejects.toThrow(/改过了/)
+    // 新文件收回去了：库里和盘上都还是原来那版
+    expect(readdirSync(root)).toHaveLength(1)
   })
 })

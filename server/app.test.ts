@@ -1713,7 +1713,9 @@ describe('★ 每天能改多少：付费那条接口的日额度', () => {
   const editUpstream = () => {
     const impl = (async () =>
       new Response('{"data":[{"b64_json":"AAAA"}]}', { status: 200 })) as unknown as typeof fetch
-    return { clients: stubClients(impl), queue: new SerialQueue({ sleep: async () => {} }) }
+    // ⚠️ `aiPerMinute` 必须放大：这一组用例连打 20+ 次 edit，不放大就会被
+    //    "每分钟 10 次"那道闸先拦住 —— 拦的还不是它们要验的那件事（日额度）。
+    return { clients: stubClients(impl), queue: new SerialQueue({ sleep: async () => {} }), aiPerMinute: 1000 }
   }
 
   it('★ 同一个账号打满 20 次之后，第 21 次要被挡住，而且说明天再来', async () => {
@@ -1769,7 +1771,7 @@ describe('★ 每天能改多少：付费那条接口的日额度', () => {
         : new Response('{"data":[{"b64_json":"AAAA"}]}', { status: 200 })
     }) as unknown as typeof fetch
     const { base, cookie } = await appWithUser({
-      clients: stubClients(impl), queue: new SerialQueue({ sleep: async () => {} }),
+      clients: stubClients(impl), queue: new SerialQueue({ sleep: async () => {} }), aiPerMinute: 1000,
     })
     const failed = await post(base, '/api/edit', editBody, cookie)
     expect(failed.status).toBe(502)     // UPSTREAM_FAILED
@@ -1778,5 +1780,65 @@ describe('★ 每天能改多少：付费那条接口的日额度', () => {
       expect((await post(base, '/api/edit', editBody, cookie)).status, `第 ${i + 1} 次`).toBe(200)
     }
     expect((await post(base, '/api/edit', editBody, cookie)).status).toBe(429)
+  })
+})
+
+/**
+ * ★ 2026-10-04（§6.6 那张表的另一半，审计也点了它）。日额度管"今天还能改几张"，
+ * 这道管"别打得太快"—— 三个 AI 接口**共用同一个桶**：只限 edit 的话，
+ * route/suggest 这两条花钱少、但同样花钱的路完全没有闸，一个人能拿它们当免费 API 打。
+ */
+describe('★ 每分钟的 AI 调用次数', () => {
+  const routeBody = { imageDataUrl: 'data:image/jpeg;base64,/9j/AA==', text: '亮一点' }
+
+  it('超过每分钟上限 → 429，而且说的是"慢一点"，不是"你的请求有问题"', async () => {
+    const { deps } = stubUpstream()
+    const { base, cookie, auth } = await appWithUser({ ...deps, aiPerMinute: 2 })
+    expect((await post(base, '/api/route', routeBody, cookie)).status).toBe(200)
+    expect((await post(base, '/api/route', routeBody, cookie)).status).toBe(200)
+    const third = await post(base, '/api/route', routeBody, cookie)
+    expect(third.status).toBe(429)
+    expect(third.body.error?.code).toBe('TOO_MANY')
+    // 下一步动作是"等一会儿"，不是"去改你的请求"
+    expect(third.body.error?.message).toMatch(/快|秒/)
+
+    // 按**人**算：别人不受影响
+    const b = await handleSignup({ username: '小红', email: 'r@r.com', password: 'password123' }, auth)
+    expect((await post(base, '/api/route', routeBody, `${SESSION_COOKIE}=${b.token}`)).status).toBe(200)
+  })
+
+  it('★ route / suggest / edit 共用一个桶 —— 只在一条路上限等于没限', async () => {
+    const { deps } = stubUpstream()
+    const { base, cookie } = await appWithUser({ ...deps, aiPerMinute: 2 })
+    expect((await post(base, '/api/route', routeBody, cookie)).status).toBe(200)
+    // suggest 换了一条路，但花的是同一笔钱 —— 同一个桶里的第二发
+    expect((await post(base, '/api/suggest', routeBody, cookie)).status).toBe(200)
+    // 第三发不管走哪条路，都该被拦住
+    expect((await post(base, '/api/edit', editBody, cookie)).status).toBe(429)
+  })
+})
+
+/**
+ * ★ 2026-10-04（审计 F2）。`http.ts` 只限单个请求体（12 MB），不限"同时几个" ——
+ * 每人几个并发的 12 MB 就能把内存吃光。超了当场 503（"现在人有点多"）。
+ */
+describe('★ 全局在途上限', () => {
+  it('在途堆到上限 → 多的当场 503；跑完一个，后面的照常', async () => {
+    let release!: () => void
+    const hang = new Promise<void>(r => { release = r })
+    const impl = (async () => {
+      await hang
+      return new Response('{"data":[{"b64_json":"AAAA"}]}', { status: 200 })
+    }) as unknown as typeof fetch
+    const { base, cookie } = await appWithUser({
+      clients: stubClients(impl), queue: new SerialQueue({ sleep: async () => {} }), maxInFlight: 1,
+    })
+    const first = post(base, '/api/edit', editBody, cookie)   // 占住唯一的名额
+    await new Promise(r => setTimeout(r, 50))                 // 等它真的进到服务器里
+    const second = await post(base, '/api/edit', editBody, cookie)
+    expect(second.status).toBe(503)
+    expect(second.body.error?.message).toMatch(/有点多/)
+    release()
+    expect((await first).status).toBe(200)
   })
 })

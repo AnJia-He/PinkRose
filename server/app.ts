@@ -71,6 +71,18 @@ export type AppDeps = {
    * 那是最难发现的一种坏（它不报错，只是安静地花我们的钱）。
    */
   models: ModelConfigDeps
+  /**
+   * 每账号每分钟最多几次 AI 调用（§6.6 那一行的另一半；默认 10）。
+   * ★ 2026-10-04 加。测试注入用：日额度那组用例会连打 20 次 edit，
+   *   不把这个数放大，会被这道闸先拦住 —— 拦的还不是它们要验的那件事。
+   */
+  aiPerMinute?: number
+  /**
+   * 同时**在途**的请求数上限（默认 64）。★ 2026-10-04 加（审计 F2）：
+   * `http.ts` 只限单个请求体（12 MB），不限"同时几个" —— 超了直接 503。
+   * 测试注入用。
+   */
+  maxInFlight?: number
 }
 
 const MIME: Record<string, string> = {
@@ -107,9 +119,9 @@ const MIME: Record<string, string> = {
  *   按 IP 记等于**全局限流**：一个人打错十次密码，全站都登不上了。
  *   按用户名记才挡得住真正要挡的那件事（盯着一个账号慢慢试）。
  */
-type Gates = { login: Limiter; signup: Limiter; probe: Limiter; edit: Limiter }
+type Gates = { login: Limiter; signup: Limiter; probe: Limiter; edit: Limiter; ai: Limiter }
 
-function newGates(): Gates {
+function newGates(aiPerMinute = 10): Gates {
   return {
     login: createLimiter({ max: 10, windowMs: 15 * 60_000 }),
     // 注册按 IP —— 这里没有"某个账号"可盯，要挡的是批量开小号。
@@ -121,6 +133,11 @@ function newGates(): Gates {
     //   ⚠️ 2026-10-03 起 App 上传前那一屏**不再提这个数**了（用户把那些提示都撤了），
     //   现在只有当额度真的用完时，下面 `assertDailyQuota` 那句 429 才对用户说一次。
     edit: createLimiter({ max: 20, windowMs: 24 * 60 * 60_000 }),
+    // ★ 2026-10-04：§6.6 那张表的另一半 —— **每账号每分钟 10 次 AI 调用**。
+    //   三个 AI 接口（route / suggest / edit）共用这一个桶：只限 edit 的话，
+    //   route/suggest 这两条花钱少、但**同样花钱**的路完全没有闸，一个人可以
+    //   拿它们当免费 API 打。日额度管"今天还能改几张"，这道管"别打得太快"。
+    ai: createLimiter({ max: aiPerMinute, windowMs: 60_000 }),
   }
 }
 
@@ -151,10 +168,37 @@ function assertGate(lim: Limiter, key: string, what: string): void {
   throw new HttpError('TOO_MANY', `${what}试得太频繁了，等 ${wait}再试。`, 429)
 }
 
+/**
+ * ★ 2026-10-04：每分钟那道的文案。和 `assertGate` 分开写，因为下一步动作不一样 ——
+ * `assertGate` 那三条是"慢一点再试"（几秒到几分钟），这条也是，但那句模板
+ * （`${what}试得太频繁了`）套在"AI 调用"上读着别扭（"AI 调用试得太频繁了"）。
+ * 不许说成"你的请求有问题" —— 那不是他的请求有问题，是他做得快了点。
+ */
+function assertAiGate(lim: Limiter, key: string): void {
+  const r = lim.hit(key)
+  if (r.ok) return
+  const secs = Math.ceil(r.retryAfterMs / 1000)
+  throw new HttpError('TOO_MANY', `做得有点快 —— 等 ${secs} 秒再继续。`, 429)
+}
+
 export function createApp(deps: AppDeps): Server {
-  const gates = newGates()
+  const gates = newGates(deps.aiPerMinute)
+  // ★ 2026-10-04（审计 F2）：**全局在途上限**。`http.ts` 只限单个请求体
+  //   （12 MB），不限"同时有几个" —— 每人几个 12 MB 的并发就能把内存吃光，
+  //   而且它们还得在串行队列里排队（body 整份留在内存）。超了当场 503：
+  //   这不是"你的请求有问题"，是"现在人有点多"。
+  //   放在**读任何东西之前** —— 挡的就是"别把 body 收进来"。
+  let inFlight = 0
+  const maxInFlight = deps.maxInFlight ?? 64
   return createServer((req, res) => {
-    handle(deps, req, res, gates).catch(e => sendError(res, e))
+    if (inFlight >= maxInFlight) {
+      sendError(res, new HttpError('INTERNAL', '现在人有点多，等一会儿再试。', 503))
+      return
+    }
+    inFlight++
+    handle(deps, req, res, gates)
+      .catch(e => sendError(res, e))
+      .finally(() => { inFlight-- })
   })
 }
 
@@ -557,6 +601,9 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       if (!deps.clients || !deps.queue) {
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
+      // ★ 2026-10-04：每分钟那道闸（§6.6）。放在 503 之后 —— 后端没接线是我们
+      //   这边的问题，不该记用户的次数（和 edit 那条日额度同一个理由）。
+      assertAiGate(gates.ai, `ai:${user.id}`)
       const body = await readJsonBody(req)
       // ★ 取客户端放在**读完请求体之后**：读一具 12 MB 的 body 要花时间，
       //   而"该用谁的钥匙"在那一刻之前就已经定了。顺序反过来只是白等。
@@ -570,6 +617,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       if (!deps.clients || !deps.queue) {
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
+      assertAiGate(gates.ai, `ai:${user.id}`)
       const body = await readJsonBody(req)
       const { chat } = await resolveClients(user, deps.clients)
       sendJson(res, 200, await handleSuggest(body, { client: chat, queue: deps.queue }))
@@ -580,6 +628,9 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       if (!deps.clients || !deps.queue) {
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
+      // ★ 2026-10-04：每分钟那道闸（§6.6），三条 AI 路共用同一个桶 ——
+      //   放它**在读体之前**：做得太快的人不该让服务器先把 12 MB 收下来。
+      assertAiGate(gates.ai, `ai:${user.id}`)
       // ★ 日额度这一道的两件事**放在读完请求体之后**：
       //   · 503 那条（上面）：后端没接线是**我们这边**的问题，不该记用户的额度；
       //   · 读 body 这条（2026-10-04 补）：原来记在读之前 —— 一个 400/413 的坏请求

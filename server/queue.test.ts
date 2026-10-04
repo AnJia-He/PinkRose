@@ -92,3 +92,25 @@ describe('SerialQueue 重试', () => {
     expect(seen).toEqual([{ attempt: 1, delayMs: 50 }, { attempt: 2, delayMs: 100 }])
   })
 })
+
+/**
+ * ★ 2026-10-04（审计 F2）。原来队列**没有长度上限**：每个排队的人，他的请求体
+ * 都整份留在内存里等着（`readJsonBody` 已经把 body 读进来了），几百个请求就能
+ * 把内存吃光；而它们串行，等的人其实什么也等不到。满了就明说，别假装能接。
+ */
+describe('★ 队列长度上限', () => {
+  it('满了立刻拒绝（503 的人话），跑完又收得下新的', async () => {
+    const q = new SerialQueue({ sleep: async () => {}, maxPending: 1 })
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const running = q.run(async () => { await gate; return 1 })
+
+    // 1 个在跑 = 已经到上限
+    await expect(q.run(async () => 2)).rejects.toThrow(/人有点多/)
+
+    release()
+    expect(await running).toBe(1)
+    // 名额还回来了：新的收得下
+    expect(await q.run(async () => 3)).toBe(3)
+  })
+})
