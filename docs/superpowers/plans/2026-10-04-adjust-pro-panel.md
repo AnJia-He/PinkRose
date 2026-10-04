@@ -239,7 +239,7 @@ git commit -m "feat(调色): 参数层加 7 个新字段 + 范围表 + 分组表
 import sys, os
 from playwright.sync_api import sync_playwright
 HERE = os.path.dirname(os.path.abspath(__file__))
-STATE = os.path.join(HERE, '..', '..', 'product-test', 'state.json')
+STATE = os.path.join(HERE, '..', 'product-test', 'state.json')   # product-test 在 scratch 下面（HERE=…/scratch/adjust-pro）
 PHOTO = os.path.join(HERE, '..', '..', '..', 'test-photos', 'e2e_first_use.jpg')
 tag = sys.argv[1]
 with sync_playwright() as p:
@@ -459,6 +459,16 @@ describe('Slider 三件套', () => {
 })
 ```
 
+> ⚠️ **测试写法勘误（2026-10-04 预检时发现，照这个来）**：上面那段代码里的
+> `@testing-library/react` / `render` / `fireEvent` **这个项目没有这个依赖**
+> （零新增依赖是规矩）。**照 `src/ui/kit/kit.test.tsx` 现成的写法**改写：
+> 文件头 `// @vitest-environment jsdom`；用它的 `mount()`（`createRoot` + `await act`）；
+> 往受控输入框里打字要**用原型上的 value setter 绕 React 的 tracker**
+> （`App.test.tsx` 里那个 `type()` 助手就是干这个的，抄它）；
+> 双击用 `dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`；
+> 回车/Esc 用 `dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`。
+> **断言（断的是什么都别改）一个字不动** —— 变的只是驱动方式。
+
 - [ ] **Step 2: 跑测试确认它红**
 
 Run: `npx vitest run src/ui/kit/Slider.test.tsx`
@@ -570,6 +580,8 @@ const BLUE_DIR = [-1 / 3, -1 / 3,  2 / 3] as const   // 蓝 ←→ 黄
 - 一个 `div.color-wheel`：`background: conic-gradient(#ff2d2d,#ffef00,#00e000,#00e5e5,#0048ff,#e000ff,#ff2d2d)`；里面一个 `span.color-wheel-dot` 按 `axesToWheel` 定位。
 - 拖动：`onPointerDown` → `setPointerCapture` → `onPointerMove` 里把坐标换算成 `(x, y)`（相对圆心、除以半径、y 取反）→ `onChange(wheelToAxes(x, y))`。
 - **双击回中**：`onDoubleClick` → `onChange({ cbCyanRed: 0, cbMagentaGreen: 0, cbYellowBlue: 0 })`。
+- ★ **给容器挂 `data-x` / `data-y`**（就是圆点当前坐标的字符串形式）—— Task 5 的
+  "套预设后色轮回中心"那条测试读它。（两个属性都要写。）
 - `aria-hidden="true"` + 一条注释：**等价通路是旁边三根轴**（键盘/读屏走那三根）。
 - 样式（`styles.css`）：`.color-wheel { width: 88px; height: 88px; border-radius: 50%; position: relative; box-shadow: inset 0 0 0 1px var(--hair); touch-action: none; }`；`.color-wheel-dot { position: absolute; width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid rgba(0,0,0,.35); transform: translate(-50%, -50%); }`
 
@@ -590,7 +602,12 @@ git commit -m "feat(调色): 色轮控件（三轴的二维视图，零和、可
 ### Task 5: 面板改成分组 + 两个新组
 
 **Files:**
-- Modify: `src/ui/AdjustmentPanel.tsx`、`src/styles.css`、`src/ui/AdjustmentPanel.test.ts`
+- Modify: `src/ui/AdjustmentPanel.tsx`、`src/styles.css`
+- Create: `src/ui/AdjustmentPanel.behavior.test.tsx`（**行为测试另开一个文件** ——
+  现有那份 `AdjustmentPanel.test.ts` 不能加 jsdom 头：它用
+  `new URL('./AdjustmentPanel.tsx', import.meta.url)` 读源码，jsdom 下那条路拼不出
+  `file://`，会当场红。**它一个字都不用改**，而且它的"没有自己写死标签"那条
+  **自动覆盖新加的 7 个标签**。）
 
 **Interfaces:**
 - Consumes: Task 1 的 `PARAM_GROUPS / PARAM_RANGE / PARAM_LABELS`；Task 3 的 `Slider(neutral, gradient)`；Task 4 的 `ColorWheel / axesToWheel / wheelToAxes`。
@@ -666,9 +683,19 @@ describe('面板的分组（2026-10-04）', () => {
 ```
 （最后一条依赖 `ColorWheel` 把圆心的坐标挂在 `data-x` / `data-y` 上供测试读 —— Task 4 实现时顺手加上，两个属性都写上。）
 
+> ⚠️ **测试写法勘误（2026-10-04 预检时发现，照这个来）**：上一段代码里的
+> `@testing-library/react` / `render` / `fireEvent` **这个项目没有**（零新增依赖）——
+> 照 `src/ui/kit/kit.test.tsx` 的写法改写（`// @vitest-environment jsdom` +
+> 自己写 `mount()`：`createRoot` + `await act`；点击用 `.click()`；别的照
+> `kit.test.tsx` 与 `App.test.tsx` 的既有套路）。**断言一个字不动。**
+> 另外"套预设后色轮归零"那条：**不要模拟拖滑块**（Base UI 的受控滑块在 jsdom 里
+> 不好驱动）—— 给 `Harness` 留一个模块级 `setFromTest`（`const [v, setV] = useState…`
+> 后面写 `setFromTest = setV`），测试里直接 `await act(() => setFromTest({ ...ZERO, cbCyanRed: 60 }))`
+> 把值置出去，再点预设、看 `data-x` 回没回 `0`。
+
 - [ ] **Step 2: 跑测试确认它红**
 
-Run: `npx vitest run src/ui/AdjustmentPanel.test.ts`
+Run: `npx vitest run src/ui/AdjustmentPanel.behavior.test.tsx`
 Expected: FAIL（还没有 `.panel-group`）。
 
 - [ ] **Step 3: 改 `AdjustmentPanel.tsx`**
