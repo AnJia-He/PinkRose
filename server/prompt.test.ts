@@ -57,7 +57,10 @@ describe('describeParams', () => {
 
   it('八个参数都有中文名，且名字与参数一一对应', () => {
     // 八个参数给**不同**的值：否则"名字都出现过"这种断言对调两个标签也照样满足。
+    // 十五个字段要写全 —— 专业面板新加的七个从 ZERO 长（中立 0），**不进提示词**
+    // （`prompt.ts` 的 `PromptParamKey` 只列这八个），所以这一份的输出不变。
     const all = describeParams({
+      ...ZERO,
       exposure: 1, contrast: 2, highlights: 3, shadows: 4,
       saturation: 5, temperature: 6, clarity: 7, vignette: 8,
     })

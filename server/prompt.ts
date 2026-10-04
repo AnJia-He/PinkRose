@@ -14,7 +14,23 @@ const KEEP_CLAUSE = 'Keep everything else exactly as it is.'
 /** 卡片文案的硬上限。prompt 里写的是 12 字，代码只做兜底防模型抽风。 */
 export const CARD_LABEL_MAX = 20
 
-const PARAM_LABELS: Record<keyof Adjustments, string> = {
+/**
+ * 提示词里的参数名。**故意只有八个老参数** —— 这是给模型看的那一份，
+ * 和 `shared/adjustments.ts` 里界面那份**措辞不同**（比如 clarity 那边叫「清晰度」、
+ * 这里叫「通透度」）。
+ *
+ * ⚠️ 2026-10-04：注解从 `Record<keyof Adjustments, string>` 收窄成这八个键。
+ * 参数层扩到 15 个（自然饱和度 / 色彩平衡 / 分离色调）之后，原来那个注解会
+ * 逼着这里也列上那七个 —— **那正是设计不要的**（spec §5：色轮这类工具模型
+ * 没有标尺，乱设比不设坏；prompt 一个字不改）。收窄之后"这八个一个不少"
+ * 照样是编译期的闸（漏一个就红），只是去掉了"参数层加字段这里必须跟着加"
+ * 这条现在错误的要求。
+ */
+type PromptParamKey =
+  | 'exposure' | 'contrast' | 'highlights' | 'shadows'
+  | 'saturation' | 'temperature' | 'clarity' | 'vignette'
+
+const PARAM_LABELS: Record<PromptParamKey, string> = {
   exposure: '亮度', contrast: '对比度', highlights: '高光', shadows: '阴影',
   saturation: '饱和度', temperature: '色温(正数=更暖)', clarity: '通透度', vignette: '暗角',
 }
@@ -46,7 +62,9 @@ export function buildEditPrompt(edit: string): string {
  */
 export function describeParams(a: Adjustments): string {
   const parts: string[] = []
-  for (const k of Object.keys(PARAM_LABELS) as (keyof Adjustments)[]) {
+  // 只遍历提示词自己那八个键（`PromptParamKey`）—— 参数层后来加的七个
+  // 不进提示词，`Object.keys` 拿到的就是上面那份对象里的八个，不是全 15 个。
+  for (const k of Object.keys(PARAM_LABELS) as PromptParamKey[]) {
     const v = a[k] ?? ZERO[k]
     if (v !== 0) parts.push(`${PARAM_LABELS[k]} ${v > 0 ? '+' : ''}${v}`)
   }

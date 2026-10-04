@@ -82,7 +82,11 @@ describe('applyTone', () => {
   })
 
   it('输出永远落在 [0, 1] 内（极端参数也不越界）', () => {
+    // 十五个字段要写全 —— 新加的七个（自然饱和度 / 色彩平衡 / 分离色调）**不进
+    // CPU 模型**（`tone.ts` 本批不动，见设计 §4：它只给「照着这张调」拟合六个），
+    // 从中立 0 长起来就对了；"极端"说的是这个模型真正消费的那些参数。
     const extreme = toUnit({
+      ...ZERO,
       exposure: 100, contrast: 100, highlights: 100, shadows: 100,
       saturation: 100, temperature: 100, clarity: 100, vignette: 100,
     })
