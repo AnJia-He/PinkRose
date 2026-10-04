@@ -166,13 +166,16 @@ describe('专业面板新增的 7 个参数（2026-10-04）', () => {
     ])
   })
 
-  it('每个键都有一行范围、一个界面名，而且分组不重不漏', () => {
+  it('每个键都有一行范围、一个界面名，而且分组顺序就是 PARAM_KEYS 顺序', () => {
     for (const k of PARAM_KEYS) {
       expect(PARAM_RANGE[k], `${k} 没有范围`).toBeTruthy()
       expect(PARAM_LABELS[k], `${k} 没有界面名`).toBeTruthy()
     }
-    const inGroups = PARAM_GROUPS.flatMap(g => g.keys)
-    expect([...inGroups].sort()).toEqual([...PARAM_KEYS].sort())   // 不重不漏
+    // ★ 2026-10-04 终审勘误：原来两边各 `sort()` 一次 = 只钉了**集合相等** ——
+    // 组里把参数换个次序（面板顺序 ≠ `PARAM_KEYS` 顺序）它照样绿，而
+    // `shared/adjustments.ts` 那三条注释都写着"顺序 = 面板顺序 = 显示顺序"。
+    // 去掉 sort 逐序比：顺序一漂当场红（不重不漏顺带仍在其中）。
+    expect(PARAM_GROUPS.flatMap(g => g.keys)).toEqual([...PARAM_KEYS])
   })
 
   it('色相是 0~360、强度是 0~100，其余仍是 -100~100', () => {
