@@ -23,6 +23,13 @@ export type Limiter = {
   hit(key: string): HitResult
   /** 额度清零（登录成功之后用 —— 别让"打错的几次"攒着） */
   reset(key: string): void
+  /**
+   * **退掉最近记的那一次**（2026-10-04 加）：这次调用没给用户任何东西时还回去。
+   * 现在唯一的用处是改图那条路的日额度 —— 上游自己挂了（5xx / 限流 / 网络），
+   * 用户什么也没拿到，不该占掉他今天的一次。
+   * ⚠️ 本来没记过就什么也不做（幂等）。
+   */
+  refund(key: string): void
   /** 现在记着多少个 key（测试和排查用） */
   size(): number
 }
@@ -75,6 +82,16 @@ export function createLimiter(opts: LimiterOptions): Limiter {
 
     reset(key: string): void {
       hits.delete(key)
+    },
+
+    refund(key: string): void {
+      const list = hits.get(key)
+      if (!list || list.length === 0) return
+      list.pop()
+      if (list.length === 0) { hits.delete(key); return }
+      // 和 hit 一样把它排到最后（"刚被碰过"），淘汰老 key 的口径才一致
+      hits.delete(key)
+      hits.set(key, list)
     },
 
     size(): number {

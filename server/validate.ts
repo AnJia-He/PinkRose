@@ -8,6 +8,17 @@ const FALLBACK_PROMPT_MAX = 200
 
 const FALLBACK_REPLY = '我没太看明白，先按你说的试了一下。'
 
+/**
+ * 需要"点一下澄清"那条路上的兜底 —— **不能**用上面那句。
+ *
+ * ★ 2026-10-04 修（spec `2026-09-24-accounts-and-gallery-design.md` 第 1275 行
+ *   早就写下了这个毛病和补法，一直没动）：那一支是**先问再做** —— 生成被拦下、
+ *   参数也没动，"先按你说的试了一下"是**假话**；而且它会紧挨着界面下一句
+ *   「在图上点一下要改的地方？」出现，两句连着读互相打架。
+ * ⚠️ 上面那句**一个字都不许改**：§4.7 的降级那条路正在用它（那条路是真的试了）。
+ */
+const FALLBACK_REPLY_ASK = '我没太看明白。'
+
 export function inferRoute(hasParams: boolean, hasEdit: boolean): Route {
   if (hasParams && hasEdit) return 'both'
   if (hasEdit) return 'generate'
@@ -79,7 +90,11 @@ export function parseDecision(raw: unknown, userText = ''): RouteDecision {
   const routeIsValid = typeof rawRoute === 'string' && (ROUTES as readonly string[]).includes(rawRoute)
   const route = routeIsValid ? (rawRoute as Route) : inferRoute(hasParams, hasEdit)
 
-  const reply = typeof obj.reply === 'string' && obj.reply.trim() ? obj.reply.trim() : FALLBACK_REPLY
+  // 先算它，因为兜底文案要按它分岔（见 FALLBACK_REPLY_ASK 那段）
+  const needsDisambiguation = obj.needs_disambiguation === true || obj.needsDisambiguation === true
+  const reply = typeof obj.reply === 'string' && obj.reply.trim()
+    ? obj.reply.trim()
+    : (needsDisambiguation ? FALLBACK_REPLY_ASK : FALLBACK_REPLY)
 
   // degraded 的语义是"这次的结果不是模型老实给的"：
   //   - route 不在枚举里（实测出现过 "ask"），说明它没守格式
@@ -94,7 +109,6 @@ export function parseDecision(raw: unknown, userText = ''): RouteDecision {
   // 声明的路由和实际内容对不上时，以**内容**为准：
   // 说 params 却给了 edit_prompt 却没有 deltas，那就是一次生成。
   const effectiveRoute = reconcile(route, hasParams, hasEdit)
-  const needsDisambiguation = obj.needs_disambiguation === true || obj.needsDisambiguation === true
 
   // ★ §7.2（2026-09-30）：「模型吐出来的东西**一件也用不上**」时，别停在这儿 —— 走 §4.7 的降级。
   //

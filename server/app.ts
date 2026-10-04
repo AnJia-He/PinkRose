@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { existsSync, createReadStream, statSync } from 'node:fs'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import { KEY_REQUIRED } from '../shared/copy.ts'
+import { normalizeUsername } from '../shared/account.ts'
 import {
   findUserByCookie, handleChangePassword, handleLogin, handleSignup,
   type AccountDeps, type PublicUser,
@@ -28,6 +29,7 @@ import {
   handleSessionFile, handleSessionStepFile, handleSessionThumb, handleUpdateSession,
 } from './sessions.ts'
 import type { Storage } from './storage.ts'
+import { SnError } from './sn.ts'
 import { handleSuggest } from './suggest.ts'
 import {
   handleCreateWork, handleDeleteWork, handleDeleteWorks, handleGetWork,
@@ -80,6 +82,13 @@ const MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
+  // ★ 2026-10-04 补的三种：dist 里真的有（品牌字 .woff2、落地页 .webp），
+  //   而这张表里没有的扩展名会以 application/octet-stream 发出去 ——
+  //   字体被当二进制流，有些浏览器直接不认。
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.webp': 'image/webp',
+  '.txt': 'text/plain; charset=utf-8',
 }
 
 /**
@@ -236,7 +245,11 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       const body = await readJsonBody(req)
       // 按**用户名**记（小写、截断）—— 理由见 newGates 那段。
       // 名字读不出来时用一个固定桶：那是畸形请求，也该被限住。
-      const who = str((body as { username?: unknown })?.username).trim().toLowerCase().slice(0, 64) || '(空)'
+      // ★ 2026-10-04：这里原来自己写 `trim().toLowerCase()`，而**认人**那条路
+      //   还会折中点（`·` 的三种写法，见 shared/account.ts 的 normalizeUsername）——
+      //   于是含中点的账号能拿三种写法各试 10 次，等于把 10 次的线变成 30 次。
+      //   闸门的 key 必须和认人**同一套归一化**，否则限的是另一种名字。
+      const who = normalizeUsername(str((body as { username?: unknown })?.username)).slice(0, 64) || '(空)'
       const gate = `login:${who}`
       assertGate(gates.login, gate, '登录')
       const r = await handleLogin(body, deps.auth)
@@ -567,11 +580,14 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       if (!deps.clients || !deps.queue) {
         throw new HttpError('INTERNAL', '后端没有配置模型客户端', 503)
       }
-      // ★ 日额度这一道**放在 503 之后**：后端没接线是**我们这边**的问题，
-      //   不该顺手把用户当天的额度记掉。放在这里（而不是 route/suggest 那两条）
-      //   是因为**只有它会真的花那 12,900 tokens**。
-      assertDailyQuota(gates.edit, `edit:${user.id}`)
+      // ★ 日额度这一道的两件事**放在读完请求体之后**：
+      //   · 503 那条（上面）：后端没接线是**我们这边**的问题，不该记用户的额度；
+      //   · 读 body 这条（2026-10-04 补）：原来记在读之前 —— 一个 400/413 的坏请求
+      //     也会白占掉今天的一次。
+      //   放在 /api/edit（而不是 route/suggest 那两条）是因为**只有它会真的花 12,900 tokens**。
       const body = await readJsonBody(req)
+      const editKey = `edit:${user.id}`
+      assertDailyQuota(gates.edit, editKey)
       // ★ 2026-09-30（「停止」按钮）：**用户走了，我们也要停。**
       //
       //   前端按停止 → 浏览器掐断这次连接 → 这里拿到 close。
@@ -593,9 +609,19 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       //   所以图片的钥匙填错了，对话完全不受影响。取客户端放在读完请求体之后，
       //   理由同 /api/route（别让读 12 MB 的每一毫秒都白等一次解密 + 查询）。
       const { image } = await resolveClients(user, deps.clients)
-      sendJson(res, 200, await handleEdit(body, {
-        client: image, queue: deps.queue, signal: ac.signal,
-      }))
+      try {
+        sendJson(res, 200, await handleEdit(body, {
+          client: image, queue: deps.queue, signal: ac.signal,
+        }))
+      } catch (e) {
+        // ★ 2026-10-04：**上游自己挂了**（5xx / 限流 / 网络）→ 用户什么也没拿到，
+        //   把今天这一次退回去（`SnError.retryable` 正好就是这一类）。
+        //   ⚠️ **用户按停止不退**：那个请求已经发出去、上游可能照跑过一段，
+        //   而且"取消不计数"会给一条"反复取消"的循环留口子。内容被上游拒（4xx）
+        //   也不退 —— 那是用户这边的输入问题。
+        if (e instanceof SnError && e.retryable) gates.edit.refund(editKey)
+        throw e
+      }
       return
     }
     throw new HttpError('BAD_REQUEST', `没有这个接口：${path}`, 404)

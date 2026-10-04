@@ -8,8 +8,9 @@
 
    ⚠️ **为什么非加前缀不可**：App 的 `styles.css` 里也有 `.nav` 和 `.brand`
    —— 那边是**左边一条 92px 的竖栏**，这边是**顶上一条通栏**。同名的两个东西
-   长得完全不像，将来谁改一边准保踩到另一边。`--accent` 同理：这边是**黄色**，
-   App 那边是**粉玫瑰**。加了前缀之后，"这份文件里的东西只属于这份文件"。
+   长得完全不像，将来谁改一边准保踩到另一边。`--accent` 同理：两边各自一支
+   强调色（2026-10-01 起同源，但仍是两份令牌）。加了前缀之后，"这份文件里的
+   东西只属于这份文件"。
 
    ★ 2026-10-01 第二次改：**这套配色从"另立门户"改成"和 App 同源"**。
 
@@ -110,8 +111,8 @@
 .lp :where(h1, h2, h3, p, figure, ul, blockquote) { margin: 0; padding: 0; }
 .lp img { display: block; max-width: 100%; }
 
-/* 这一页的焦点环跟着自己的强调色走。全局那条用的是 App 的粉
-   （`--accent`），在这样一张浅底黄点缀的页面上是跑错片场。 */
+/* 这一页的焦点环跟着自己的强调色走。全局那条跟着 App 的 `--accent`，
+   而这一页有自己的 `--lp-accent`（两份令牌，见文件头那段）。 */
 .lp :focus-visible { outline: 2px solid var(--lp-accent); outline-offset: 3px; }
 
 .lp-wrap { max-width: 1280px; margin: 0 auto; padding: 0 40px; }
@@ -242,7 +243,7 @@
    于是键盘用户 Tab 到它上面时**屏上什么都不会变**，而左右方向键其实正在改它
    （2026-09-30 走纯键盘抓到的，`npm run check:layout` 里那条判据现在守着）。
    所以改成"**元素本身可见、只是渲染成透明**"：去掉 opacity，改用
-   透明底 + 透明的滑轨和滑块 —— 这样 `.lp :focus-visible` 给它那圈黄框
+   透明底 + 透明的滑轨和滑块 —— 这样 `.lp :focus-visible` 给它那圈焦点框
    就真的画得出来了。 */
 .lp-ba input {
   position: absolute; inset: 0; width: 100%; height: 100%;

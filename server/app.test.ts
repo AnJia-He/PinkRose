@@ -1738,4 +1738,45 @@ describe('★ 每天能改多少：付费那条接口的日额度', () => {
     // 另一个人第一次打，不该受影响
     expect((await post(base, '/api/edit', editBody, cookieB)).status).toBe(200)
   })
+
+  /**
+   * ★ 2026-10-04 补的两条（审计 F4）。原来记账发生在**读体之前**：一个 400/413 的
+   *   坏请求也会白占掉今天的一次；上游自己挂了（5xx/网络）也一样记 —— 而那条路
+   *   用户**什么也没拿到**。
+   */
+  it('★ 读不出 JSON 的坏请求不占今天的额度（记账挪到读完 body 之后）', async () => {
+    const { base, cookie } = await appWithUser(editUpstream())
+    const bad = await fetch(`${base}/api/edit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: '这根本不是 JSON',
+    })
+    expect(bad.status).toBe(400)
+    // 坏请求如果记了一笔，下面第 20 次成功就会变成"今天的第 21 次"→ 429
+    for (let i = 0; i < 20; i++) {
+      expect((await post(base, '/api/edit', editBody, cookie)).status, `第 ${i + 1} 次`).toBe(200)
+    }
+    expect((await post(base, '/api/edit', editBody, cookie)).status).toBe(429)
+  })
+
+  it('★ 上游自己挂了 → 这一次退回：用户什么也没拿到，不该占今天的额度', async () => {
+    let calls = 0
+    const impl = (async () => {
+      calls++
+      // 前 4 次 = 队列的四次尝试（5xx 可重试），全挂；从第 5 次起正常
+      return calls <= 4
+        ? new Response('{"error":{"message":"boom"}}', { status: 500 })
+        : new Response('{"data":[{"b64_json":"AAAA"}]}', { status: 200 })
+    }) as unknown as typeof fetch
+    const { base, cookie } = await appWithUser({
+      clients: stubClients(impl), queue: new SerialQueue({ sleep: async () => {} }),
+    })
+    const failed = await post(base, '/api/edit', editBody, cookie)
+    expect(failed.status).toBe(502)     // UPSTREAM_FAILED
+    // 挂掉那一次没占额度 → 后面整整 20 次都能成功
+    for (let i = 0; i < 20; i++) {
+      expect((await post(base, '/api/edit', editBody, cookie)).status, `第 ${i + 1} 次`).toBe(200)
+    }
+    expect((await post(base, '/api/edit', editBody, cookie)).status).toBe(429)
+  })
 })

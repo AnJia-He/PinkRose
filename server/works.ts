@@ -155,8 +155,10 @@ export function toMeta(row: WorkRow): WorkMeta {
  * 客户端才好自己分组、搜索、按 60 张一摆地懒加载（裁定 ③）。
  */
 export function handleListWorks(user: PublicUser, deps: WorksDeps): { works: WorkMeta[] } {
+  // ⚠️ 不带 `recipe`（2026-10-04）：列表只要元数据，而配方是整块 JSON ——
+  //    每一行都白捞一次（详情页那条 handleGetWork 才要它）。
   const rows = deps.db.raw.prepare(
-    `SELECT id, user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias, recipe
+    `SELECT id, user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias
      FROM works WHERE user_id = ? ORDER BY updated_at DESC`,
   ).all(user.id) as unknown as WorkRow[]
   return { works: rows.map(toMeta) }

@@ -76,4 +76,28 @@ describe('createLimiter', () => {
     for (let i = 0; i < 10; i++) lim.hit(`old${i}`)
     expect(lim.hit('newcomer').ok).toBe(true)
   })
+
+  /**
+   * ★ 2026-10-04 加的方法。唯一的用处：改图那条路的**日额度** ——
+   *   上游自己挂了（5xx / 限流 / 网络），用户什么也没拿到，那一次退回去。
+   */
+  it('★ refund：退掉最近记的那一次', () => {
+    const lim = createLimiter({ max: 1, windowMs: 1000, now: at(0) })
+    expect(lim.hit('a').ok).toBe(true)
+    expect(lim.hit('a').ok).toBe(false)
+    lim.refund('a')
+    expect(lim.hit('a').ok).toBe(true)   // 退回来之后又是一次完整的额度
+  })
+
+  it('refund 是幂等的 —— 没记过的 key / 多退一次都不出事', () => {
+    const lim = createLimiter({ max: 2, windowMs: 1000, now: at(0) })
+    lim.refund('nobody')                 // 没记过：什么也不做
+    expect(lim.size()).toBe(0)
+    lim.hit('a')
+    lim.refund('a')
+    lim.refund('a')                      // 多退的那一次不该把额度退过了头
+    expect(lim.hit('a').ok).toBe(true)
+    expect(lim.hit('a').ok).toBe(true)
+    expect(lim.hit('a').ok).toBe(false)  // 上限还是 2
+  })
 })

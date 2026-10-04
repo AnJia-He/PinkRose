@@ -104,6 +104,23 @@ describe('parseDecision', () => {
     expect(parseDecision({ ...GOOD, reply: 123 }).reply.length).toBeGreaterThan(0)
   })
 
+  it('★ 需要点选澄清时，兜底**不许说"先按你说的试了一下"** —— 那一支什么都没做', () => {
+    // 2026-10-04 修（spec 第 1275 行早写下的毛病）：模型说"我不确定"但没给自己的
+    // 回复时，兜底原来吐「我没太看明白，先按你说的试了一下。」—— 而这一路
+    // 生成被拦下、参数也没动，是句假话；紧接着界面又问「在图上点一下」，
+    // 两句连着读互相打架。补法：这一支给中性的一句。
+    const d = parseDecision({ needs_disambiguation: true, param_deltas: {} }, '把那个去掉')
+    expect(d.reply.length).toBeGreaterThan(0)
+    expect(d.reply).not.toContain('试')
+  })
+
+  it('对照：普通兜底**仍然**说"试了一下"（降级那条路是真的试了）', () => {
+    // 上面那条的另一半 —— 少了它，一个"把 FALLBACK_REPLY 直接删掉"的改法照样绿，
+    // 而 §4.7 降级那条路（拿用户原话真的跑了一次）就丢了它该说的话。
+    const d = parseDecision({ route: 'params', param_deltas: {} })
+    expect(d.reply).toContain('试了一下')
+  })
+
   it('needs_disambiguation 非布尔时一律 false（宁可少问，不要卡住）', () => {
     expect(parseDecision({ ...GOOD, needs_disambiguation: 'yes' }).needsDisambiguation).toBe(false)
     expect(parseDecision({ ...GOOD, needs_disambiguation: true }).needsDisambiguation).toBe(true)

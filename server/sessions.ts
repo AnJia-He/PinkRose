@@ -149,8 +149,11 @@ export async function handleCreateSession(
 }
 
 export function handleListSessions(user: PublicUser, deps: SessionsDeps): { sessions: SessionMeta[] } {
+  // ⚠️ 原来是 `SELECT *`（2026-10-04 收窄）：`messages` 每行最多 200 条 × 2000 字，
+  //    而列表只用得上 toMeta 那几个字段 —— 每一行都白捞一遍整段对话。
   const rows = deps.db.raw.prepare(
-    'SELECT * FROM sessions WHERE user_id = ? ORDER BY updated_at DESC',
+    `SELECT id, title, original_name, created_at, updated_at, thumb, steps
+     FROM sessions WHERE user_id = ? ORDER BY updated_at DESC`,
   ).all(user.id) as unknown as SessionRow[]
   return { sessions: rows.map(toMeta) }
 }
