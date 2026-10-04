@@ -163,6 +163,19 @@
   --glass-hi: rgba(255, 255, 255, .9);    /* 那一面**顶边**的一道高光 */
   --glass-hover: rgba(18, 20, 28, .045);  /* 磨砂面上"一行"的悬停（比 --hover 淡得多） */
   --hair: rgba(18, 20, 28, .07);          /* 面上**行与行之间**那条线（比 --line 淡） */
+  /* 悬着/亮着那颗导航按钮身上的三样（★ 2026-10-04 从 `.nav-item` 收进来的裸值：
+     上半那道**渐隐的白高光**、顶边一条更亮的**内高光**、底下一层**柔影**）。
+     ⚠️ 这四个**两种模式共用**（底色换过、但亮点那颗一直压在强调蓝上，白高光
+        在两边同理；柔影用的近黑在深底上本来就几乎看不见，沿用旧值 = 零视觉变化）。 */
+  --glass-sheen: rgba(255, 255, 255, .26);
+  --glass-edge: rgba(255, 255, 255, .45);
+  --glass-drop: rgba(18, 20, 28, .35);
+  --glass-drop-2: rgba(18, 20, 28, .5);
+  /* 登录页那两层光晕（★ 也是 2026-10-04 收的裸值）。底下那层是"强调色那一档
+     压得很淡"—— 主色改了就改这里（改色的账：10-01 → 10-03 换成蓝，= accent-700
+     那一档）。深色版在两处都要**换回来**，理由在原处。 */
+  --login-glow-top: rgba(255, 255, 255, .72);
+  --login-glow-corner: rgba(18, 67, 154, .16);
   /* 页面底上那层柔光：一束从右上来、一束从左中、右下角一点点压暗 —— 三束都很淡，
      为的是"有空气"，不是"看得出有渐变"。⚠️ 它**不上颜色**（理由在 `.shell` 那段）。 */
   --wash:
@@ -264,6 +277,10 @@
     --glass-hi: rgba(255, 255, 255, .07);
     --glass-hover: rgba(255, 255, 255, .08);
     --hair: rgba(255, 255, 255, .09);
+    /* 登录页那两层光晕**又要换回来**：顶上那层白光在深底上太亮（.72 会糊成
+       一片灰雾），底下那层强调色反而是深底上唯一看得见的一层。 */
+    --login-glow-top: rgba(255, 255, 255, .06);
+    --login-glow-corner: rgba(27, 98, 214, .26);
     --wash:
       radial-gradient(760px 420px at 88% -12%, rgba(255, 255, 255, .07), transparent 62%),
       radial-gradient(700px 480px at -14% 32%, rgba(255, 255, 255, .04), transparent 60%),
@@ -390,16 +407,16 @@ body {
 }
 .nav-item:hover {
   background: var(--glass-hover); color: var(--text);
-  box-shadow: inset 0 1px 0 var(--glass-hi), 0 4px 10px -6px rgba(18, 20, 28, .35);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 4px 10px -6px var(--glass-drop);
 }
 /* 亮着的那一颗：**一片有高光的玻璃**，不是一块平蓝（用户说的"光滑"就是它）。
    三件东西叠出来的：上半渐隐的白高光、顶边一条更亮的内高光、底下一层柔影
    让它从栏上浮起来。底色还是那支蓝，白字照旧。 */
 .nav-item.on {
   background-color: var(--accent);
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, .26), rgba(255, 255, 255, 0) 62%);
+  background-image: linear-gradient(180deg, var(--glass-sheen), transparent 62%);
   border-color: var(--accent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45), 0 6px 16px -10px rgba(18, 20, 28, .5);
+  box-shadow: inset 0 1px 0 var(--glass-edge), 0 6px 16px -10px var(--glass-drop-2);
   color: var(--accent-ink); font-weight: 600;
 }
 /* ★ 2026-10-03：左栏最底下那两颗（回门面的「产品介绍」和「个人设置」，见 Nav.tsx）。
@@ -1142,22 +1159,22 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   /* ⚠️ 2026-10-01 翻粉底时这两层光晕**换了角色**：粉底上再加粉光是看不见的
      （原来深底上"加一层粉"才看得见），所以顶上那层改成白光（把卡片上方提亮），
      底下那层留一点品牌玫瑰压住角落。位置、大小一个字没动。
-     ⚠️ 底下那层里的 rgb 是**强调色那两档的裸值** —— 主色改了就跟着改
-     （改色的账：10-01 第二次定色 203,139,207 → 195,65,126（旧玫瑰）；
-       10-03 换成蓝 195,65,126 → 18,67,154（= accent-700 那一档））。 */
+     ⚠️ 2026-10-04：两个色值**收进令牌**（`--login-glow-top` / `--login-glow-corner`，
+     见文件头玻璃面那段）—— 原来是裸值 + 一句"主色改了就跟着改"的口头约定。 */
   background:
-    radial-gradient(58% 42% at 50% 0%, rgba(255, 255, 255, .72), transparent 72%),
-    radial-gradient(46% 34% at 8% 100%, rgba(18, 67, 154, .16), transparent 72%),
+    radial-gradient(58% 42% at 50% 0%, var(--login-glow-top), transparent 72%),
+    radial-gradient(46% 34% at 8% 100%, var(--login-glow-corner), transparent 72%),
     var(--bg);
 }
 /* ⚠️ 深色模式下这两层光晕**又要换回来**：顶上那层白光在深底上太亮
    （.72 会糊成一片灰雾），底下那层强调色反而是深底上唯一看得见的一层。
-   这不是"两份配置各自为政"—— 是同一个意思在两种底上**要用不同的做法**。 */
+   这不是"两份配置各自为政"—— 是同一个意思在两种底上**要用不同的做法**。
+   （2026-10-04：两个值进了深色 :root 的令牌，这里只留 `.login` 的用法。） */
 @media (prefers-color-scheme: dark) {
   .login {
     background:
-      radial-gradient(58% 42% at 50% 0%, rgba(255, 255, 255, .06), transparent 72%),
-      radial-gradient(46% 34% at 8% 100%, rgba(27, 98, 214, .26), transparent 72%),
+      radial-gradient(58% 42% at 50% 0%, var(--login-glow-top), transparent 72%),
+      radial-gradient(46% 34% at 8% 100%, var(--login-glow-corner), transparent 72%),
       var(--bg);
   }
 }
