@@ -951,9 +951,16 @@ export default function App() {
    * ⚠️ **参考图用完就关**（`bitmap.close()`）：`decodeImageFile` 给的位图占的是
    *   GPU 内存，为采一次色一直留着它不值 —— 这个项目为这件事写过好几处注释。
    *
-   * ⚠️ **它盖掉的是六个参数，清晰度和暗角原样留着**（`MatchedTone` 只有六个键，
-   *   想整份替换过不了 typecheck）。那两个跟"参考图长什么样"没关系：
-   *   暗角是构图选择，清晰度是局部细节。
+   * ⚠️ **合流点做三件事**（少写哪一条，屏幕上那套颜色就和拟合的世界对不上）：
+   *   ① 六个拟合参数被**换掉**（`MatchedTone` 只有六个键 —— 想整份替换过不了
+   *      typecheck）；
+   *   ② **五条参与颜色的新参数被归零**（自然饱和度 / 三条色彩平衡 / 分离色调强度）：
+   *      拟合是从 `ZERO` 起跑的，它的世界里这五条就是 0 —— 用户先拖过色彩平衡
+   *      再"照着调"，不归零的话结果里会**悄悄混进**拟合没看过的色偏，而画面
+   *      看起来"就是有点不对"，无从排查。两条**色相不归零**（强度为 0 时它们
+   *      本来就不起作用，清掉反而是丢用户挑的颜色）；
+   *   ③ 清晰度和暗角**原样留着**：那两个跟"参考图长什么样"没关系 ——
+   *      暗角是构图选择，清晰度是局部细节。
    *
    * ⚠️ **故意不弹"这个色调我做不到满分"之类的提示。** 2026-10-02 量过：
    *   八张真实旅游照两两配对（56 对），**48 对**的残差超过肉眼阈值，
@@ -969,7 +976,19 @@ export default function App() {
       // 传的是 `image.bitmap` 而不是 `image`：`Sizable` 要的是"能 drawImage 的东西"
       // 且自带宽高，而 `DecodedImage` 是个壳（位图在 `.bitmap` 上）。
       const { params: matched } = matchToReference(samplePixels(image.bitmap), samplePixels(ref.bitmap))
-      setParams(p => ({ ...p, ...matched }))
+      setParams(p => ({
+        ...p,
+        ...matched,
+        // ★ 2026-10-04：五条参与颜色的新参数归零 —— 拟合从 `ZERO` 起跑，它的世界里
+        //   这五条就是 0（理由见上面那段 ⚠️）。逐条写死（同 `clampAdjustments` 那条
+        //   道理：漏掉一条，编译期就红 —— 返回值必须是完整的 `Adjustments`）。
+        //   两条色相**故意不在这儿**：强度为 0 时它们本来就不起作用。
+        vibrance: 0,
+        cbCyanRed: 0,
+        cbMagentaGreen: 0,
+        cbYellowBlue: 0,
+        splitAmount: 0,
+      }))
     } catch {
       noticeBad('这张参考图打不开，换一张试试')
     } finally {

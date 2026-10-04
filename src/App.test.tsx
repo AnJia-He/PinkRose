@@ -127,6 +127,15 @@ vi.mock('./image/decode', async (importOriginal) => {
   return { ...actual, decodeImageFile: vi.fn() }
 })
 
+/** 「照着这张调」那一步要读像素（源图、参考图各采一遍），要 2D 画布，jsdom 没有。
+ *  ⚠️ 假掉的**只有"读像素"这一下**：`samplePixels` 拿到什么内容由各用例自己给，
+ *  而 `matchToReference` 本身**真的跑** —— 合流语义正是它和 `setParams` 交界处的
+ *  事，假掉拟合就等于把要测的东西一起假掉了。 */
+vi.mock('./image/sample', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./image/sample')>()
+  return { ...actual, samplePixels: vi.fn() }
+})
+
 /** 三个网络出口。**保留真的 ApiError** —— App 里靠 `instanceof ApiError`
  *  决定给用户看哪句话，假掉它就把错误路径一起假掉了。 */
 vi.mock('./api/client', async (importOriginal) => {
@@ -137,6 +146,7 @@ vi.mock('./api/client', async (importOriginal) => {
 import App from './App'
 import { formatSize, modelValue } from './ui/AccountPage'
 import type { PublicConfig } from './api/models'
+import { matchToReference, type Rgb } from './core/colorMatch'
 import * as decodeMod from './image/decode'
 import * as prepareMod from './image/prepare'
 import * as api from './api/client'
@@ -145,6 +155,7 @@ import * as resizeMod from './image/resize'
 import * as saveMod from './export/save'
 import * as thumbMod from './core/thumbnail'
 import * as markMod from './image/mark'
+import * as sampleMod from './image/sample'
 
 // ── 每张"底"带一个记号，好认出送上去的到底是哪一张 ──────────────────
 let bitmapSeq = 0
@@ -392,6 +403,10 @@ beforeEach(() => {
 
   // 上传染回来的那张底（包一层：要用的是它的 .bitmap）
   vi.mocked(decodeMod.decodeImageFile).mockResolvedValue(fakeDecoded('upload'))
+  // 「照着这张调」的两个采样点：jsdom 里读不了像素，默认给一块中性灰。
+  // 只有照调那条用例会覆盖它（覆盖成"源图和参考图分得开"的假数据 ——
+  // 拟合要真的算出一个不为零的结果）。
+  vi.mocked(sampleMod.samplePixels).mockReturnValue([[128, 128, 128]])
   // 路由用它（模拟"当前看到的画面"）
   vi.mocked(prepareMod.prepareForRouting).mockResolvedValue({
     dataUrl: 'data:image/jpeg;base64,ROUTING', width: 512, height: 341,
@@ -2452,6 +2467,80 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(container.querySelector('.welcome')).toBeTruthy()
     expect(container.querySelector('.empty-state')).toBeNull()
     expect(格子()).toContain('调色')      // 而那一格**还在**
+  })
+})
+
+/**
+ * ★ 2026-10-04（「专业面板」终审 I1）：**「照着这张调」的合流语义**。
+ *
+ * 拟合（`core/colorMatch.ts`）从 `ZERO` 起跑，产出的是**六个参数的绝对值** ——
+ * 它的世界里，这一批新加的七条参数全是 0。可用户完全可能先拖过色彩平衡、
+ * 分离色调强度，再点「照着这张调」：合流点要是不把那五条**参与颜色的**新参数
+ * 归零，屏幕上那套颜色就**不是**拟合算过的那套（结果里混进拟合没看过的色偏，
+ * 而且不报错）。清晰度 / 暗角相反 —— 它们是构图与局部细节，照旧保留。
+ *
+ * 这一条走的是**真链路**：文件选择器 → `decodeImageFile`（假）→ `samplePixels`
+ * （假：jsdom 没有 2D 画布）→ `matchToReference`（**真**）→ `setParams`。
+ * 拟合本身一个字节没假 —— 假掉它，这条测的就只剩"我把自己的假设测了一遍"。
+ */
+describe('★ 「照着这张调」：拟合的世界 = 看到的世界（2026-10-04）', () => {
+  /** 源图（上传的那张）与参考图的采样点。几个点就够 —— 拟合看的是色彩分布。 */
+  const SRC: Rgb[] = [[96, 92, 88], [128, 120, 112], [160, 150, 140], [80, 84, 90]]
+  const REF: Rgb[] = [[168, 158, 140], [196, 184, 164], [150, 152, 140], [140, 142, 150]]
+
+  it('★ 套用参考图：六条换拟合值、五条参与颜色的归零；清晰度/暗角原样留着', async () => {
+    await renderApp()
+    await uploadPhoto()
+
+    // ① 先制造"用户已经拖过新参数"的现场（走模型那条路 —— 和改参数同一个入口）。
+    //    顺带带上清晰度 / 暗角：它们待会儿是**要被留住**的那两条。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({
+      route: 'params',
+      paramDeltas: {
+        vibrance: 30, cbYellowBlue: 60, splitAmount: 40, splitHiHue: 200,
+        clarity: 20, vignette: -30,
+      },
+      reply: '调好了。',
+    }))
+    await say('调个色')
+    expect(canvasProps.props.at(-1)?.params).toMatchObject({
+      vibrance: 30, cbYellowBlue: 60, splitAmount: 40, clarity: 20, vignette: -30,
+    })
+
+    // ② 「照着这张调」那颗按钮住在调色面板里 —— 先到那一屏
+    await goNav('调色')
+
+    // 参考图那一趟：解码回一个带 'ref' 记号的位图；采样按记号分源图 / 参考图
+    vi.mocked(decodeMod.decodeImageFile).mockResolvedValueOnce(fakeDecoded('ref'))
+    vi.mocked(sampleMod.samplePixels).mockImplementation(
+      src => ((src as unknown as { __tag?: string }).__tag === 'ref' ? REF : SRC))
+    const refInput = container.querySelector('input.presets-ref-file') as HTMLInputElement
+    expect(refInput).toBeTruthy()
+    const file = new File(['x'], 'ref.jpg', { type: 'image/jpeg' })
+    Object.defineProperty(refInput, 'files', { value: [file], configurable: true })
+    await act(async () => {
+      refInput.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // ③ 合流之后画布上的参数。六个拟合键必须**逐值等于**直接调纯函数拿到的
+    //    （同一份输入、同一份代码，确定性 —— 比只断言"变没变"强）。
+    const { params: matched } = matchToReference(SRC, REF)
+    const after = canvasProps.props.at(-1)?.params ?? {}
+    for (const k of ['temperature', 'saturation', 'exposure', 'contrast', 'highlights', 'shadows'] as const) {
+      expect(after[k], `${k} 该是拟合值`).toBe(matched[k])
+    }
+    // ④ 五条参与颜色的新参数：拟合的世界里它们就是 0（不归零 = 色偏悄悄混进来）
+    expect(after.vibrance).toBe(0)
+    expect(after.cbCyanRed).toBe(0)
+    expect(after.cbMagentaGreen).toBe(0)
+    expect(after.cbYellowBlue).toBe(0)
+    expect(after.splitAmount).toBe(0)
+    // ⑤ 两条色相**不动**（强度归零它们本来就不起作用；顺手清掉反而是丢用户挑的颜色）
+    expect(after.splitHiHue).toBe(200)
+    // ⑥ 清晰度 / 暗角：构图与局部细节，不在"参考图长什么样"的世界里
+    expect(after.clarity).toBe(20)
+    expect(after.vignette).toBe(-30)
   })
 })
 
