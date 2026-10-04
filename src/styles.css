@@ -151,6 +151,23 @@
   --shadow-2: 0 6px 20px rgba(18, 20, 28, .08);
   --shadow-3: 0 16px 44px rgba(18, 20, 28, .12);
 
+  /* ── 玻璃面（★ 2026-10-04，「个人设置」那一页起的样板）────────────────
+     用户发来一张别人家的产品截图说「**人家的好有质感**」—— 拆开看，差的就是
+     这几件小事：面是**半透明的磨砂**（不是实心白贴上去）、行与行之间是
+     **发丝线**（不是硬描边）、底下铺着**一层很淡的光**（面才有的可透）。
+     这一族**先只用在「个人设置」那一页**（`.account` 那段写着为什么先做这一页、
+     以及往别的屏铺之前要想什么），别看见好看就到处刷。 */
+  --glass: rgba(255, 255, 255, .72);      /* 磨砂面的底（配 backdrop-filter 用） */
+  --glass-hi: rgba(255, 255, 255, .9);    /* 那一面**顶边**的一道高光 */
+  --glass-hover: rgba(18, 20, 28, .045);  /* 磨砂面上"一行"的悬停（比 --hover 淡得多） */
+  --hair: rgba(18, 20, 28, .07);          /* 面上**行与行之间**那条线（比 --line 淡） */
+  /* 页面底上那层柔光：一束从右上来、一束从左中、右下角一点点压暗 —— 三束都很淡，
+     为的是"有空气"，不是"看得出有渐变"。⚠️ 它**不上颜色**（理由在 `.account` 那段）。 */
+  --wash:
+    radial-gradient(760px 420px at 88% -12%, rgba(255, 255, 255, .95), transparent 62%),
+    radial-gradient(700px 480px at -14% 32%, rgba(255, 255, 255, .55), transparent 60%),
+    radial-gradient(900px 560px at 112% 118%, rgba(18, 20, 28, .045), transparent 58%);
+
   /* ── 动效 ──────────────────────────────────────────────────────────
      `--ease` 是那种"快起慢收"的曲线，落地页 v4 用的也是它。
      ⚠️ 每一处动效都要能被 `prefers-reduced-motion` 关掉（见文件末尾）。 */
@@ -235,6 +252,20 @@
     --shadow-1: 0 1px 2px rgba(0, 0, 0, .40);
     --shadow-2: 0 6px 20px rgba(0, 0, 0, .46);
     --shadow-3: 0 16px 44px rgba(0, 0, 0, .56);
+
+    /* ── 玻璃面（★ 2026-10-04，和浅色版同一个做法）────────────────────────
+       深底上"磨砂"= 提亮一点点的白（比 `--bg` 亮、落在 `--panel` 那一档），
+       顶边那道内高光几乎看不见 —— 深色里本来就没有"光从上面来"那套明暗。
+       悬停照旧**比面亮一档**（方向和 `--hover` 一致，只是淡得多；跟 `--glass`
+       同值就是"悬了等于没悬"，别写成一样的）。 */
+    --glass: rgba(255, 255, 255, .05);
+    --glass-hi: rgba(255, 255, 255, .07);
+    --glass-hover: rgba(255, 255, 255, .08);
+    --hair: rgba(255, 255, 255, .09);
+    --wash:
+      radial-gradient(760px 420px at 88% -12%, rgba(255, 255, 255, .07), transparent 62%),
+      radial-gradient(700px 480px at -14% 32%, rgba(255, 255, 255, .04), transparent 60%),
+      radial-gradient(900px 560px at 112% 118%, rgba(0, 0, 0, .30), transparent 58%);
   }
 }
 
@@ -1562,6 +1593,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   flex: 1; min-width: 0; min-height: 0;
   overflow-y: auto;
   padding: 0 20px 24px;
+  /* ★ 2026-10-04：底不再是一块死灰 —— 铺一层**很淡的光**（`--wash`，令牌那里）。
+     下面那张卡是磨砂的，而磨砂得**有东西可透**才成立：这块光就是它透的东西。
+     ⚠️ 光是**中性**的（白 + 一点灰），不上颜色 —— 「主框架一律无色」是文件头
+     那条产品规矩（彩色底会带偏看照片的颜色），要开彩色的头也不该从这一页开。 */
+  background-image: var(--wash);
 }
 /* ⚠️ 这里**没有**宽度上限那一层壳 —— 2026-10-04 一度有过（`.account-inner`，
    720px），是给"模型那一行太长了"加的**第一版**答案。用户当天第二次指着那一行说
@@ -1596,13 +1632,52 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    「模型选择条跟这个长度差不多就行」，配的是左栏那颗按钮的截图）。
    第一版是 `width: 100%`（1440 的屏上 1308px，一条横幅）；我先收成 720px 的一栏，
    用户还是嫌长 —— 他要的不是"窄一点的横条"，是**一颗按钮那么大**。
-   现在靠 `align-items: flex-start` 让它按内容收紧：一行就是"模型 ＋ 别名 ＋ ›"
+   现在靠 `width: fit-content` 让**整张卡**按内容收紧：一行就是"模型 ＋ 别名 ＋ ›"
    那么宽（十来字的别名也放得下），和下面那颗「退出登录」是同一种东西。
    ⚠️ 别再把它拉回满宽 —— 这一页因此也**不再需要**宽度上限那一层壳
-   （原来那层 `.account-inner` 已经删了：它本来就是为这一行加的）。 */
-.account-rows { display: flex; flex-direction: column; align-items: flex-start; margin-top: var(--sp-5); }
-.account-row { display: flex; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-4); text-align: left; }
+   （原来那层 `.account-inner` 已经删了：它本来就是为这一行加的）。
+
+   ★ 2026-10-04（当天第四遍，就是这一版）：用户发来一张别人家的产品截图说
+   「**人家的好有质感**」。那张图里"贵"的是四件小事，这一版全落在这儿：
+     ① **面是半透明磨砂**（`--glass` + `backdrop-filter`），浮在底上，不是实心白贴上去；
+     ② **没有硬描边** —— 行间那条线降到 `--hair` 那么淡，卡片自己靠**阴影**浮起来
+        （全局 `button` 那圈 `--line-2` 在这几行上被整组按掉，见下）；
+     ③ **形是圆的** —— 卡片 `--r-lg`、下面那颗按钮 `--r-pill`，一个方角都别留；
+     ④ **底下有一层很淡的光**给它透（`.account` 的 `--wash`，见上面那段）。
+   这一版**先只做这一页**，是样板 —— 往别的屏铺之前先想文件头那条
+   "主框架一律无色"（照片旁边能不能铺，是另一个问题）。 */
+.account-rows {
+  display: flex; flex-direction: column;
+  width: fit-content;
+  margin-top: var(--sp-5);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-lg);
+  /* 两层影子叠着用：近处一小道"贴地"的 + 远处一大片散开的；再借一道内高光
+     假装"光从上面来"打在磨砂面的顶边上（深色版里那道几乎看不见）。 */
+  box-shadow: var(--shadow-1), var(--shadow-2), inset 0 1px 0 var(--glass-hi);
+  overflow: hidden;   /* 行悬停那层底要跟着卡片的圆角一起裁 */
+}
+/* 行自己**不画框**：默认透明，鼠标压上去才浮出一层几乎看不见的底。
+   ⚠️ 下面这几条是在**按掉全局 `button` 那条长相**（`--raised` 底 + `--line-2` 边）——
+   少写一条，那一行就会重新长回一个方框（用户最早嫌的就是那个）。 */
+.account-row {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4); text-align: left;
+  background: transparent; border: 0; border-radius: 0;
+  /* 全局那条"按下缩 3%"（`button:where(:active)`）在这几行上关掉：一行是**面上
+     的一块**，缩进去会在卡片边上露出底下的磨砂。反馈走悬停那层底就够了。 */
+  transform: none;
+}
+.account-row + .account-row { border-top: 1px solid var(--hair); }
+/* 悬停那层底比全局 `--hover` 淡得多：`--hover` 是给"一整块面"用的，
+   这是"面上的一行"，整块面那样变色就太重了。 */
+.account-row:where(:hover):where(:not(:disabled)) { background: var(--glass-hover); }
+/* 焦点环往**里**收 2px：卡片会把往外扩的那一圈裁掉（`overflow: hidden`），
+   照全局那套（offset +2px）走，键盘用户只看得到半圈。 */
+.account-row:focus-visible { outline-offset: -2px; }
 .account-row-label { flex: 1; }
 /* 右边那个值（别名，或者「默认」）—— 它是**注解**，不是这一行的主句：
    压成 muted，扫一眼先看到「模型」，想看细节再看右边。 */
@@ -1610,8 +1685,25 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .account-row-go { color: var(--muted-2); }
 
 /* 退出登录**不穿主色**：主色在这套语言里是"这件正事"（分享 / 下载 / 保存），
-   而退出是"我要走了"。它是这一页唯一的动作，但不该比别处的正事更响。 */
-.account-signout { margin-top: var(--sp-6); }
+   而退出是"我要走了"。它是这一页唯一的动作，但不该比别处的正事更响。
+
+   ★ 2026-10-04：它从"和别处按钮同一个方角"变成一颗**药丸**（和上面那张卡同一批
+   "柔"的做法：圆角、白底、一线描边、一点点影子）。它**待在卡片外面** —— 上面那张
+   卡是"你在这儿的几项设置"，它是"离开这一页"，不是同一组东西，别顺手收进卡片里。 */
+.account-signout {
+  margin-top: var(--sp-6);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 8px 20px;
+  color: var(--muted);
+  box-shadow: var(--shadow-1);
+}
+/* 悬停**不变底色**，只是字浮上来 + 影子散开一点：它是这一页最轻的动作。 */
+.account-signout:where(:hover):where(:not(:disabled)) {
+  background: var(--panel); color: var(--text);
+  border-color: var(--line-2); box-shadow: var(--shadow-2);
+}
 
 /* ── 模型设置页（Task 9，§7.3 / §7.4） ────────────────────────────────
    和用户管理页同一个待遇：`.shell` 的直接子元素，所以必须自己滚 ——
