@@ -1,21 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { ZERO, PARAM_KEYS, PARAM_LABELS, isChanged, clampAdjustments, applyDeltas, toUnit } from './adjustments.ts'
+import {
+  ZERO, PARAM_KEYS, PARAM_RANGE, PARAM_GROUPS, PARAM_LABELS,
+  isChanged, clampAdjustments, applyDeltas, toUnit, type Adjustments,
+} from './adjustments.ts'
 
-describe('PARAM_KEYS', () => {
-  it('固定八个参数，名字不能改', () => {
-    expect(PARAM_KEYS).toEqual([
-      'exposure', 'contrast', 'highlights', 'shadows',
-      'saturation', 'temperature', 'clarity', 'vignette',
-    ])
-  })
-})
-
-describe('ZERO', () => {
-  it('八个字段全为 0', () => {
-    for (const k of PARAM_KEYS) expect(ZERO[k]).toBe(0)
-  })
-})
+// ⚠️ 这里原来有两条 `PARAM_KEYS 固定八个参数` / `ZERO 八个字段全为 0` 的
+//    describe —— 2026-10-04 参数层扩到 15 个之后，它们的断言（键数、键序）
+//    必然红，而**覆盖被下面「专业面板新增的 7 个参数」那一组的首尾两条完全
+//    包含**（15 键 + 顺序 / ZERO 全 0），所以直接删掉，不留两份同一个断言。
 
 describe('clampAdjustments', () => {
   it('把越界值钳到 [-100, 100]', () => {
@@ -77,29 +70,34 @@ describe('toUnit', () => {
     expect(toUnit({ ...ZERO, saturation: 50 }).saturation).toBe(0.5)
   })
 
-  it('八个通道各读各的字段（互不串位）', () => {
-    // 每个通道喂一个互不相同的值：若映射写错（例如 clarity 读成 contrast），
-    // 这条会立刻红。只抽样 4 个通道是抓不到串位的。
+  it('★ 十五个通道各读各的字段（互不串位）', () => {
+    // 每个通道喂一个互不相同的值：若映射写错（例如 clarity 读成 contrast、
+    // 或者色相被除了 100 而不是 360），这条会立刻红。只抽样几个通道是抓不到串位的
+    // —— 这条原来只抽样八个老的，2026-10-04 加参数时同步扩到十五个。
     const u = toUnit({
       exposure: 10, contrast: 20, highlights: 30, shadows: 40,
-      saturation: 50, temperature: 60, clarity: 70, vignette: 80,
+      temperature: 50, vibrance: 60, saturation: 70,
+      cbCyanRed: 80, cbMagentaGreen: 90, cbYellowBlue: 100,
+      splitHiHue: 180, splitLoHue: 270, splitAmount: 25,
+      clarity: 55, vignette: 65,
     })
-    expect(u.exposure).toBe(0.1)
-    expect(u.contrast).toBe(0.2)
-    expect(u.highlights).toBe(0.3)
-    expect(u.shadows).toBe(0.4)
-    expect(u.saturation).toBe(0.5)
-    expect(u.temperature).toBe(0.6)
-    expect(u.clarity).toBe(0.7)
-    expect(u.vignette).toBe(0.8)
+    expect(u).toEqual({
+      exposure: 0.1, contrast: 0.2, highlights: 0.3, shadows: 0.4,
+      temperature: 0.5, vibrance: 0.6, saturation: 0.7,
+      cbCyanRed: 0.8, cbMagentaGreen: 0.9, cbYellowBlue: 1,
+      splitHiHue: 0.5, splitLoHue: 0.75, splitAmount: 0.25,
+      clarity: 0.55, vignette: 0.65,
+    })
   })
 
   it('负值同样逐通道对应', () => {
     const u = toUnit({
+      ...ZERO,
       exposure: -10, contrast: -20, highlights: -30, shadows: -40,
       saturation: -50, temperature: -60, clarity: -70, vignette: -80,
     })
     expect(u).toEqual({
+      ...ZERO,
       exposure: -0.1, contrast: -0.2, highlights: -0.3, shadows: -0.4,
       saturation: -0.5, temperature: -0.6, clarity: -0.7, vignette: -0.8,
     })
@@ -107,14 +105,15 @@ describe('toUnit', () => {
 })
 
 describe('PARAM_LABELS', () => {
-  it('八个参数一个不少、一个不多', () => {
+  it('十五个参数一个不少、一个不多', () => {
     expect(Object.keys(PARAM_LABELS).sort()).toEqual([...PARAM_KEYS].sort())
   })
 
-  it('八条标签互不相同', () => {
+  it('每条标签互不相同', () => {
     // 变异：`contrast: '亮度'` 这种复制粘贴事故 —— 上面那条数键、这条管值，
     // 少了这条，两条参数在界面上会顶同一个名字，而所有别的断言都照绿。
-    expect(new Set(Object.values(PARAM_LABELS)).size).toBe(8)
+    // 数用 PARAM_KEYS.length 而不是写死 —— 加参数时这条跟着走，不许静默放宽。
+    expect(new Set(Object.values(PARAM_LABELS)).size).toBe(PARAM_KEYS.length)
   })
 
   it('exposure 显示成「亮度」，不是「曝光」', () => {
@@ -153,5 +152,67 @@ describe('isChanged', () => {
       // 变异：在任一处写回 `params[k] !== 0` / `value[k] !== 0` → 必须红
       expect(src, `${f} 里还有人自己判 null 值`).not.toMatch(/\w+\[k\]\s*!==\s*0/)
     }
+  })
+})
+
+describe('专业面板新增的 7 个参数（2026-10-04）', () => {
+  it('PARAM_KEYS 是 15 个，而且顺序就是面板顺序', () => {
+    expect(PARAM_KEYS).toEqual([
+      'exposure', 'contrast', 'highlights', 'shadows',
+      'temperature', 'vibrance', 'saturation',
+      'cbCyanRed', 'cbMagentaGreen', 'cbYellowBlue',
+      'splitHiHue', 'splitLoHue', 'splitAmount',
+      'clarity', 'vignette',
+    ])
+  })
+
+  it('每个键都有一行范围、一个界面名，而且分组不重不漏', () => {
+    for (const k of PARAM_KEYS) {
+      expect(PARAM_RANGE[k], `${k} 没有范围`).toBeTruthy()
+      expect(PARAM_LABELS[k], `${k} 没有界面名`).toBeTruthy()
+    }
+    const inGroups = PARAM_GROUPS.flatMap(g => g.keys)
+    expect([...inGroups].sort()).toEqual([...PARAM_KEYS].sort())   // 不重不漏
+  })
+
+  it('色相是 0~360、强度是 0~100，其余仍是 -100~100', () => {
+    expect(PARAM_RANGE.splitHiHue).toEqual([0, 360])
+    expect(PARAM_RANGE.splitLoHue).toEqual([0, 360])
+    expect(PARAM_RANGE.splitAmount).toEqual([0, 100])
+    expect(PARAM_RANGE.vibrance).toEqual([-100, 100])
+    expect(PARAM_RANGE.cbCyanRed).toEqual([-100, 100])
+  })
+
+  it('clamp 按各自的范围钳（色相不会被钳成 100）', () => {
+    const c = clampAdjustments({ ...ZERO, splitHiHue: 400, splitLoHue: -20, splitAmount: 300, cbCyanRed: 999 })
+    expect(c.splitHiHue).toBe(360)
+    expect(c.splitLoHue).toBe(0)
+    expect(c.splitAmount).toBe(100)
+    expect(c.cbCyanRed).toBe(100)
+  })
+
+  it('★ 缺新键的老 params（只有八根）→ 全部落成 0，一个 NaN 都不许有', () => {
+    // 形状照 2026-10-04 之前存进库里的那份（只有八个键）
+    const legacy = {
+      exposure: 10, contrast: -5, highlights: 0, shadows: 0,
+      saturation: 0, temperature: 0, clarity: 0, vignette: 0,
+    } as unknown as Adjustments
+    const c = clampAdjustments(legacy)
+    for (const k of PARAM_KEYS) expect(Number.isFinite(c[k]), `${k} 不是有限数`).toBe(true)
+    expect(c.vibrance).toBe(0)
+    expect(c.splitHiHue).toBe(0)
+    expect(c.exposure).toBe(10)   // 老值照旧保留
+  })
+
+  it('toUnit：色相除以 360、其余除以 100', () => {
+    const u = toUnit({ ...ZERO, splitHiHue: 180, splitAmount: 50, vibrance: -50, cbYellowBlue: 25 })
+    expect(u.splitHiHue).toBeCloseTo(0.5)
+    expect(u.splitAmount).toBeCloseTo(0.5)
+    expect(u.vibrance).toBeCloseTo(-0.5)
+    expect(u.cbYellowBlue).toBeCloseTo(0.25)
+  })
+
+  it('ZERO 有全部 15 个键、全是 0（新参数的中立点也是 0）', () => {
+    for (const k of PARAM_KEYS) expect(ZERO[k]).toBe(0)
   })
 })
