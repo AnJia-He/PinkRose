@@ -26,6 +26,33 @@ const BODY = {
   modelId: 'some-vision-model', alias: '我的便宜货',
 }
 
+// ★ 2026-10-05：「图片生成 × anthropic-compatible」是一个**不允许的组合** ——
+// 这个协议形状没有图片生成（Anthropic 不做图）。拦在建和改两处，
+// 判据只有一份（`assertProviderFitsKind`，那种"两个 if 只改一边"的老毛病防的就是它）。
+describe('协议形状 × 类别', () => {
+  it('chat 可以有 anthropic-compatible', () => {
+    const p = createConfig({ ...BODY, provider: 'anthropic-compatible' }, USER, fresh())
+    expect(p.provider).toBe('anthropic-compatible')
+  })
+
+  it('★ image × anthropic-compatible → 400，话里带着出路（"这一栏选兼容 OpenAI"）', () => {
+    expect(() => createConfig({ ...BODY, kind: 'image', provider: 'anthropic-compatible' }, USER, fresh()))
+      .toThrow(/兼容 OpenAI/)
+  })
+
+  it('★ 改一套：provider 能改（chat 改得过去）；改成不合法的组合照样拦', () => {
+    const d = fresh()
+    const m = createConfig(BODY, USER, d)          // chat + custom
+    expect(updateConfig(m.id, { provider: 'anthropic-compatible' }, USER, d).provider)
+      .toBe('anthropic-compatible')
+    const img = createConfig({ ...BODY, kind: 'image' }, USER, d)
+    expect(() => updateConfig(img.id, { provider: 'anthropic-compatible' }, USER, d))
+      .toThrow(/兼容 OpenAI/)
+    // 而且被拦下之后库里那份**没被动过**（没有"先写后报错"的半截状态）
+    expect(resolveSecretById(img.id, 'image', USER, d)!.provider).toBe('custom')
+  })
+})
+
 describe('掩盖码', () => {
   it('前 3 后 4', () => {
     // ⚠️ 后 4 个字符是 `-4f2`（分隔符正好落在第 4 位）——

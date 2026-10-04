@@ -90,10 +90,10 @@ export type ChatMessage = { role: 'system' | 'user'; content: string | ChatConte
  * 正文被截断成空，而且这时 message.content 是 null（不是空串）。
  * 1200 是实测能稳定出正文的下限。
  */
-const MIN_CHAT_TOKENS = 1200
+export const MIN_CHAT_TOKENS = 1200
 
 /** 单次请求超时。实测 token.sensenova.cn 不稳定，生成要 9~11 秒，给足余量。 */
-const CHAT_TIMEOUT_MS = 60_000
+export const CHAT_TIMEOUT_MS = 60_000
 const EDIT_TIMEOUT_MS = 180_000
 
 /**
@@ -115,7 +115,22 @@ export type ModelConnection = {
   modelId: string
 }
 
-export class SenseNovaClient {
+/**
+ * 一个模型客户端的**公开形状** —— 调用方（route / suggest / edit / 各处测试）
+ * 只认这几样，**不关心对面是哪种协议形状**（2026-10-05 起有两种：OpenAI 兼容
+ * 走 `SenseNovaClient`，Anthropic 兼容走 `anthropic.ts` 的 `AnthropicClient`）。
+ * 两个类都 implements 它，形状对不上就是编译错，不用等到真机。
+ */
+export interface ModelClient {
+  readonly baseUrl: string
+  readonly apiKey: string
+  readonly vlmModel: string
+  readonly imageModel: string
+  chatJson(messages: ChatMessage[], maxTokens?: number): Promise<string>
+  edit(o: { imageDataUrl: string; prompt: string; size: Size }, signal?: AbortSignal): Promise<string>
+}
+
+export class SenseNovaClient implements ModelClient {
   private readonly cfg: ModelConnection
   private readonly fetchImpl: typeof fetch
   // 不用构造函数参数属性——Node 24 剥离模式不支持（见 http.ts 的说明）
@@ -193,84 +208,113 @@ export class SenseNovaClient {
     return b64
   }
 
+  /** 见文件尾 `requestJson` 的注释 —— OpenAI 和 Anthropic 两种形状**共用那一条**。 */
   private async postJson(path: string, body: unknown, timeoutMs: number,
                          maxBytes: number, outer?: AbortSignal): Promise<unknown> {
-    const url = `${this.cfg.baseUrl}${path}`
-    let res: Response
-    try {
-      res = await this.fetchImpl(url, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${this.cfg.apiKey}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify(body),
-        // ★ 2026-10-02（安全审计 S1）：**不跟重定向**。
-        //   跟的话，"地址白名单/路径剥离"全都可以被一跳 3xx 绕过去：
-        //   用户填一个公网地址，它回 `Location: http://10.0.0.1:9200/_search`，
-        //   fetch 就替我们把请求打到内网去了（实测旧行为确实会跟）。
-        //   `manual` 时 Node 把那个 3xx 原样交回来，下面按"地址不对"处理。
-        redirect: 'manual',
-        // 两个中断源合成一个：**超时**（一直就有）和**用户按了停止**（2026-09-30 加）。
-        // AbortSignal.any 要 Node 20.3+，这个项目钉的是 Node 24。
-        signal: outer
-          ? AbortSignal.any([AbortSignal.timeout(timeoutMs), outer])
-          : AbortSignal.timeout(timeoutMs),
-      })
-    } catch (e) {
-      // ★ 用户按了停止 —— **绝不能标成可重试**。
-      //   标成可重试的话，那个已经不想要的请求会再打一遍上游：钱再花一次、
-      //   串行队列再被占十几秒，正好和"停止"想要的反着来。
-      //   （超时也走 AbortError，但它**该**重试 —— 靠 outer.aborted 区分。）
-      if (outer?.aborted) {
-        throw new SnError('UPSTREAM_FAILED', '用户取消了这次生成', false)
-      }
-      // 网络层异常（DNS 失败 / 超时 / 连接重置）统一归为可重试
-      throw new SnError('UPSTREAM_FAILED', `连不上上游：${(e as Error).message}`, true)
-    }
+    return requestJson({
+      fetchImpl: this.fetchImpl,
+      url: `${this.cfg.baseUrl}${path}`,
+      headers: {
+        authorization: `Bearer ${this.cfg.apiKey}`,
+        'content-type': 'application/json',
+      },
+      body, timeoutMs, maxBytes, outer,
+      secret: this.cfg.apiKey,
+    })
+  }
+}
 
-    // ⚠️ 正文读取必须**同等**对待，不能放在 try 之外。
-    // fetch 在**响应头**到达时就 resolve 了，正文是随后独立的一次网络往返：
-    // 连接下载到一半被重置、或 AbortSignal.timeout 掐在几 MB 的 edit 正文
-    // 传输途中（EDIT_TIMEOUT_MS 覆盖的是整个传输过程），都在这一句上炸。
-    // 裸异常逃出去，调用方按 `SnError && retryable` 重试的网关会把它当成
-    // 永久失败——一次抖动变成用户可见的硬错误。
-    // 范围**只包住这一句**：下面 res.ok 与 JSON 解析抛的 SnError 分类已经正确，
-    // 套进来只会把它们重新包装一遍。
-    let text: string
-    try {
-      // ★ 2026-10-02（安全审计 S2）：**带上限读**。地址是用户自己填的，
-      //   裸的 `res.text()` 没有任何内置上限 —— 对面灌几十 GB 就能把这台
-      //   机器的内存吃光（超时兜时间，兜不住大小）。上限的来历见
-      //   `http.ts` 的 `OUTBOUND_LIMITS`。
-      text = await readTextCapped(res, maxBytes)
-    } catch (e) {
-      // 同上：停止可能发生在**读正文**这一段（生成那一路正文是几百 KB 的 base64）。
-      if (outer?.aborted) {
-        throw new SnError('UPSTREAM_FAILED', '用户取消了这次生成', false)
-      }
-      throw new SnError('UPSTREAM_FAILED', `读取上游响应正文失败：${(e as Error).message}`, true)
+/**
+ * 一次出站 JSON 请求（POST 出去、JSON 读回来）。
+ *
+ * ★ 2026-10-05：从 `SenseNovaClient` 的私有方法提出来**给两种协议形状共用**
+ * （Anthropic 形状的客户端在 `anthropic.ts`）。共用的恰恰是最不能分家的那堆：
+ * 不跟重定向、超时+取消合流、带上限读正文、按状态码分类错误、钥匙按值抹掉 ——
+ * **一行都不许在第二个客户端里再抄一遍**（抄一份就是"一处修了另一处照漏"，
+ * 这仓库吃过太多次）。两种形状真正差的只有 URL 和请求头，由各自的封装拼好传进来。
+ */
+export async function requestJson(o: {
+  fetchImpl: typeof fetch
+  url: string
+  headers: Record<string, string>
+  body: unknown
+  timeoutMs: number
+  maxBytes: number
+  outer?: AbortSignal
+  /** 上游原文可能回显钥匙 —— 日志前按值抹（`redactSecrets` 的第二个参数）。 */
+  secret: string
+}): Promise<unknown> {
+  let res: Response
+  try {
+    res = await o.fetchImpl(o.url, {
+      method: 'POST',
+      headers: o.headers,
+      body: JSON.stringify(o.body),
+      // ★ 2026-10-02（安全审计 S1）：**不跟重定向**。
+      //   跟的话，"地址白名单/路径剥离"全都可以被一跳 3xx 绕过去：
+      //   用户填一个公网地址，它回 `Location: http://10.0.0.1:9200/_search`，
+      //   fetch 就替我们把请求打到内网去了（实测旧行为确实会跟）。
+      //   `manual` 时 Node 把那个 3xx 原样交回来，下面按"地址不对"处理。
+      redirect: 'manual',
+      // 两个中断源合成一个：**超时**（一直就有）和**用户按了停止**（2026-09-30 加）。
+      // AbortSignal.any 要 Node 20.3+，这个项目钉的是 Node 24。
+      signal: o.outer
+        ? AbortSignal.any([AbortSignal.timeout(o.timeoutMs), o.outer])
+        : AbortSignal.timeout(o.timeoutMs),
+    })
+  } catch (e) {
+    // ★ 用户按了停止 —— **绝不能标成可重试**。
+    //   标成可重试的话，那个已经不想要的请求会再打一遍上游：钱再花一次、
+    //   串行队列再被占十几秒，正好和"停止"想要的反着来。
+    //   （超时也走 AbortError，但它**该**重试 —— 靠 outer.aborted 区分。）
+    if (o.outer?.aborted) {
+      throw new SnError('UPSTREAM_FAILED', '用户取消了这次生成', false)
     }
-    // ★ 2026-10-02：**3xx 单列一条**。我们故意不跟重定向（见上面 fetch 那段），
-    //   所以要让用户看到一句能照着改的话，而不是一条"上游 307"。
-    //   现实里最常见的来源：地址填了 `http://example.com` 而它跳去 https。
-    if (res.status >= 300 && res.status < 400) {
-      throw new SnError('UPSTREAM_FAILED',
-        `上游要求跳到别处（HTTP ${res.status}），接口地址要填**跳过去之后**的那个`, false)
+    // 网络层异常（DNS 失败 / 超时 / 连接重置）统一归为可重试
+    throw new SnError('UPSTREAM_FAILED', `连不上上游：${(e as Error).message}`, true)
+  }
+
+  // ⚠️ 正文读取必须**同等**对待，不能放在 try 之外。
+  // fetch 在**响应头**到达时就 resolve 了，正文是随后独立的一次网络往返：
+  // 连接下载到一半被重置、或 AbortSignal.timeout 掐在几 MB 的 edit 正文
+  // 传输途中（EDIT_TIMEOUT_MS 覆盖的是整个传输过程），都在这一句上炸。
+  // 裸异常逃出去，调用方按 `SnError && retryable` 重试的网关会把它当成
+  // 永久失败——一次抖动变成用户可见的硬错误。
+  // 范围**只包住这一句**：下面 res.ok 与 JSON 解析抛的 SnError 分类已经正确，
+  // 套进来只会把它们重新包装一遍。
+  let text: string
+  try {
+    // ★ 2026-10-02（安全审计 S2）：**带上限读**。地址是用户自己填的，
+    //   裸的 `res.text()` 没有任何内置上限 —— 对面灌几十 GB 就能把这台
+    //   机器的内存吃光（超时兜时间，兜不住大小）。上限的来历见
+    //   `http.ts` 的 `OUTBOUND_LIMITS`。
+    text = await readTextCapped(res, o.maxBytes)
+  } catch (e) {
+    // 同上：停止可能发生在**读正文**这一段（生成那一路正文是几百 KB 的 base64）。
+    if (o.outer?.aborted) {
+      throw new SnError('UPSTREAM_FAILED', '用户取消了这次生成', false)
     }
-    if (!res.ok) {
-      throw new SnError(codeForStatus(res.status),
-        // ⚠️ 上游原文可能把钥匙回显出来（网关五花八门），而这一句会被**打日志**。
-        //   按形状抹（`Bearer` / `sk-`）不够 —— 钥匙是**我们自己知道的那一串**，
-        //   直接按值抹最可靠（安全审计 S5）。
-        `上游 HTTP ${res.status}：${redactSecrets(text.slice(0, 300), this.cfg.apiKey)}`,
-        res.status === 429 || res.status >= 500)
-    }
-    try {
-      return JSON.parse(text)
-    } catch {
-      throw new SnError('UPSTREAM_FAILED', `上游返回的不是 JSON：${text.slice(0, 200)}`, true)
-    }
+    throw new SnError('UPSTREAM_FAILED', `读取上游响应正文失败：${(e as Error).message}`, true)
+  }
+  // ★ 2026-10-02：**3xx 单列一条**。我们故意不跟重定向（见上面 fetch 那段），
+  //   所以要让用户看到一句能照着改的话，而不是一条"上游 307"。
+  //   现实里最常见的来源：地址填了 `http://example.com` 而它跳去 https。
+  if (res.status >= 300 && res.status < 400) {
+    throw new SnError('UPSTREAM_FAILED',
+      `上游要求跳到别处（HTTP ${res.status}），接口地址要填**跳过去之后**的那个`, false)
+  }
+  if (!res.ok) {
+    throw new SnError(codeForStatus(res.status),
+      // ⚠️ 上游原文可能把钥匙回显出来（网关五花八门），而这一句会被**打日志**。
+      //   按形状抹（`Bearer` / `sk-`）不够 —— 钥匙是**我们自己知道的那一串**，
+      //   直接按值抹最可靠（安全审计 S5）。
+      `上游 HTTP ${res.status}：${redactSecrets(text.slice(0, 300), o.secret)}`,
+      res.status === 429 || res.status >= 500)
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new SnError('UPSTREAM_FAILED', `上游返回的不是 JSON：${text.slice(0, 200)}`, true)
   }
 }
 
@@ -287,7 +331,7 @@ function codeForStatus(status: number): AppErrorCode {
   // **「这次请求有点问题，换个说法试试」** —— 让一个钥匙填错的人去改措辞。
   // 那是句假话，而且他改一百遍也没用（文案规范：不许写产品做不到的事）。
   //
-  // ⚠️ 仍然**不可重试**（和上面那条注释同一个道理）：见 postJson 里那个
+  // ⚠️ 仍然**不可重试**（和上面那条注释同一个道理）：见 requestJson 里那个
   // `res.status === 429 || res.status >= 500`——401/403 落不进可重试那一支，
   // 队列不会拿着一把被拒的钥匙再打一遍。
   if (status === 401 || status === 403) return 'UPSTREAM_AUTH'

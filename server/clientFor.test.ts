@@ -3,6 +3,7 @@ import { openDb } from './db.ts'
 import { createVault } from './keyvault.ts'
 import { activateConfig, createConfig } from './models.ts'
 import { SenseNovaClient, type ModelConnection } from './sn.ts'
+import { AnthropicClient } from './anthropic.ts'
 import { resolveClients, type ClientDeps } from './clientFor.ts'
 import type { HostLookup } from './hostGuard.ts'
 
@@ -92,6 +93,25 @@ describe('按用户取客户端', () => {
     const a = createConfig({ kind: 'chat', provider: 'custom', baseUrl: 'https://chat.example.com/v1', apiKey: 'sk-chat', modelId: 'my-vlm', alias: '甲' }, USER, d)
     activateConfig({ kind: 'chat', id: a.id }, USER, d)
     expect((await resolveClients(USER, d)).chat.vlmModel).toBe('my-vlm')
+  })
+
+  it('★ provider=anthropic-compatible 的对话配置 → 造的是 AnthropicClient（2026-10-05）', async () => {
+    // 这是"两种协议形状"的分叉本身：同一栏、同一份 resolveClients，
+    // 用户存的是哪种形状就该造出哪个客户端。图片那一栏没得选
+    //（`models.ts` 拒了 image × anthropic），所以它永远是 SenseNovaClient。
+    const d = fresh()
+    const a = createConfig({
+      kind: 'chat', provider: 'anthropic-compatible', baseUrl: 'https://claude.example.com/v1',
+      apiKey: 'sk-ant', modelId: 'claude-test', alias: '克劳德',
+    }, USER, d)
+    activateConfig({ kind: 'chat', id: a.id }, USER, d)
+
+    const c = await resolveClients(USER, d)
+    expect(c.chat).toBeInstanceOf(AnthropicClient)
+    expect(c.image).toBeInstanceOf(SenseNovaClient)
+    // 类选对了，连接三样也要是对的
+    expect([c.chat.baseUrl, c.chat.apiKey, c.chat.vlmModel])
+      .toEqual(['https://claude.example.com/v1', 'sk-ant', 'claude-test'])
   })
 
   /**

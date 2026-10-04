@@ -265,7 +265,9 @@ describe('模型设置', () => {
 
     await click(inPart(form()!, '测一下'))
     // 原样 —— 我们既没补 https://，也没补 /v1
-    expect(api.testModel).toHaveBeenCalledWith({ baseUrl: 'api.domain.com', apiKey: 'sk-abc123' })
+    // 探活也带着形状（★ 2026-10-05）—— 默认「兼容 OpenAI」
+    expect(api.testModel).toHaveBeenCalledWith(
+      { baseUrl: 'api.domain.com', apiKey: 'sk-abc123', provider: 'openai-compatible' })
 
     await click(inPart(form()!, '保存'))
     expect(api.createModel).toHaveBeenCalledWith({
@@ -327,6 +329,7 @@ describe('模型设置', () => {
     await type(field('key'), 'sk-new-key')
     await click(inPart(form()!, '保存'))
     expect(api.updateModel).toHaveBeenCalledWith(1, {
+      provider: 'openai-compatible',   // ★ 2026-10-05 起形状也随保存走
       alias: '我的便宜货', modelId: 'deepseek-chat',
       baseUrl: 'api.other-vendor.com', apiKey: 'sk-new-key',
     })
@@ -344,9 +347,62 @@ describe('模型设置', () => {
     await type(field('alias'), '换了个名字')
     await click(inPart(form()!, '保存'))
 
-    expect(api.updateModel).toHaveBeenCalledWith(1, { alias: '换了个名字', modelId: 'deepseek-chat' })
+    expect(api.updateModel).toHaveBeenCalledWith(1, {
+      provider: 'openai-compatible', alias: '换了个名字', modelId: 'deepseek-chat',
+    })
     expect(api.updateModel).not.toHaveBeenCalledWith(1, expect.objectContaining({ baseUrl: expect.anything() }))
     // 变异：无条件把 baseUrl 放进请求体 → 这一条红（真服务端会 400）
+  })
+
+  it('★ 提供商下拉：只在对话栏；选「兼容 Anthropic」→ 请求带上它、地址示例跟着换', async () => {
+    store = [CHAT(1)]
+    await show()
+    // 图片栏**没有**这颗下拉 —— 那里没有第二种形状可选（服务端也拦，两道）
+    await openAdd('图片生成')
+    expect(container.querySelector('#model-provider')).toBeNull()
+    await click(inPart(form()!, '取消'))
+
+    await openAdd('对话与理解')
+    const sel = container.querySelector('#model-provider') as HTMLSelectElement | null
+    expect(sel).toBeTruthy()
+    expect(sel!.value).toBe('openai-compatible')        // 默认那一档
+    expect(field('url').placeholder).toBe('https://api.example.com/v1')
+
+    // 换成 Anthropic 形状：地址和模型名的示例都跟着换（各形状各有各的填法习惯）
+    await act(async () => {
+      sel!.value = 'anthropic-compatible'
+      sel!.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    expect((container.querySelector('#model-url') as HTMLInputElement).placeholder)
+      .toBe('https://api.example.com')
+    expect((container.querySelector('#model-name') as HTMLInputElement).placeholder)
+      .toBe('例如 claude-sonnet-4-5')
+
+    await type(field('alias'), '克劳德')
+    await type(field('url'), 'claude.example.com')
+    await type(field('name'), 'claude-test')
+    await type(field('key'), 'sk-ant')
+    await click(inPart(form()!, '保存'))
+    expect(api.createModel).toHaveBeenCalledWith({
+      kind: 'chat', provider: 'anthropic-compatible', alias: '克劳德',
+      baseUrl: 'claude.example.com', apiKey: 'sk-ant', modelId: 'claude-test',
+    })
+    // 变异：保存时写死 provider: 'openai-compatible' → 这一条红
+  })
+
+  it('★ 编辑一套 Anthropic 的：下拉回显它；「测一下」也带着它（不然探活发错请求头）', async () => {
+    store = [CHAT(1, { provider: 'anthropic-compatible', alias: '克劳德' })]
+    await show()
+    await openEdit('克劳德')
+    expect((container.querySelector('#model-provider') as HTMLSelectElement).value)
+      .toBe('anthropic-compatible')                      // 回显存的那种形状
+
+    await click(inPart(form()!, '换一把'))               // 编辑态钥匙是收起的，先摊开
+    await type(field('key'), 'sk-ant-2')                 // 有钥匙才走"表单值探活"那条路
+    await click(inPart(form()!, '测一下'))
+    expect(api.testModel).toHaveBeenCalledWith(
+      { baseUrl: 'https://api.deepseek.com/v1', apiKey: 'sk-ant-2', provider: 'anthropic-compatible' })
+    // 变异：ProbeTarget 不带 provider → 这一条红（真跑起来是"钥匙明明没错却被说不认"）
   })
 
   it('★ 钥匙永不回显：编辑时那一格显示的是 keyHint，明文一个字母都没有（§7.7）', async () => {

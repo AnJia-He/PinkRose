@@ -567,7 +567,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       //   所以按用户限速。放在读体之后（要先知道是谁）。
       assertGate(gates.probe, `probe:${user.id}`, '测试连接')
       // 库里那一套：先按 id 取，取不到就是 404（别人的 / 没有的，同一个结局）
-      let conn: { baseUrl: string; apiKey: string }
+      let conn: { baseUrl: string; apiKey: string; anthropic: boolean }
       if (body.id !== undefined) {
         const s = resolveSecretById(Number(body.id), str(body.kind) as ModelKind, user, deps.models)
         if (!s) throw new HttpError('BAD_REQUEST', '没有这一套设置', 404)
@@ -575,11 +575,13 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
         //   它拿的是库里那份存下来的地址，所以这里要单独再拦一次内网
         //   （和 clientFor 里那道同一个理由：存量配置不会自己消失）。
         assertModelHostAllowed(s.baseUrl)
-        conn = { baseUrl: s.baseUrl, apiKey: s.apiKey }
+        conn = { baseUrl: s.baseUrl, apiKey: s.apiKey, anthropic: s.provider === 'anthropic-compatible' }
       } else {
         conn = {
           baseUrl: normalizeBaseUrl(str(body.baseUrl)),
           apiKey: str(body.apiKey).trim(),
+          // 表单里选的那个形状（"还没保存就先测"的场景 —— 那一刻库里没有它）
+          anthropic: str(body.provider) === 'anthropic-compatible',
         }
         if (!conn.apiKey) throw new HttpError('BAD_REQUEST', KEY_REQUIRED)
       }

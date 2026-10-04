@@ -14,11 +14,22 @@
 
 import { OUTBOUND_LIMITS, readTextCapped } from './http.ts'
 import type { ProbeFail, ProbeResult } from '../shared/protocol.ts'
+import { ANTHROPIC_VERSION } from './anthropic.ts'
 
 /** 超时。这是个人在等的一次点击，比 AI 那几条路短得多。 */
 const PROBE_TIMEOUT_MS = 8000
 
-export type ProbeInput = { baseUrl: string; apiKey: string }
+export type ProbeInput = {
+  baseUrl: string
+  apiKey: string
+  /**
+   * ★ 2026-10-05：Anthropic 形状的探活（钥匙和官方要求：`x-api-key` + 版本头）。
+   * 端点两边都是 `{baseUrl}/models`（归一化保证库里那份以 `/v1` 结尾）——
+   * 差的只有请求头。版本头的值从 `anthropic.ts` 来（**一处定义**：
+   * 一处改了另一处漏，症状是探活全 400）。
+   */
+  anthropic?: boolean
+}
 
 /**
  * 失败时给用户看的话。
@@ -68,7 +79,9 @@ export async function probeConnection(
   try {
     res = await fetchImpl(url, {
       method: 'GET',
-      headers: { authorization: `Bearer ${input.apiKey}` },
+      headers: input.anthropic
+        ? { 'x-api-key': input.apiKey, 'anthropic-version': ANTHROPIC_VERSION }
+        : { authorization: `Bearer ${input.apiKey}` },
       // ★ 2026-10-02（安全审计 S1）：不跟重定向。理由和 sn.ts 里那段一样 ——
       //   这是**用户填的地址**，跟一跳 3xx 就能把请求导去内网，地址校验形同虚设。
       redirect: 'manual',

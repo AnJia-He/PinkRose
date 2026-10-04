@@ -4,7 +4,8 @@ import type { Db } from './db.ts'
 import type { Vault } from './keyvault.ts'
 import { resolveSecret, type ModelConfigDeps } from './models.ts'
 import { assertModelHostAllowed, assertResolvedHostAllowed, type HostLookup } from './hostGuard.ts'
-import { SenseNovaClient, type ModelConnection } from './sn.ts'
+import { SenseNovaClient, type ModelClient, type ModelConnection } from './sn.ts'
+import { AnthropicClient } from './anthropic.ts'
 
 export type ClientDeps = {
   db: Db
@@ -18,7 +19,7 @@ export type ClientDeps = {
    * 出站的请求头里到底是哪把钥匙。挂在 AppDeps 上就只能换掉最终产物，
    * 看不见"它是不是拿对了那一套"。
    */
-  clientFactory?: (conn: ModelConnection) => SenseNovaClient
+  clientFactory?: (conn: ModelConnection) => ModelClient
   /**
    * 出站前"把域名解析成 IP 再判一次"的注入点（测试用；生产走真实 DNS）。
    * 要验的行为是"**解析结果**指向内网就拒"，而真去查 DNS 的测试既慢又不稳。
@@ -44,8 +45,8 @@ export type ClientDeps = {
  * 而不是让他连图都改不了。
  */
 export async function resolveClients(user: PublicUser, deps: ClientDeps): Promise<{
-  chat: SenseNovaClient
-  image: SenseNovaClient
+  chat: ModelClient
+  image: ModelClient
 }> {
   return {
     chat: await clientOf('chat', user, deps),
@@ -53,7 +54,7 @@ export async function resolveClients(user: PublicUser, deps: ClientDeps): Promis
   }
 }
 
-async function clientOf(kind: 'chat' | 'image', user: PublicUser, deps: ClientDeps): Promise<SenseNovaClient> {
+async function clientOf(kind: 'chat' | 'image', user: PublicUser, deps: ClientDeps): Promise<ModelClient> {
   const modelDeps: ModelConfigDeps = { db: deps.db, vault: deps.vault }
   const secret = resolveSecret(kind, user, modelDeps)
 
@@ -82,6 +83,12 @@ async function clientOf(kind: 'chat' | 'image', user: PublicUser, deps: ClientDe
     ? { apiKey: secret.apiKey, baseUrl: secret.baseUrl, modelId: secret.modelId }
     : { apiKey: fallback.apiKey, baseUrl: fallback.baseUrl, modelId: fallback.model }
 
-  const make = deps.clientFactory ?? ((c: ModelConnection) => new SenseNovaClient(c))
+  // ★ 2026-10-05：**两种协议形状，按用户存的那条的 `provider` 选**：
+  //   · `anthropic-compatible` → `AnthropicClient`（Claude 官方那种 /v1/messages 形状）
+  //   · 其余（历史值 `custom`、我们的默认通道）→ `SenseNovaClient`（OpenAI 兼容）。
+  //   ⚠️ "图片生成 × Anthropic"这个组合在 `models.ts` 建/改的时候就拒了 ——
+  //      这里不重复判一遍（一处规矩一处定义）；真漏进（历史数据）`edit()` 也会抛清楚。
+  const Cls = secret?.provider === 'anthropic-compatible' ? AnthropicClient : SenseNovaClient
+  const make = deps.clientFactory ?? ((c: ModelConnection) => new Cls(c))
   return make(conn)
 }

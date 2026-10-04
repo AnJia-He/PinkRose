@@ -1321,17 +1321,23 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .models-field,
 .account-field { display: flex; flex-direction: column; gap: var(--sp-2); font-size: 13px; color: var(--muted); }
 .login-field input,
-.models-field input {
+.models-field input,
+.models-field select {
   padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--line-2);
   background: var(--bg); color: var(--text); font-size: 15px;
   transition: border-color var(--dur-1) ease, box-shadow var(--dur-1) ease;
 }
+/* 提供商那个下拉（★ 2026-10-05）和输入框同一副长相；`appearance` 不动 ——
+   原生箭头在 `color-scheme: dark` 底下自己就是对的样子。 */
+.models-field select { cursor: pointer; }
 .login-field input:hover,
-.models-field input:hover { border-color: var(--line-3); }
+.models-field input:hover,
+.models-field select:hover { border-color: var(--line-3); }
 /* 和对话栏那个输入框同一套焦点观感 —— 一像素的描边在深色底上变化太小，
    用户看不出焦点进没进这一格。 */
 .login-field input:focus,
-.models-field input:focus {
+.models-field input:focus,
+.models-field select:focus {
   outline: none; border-color: var(--accent);
   box-shadow: var(--ring);
 }

@@ -49,7 +49,22 @@ const KINDS: readonly { kind: ModelKind; title: string; what: string; noun: stri
  *    `provider` 分叉，市面这些接口本来就是同一个 OpenAI 兼容协议）。
  *    问一个不影响任何结果、还要报出几家名字的问题，是纯加负担。
  */
+/**
+ * 图片那一栏恒定存的协议形状。
+ *
+ * ⚠️ 界面**不问用户"哪家厂商"**（这原来是硬编码 `openai-compatible` 那段注释的
+ *    全部理由，一条没变）：问了就要在屏幕上写出几家的名字，而那是 §7.3 明令
+ *    不写的东西；而"厂商"对行为**没有任何影响** —— 服务端造客户端只看地址 +
+ *    钥匙 + 型号名，市面这些接口本来就是同一个 OpenAI 兼容协议。
+ *
+ * ★ 2026-10-05 起多了另一种**协议形状**（`Shape`）：「兼容 Anthropic」
+ *    （Claude 官方那种 /v1/messages 形状）。这跟"厂商"是两回事 ——
+ *    形状**真的决定发出去的请求长什么样**，也是用户从服务商文档上抄得下来的。
+ *    ⚠️ 下拉**只在「对话与理解」那一栏**：图片生成没有 Anthropic 形状的服务
+ *    （`server/models.ts` 的 `assertProviderFitsKind` 也拦着）。
+ */
 const PROVIDER = 'openai-compatible'
+type Shape = 'openai-compatible' | 'anthropic-compatible'
 
 /**
  * 这一页那几句「必填 / 得重填钥匙」的话**都在 `shared/copy.ts` 里**，不在这一页。
@@ -289,6 +304,13 @@ function ModelForm({
    *    所以 useState 的初值就是这一份，不会串。
    */
   const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? '')
+  /**
+   * 协议形状（★ 2026-10-05）。编辑一套**老配置**时：`anthropic-compatible`
+   * 照实显示；其余（含历史值 `custom`）都映射到「兼容 OpenAI」—— 那是它们
+   * 一直以来的行为，而且**保存一次就把它规范成明确值**（`custom` 是历史遗留）。
+   */
+  const [shape, setShape] = useState<Shape>(
+    config?.provider === 'anthropic-compatible' ? 'anthropic-compatible' : 'openai-compatible')
   const [modelId, setModelId] = useState(config?.modelId ?? '')
   /** **明文钥匙永远不预填**（§7.7）—— 空 = "不动库里那一把"。 */
   const [apiKey, setApiKey] = useState('')
@@ -301,6 +323,8 @@ function ModelForm({
   const url = baseUrl.trim()
   const key = apiKey.trim()
   const name = modelId.trim()
+  /** 实际要提交/使用的形状 —— 图片那一栏恒定 `PROVIDER`（没有第二种可选）。 */
+  const provider: Shape = kind === 'chat' ? shape : PROVIDER
   /**
    * 地址**动了没有**，基准是库里存着的那一份（服务端归一化之后就是它）。
    *
@@ -329,7 +353,9 @@ function ModelForm({
     // 测的**永远是用户眼睛正盯着的那一份**（`api/models.ts` 里 ProbeTarget 那段）。
     let target: ProbeTarget
     if (key !== '') {
-      target = { baseUrl: url, apiKey: key }
+      // ⚠️ 带上**表单里选的形状** —— 不带的后果是探活还发 OpenAI 那套请求头，
+      //    Anthropic 形状的服务回 401/400，用户被指去查一把根本没问题的钥匙。
+      target = { baseUrl: url, apiKey: key, provider }
     } else if (config && !urlChanged) {
       // 编辑一套存好的、地址又没动过：表单里没有明文钥匙（永不回显），
       // 而库里那份和表单里这份是同一个地址 —— 让服务端用存着的那把钥匙探。
@@ -375,9 +401,10 @@ function ModelForm({
     setSaving(true)
     try {
       if (config === null) {
-        await createModel({ kind, provider: PROVIDER, alias: a, baseUrl: url, apiKey: key, modelId: m })
+        await createModel({ kind, provider, alias: a, baseUrl: url, apiKey: key, modelId: m })
       } else {
         await updateModel(config.id, {
+          provider,
           alias: a,
           modelId: m,
           // ⚠️ 地址没动就**一个字都不提 baseUrl**（提了 = 逼他重填一把没坏的钥匙）；
@@ -412,6 +439,20 @@ function ModelForm({
         <p className="models-form-lede">填一个兼容 OpenAI 协议的服务 —— 哪一家都行。</p>
       )}
 
+      {/* 协议形状（★ 2026-10-05，照人家那颗「提供商」下拉学的）。**只在对话栏** ——
+          图片生成没有 Anthropic 形状的服务（服务端第二道拦着，见 `models.ts`）。
+          文案上"兼容"两个字不能省：用户手里的服务多半两家都不是，是"兼容某一家"的。 */}
+      {kind === 'chat' && (
+        <Field className="models-field" label="提供商" hintClassName="models-hint"
+               hint="「兼容 OpenAI」是绝大多数服务；「兼容 Anthropic」是 Claude 官方那种接口。">
+          <select id="model-provider" className="models-select" value={shape}
+                  onChange={(e) => setShape(e.target.value as Shape)}>
+            <option value="openai-compatible">兼容 OpenAI</option>
+            <option value="anthropic-compatible">兼容 Anthropic</option>
+          </select>
+        </Field>
+      )}
+
       <Field className="models-field" label="别名" hintClassName="models-hint"
              hint="别名是给你自己认的，名单里显示的就是它。">
         {/* 别名是**给用户自己认的**（§7.4）：名单里到处显示的都是它，型号名藏在下面。
@@ -436,7 +477,9 @@ function ModelForm({
             它**永远不可能是**我们自己或任何真实服务商的地址 —— 它只教
             "这一格填什么样"。判据在测试里跟着改成了"只许是这个值"。 */}
         <TextInput id="model-url" value={baseUrl} autoComplete="off" inputMode="url" spellCheck={false}
-                   placeholder="https://api.example.com/v1"
+                   placeholder={provider === 'anthropic-compatible'
+                     ? 'https://api.example.com'
+                     : 'https://api.example.com/v1'}
                    onChange={(e) => setBaseUrl(e.target.value)} />
       </Field>
 
@@ -448,7 +491,8 @@ function ModelForm({
             示例只教"填一截短标识符"这个**形态**；deepseek 是**用户侧**常见的
             选择，和我们自己用什么（§7.3）没有任何关系。 */}
         <TextInput id="model-name" value={modelId} autoComplete="off" spellCheck={false}
-                   list="model-names" placeholder="例如 deepseek"
+                   list="model-names"
+                   placeholder={provider === 'anthropic-compatible' ? '例如 claude-sonnet-4-5' : '例如 deepseek'}
                    onChange={(e) => setModelId(e.target.value)} />
         <datalist id="model-names">
           {options.map((n) => <option key={n} value={n} />)}

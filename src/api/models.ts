@@ -96,7 +96,10 @@ export const activateModel = (kind: ModelKind, id: number | null) =>
  *      而用户眼睛盯着的是表单里那份 —— 测出来的"通了"是一句假话。
  */
 export type ProbeTarget =
-  | { baseUrl: string; apiKey: string }
+  // ★ 2026-10-05：`provider` —— 探活请求头按它分叉（Anthropic 形状用 x-api-key +
+  //   版本头）。不带的话，在"表单里选了 Anthropic、还没保存"的那一刻，探的还是
+  //   OpenAI 那套头 —— 服务端回 401，用户被指去查一把根本没问题的钥匙。
+  | { baseUrl: string; apiKey: string; provider?: string }
   | { kind: ModelKind; id: number }
 
 /** 免费的那一下：打 `GET {baseUrl}/models`，只验地址通不通、钥匙认不认。 */

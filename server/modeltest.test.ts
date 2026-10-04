@@ -12,6 +12,20 @@ describe('probeConnection', () => {
     expect(r).toEqual({ ok: true, models: ['a', 'b'] })
   })
 
+  it('★ anthropic 形状：钥匙走 x-api-key + 版本头（不是 Bearer，2026-10-05）', async () => {
+    let init: RequestInit | undefined
+    const impl = (async (_u: string | URL | Request, i?: RequestInit) => {
+      init = i
+      return new Response(JSON.stringify({ data: [{ id: 'claude-test' }] }), { status: 200 })
+    }) as unknown as typeof fetch
+    const r = await probeConnection({ ...INPUT, anthropic: true }, impl)
+    expect(r).toEqual({ ok: true, models: ['claude-test'] })
+    const h = init!.headers as Record<string, string>
+    expect(h['x-api-key']).toBe('sk-x')
+    expect(h['anthropic-version']).toBe('2023-06-01')   // 少了它官方端点直接 400
+    expect(h).not.toHaveProperty('authorization')
+  })
+
   it('★ 401 → 「钥匙不认」，文案里带着用户最常犯的那几种', async () => {
     const r = await probeConnection(INPUT, okFetch({ error: { message: 'Forbidden' } }, 401))
     expect(r.ok).toBe(false)

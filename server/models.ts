@@ -8,10 +8,15 @@ import { assertModelHostAllowed } from './hostGuard.ts'
 import type { Vault } from './keyvault.ts'
 
 export type ModelKind = 'chat' | 'image'
-export type Provider = 'sensenova' | 'openai-compatible' | 'custom'
+/**
+ * 协议形状。`sensenova` / `custom` 都是历史值（都按 OpenAI 兼容处理）——
+ * ★ 2026-10-05 加了 `anthropic-compatible`（Claude 官方那种 /v1/messages 形状，
+ * 用户原来接不了）；**只有 chat 类别有它**（见 `assertProviderFitsKind`）。
+ */
+export type Provider = 'sensenova' | 'openai-compatible' | 'anthropic-compatible' | 'custom'
 
 const KINDS: readonly ModelKind[] = ['chat', 'image']
-const PROVIDERS: readonly Provider[] = ['sensenova', 'openai-compatible', 'custom']
+const PROVIDERS: readonly Provider[] = ['sensenova', 'openai-compatible', 'anthropic-compatible', 'custom']
 
 /** 别名长度上限。界面上到处显示的是它，太长会撑坏布局。 */
 const MAX_ALIAS = 20
@@ -124,6 +129,19 @@ function readProvider(v: unknown): Provider {
   return p
 }
 
+/**
+ * ★ 2026-10-05：「图片生成」没有 Anthropic 形状的服务 —— 建和改都要拦。
+ *
+ * 界面上那一栏干脆不给这个选项（那是第一道防线）；这句是第二道，文案给出路
+ * （《文案规范》）。⚠️ **一处定义**：`create` 和 `update` 都调这一个 ——
+ * 两个 if 分开写，总有一天只改了其中一边（这个仓库的老毛病清单里有它）。
+ */
+function assertProviderFitsKind(kind: ModelKind, provider: Provider): void {
+  if (kind === 'image' && provider === 'anthropic-compatible') {
+    throw new HttpError('BAD_REQUEST', '图片生成没有这种形状的服务 —— 这一栏选「兼容 OpenAI」')
+  }
+}
+
 function readAlias(v: unknown): string {
   const a = str(v).trim()
   if (!a) throw new HttpError('BAD_REQUEST', ALIAS_REQUIRED)
@@ -195,6 +213,7 @@ export function createConfig(body: unknown, user: PublicUser, deps: ModelConfigD
   const o = asObject(body)
   const kind = readKind(o.kind)
   const provider = readProvider(o.provider)
+  assertProviderFitsKind(kind, provider)
   const alias = readAlias(o.alias)
   const modelId = readModelId(o.modelId)
   const baseUrl = normalizeBaseUrl(str(o.baseUrl))
@@ -223,6 +242,11 @@ export function updateConfig(id: number, body: unknown, user: PublicUser, deps: 
 
   const alias = o.alias === undefined ? row.alias : readAlias(o.alias)
   const modelId = o.modelId === undefined ? row.model_id : readModelId(o.modelId)
+  // ★ 2026-10-05：协议形状也能改（它和地址、钥匙是一件事的三面）。改完立刻验
+  //   "这个形状配这个类别" —— 历史值 `custom` 按 OpenAI 兼容处理（`clientFor`
+  //   只看 `anthropic-compatible` 那一个值），所以这里不用动它。
+  const provider = o.provider === undefined ? (row.provider as Provider) : readProvider(o.provider)
+  assertProviderFitsKind(kind, provider)
 
   // ★ 接口地址和钥匙**要么都不动，要么一起给**。
   //
@@ -243,8 +267,8 @@ export function updateConfig(id: number, body: unknown, user: PublicUser, deps: 
   const apiKeyEnc = newKey === null ? row.api_key_enc : deps.vault.seal(newKey)
 
   deps.db.raw
-    .prepare('UPDATE model_configs SET base_url = ?, api_key_enc = ?, model_id = ?, alias = ? WHERE id = ? AND user_id = ?')
-    .run(baseUrl, apiKeyEnc, modelId, alias, id, user.id)
+    .prepare('UPDATE model_configs SET provider = ?, base_url = ?, api_key_enc = ?, model_id = ?, alias = ? WHERE id = ? AND user_id = ?')
+    .run(provider, baseUrl, apiKeyEnc, modelId, alias, id, user.id)
 
   const after = deps.db.raw
     .prepare('SELECT id, kind, provider, base_url, api_key_enc, model_id, alias FROM model_configs WHERE id = ?')
