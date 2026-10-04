@@ -85,7 +85,23 @@ const URL = process.env.DEV_BASE ?? 'http://localhost:5173'
 const APP = `${URL}/app`
 /** 仓库里已有的样片，不必另存一张大图。比例是横的（1200×800），
  *  而真机是竖的 —— 两种都要能过，所以判据用的是长边/短边。 */
+/**
+ * 修图那一屏上传用的照片（横图）。
+ * ⚠️ 换它之前想清楚：下面几条判据（"面板开着 / 存失败之后照片还有多大"）
+ * 是**按它校准的**。竖图在高度受限的那几屏会小一截（短边吃亏），
+ * 整趟换竖图会把这些判据一起弄红 —— 那是另一件事。
+ * 竖图另有一趟**专门**的量法，见 `PORTRAIT` 和 `judgeThumb`。
+ */
 const PHOTO = join(ROOT, 'test-photos', 'e2e_first_use.jpg')
+
+/**
+ * 竖图夹具 —— 只给"对话里那张小图的清晰度"那一趟用（1080×2048，手机/AI 出的
+ * 那种比例，也是**短边最吃亏**的形状）。为什么这条要单独用竖图：
+ * `makeThumbnail` 按**长边**缩，而 `.bubble-thumb` 是 `width: 120px` 的框、
+ * 高度随比例 —— 横图在那个数下宽度刚好够（量不出区别），竖图才会露馅。
+ * 文件在 `test-photos/`（整目录 gitignore，和 `PHOTO` 那张一样）。
+ */
+const PORTRAIT = join(ROOT, 'test-photos', 'e2e_portrait.jpg')
 
 /** 本仓库刚构建出来的那一版。用来核对服务器发的到底是哪一版。 */
 const DIST_HTML = join(ROOT, 'dist', 'index.html')
@@ -355,7 +371,7 @@ function judgeMarker(label, m, expected) {
 }
 
 /** 对话里那张小图：真的 `makeThumbnail` 的产出（data URL）得真有像素。 */
-async function judgeThumb(page, label) {
+async function judgeThumb(page, label, view) {
   let got
   try {
     await page.waitForFunction(
@@ -363,7 +379,9 @@ async function judgeThumb(page, label) {
       null, { timeout: 5_000 })
     got = await page.evaluate(() => {
       const img = document.querySelector('.bubble-thumb')
-      return { nw: img.naturalWidth, nh: img.naturalHeight, isData: img.src.startsWith('data:image/') }
+      const b = img.getBoundingClientRect()
+      return { nw: img.naturalWidth, nh: img.naturalHeight, isData: img.src.startsWith('data:image/'),
+               w: b.width, h: b.height, dpr: devicePixelRatio }
     })
   } catch {
     got = null
@@ -378,6 +396,34 @@ async function judgeThumb(page, label) {
   if (got.nw <= 0 || got.nh <= 0) {
     // 上面 waitForFunction 已经保证 > 0，这里是"判据本身别写错"的保险
     fails.push(`${label}：小图上没有像素（${got.nw}x${got.nh}）`)
+    return
+  }
+
+  // ★ 2026-10-04（晚）：**清晰度**。用户原话「对话框里的图片缩略图好模糊」——
+  //   又一个"四样检查全绿、用户先在真屏幕上看见"的例子：上面这条判据原来只问
+  //   "图上有没有像素"，不问**够不够**。160 长边的小图在 `width: 120px` 的框里
+  //   被拉 2.9 倍（DPR 2 的屏上），它照样绿。
+  //   和作品页那条（`judgeGallery` 的 `thumbCoverage`）是**同一把尺子**：
+  //   两个方向各算一次、取小的那个，< 1 就是浏览器在凭空造像素。
+  //   这里**不吃"长边/短边"那套解释**：`.bubble-thumb` 是 `width: 120px`、
+  //   高度随比例 —— 竖图越高，它要盖的设备像素越多，所以竖图最容易露馅
+  //   （这正是上传夹具换成竖图的原因，见 `PHOTO` 那段）。
+  //   ⚠️ 同样**只判桌面档**（理由见 `judgeGallery` 里那段）。
+  //   变异：把 `THUMB_MAX_SIDE` 改回 160 → 竖图小图 84x160、框 120 CSS ×DPR 1，
+  //   覆盖度 0.70 → 这一条红。
+  const needW = Math.round(got.w * got.dpr)
+  const needH = Math.round(got.h * got.dpr)
+  const cover = Math.min(got.nw / needW, got.nh / needH)
+  console.log(`     ★ 覆盖度 min(源/需要) = ${cover.toFixed(2)}` +
+    `（源 ${got.nw}x${got.nh}，框 ${got.w.toFixed(0)}x${got.h.toFixed(0)} CSS ×DPR ${got.dpr} = ` +
+    `要盖 ${needW}x${needH} 设备像素${view.isMobile ? '；手机档只打不判，理由见源码注释' : ''}）`)
+  if (!view.isMobile && cover < 1) {
+    fails.push(`${label}：对话里那张小图**是被拉大出来的**（源 ${got.nw}x${got.nh}，` +
+      `要盖 ${needW}x${needH} 设备像素，只盖得住 ${cover.toFixed(2)}）—— 根因不在 DPR：` +
+      '`makeThumbnail` 按**长边**缩，而 `.bubble-thumb` 是 `width: 120px` 的框、' +
+      '高度随比例 —— **竖图吃亏在宽度**（1080x2048 在 160 长边下宽只有 84）。' +
+      '数值在 `THUMB_MAX_SIDE`（src/core/thumbnail.ts，2026-10-04 起 480），' +
+      '两个调用点（App.tsx 里恢复的 `thumbOf` 和抓快照那个 effect）都走它。')
   }
 }
 
@@ -1317,8 +1363,9 @@ try {
       await page.waitForSelector('canvas', { timeout: 15_000 })
       await page.waitForTimeout(1200)
       judge(`${view.name} · 刚传完照片`, await measure(page), view)
-      // 真的 makeThumbnail 的产出：能解开、真有像素。（jsdom 那条路整个把它假掉了。）
-      await judgeThumb(page, `${view.name} · 刚传完照片`)
+      // 真的 makeThumbnail 的产出：能解开、真有像素、而且**够它被显示出来的那个尺寸**
+      //（第三样是 2026-10-04 晚加的 —— 前两样在 160 时代就是绿的，用户先在真屏幕上看见了糊）。
+      await judgeThumb(page, `${view.name} · 刚传完照片`, view)
 
       // ── 图上点选：红圈的几何 ─────────────────────────────────────────
       // 走到的位置是"用户点了一下、还没点确认" —— 钱就卡在这一步之后，
@@ -1646,6 +1693,33 @@ try {
         fails.push(`${view.name}：滚到底了却没接上后面的（还是 ${after.cells} 格）——` +
           '那个圈在转，可东西永远取不回来')
       }
+
+      // ── ★ 2026-10-04（晚）：对话里那张小图的清晰度（**竖图**单走一趟）──────
+      //
+      // 要抓的病：`makeThumbnail` 按**长边**缩，而 `.bubble-thumb` 是
+      // `width: 120px` 的框、高度随比例 —— **竖图吃亏在宽度**（1080×2048 在
+      // 当时的 160 长边下宽只有 84，被拉近 3 倍，用户原话「对话框里的图片
+      // 缩略图好模糊」）。
+      //
+      // ⚠️ 为什么**不借上面那趟的横图**：横图在 160 那个数下宽度刚好够
+      //    （1200×800 → 160×107，框 120 → 覆盖度 1.33），量不出区别；
+      //    而整趟换成竖图会把"面板开着 / 存失败之后照片还有多大"那几条
+      //    （按横图校准的）一起弄红 —— 那是另一件事。
+      //
+      // 零花费：suggest / edit / route 三条在这个 page 上早就掐掉了，
+      // 这一趟只上传（本地解码 + 一次 POST /api/sessions）。
+      await page.goto(APP, { waitUntil: 'load' })
+      await page.waitForTimeout(800)
+      // 上一趟留下的会话会带着回来（10-02 上线的恢复）—— 先回到选照片那一屏
+      const again = page.locator('.actions button', { hasText: '新的一张' })
+      if (await again.count()) {
+        await again.click()
+        await page.waitForTimeout(600)
+      }
+      await page.setInputFiles('input[type="file"]', PORTRAIT)
+      await page.waitForSelector('canvas', { timeout: 15_000 })
+      await page.waitForTimeout(1200)
+      await judgeThumb(page, `${view.name} · 竖图刚传完照片`, view)
     } finally {
       await page.close()
     }
