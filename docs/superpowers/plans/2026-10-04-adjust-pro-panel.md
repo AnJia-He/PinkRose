@@ -667,8 +667,6 @@ describe('面板的分组（2026-10-04）', () => {
     expect(ranges.filter(m => m === '360')).toHaveLength(2)   // 两条色相带
     expect(ranges).toContain('100')                           // 强度
   })
-})
-```
 
   it('★ 套一个预设 → 新参数一并归零（不许"套了预设色轮还留着"）', () => {
     const { container } = render(<Harness />)
@@ -815,6 +813,15 @@ it('★ 老格式的会话（params 只有八根）接回来：15 根滑块都�
 
 Run: `npx vitest run src/App.test.tsx -t 老格式的会话`
 Expected: FAIL（`vibrance` 是 `undefined` → 面板上出现 `NaN` 或断言失败）。
+
+- [ ] **Step 2b: ★ 预检/执行时补的裁定 —— 老**作品**的详情页也要归一化（会话那条支线的孪生）**
+
+同一味病、另一条路：`WorkDetailPage.tsx` 用 `isChanged` 列「这张图怎么来的」那张表，
+而**老作品**存下来的 `recipe.params` 只有八个键 —— 新键是 `undefined`，
+`undefined !== 0` 会让它**多列 7 行**（「自然饱和度 undefined」这种）。
+先写测试（照该文件/详情页现有测试的夹具写法，喂一条"八键 recipe"的老作品）：
+表里**只有真改过的那几行**、没有新参数的幽灵行。跑红之后修：那一页算表之前
+`const params = clampAdjustments(recipe.params)`（一行，和 App 那边同款）。
 
 - [ ] **Step 3: 改 `src/App.tsx`**
 
