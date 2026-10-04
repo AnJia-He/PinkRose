@@ -3246,6 +3246,11 @@ describe('用户管理页', () => {
     expect(container.querySelector('.account')).toBeTruthy()
     // 用户名是这一页的主句（§3.6 那张图最上面那一行）—— 它在，这一页就没白
     expect(container.querySelector('.account-name')?.textContent).toBe(LOGGED_IN.username)
+    // ★ 2026-10-04：**那三个字也得在**（用户看完这一页说「用户名没显示出来」）。
+    //   他的测试账号正好叫「111」—— 屏幕上只有一个孤零零的数字时，读不出
+    //   "这是你的用户名"。标签是**另起一格**，`.account-name` 里仍然只有名字
+    //   （上面那条断言就是钉这个的）。
+    expect(container.querySelector('.account-label')?.textContent).toBe('用户名')
   })
 
   it('★ 右上角那颗 👤 点得开它，而且地址栏跟着走', async () => {
