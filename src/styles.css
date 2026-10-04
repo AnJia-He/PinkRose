@@ -938,6 +938,31 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    里面那个原生输入，所以焦点圈得借 `:has` 画在拇指上。 */
 .slider-thumb:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* ── 色轮（色彩平衡那组，2026-10-04）─────────────────────────────────
+   88px 的色相环 + 一个可拖的点。数学在 `src/core/colorBalance.ts`
+   （拖点 = 零和地写三根轴；那三根轴是它的**等价通路** —— 所以它
+   `aria-hidden`，别给它加键盘通路）。
+
+   ⚠️ `touch-action: none` 不是装饰：没有它，手机上拖这个点会变成滚动页面。
+
+   ⚠️ `from 90deg` 是**有意的**：数学钉死了「x 向右 = 偏红、y 向上 = 偏蓝」，
+   而 conic-gradient 默认从**正上方**开始铺色 —— 少这个 90°，红会画在顶上，
+   往"红"那格拖反而把画面推蓝（颜色和动作对不上）。 */
+.color-wheel {
+  width: 88px; height: 88px; border-radius: 50%; position: relative;
+  box-shadow: inset 0 0 0 1px var(--hair);
+  touch-action: none;
+  /* ⚠️ 这一条 conic-gradient 是**内容色**（色相环本身就是这个控件要表达的数据），
+     不是主题色 —— 全局"样式只引用令牌"的**唯一例外**，和滑块的渐变轨同类：
+     换成令牌它就不再是色相环了。 */
+  background: conic-gradient(from 90deg, #ff2d2d, #ffef00, #00e000, #00e5e5, #0048ff, #e000ff, #ff2d2d);
+}
+.color-wheel-dot {
+  position: absolute; width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; border: 2px solid rgba(0, 0, 0, .35);
+  transform: translate(-50%, -50%);
+}
+
 /* ── 对话栏 ──────────────────────────────────────────────────────────
    这是整个产品的心脏（卖点是"对话式修图"，不是"更多滤镜"），
    而它原来只是**一列灰气泡 + 一个输入框**。
