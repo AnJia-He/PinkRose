@@ -49,6 +49,13 @@ uniform float uSaturation;
 uniform float uTemperature;
 uniform float uClarity;
 uniform float uVignette;
+uniform float uVibrance;
+uniform float uCbCyanRed;
+uniform float uCbMagentaGreen;
+uniform float uCbYellowBlue;
+uniform float uSplitHiHue;
+uniform float uSplitLoHue;
+uniform float uSplitAmount;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
@@ -76,6 +83,15 @@ vec3 linearToSrgb(vec3 c) {
              step(vec3(0.0031308), c));
 }
 
+// Hue (0..1) -> a pure chroma tint (luma removed), so applying it shifts
+// color without changing brightness.
+vec3 hueTint(float h) {
+  vec3 k = vec3(1.0, 2.0 / 3.0, 1.0 / 3.0);
+  vec3 p = abs(fract(vec3(h) + k) * 6.0 - 3.0);
+  vec3 rgb = clamp(p - 1.0, 0.0, 1.0);
+  return rgb - vec3(dot(rgb, LUMA));
+}
+
 void main() {
   vec2 uv = vUv;
 
@@ -98,6 +114,11 @@ void main() {
   // 1. Temperature
   c.r += uTemperature * 0.10;
   c.b -= uTemperature * 0.10;
+
+  // 1.5 Color balance -- one shift per channel, same style as temperature.
+  c.r += uCbCyanRed * 0.10;
+  c.g += uCbMagentaGreen * 0.10;
+  c.b += uCbYellowBlue * 0.10;
 
   // 2. Exposure (linear space)
   c = srgbToLinear(c);
@@ -132,6 +153,22 @@ void main() {
   // 5. Saturation
   float l2 = dot(c, LUMA);
   c = vec3(l2) + (c - vec3(l2)) * (1.0 + uSaturation);
+
+  // 5.5 Vibrance -- push the DULL colors, leave the saturated ones alone
+  //     (that is the whole difference from saturation).
+  float mx = max(max(c.r, c.g), c.b);
+  float mn = min(min(c.r, c.g), c.b);
+  float satNow = mx > 1e-4 ? (mx - mn) / mx : 0.0;
+  float l2b = dot(c, LUMA);
+  c = vec3(l2b) + (c - vec3(l2b)) * (1.0 + uVibrance * (1.0 - satNow) * 1.2);
+
+  // 6.5 Split toning -- tint highlights and shadows separately.
+  //     At amount 0 this is an exact identity (adds vec3(0)).
+  float l3 = dot(c, LUMA);
+  float wHi = smoothstep(0.45, 1.0, l3);
+  float wLo = 1.0 - smoothstep(0.0, 0.55, l3);
+  c += hueTint(uSplitHiHue) * (wHi * uSplitAmount * 0.25);
+  c += hueTint(uSplitLoHue) * (wLo * uSplitAmount * 0.25);
 
   // 6. Vignette
   //

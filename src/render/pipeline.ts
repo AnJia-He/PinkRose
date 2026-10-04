@@ -6,6 +6,8 @@ import { fitToLimit, readLimit } from './limits'
 const UNIFORM_NAMES = [
   'uExposure', 'uContrast', 'uHighlights', 'uShadows',
   'uSaturation', 'uTemperature', 'uClarity', 'uVignette',
+  'uVibrance', 'uCbCyanRed', 'uCbMagentaGreen', 'uCbYellowBlue',
+  'uSplitHiHue', 'uSplitLoHue', 'uSplitAmount',
 ] as const
 
 type UniformName = typeof UNIFORM_NAMES[number]
@@ -149,6 +151,13 @@ export class TonePipeline {
       uTemperature: u.temperature,
       uClarity: u.clarity,
       uVignette: u.vignette,
+      uVibrance: u.vibrance,
+      uCbCyanRed: u.cbCyanRed,
+      uCbMagentaGreen: u.cbMagentaGreen,
+      uCbYellowBlue: u.cbYellowBlue,
+      uSplitHiHue: u.splitHiHue,
+      uSplitLoHue: u.splitLoHue,
+      uSplitAmount: u.splitAmount,
     }
     for (const n of UNIFORM_NAMES) {
       gl.uniform1f(this.uniforms.get(n) ?? null, map[n])
