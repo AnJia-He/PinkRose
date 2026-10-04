@@ -833,16 +833,25 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .hint { display: flex; align-items: center; gap: var(--sp-3); color: var(--muted); font-size: 14px; }
 .hint::before { width: 16px; height: 16px; }
 
-/* 面板不再自己封顶 42vh，改成"最多占 40vh，不够就滚"。
-   ⚠️ 2026-09-30：八条滑块从"一行一条横铺满整屏宽"改成了**分栏**（1440 的屏上
-   原来是 1170px 一条滑轨，拇指要横跨半个屏幕去追它，右边那个数字孤零零贴在
-   屏幕最边上、离滑块一米远）。分栏落在**每一组的肚子里**（`.panel-group-body`），
-   不是这里 —— 面板本身仍然是"头 / 预设 / 组"的竖列，理由见 AdjustmentPanel.tsx。 */
+/* ★ 2026-10-05：这一栏从"图片下面的一条"改成"图片右边的一列"。
+   用户原话：「图片区和微调区左右分布吧，然后调色整个区域的功能布局优化一下
+   看怎么不拥挤」—— 画板上他挑的是"图片占大块、微调一条列在右"（方案 A）。
+   宽度和对话栏**同一套算法**（两个栏永远不同屏出现，观感上就是"右边那一格"）。
+   改版前它是"最多占 40vh、不够就滚"—— 那条**高度上封顶**正是"照片被挤"的
+   根源（竖图上尤其明显：高度就是它的全部）。现在整列通高、自己滚。
+   ⚠️ 窄屏（≤640）在下面那条媒体查询里变回"底下一整条"（今天的样子）。
+   ⚠️ 2026-09-30 的历史仍然成立：十五条滑块**不横铺满整屏** —— 分栏落在
+   每一组的肚子里（`.panel-group-body`），面板本身仍是"头 / 预设 / 组"的竖列。 */
 .panel {
-  flex: none;
-  border-top: 1px solid var(--line); background: var(--panel);
-  padding: var(--sp-4) var(--sp-5) var(--sp-5);
-  max-height: 40vh; overflow-y: auto;
+  width: clamp(340px, 26vw, 440px); flex: none; min-height: 0;
+  border-left: 1px solid var(--line); background: var(--panel);
+  /* ⚠️ `padding-top` **必须是 0**（2026-10-05 实测定下）：组头的吸顶位置
+     跟着滚动容器的内容上沿走 —— 留 16px 内边距的话，吸顶位置就比面板上沿
+     低 16px，滚起来会有一条 16px 的缝，行从缝里露出来半行、滚到底定格时
+     尤其像 bug（真机截过：一行"亮度"停在组头上面）。那 16px 的呼吸改挂在
+     `.panel-head` 的 `margin-top` 上，观感一模一样、但没有那条缝。 */
+  padding: 0 var(--sp-5) var(--sp-5);
+  overflow-y: auto;
 }
 /* ★ 2026-10-04：十五条参数分成五组（光效 / 色彩 / 色彩平衡 / 分离色调 / 效果），
    每组一个可折叠的头，组与组之间一条发丝线 —— 十五根平铺时"从哪儿到哪儿是一组"
@@ -854,7 +863,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    组标题上长回一个方框。悬停只换字色：整行铺底色在这个密度下太重。 */
 .panel-group-head {
   display: flex; align-items: center; justify-content: space-between; width: 100%;
-  background: none; border: 0; border-radius: 0; padding: 2px 0; color: var(--muted);
+  /* ★ 2026-10-05：往下滚的时候**组名钉在顶上**（面板变成右边一整列之后，
+     一屏装不下十五条，滚到半路得知道自己在哪一组）。底色 = 面板色 ——
+     不滚的时候看不出来、滚起来时从它底下过；上下内边距从 2px 加到 5/4px，
+     钉住时文字不贴边。⚠️ 底色只准用 `var(--panel)` 这一个值：面板自己就是
+     这个色，任何别的色都会在"没钉住"的时候显出一块补丁。 */
+  position: sticky; top: 0; z-index: 1;
+  background: var(--panel); border: 0; border-radius: 0; padding: 5px 0 4px; color: var(--muted);
   font-size: 12px; letter-spacing: .06em; transform: none;
 }
 .panel-group-head:hover { color: var(--text); }
@@ -869,6 +884,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .color-wheel { grid-row: span 3; }
 .panel-head {
   display: flex; justify-content: space-between; align-items: center;
+  /* ★ 2026-10-05：这 16px 原来挂在 `.panel` 的 `padding-top` 上 —— 组头吸顶
+     之后它变成了一条"缝"（行会从缝里露出来），挪到这里：观感一样、缝没了。
+     滚动容器不折叠外边距，所以它稳稳地待在滚动内容的顶上。 */
+  margin-top: var(--sp-4);
   margin-bottom: var(--sp-2); color: var(--text); font-weight: 600; font-size: 13px;
 }
 /* 「重置」是这一栏里的次要动作：它不该和预设抢眼，所以是一个没有框的文字钮。
@@ -1179,6 +1198,17 @@ button:where(:disabled) { opacity: .45; cursor: default; }
     width: auto;
     flex: none;
     height: 38vh;
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+
+  /* ★ 2026-10-05：微调面板在窄屏上**变回"照片在上、微调在下"** ——
+     这一档的 `.workspace` 本来就翻成竖排（见上），面板自然落到照片底下；
+     这里只把"右边一列"那套（定宽 / 左发丝线 / 通高）换回"底下一整条"，
+     高度仍是"最多 40vh、不够就滚"（和改版前一模一样）。 */
+  .panel {
+    width: auto;
+    max-height: 40vh;
     border-left: none;
     border-top: 1px solid var(--line);
   }

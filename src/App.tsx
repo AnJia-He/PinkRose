@@ -1563,7 +1563,7 @@ export default function App() {
 
       {/* 修图页和调色页**共用这一块壳**（★ 2026-10-04）。
           `adjust` 不是另一套界面：同一张照片、同一个舞台、同一根操作条 ——
-          区别在**右边那一区**（对话 还是 八条滑块），见下面 `workspace` 里那两处。
+          区别在**右边那一区**（对话 还是 微调面板），见下面 `workspace` 里那两处。
           ⚠️ 写成"两个 kind 一起渲染"而不是把整块复制一份：复制一份等于把
           "这张照片怎么排版"这件事变成两份，改一边忘一边是迟早的事。
           ⚠️ 也别顺手把面板挪到这个条件**外面**：挪出去，停在作品页 / 对话页
@@ -1773,27 +1773,32 @@ export default function App() {
                   onCancelMark={cancelPick}
                 />
               )}
-            </main>
-          )}
 
-          {/* ★ 2026-10-04：这一条**从 state 改成了从网址推出来**。
-              在那之前它是 `const [showPanel, setShowPanel] = useState(false)`，
-              由顶栏那颗按钮翻转。现在「调色」是左栏里的一支（`view.kind ===
-              'adjust'`），而"你在哪一支"本来就只有网址这一个来源 —— 再留一份
-              state 就是同一个事实有两个可以互相打架的答案（停在 `/app/adjust`
-              上按 F5，state 回到 false、地址栏却还写着 adjust）。
-              换成"由网址推"顺带换来两件以前没有的：**按 F5 面板还开着**，
-              以及这一屏能被收藏、能发给别人。
-              ⚠️ 别把这条判据改回 state：`view` 是**页面刷新之后仍然对**的那一份，
-              state 不是 —— 而这个项目已经在这条线上栽过一次（见 Nav.tsx 里
-              「产品介绍」那颗的注释：参数必须留在网址里，不能只记在内存）。*/}
-          {image && view.kind === 'adjust' && (
-            <AdjustmentPanel
-              value={params}
-              onChange={setParams}
-              onReset={() => setParams(ZERO)}
-              onMatchReference={file => void matchReference(file)}
-            />
+              {/* ★ 2026-10-05：微调面板**搬进右边这一格**（原来在图片区下面）。
+                  用户原话：「图片区和微调区左右分布吧，然后调色整个区域的功能布局
+                  优化一下看怎么不拥挤和用户使着方便」—— 他挑的是"图片占大块、
+                  微调一条列在右"那版（画板上过的方案 A）。
+                  ⚠️ 它和对话栏**永远不同屏**（判据都是 `view.kind`：这一屏不渲染
+                  对话、别的屏不渲染面板），所以两栏合穿同一格是安全的 ——
+                  这一格里要么是对话，要么是微调，不会两个都来、也不会两个都空。
+                  ★ 这一条判据是**从网址推出来**的（不是 state）：
+                  在那之前它是 `const [showPanel, setShowPanel] = useState(false)`，
+                  由顶栏那颗按钮翻转 —— 再留一份 state 就是同一个事实有两个可以
+                  互相打架的答案（停在 `/app/adjust` 上按 F5，state 回到 false、
+                  地址栏却还写着 adjust）。由网址推顺带换来：**按 F5 面板还开着**、
+                  这一屏能被收藏、能发给别人。
+                  ⚠️ 别把这条判据改回 state：`view` 是**页面刷新之后仍然对**的那一份，
+                  state 不是 —— 而这个项目已经在这条线上栽过一次（见 Nav.tsx 里
+                  「产品介绍」那颗的注释：参数必须留在网址里，不能只记在内存）。*/}
+              {view.kind === 'adjust' && (
+                <AdjustmentPanel
+                  value={params}
+                  onChange={setParams}
+                  onReset={() => setParams(ZERO)}
+                  onMatchReference={file => void matchReference(file)}
+                />
+              )}
+            </main>
           )}
         </div>
       )}
