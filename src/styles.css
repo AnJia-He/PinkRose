@@ -898,6 +898,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .slider.on .slider-label { color: var(--text); }
 .slider.on .slider-value { color: var(--accent-300); font-weight: 600; }
+/* ★ 2026-10-04：点数字进了编辑态，那个输入框（`.slider-value` 的替身）。
+   宽度按 em 给（字号定了宽度就定），tabular-nums 保住"数字跳动时不左右抖"。 */
+.slider-edit {
+  width: 4.5em; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px;
+  padding: 0 2px; border: 1px solid var(--accent); border-radius: var(--r-sm);
+  background: var(--panel); color: var(--text);
+}
 
 /* ── 滑块本体（2026-10-01 换的）──────────────────────────────────────
    换之前这里是**两套手写的伪元素**：`::-webkit-slider-runnable-track / -thumb`
