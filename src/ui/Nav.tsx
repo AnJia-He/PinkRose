@@ -1,3 +1,4 @@
+import { UserRound } from 'lucide-react'
 import type { View } from './view'
 
 /**
@@ -75,9 +76,24 @@ export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
               onClick={() => onGo({ kind: 'landing' })}>首页</button>
       {/* 用户管理（§3.6）—— 2026-10-03 从顶栏那颗 👤 搬下来的，就在「首页」下面
           （用户指定的位置）。它排在 `.nav-home` **后面**，所以跟着一起被那条
-          auto 外边距推到底 —— 这两颗是一组"和上面三支不一样的东西"。 */}
+          auto 外边距推到底 —— 这两颗是一组"和上面三支不一样的东西"。
+
+          ★ 2026-10-04：**文字换成人物图标**（用户原话：「个人设置改为人物图标」）。
+          它本来就是那颗 👤 搬下来的，换句话说这是**搬回它原来的长相** ——
+          左栏里另外五颗都是"去哪儿"（修图 / 调色 / 对话 / 作品 / 首页），
+          只有这一颗是"**我**"，所以它用一个人物图标反而更好认。
+
+          ⚠️ 因为没有可见文字了，**那两行标记就不是可选项**：
+            · `aria-label` —— 读屏和"按标签找元素"的测试都靠它
+              （`App.test.tsx` 的 `openAccount()`、`check:layout` 量的那个名字）；
+            · `title` —— 鼠标停上去能看见"个人设置"（图标独自站着时，
+              这是唯一能补上名字的地方）。
+          删了任何一个，都会变成"看着没问题、但没人找得到它"。*/}
       <button className={`nav-item nav-me${atAccount ? ' on' : ''}`}
-              onClick={() => onGo({ kind: 'account' })}>个人设置</button>
+              onClick={() => onGo({ kind: 'account' })}
+              aria-label="个人设置" title="个人设置">
+        <UserRound size={20} strokeWidth={1.5} aria-hidden="true" />
+      </button>
     </nav>
   )
 }

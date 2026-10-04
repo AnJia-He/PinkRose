@@ -954,7 +954,10 @@ async function measureSessions(page, targetName = null) {
       //   分轴用的，见 judgeSessions 里那一段。
       navRow: getComputedStyle(document.querySelector('.nav')).flexDirection === 'row',
       homeBox: box(document.querySelector('.nav-home')),
-      meText: document.querySelector('.nav-me')?.textContent?.trim() ?? '',
+      // ★ 2026-10-04：「个人设置」那颗**没有文字了**（用户：「个人设置改为人物图标」），
+      //   名字搬到了 `aria-label` 上 —— 按 textContent 读会读到空串，
+      //   而下面那条判据会报"写的是「」而不是「个人设置」"，看着像文案改错了。
+      meText: document.querySelector('.nav-me')?.getAttribute('aria-label')?.trim() ?? '',
       meBox: box(document.querySelector('.nav-me')),
       lastTabBox: (() => {
         const tabs = [...document.querySelectorAll('.nav button:not(.nav-home):not(.nav-me)')]
@@ -1088,8 +1091,9 @@ function judgeSessions(label, m, view, mode) {
         '它们看上去就变成第四、第五个栏目了')
     }
     if (m.meText !== '个人设置') {
-      fails.push(`${label}：左栏尾部那颗写的是「${m.meText}」而不是「个人设置」—— ` +
-        '用户管理那一页的入口（2026-10-03 从顶栏右上角那颗 👤 搬下来的）')
+      fails.push(`${label}：左栏尾部那颗的名字是「${m.meText}」而不是「个人设置」—— ` +
+        '用户管理那一页的入口（2026-10-03 从顶栏右上角那颗 👤 搬下来的；' +
+        '2026-10-04 起它是个**人物图标**，名字只在 aria-label / title 上）')
     }
   }
   if (m.navOn !== '对话') {

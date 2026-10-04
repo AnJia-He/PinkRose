@@ -2374,7 +2374,11 @@ describe('左栏导航：切界面不丢工作', () => {
     //   左栏这一列是「**这里有哪几件事**」。
     // 一件事在不在，不该随手上有没有照片变；**该换的是"没东西可看"那块地方**。
     await renderApp()
-    const 格子 = () => [...container.querySelectorAll('.nav-item')].map(b => b.textContent)
+    // ⚠️ 「个人设置」那颗现在是**人物图标**（2026-10-04 用户：「个人设置改为人物图标」），
+    //   它没有文字 —— 名字只在 `aria-label` 上。所以这里读的是"标签优先、文字兜底"。
+    //   少了前一半，这一格会**静默读成空串**（断言红在最后一项，看着像少了一颗按钮）。
+    const 格子 = () => [...container.querySelectorAll('.nav-item')]
+      .map(b => b.getAttribute('aria-label') || b.textContent)
     expect(格子()).toEqual(['修图', '调色', '对话', '作品', '首页', '个人设置'])
 
     await goNav('调色')
@@ -3201,10 +3205,16 @@ describe('保存 = 存进作品集（Task 13）', () => {
  * "这一页真的开着"，见下面那一条的注释。
  */
 describe('用户管理页', () => {
-  /** 左栏那颗「个人设置」—— 按**文字**找，和 `goNav` 同一个路数。 */
+  /** 左栏那颗「个人设置」。
+   *
+   *  ⚠️ **2026-10-04 起按 `aria-label` 找，不是按文字** —— 用户说
+   *  「个人设置改为人物图标」，那颗按钮现在里面只有一个人物图标，
+   *  `textContent` 是**空字符串**。名字搬进了 `aria-label`（还有 `title`）。
+   *  按文字找的那一版不会报错，只会"找不到那颗按钮" —— 而那种红很容易被
+   *  当成"页面坏了"，其实是标签换了个地方放。 */
   function accountNav(): HTMLButtonElement | null {
     return [...container.querySelectorAll('.nav button')]
-      .find(b => (b.textContent ?? '').trim() === '个人设置') as HTMLButtonElement | null
+      .find(b => b.getAttribute('aria-label') === '个人设置') as HTMLButtonElement | null
   }
 
   /** 从左栏那颗「个人设置」进去 —— 用户真会走的那一条路。 */
