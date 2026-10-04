@@ -22,29 +22,18 @@ import type { View } from './view'
  *     👤 原来只住在顶栏，而顶栏**只有修图页有** —— 站在作品页/对话页的人
  *     根本进不去设置，得先绕回修图页。
  */
-export function Nav({ view, onGo, hasImage }: {
-  view: View
-  onGo: (v: View) => void
-  /** 手上有没有一张照片 —— 「调色」那一格要不要出现就看它（见下面 `here` 那段）。 */
-  hasImage: boolean
-}) {
-  // ★ 2026-10-04（当天第二遍）：**没有照片时，「调色」不在，而且那一格算「修图」。**
+export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
+  // ⚠️ 这一列**不随"手上有没有照片"变**，是用户 2026-10-04 亲口定的：
+  //   「**调色要一直在导航栏**，没有图片的时候显示图片的地方提示还没有照片不就好了？
+  //    但是微调的按钮要一直在」。
   //
-  // 用户当场撞上的原话：「这怎么还是这个，进来就是图片加微调按钮」——
-  // 他点「调色」的时候手上没有照片，于是出来的还是那张"选一张照片"的欢迎页，
-  // 屏幕上唯二的变化是左栏亮点挪了一格、地址栏多了一截。**看上去就像点了没反应。**
-  //
-  // 它和顶栏那三颗（分享 / 保存 / 新的一张）**是同一条规矩**：关于**这张照片**
-  // 的东西，照片在才有 —— 而那一条正是用户 10-03 自己定的。
-  //
-  // ⚠️ 所以 `here` 要跟着一起改：站在 `/app/adjust` 而手上没有照片时，亮的必须是
-  //   「修图」（用户看到的确实就是修图页那一屏）。地址栏里那个 `adjust` **只在
-  //   真有照片时才作数** —— 也正因为如此，从这个地址**选一张照片进来**会落回
-  //   「调色」那一屏（那是他要的：他本来就是奔着微调去的），而这一点不需要任何
-  //   跳转或重定向：`hasImage` 一变真，这一格和那种亮法一起回来。
-  const here = view.kind === 'work' ? 'gallery'
-    : (view.kind === 'adjust' && !hasImage) ? 'edit'
-      : view.kind
+  //   在那之前我做过一版"没有照片时把那一格藏起来"，理由写得挺像回事
+  //   （"关于这张照片的工具，照片在才有"，照的是顶栏那三颗的规矩）—— 想窄了：
+  //   **顶栏那三颗是"对这张照片做什么"，而左栏这一列是"这里有哪几件事"。**
+  //   一件事在不在，不该随手上有没有照片变；**该换的是"没东西可看"那块地方**
+  //   （那件事在 `App.tsx` 里：没照片时照片那块地方说一句「还没有照片」，
+  //    见 `ui/AdjustEmpty.tsx`）。
+  const here = view.kind === 'work' ? 'gallery' : view.kind
   /** 站在用户管理那两页（账号 / 模型设置）时，「个人设置」是亮的 ——
    *  模型设置是它底下一格（§7.4），不是第五个地方。 */
   const atAccount = view.kind === 'account' || view.kind === 'models'
@@ -64,13 +53,11 @@ export function Nav({ view, onGo, hasImage }: {
           （修图 = 说话改、调色 = 手动改），另外两支说的是别的照片
           （对话 = 改过的那些、作品 = 存下来的那些）。
 
-          ⚠️ **没有照片时它整个不渲染**（当天第二遍加的，`hasImage`）——
-          理由和那条 `here` 的注释是同一件事，别把 `hasImage` 那道判断删了：
-          删了之后它在欢迎页上就是一格**点了没反应**的按钮（点进去还是欢迎页）。*/}
-      {hasImage && (
-        <button className={`nav-item${here === 'adjust' ? ' on' : ''}`}
-                onClick={() => onGo({ kind: 'adjust' })}>调色</button>
-      )}
+          ⚠️ **它一直在 —— 别再加"没有照片就不显示"那道判断**（2026-10-04 试过，
+          被用户当场否掉：「微调的按钮要**一直在**」）。没有照片时该变的是**照片那块
+          地方**（`ui/AdjustEmpty.tsx` 那句「还没有照片。」），不是这一格。*/}
+      <button className={`nav-item${here === 'adjust' ? ' on' : ''}`}
+              onClick={() => onGo({ kind: 'adjust' })}>调色</button>
       <button className={`nav-item${here === 'sessions' ? ' on' : ''}`}
               onClick={() => onGo({ kind: 'sessions' })}>对话</button>
       <button className={`nav-item${here === 'gallery' ? ' on' : ''}`}

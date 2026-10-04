@@ -1401,12 +1401,24 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .session-del.danger { color: var(--danger); }
 
 /* 空态照作品页那两条（"两句拉开档次"的理由在那边写着，这里一样成立）。 */
-.sessions-empty {
-  margin-top: 18vh; text-align: center; color: var(--text);
+/* 空态 —— **两处共用**：对话列表（「还没改过照片。」+「去改一张」）和调色那一屏
+   （「还没有照片。」+「选一张照片」，见 `ui/AdjustEmpty.tsx`）。
+   两处照的都是 §3.7 那个句式：**主句说现状，按钮说"那怎么办"**。
+
+   ★ 2026-10-04：原来是 `.sessions-empty` 自己一套，加第二处时**没有各抄一份**
+   （"同一个长相只有一份"那条）—— 规矩搬到 `empty-state` 这一组上。
+   ⚠️ `.sessions-empty*` 那几个**老类名仍然挂在元素上**：探针（`check:layout` 的
+   `.sessions-empty-title` / `.sessions-empty button`）和测试按它们找，别删。 */
+.empty-state {
+  text-align: center; color: var(--text);
   animation: welcome-in .5s var(--ease) both;
 }
-.sessions-empty-title { margin: 0; font-size: 17px; }
-.sessions-empty .btn-primary { margin-top: var(--sp-4); }
+.empty-state-title { margin: 0; font-size: 17px; }
+.empty-state .btn-primary { margin-top: var(--sp-4); }
+/* 那 18vh 只有**列表页**要：它是从顶上往下排的一条长列；
+   调色那一屏的舞台自己就是居中的（`.stage` 是 flex 居中），不要再叠一层。 */
+.sessions-empty { margin-top: 18vh; }
+/* `.adjust-empty` 只是个**锚点类**（探针 / 测试按它点名），长相全在上面那 3 条上。 */
 
 /* ── 作品详情页（Task 12）：这张图怎么来的 ──────────────────────────
    ⚠️ **`.detail` 必须自己滚**（下面那条 overflow-y: auto），和 `.gallery` 同一条规矩：

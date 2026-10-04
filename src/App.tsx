@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Btn } from './ui/kit/Btn.tsx'
 import Canvas from './ui/Canvas'
 import Uploader from './ui/Uploader'
+import AdjustEmpty from './ui/AdjustEmpty'
 import AdjustmentPanel from './ui/AdjustmentPanel'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import { LoginPage } from './ui/LoginPage'
@@ -1520,9 +1521,9 @@ export default function App() {
   return (
     <div className="shell">
       {/* 左栏在**所有**界面里都在：作品页、详情页是同一个壳，换的只是右边那一格。
-          `hasImage` 给的是"手上有没有一张照片" —— 「调色」那一格按它出现 / 消失
-          （没有照片时点它就是"点了没反应"，见 Nav.tsx 里 `here` 那段）。 */}
-      <Nav view={view} onGo={go} hasImage={image !== null} />
+          ⚠️ 它**不收"有没有照片"那个参数**（2026-10-04 试过一版，被用户否掉：
+          「微调的按钮要一直在」）—— 没照片时该变的是照片那块地方，见下面 `stage`。 */}
+      <Nav view={view} onGo={go} />
 
       {/* 修图页和调色页**共用这一块壳**（★ 2026-10-04）。
           `adjust` 不是另一套界面：同一张照片、同一个舞台、同一根操作条 ——
@@ -1652,7 +1653,24 @@ export default function App() {
 
           {!image && (
             <main className="stage">
-              {busy ? <div className="hint">{busy}</div> : <Uploader onPick={onPick} />}
+              {/* ★ 还没有照片时，**两屏给的东西不一样**（2026-10-04 定的）：
+
+                  · 「修图」= 欢迎页：标志 + 一句话 + 那条对话输入框 + 背景的图片球
+                    —— 它是"**登录之后看到的第一张脸**"，要介绍这个产品是什么。
+                  · 「调色」= 一句「还没有照片。」+ 一颗「选一张照片」
+                    （`ui/AdjustEmpty.tsx`）—— 用户已经在这个工具里了，只是手上
+                    这张没了，所以**不用再介绍一遍**。
+
+                  ⚠️ 别让它们合并回同一个 —— 那正是 2026-10-04 用户撞上的那版：
+                  他点「调色」，看到的是和「修图」**一模一样**的欢迎页，屏幕上
+                  唯二的变化是左栏亮点挪了一格、地址栏多了一截，**看着就像没反应**。
+                  他给的方子就是现在这条：「没有图片的时候显示图片的地方提示还没有照片」。
+
+                  ⚠️ 左栏那一格**不跟着变**（`Nav` 不收这类参数）—— 变的是**这块地方**，
+                  不是"这里有没有这件事"。两者分开才是他说的那个形状。 */}
+              {busy ? <div className="hint">{busy}</div>
+                : view.kind === 'adjust' ? <AdjustEmpty onPick={onPick} />
+                  : <Uploader onPick={onPick} />}
             </main>
           )}
 

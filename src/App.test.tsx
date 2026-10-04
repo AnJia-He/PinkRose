@@ -2363,43 +2363,56 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(canvasProps.props.at(-1)?.params.exposure).toBe(20)
   })
 
-  it('★ 还没有照片时，左栏**没有「调色」那一格**（2026-10-04 用户当场撞上的）', async () => {
-    // 用户原话：「**这怎么还是这个，进来就是图片加微调按钮**」——
-    // 他点「调色」的时候手上没有照片，于是出来的还是那张"选一张照片"的欢迎页，
-    // 屏幕上唯二的变化是左栏亮点挪了一格、地址栏多了一截。看上去就像点了没反应。
+  it('★ 「调色」那一格**一直在** —— 没照片时变的是照片那块地方（2026-10-04）', async () => {
+    // 用户原话（当天第三遍，把我上一版否了）：
+    //   「**调色要一直在导航栏**，没有图片的时候显示图片的地方提示还没有照片不就好了？
+    //    但是微调的按钮要**一直在**，你这也要靠我？」
     //
-    // ⚠️ 规矩和顶栏那三颗**是同一条**：关于**这张照片**的东西，照片在才有
-    //   （而那一条是用户 2026-10-03 自己定的）。所以这条测试钉两处：
-    //   ① 那一格不在；② 站在 `/app/adjust` 而没有照片时，亮的是**「修图」**
-    //      —— 用户看到的确实就是修图页那一屏，亮点不能和他眼睛里的东西对不上。
+    // 我上一版做的是"没有照片就把那一格藏起来"（理由还写得挺像回事：照顶栏那三颗
+    // 的规矩，"关于这张照片的东西，照片在才有"）。他一句话点破 —— **想窄了**：
+    //   顶栏那三颗是「**对这张照片做什么**」（分享 / 保存 / 新的一张）；
+    //   左栏这一列是「**这里有哪几件事**」。
+    // 一件事在不在，不该随手上有没有照片变；**该换的是"没东西可看"那块地方**。
     await renderApp()
     const 格子 = () => [...container.querySelectorAll('.nav-item')].map(b => b.textContent)
-    expect(格子()).toEqual(['修图', '对话', '作品', '首页', '个人设置'])
-    expect(格子()).not.toContain('调色')
+    expect(格子()).toEqual(['修图', '调色', '对话', '作品', '首页', '个人设置'])
 
-    // 地址栏里直接写着 /app/adjust（收藏夹 / F5）而手上没有照片 —— 同上。
-    // ⚠️ 这里**必须真换一个 root 重挂**（和本文件别处"重开一次页面"同一个写法）：
-    //   `root.render()` 第二次不会重跑 `useState` 的初始化器，同一个实例还用着
-    //   老的 `view`，那样量到的是假的。
-    history.replaceState(null, '', '/app/adjust')
+    await goNav('调色')
+    expect(location.pathname).toBe('/app/adjust')
+    expect(container.querySelector('.nav-item.on')?.textContent).toBe('调色')
+    // ★ **照片那块地方**说的是「还没有照片。」+ 一条出路（§3.7 那个句式：
+    //   主句说现状，按钮说"那怎么办"）——和对话列表那条空态是同一个长相。
+    expect(container.querySelector('.empty-state-title')?.textContent).toBe('还没有照片。')
+    expect(container.querySelector('.empty-state button')?.textContent).toBe('选一张照片')
+    // ⚠️ **而且不是欢迎页**：那一屏是"登录之后看到的第一张脸"（标志 + 那句话 +
+    //   背景那颗图片球），要介绍这个产品是什么。合并回去就退回了用户撞上的那一版
+    //   ——他点「调色」，看到的和「修图」一模一样，**看着就像没反应**。
+    expect(container.querySelector('.welcome')).toBeNull()
+    expect(container.querySelector('.globe')).toBeNull()
+    // 没照片时滑块也没得拖（它们是作用在照片上的），所以面板不出现
+    expect(container.querySelector('.panel')).toBeNull()
+
+    // ★ 从**这一屏**选一张照片 → 落回的就是这一屏（调色），面板跟着开。
+    //   不需要任何跳转：`onPick` 本来就不动 view。
+    await uploadPhoto()
+    expect(container.querySelector('.empty-state')).toBeNull()
+    expect(container.querySelector('.panel')).toBeTruthy()
+    expect(container.querySelector('.nav-item.on')?.textContent).toBe('调色')
+
+    // ★ 另一头：**同一件事在「修图」那一边仍是欢迎页** —— 两屏没照片时给的东西
+    //   **不一样**，这正是用户要的那个形状（一块地方说现状，不是一个入口消失）。
+    //   ⚠️ 换 root 重挂（本文件里"重开一次页面"的惯用写法）：`root.render()` 第二次
+    //   不重跑 `useState` 的初始化器，同一个实例还留着老 view 和那张照片。
+    history.replaceState(null, '', '/app')
     await act(async () => root.unmount())
     container.remove()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
     await renderApp()
-    expect(container.querySelector('input[type="file"]')).toBeTruthy()   // 还是"选一张照片"那一屏
-    expect(container.querySelector('.panel')).toBeNull()
-    expect(格子()).not.toContain('调色')
-    expect(container.querySelector('.nav-item.on')?.textContent).toBe('修图')
-
-    // ★ 而从这个地址**选一张照片进来**，落回的就是「调色」那一屏 ——
-    //   那正是他点这一格时想要的（他本来就是奔着微调去的）。
-    //   实现上不需要任何跳转：`hasImage` 一变真，这一格和那种亮法一起回来。
-    await uploadPhoto()
-    expect(格子()).toContain('调色')
-    expect(container.querySelector('.panel')).toBeTruthy()
-    expect(container.querySelector('.nav-item.on')?.textContent).toBe('调色')
+    expect(container.querySelector('.welcome')).toBeTruthy()
+    expect(container.querySelector('.empty-state')).toBeNull()
+    expect(格子()).toContain('调色')      // 而那一格**还在**
   })
 })
 

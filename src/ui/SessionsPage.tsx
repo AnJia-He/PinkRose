@@ -109,9 +109,9 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
   if (rows.length === 0) {
     return (
       <section className="sessions">
-        <div className="sessions-empty">
+        <div className="sessions-empty empty-state">
           {/* 空态那两句话的分工照作品页：主句说现状，下面那句（或者那颗按钮）说"那怎么办"（§3.7） */}
-          <p className="sessions-empty-title">还没改过照片。</p>
+          <p className="sessions-empty-title empty-state-title">还没改过照片。</p>
           <button className="btn-primary" onClick={onNew}>去改一张</button>
         </div>
       </section>
