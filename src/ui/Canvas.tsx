@@ -19,6 +19,16 @@ type Props = {
   canvasRef: MutableRefObject<HTMLCanvasElement | null>
   /** 正在等用户点一下（spec §6.3）。true 时画布接受点击并把它换算成坐标。 */
   picking?: boolean
+  /**
+   * ★ 2026-10-06（用户原话：「而且中途思考要有一些加载动作比如正在思考，要让
+   * 用户知道你在干嘛」）：**正在生成**（判据在 App：`busy === BUSY_GENERATING`）。
+   * 为真时照片上盖一层**淡淡的暗罩 + 转圈** —— 那十几秒里照片原来完全没反应，
+   * 用户不知道是在等还是坏了。
+   * ⚠️ **只有生成这一段**会传 true：「正在思考…」/ 上传 / 切会话那几句不盖
+   *   （一个 1.5 秒的闪暗、紧接着再暗十来秒，读起来是界面在抽）。
+   * 可选：不传 = 不盖，直接挂载它的测试不用为此表态。
+   */
+  busy?: boolean
   /** 用户点的那个点，0~1（**相对照片左上角**）。null = 还没点。 */
   marker?: NormPoint | null
   onPickPoint?: (x: number, y: number) => void
@@ -53,6 +63,7 @@ export function describeFailure(e: unknown): string {
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
 export default function Canvas({
   image, params, lutCube, lutAmount, originalPreview, canvasRef, picking, marker, onPickPoint, onFail,
+  busy,
 }: Props) {
   const innerRef = useRef<HTMLCanvasElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -286,6 +297,16 @@ export default function Canvas({
           }}
         />
       )}
+      {/* ★ 2026-10-06：生成中那层**暗罩 + 转圈**（用户原话：「要让用户知道你在
+          干嘛」——那十几秒照片原来完全没反应）。
+
+          它是 wrap 的最后一个孩子 → 画在照片和红圈之上；`absolute; inset: 0`
+          按 wrap 定位 —— `.canvas-wrap` 的 `position: relative` 早就有了
+          （本来是给 `.canvas-peek` 当包含块的），暗罩搭同一班车。
+          ⚠️ 进出由 CSS 管：`pointer-events: none`（只是指示、不挡操作 ——
+          「按住看原图」和图上点选照常收得到事件，它们挂在 wrap 上）。
+          ⚠️ `aria-hidden`：它本身没有一个字，要把话说出去的是上面那条气泡。 */}
+      {busy && <div className="canvas-veil" aria-hidden="true" />}
     </div>
   )
 }

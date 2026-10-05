@@ -36,7 +36,7 @@ import { bitmapsToClose, attachThumb, type Snapshot } from './core/history'
 import { GALLERY_THUMB_MAX_SIDE, THUMB_MAX_SIDE, bitmapToDataUrl, makeThumbnail } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
 import { useDelivery } from './app/useDelivery'
-import { useGeneration } from './app/useGeneration'
+import { BUSY_GENERATING, useGeneration } from './app/useGeneration'
 import { useLuts } from './app/useLuts'
 import { normalizeLutRef, sameLutName, type LutRef } from '../shared/lut.ts'
 import type { SuggestCard } from '../shared/protocol.ts'
@@ -158,7 +158,11 @@ type PendingMark = {
  * ★ 2026-10-05（设计 §4.5）：从**旧步骤**继续改之前那条确认。
  *
  * `keepFromMsg` 缺席 = "确认那一刻才知道"：「再来一版」那条路没有新的用户消息，
- * 切对话的保留边界就是确认之后 `say(reply)` 拿到的那个 id（`mid`）。
+ * 切对话的保留边界就是**确认那一刻 `nextId()` 发出的那个号**（`confirmReplace`
+ * 里的 `mid`）—— 它同时是这一步的步骤 id 和那句 reply 的消息 id（先发号、
+ * 再交给 `runGenerate`，见那边的注释）。
+ * （措辞 2026-10-06 更正：原来写的是"确认之后 `say(reply)` 拿到的那个 id"——
+ *  机制早就不是 `say` 了，那句话现在由 `runGenerate` 在成功那一刻插；语义没变。）
  */
 type PendingReplace = {
   stepId: number
@@ -257,6 +261,18 @@ export default function App() {
   const reloadLuts = lutsApi.reload
   /** 非 null 时既是"正在忙"的标志，也是要显示给用户的那句话 */
   const [busy, setBusy] = useState<string | null>(null)
+  /**
+   * ★ 2026-10-06（用户原话：「而且中途思考要有一些加载动作比如正在思考，要让用户
+   * 知道你在干嘛」）：**这一趟是不是真的在生成**。
+   *
+   * 它决定两处"看得见"：对话里图的位置摆不摆占位块、照片上盖不盖那层暗罩。
+   * 「正在思考…」（决策那段 1.3~1.6 秒）和上传/切会话那几句**都不算** ——
+   * 一闪一暗会闪。
+   *
+   * ⚠️ 判据是**那个常量本身**（`useGeneration` 导出的 `BUSY_GENERATING`），
+   *   不是字符串嗅探（`busy.startsWith('正在改')` 那种：文案改一个字就静默失效）。
+   */
+  const generating = busy === BUSY_GENERATING
   /** 本设备能不能把图交给系统分享面板。只在挂载时算一次：设备能力不会中途变。
    *  用惰性初始化（传函数），免得每次 render 都去 new 一个探针 File。 */
   const [canShare] = useState(canShareImage)
@@ -1364,7 +1380,12 @@ export default function App() {
     const uid = nextId()
     setMessages(m => [...m, { id: uid, role: 'user', text }])
     setCards([])
-    setBusy('正在看照片…')
+    // ★ 2026-10-06（用户原话：「而且中途思考要有一些加载动作比如正在思考，要让
+    //   用户知道你在干嘛」）：这一段写「正在思考…」—— 原来写「正在看照片…」，
+    //   说的是**我们的动作**；接下来那 1.3~1.6 秒是模型在读这张照片、想你这句
+    //   话该怎么改，用户要的"知道你在干嘛"就是这个。生成那段（"正在改…大约
+    //   10 秒"）一个字没动，上传/切会话那两句也没动。
+    setBusy('正在思考…')
     // ★ 2026-10-05（终审残留）：记下"这一趟出发时是哪条会话、哪一版底图"。
     //   `postRoute` 要等 1.3~1.6 秒，而切会话 / 换照片都**没有** busy 闸门 ——
     //   不记的话，决策回来会把这趟落到**别人会话**上：轻则弹一条"后面还有 0 步…"
@@ -2208,6 +2229,11 @@ export default function App() {
                   marker={marker}
                   onPickPoint={onPickPoint}
                   onFail={noticeBad}
+                  // ★ 2026-10-06：生成中给照片盖一层淡淡的暗罩 + 转圈（那十几秒
+                  //   照片原来完全没反应）。传的是 `generating` 不是 `busy` ——
+                  //   「正在思考」/上传/切会话那几句**不盖**（一闪一暗会闪），
+                  //   判据在 App 顶上那一条。
+                  busy={generating}
                 />
               </div>
               {/* ★ 2026-10-04：**调色那一屏没有对话栏。**
@@ -2237,6 +2263,10 @@ export default function App() {
                   messages={messages}
                   cards={cards}
                   busy={busy}
+                  // ★ 2026-10-06：生成中才摆"图位的占位块"（和画布那层暗罩同一
+                  //   个判据、同一个来源）。「正在思考…」那 1.5 秒不摆 ——
+                  //   那会儿还不知道要不要生成。
+                  generating={generating}
                   suggesting={suggesting}
                   draft={draft}
                   onSend={send}

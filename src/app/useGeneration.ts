@@ -24,6 +24,17 @@ import type { ChatMessage } from '../ui/ChatPanel'
  *    所以原来写 `[]` 的那几条依旧写 `[]`。
  */
 
+/**
+ * ★ 2026-10-06：「正在生成」那句忙文案 —— **导出是有用的**。
+ *
+ * App 那边靠它判"这一趟是不是真的在生成"（生成中照片上才盖暗罩、对话里才摆
+ * 图位的占位块；「正在思考…」那 1.3~1.6 秒**不**盖 —— 一闪一暗会闪）。
+ * 判据必须是**这一个常量**的身份比较（`busy === BUSY_GENERATING`）：
+ * 拿 `busy.startsWith('正在改')` 那种字符串嗅探，哪天文案改一个字就**静默**
+ * 失效（暗罩和占位块再也不会出现，测试和 typecheck 全绿）。
+ */
+export const BUSY_GENERATING = '正在改…大约 10 秒'
+
 export type GenerationDeps = {
   /** 当前底图。生成送的是**它**（不是原图、也不是画布），见 `runGenerate`。 */
   image: DecodedImage | null
@@ -180,7 +191,7 @@ export function useGeneration(deps: GenerationDeps) {
     //   这张照片），紧接着被落盘那一趟写进那条会话：两条会话互相污染，一句报错都没有。
     //   钱已经花了，但写错地方更坏（§9 那三条"错了不会报错"里就有"串会话"）。
     const seqAtStart = baseSeqRef.current
-    setBusy('正在改…大约 10 秒')
+    setBusy(BUSY_GENERATING)
     try {
       // source 直接就是能 drawImage 的东西（位图或画布），不用再拆一层
       const prepared = await prepareForModel(source)
@@ -393,7 +404,7 @@ export function useGeneration(deps: GenerationDeps) {
     // ★ 2026-10-05（滤镜）：这条路（send / 卡片触发的路由决策）**就是"此刻"**——
     //   所以传的是闭包里那个 `lut`，和上面 `params` 同一条口径。
     //   ⚠️ 它读 `lut`，所以 `lut` 必须进依赖数组（同 `image` 那条的理由）。
-    if (isGen && image && cur !== null) {
+    if (isGen && image && cur !== null && d.editPrompt) {
       // ★ 2026-10-06：生成这条路**只发号、不插消息** —— 那句话由 `runGenerate`
       //   在**成功那一刻**和图片一起说（用户原话：「对话区 AI 回复的太快，它跟
       //   图片应该是同时出的」）。原来这里是 `say(d.reply || '好了。')`，话抢先
@@ -402,6 +413,10 @@ export function useGeneration(deps: GenerationDeps) {
       //   号）、也是消息的 id；`runGenerate` 签名里那段把这条约定写全了。
       //   （`nextId` 只碰 ref，按这个文件的口径不进依赖数组 —— `say` 自己也是
       //   这么用它的。）
+      //   ⚠️ `d.editPrompt` 那道闸门（2026-10-06 评审 Minor 补的）：模型声明
+      //   generate 却给了**空 editPrompt** 时走不进来 —— 进来的话 `runGenerate`
+      //   会撞上它开头那句 `if (!editPrompt) return`，用户说了一句话、一个字都
+      //   收不到（静默失败）。落回下面那句"立刻说"。
       const mid = nextId()
       // ★ T11：传 `nextLut`（这一步做完之后那个），和 `nextParams` 对称 ——
       //   理由见上面滤镜那块。⚠️ 别"顺手"改回闭包的 `lut`。
@@ -411,8 +426,10 @@ export function useGeneration(deps: GenerationDeps) {
       return
     }
     // 纯参数 / 不生成这条：没有"等一张图"这回事，照旧**立刻说**。
-    // （`isGen` 为真但 `image` / `cur` 为空、走不到生成的那种退化情形也落在这里
-    //   —— 行为与改动前一致：话说、不动手。）
+    // （`isGen` 为真但 `image` / `cur` 为空、或者模型声明 generate 却给了**空
+    //   editPrompt** 的退化情形都落在这里 —— 话说、不动手。最后那一项是
+    //   2026-10-06 补的闸门：那种决策进 `runGenerate` 会撞上它开头那句
+    //   `if (!editPrompt) return`，一句反馈都没有 —— 静默失败。）
     say(d.reply || '好了。')
     // ★ T11 又读了 `luts` / `setLut`（上面那块滤镜落地），两个都得进依赖数组 ——
     //   漏掉 `luts` 的话，清单刷新之后这个回调还在用旧的（名字换成错 id）；

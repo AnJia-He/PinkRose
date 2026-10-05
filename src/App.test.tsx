@@ -27,8 +27,10 @@ import type {
  *  用 hoisted：vi.mock 的工厂会被提到所有 import 之前执行。 */
 const canvasProps = vi.hoisted(() => ({
   images: [] as { width: number; height: number }[],
+  // ★ 2026-10-06：`busy` 是"生成中照片上那层暗罩"的唯一依据（真的 Canvas 按它
+  //   渲染 `.canvas-veil`）—— 这个假画布看不到暗罩本身，就只能看它拿到的 prop。
   props: [] as { originalPreview: string | null; picking: boolean; marker: unknown
-                  params: Record<string, number> }[],
+                  params: Record<string, number>; busy: boolean }[],
 }))
 
 /** 画布：真的那个要 WebGL2。这里给一个真 <canvas> 并挂上 ref ——
@@ -36,9 +38,9 @@ const canvasProps = vi.hoisted(() => ({
 vi.mock('./ui/Canvas', async () => {
   const React = await import('react')
   return {
-    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint }: any) => {
+    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint, busy }: any) => {
       canvasProps.images.push(image)
-      canvasProps.props.push({ originalPreview, picking, marker, params })
+      canvasProps.props.push({ originalPreview, picking, marker, params, busy })
       return React.createElement('canvas', {
         ref: (node: HTMLElement | null) => {
           canvasRef.current = node
@@ -943,7 +945,98 @@ describe('对话式修图：钱花在对的地方', () => {
       await new Promise(r => setTimeout(r, 0))
     })
     expect(texts()).toContain('好，这就去改。')
+    // ★ 而且**只说一遍**：这句应答今天是"只在成功那一刻说"（上一条用例钉的），
+    //   将来谁要是半回退（决策出一遍、成功又补一遍），这里当场红。
+    expect(texts().filter(t => t === '好，这就去改。')).toHaveLength(1)
     expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)  // 原图那张 + 新这一步的
+  })
+
+  /**
+   * ★ 2026-10-06（用户原话：「而且中途思考要有一些加载动作比如正在思考，要让用户
+   * 知道你在干嘛」）。这条钉生成中那十几秒里的三样"看得见"：
+   *   ① 那条「正在…」气泡，文字后面是**三颗跳动的点**（替掉了原来 12px 的小转圈）；
+   *   ② 图要出现的位置先摆一块 `.shot-skeleton` 占位（图到了原地换掉）；
+   *   ③ 画布拿到 `busy: true`（真的 Canvas 按它盖那层暗罩 —— 画布在 App 测试里
+   *      是假掉的，所以看到的是它收到的那一帧 prop）。
+   * 放行之后三样都要收工：占位块消失、真图换上、画布不再忙。
+   */
+  it('★ 生成中「等待看得见」—— 跳动的点 + 图位的占位块 + 画布暗罩，放行后收工', async () => {
+    const gate = makeGate<{ imageDataUrl: string; width: number; height: number }>()
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉后面的路人', reply: '好，这就去改。' }))
+    vi.mocked(api.postEdit).mockReturnValueOnce(gate.promise)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+
+    // ① 三颗点：在那条「正在…」气泡里
+    const dots = container.querySelector('.bubble.pending .pending-dots')
+    expect(dots, '那条「正在…」气泡上没有跳动的点').toBeTruthy()
+    expect(dots!.querySelectorAll('i')).toHaveLength(3)
+    // ② 图位占位（等十几秒的那一块）
+    expect(container.querySelector('.shot-skeleton'), '生成中图的位置没有占位块').toBeTruthy()
+    // ③ 照片那边的暗罩（判据是这一帧 prop，不是字符串）
+    expect(canvasProps.props.at(-1)?.busy).toBe(true)
+
+    await act(async () => {
+      gate.open(OK)
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(container.querySelector('.shot-skeleton')).toBeNull()   // 占位让位给真图
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(canvasProps.props.at(-1)?.busy).toBe(false)
+  })
+
+  /**
+   * ★ 2026-10-06：决策那 1.3~1.6 秒写的是「正在思考…」——
+   * 原来写「正在看照片…」：那半句说的是**我们的动作**，而用户要的是
+   * "知道你在干嘛"，"在想"才是这一刻这件事。
+   * ⚠️ 这一段**不盖暗罩**（照片那边只在**生成**时盖）：一个 1.5 秒的闪暗、
+   * 紧接着再暗十来秒，读起来是界面在抽。
+   */
+  it('★ 决策那一段：「正在思考…」（不再写"正在看照片"），而且照片上不盖暗罩', async () => {
+    const gate = makeGate<RouteDecision>()
+    vi.mocked(api.postRoute).mockReturnValueOnce(gate.promise)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('亮一点')
+
+    expect(container.textContent).toContain('正在思考…')
+    expect(container.textContent).not.toContain('正在看照片')   // 旧文案全站下线
+    expect(container.querySelector('.bubble.pending .pending-dots')).toBeTruthy()
+    // 「正在思考」不是"生成中"：占位块和暗罩都不许亮
+    expect(container.querySelector('.shot-skeleton')).toBeNull()
+    expect(canvasProps.props.at(-1)?.busy).toBe(false)
+
+    await act(async () => {
+      gate.open(decision({ route: 'params', paramDeltas: { exposure: 20 }, reply: '给你提亮了。' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.textContent).not.toContain('正在思考')
+  })
+
+  /**
+   * ★ 2026-10-06（评审 Minor）：模型声明 `route: 'generate'` 却给了**空
+   * `editPrompt`** 的退化决策 —— 落回"立刻说一句"，**不许静默**。
+   * 红的样子（改动前）：这一版会进 `runGenerate`、撞上它开头的
+   * `if (!editPrompt) return` —— 钱不花、图不画，但**一个字都不说**
+   * （用户说了一句话，屏幕上没有任何反馈 —— 静默失败）。
+   * ⚠️ 判据是 `lastReply()` 那条：只断"没花钱"的话，退化路悄悄吞掉半句
+   *    照样绿。
+   */
+  it('★ 声明 generate 却给了空 editPrompt 的退化决策：不生成，但必须回一句话', async () => {
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '', reply: '这句不改，先这么看。' }))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+
+    expect(api.postEdit).not.toHaveBeenCalled()        // 没有 editPrompt 就一个钱都不花
+    expect(lastReply()).toBe('这句不改，先这么看。')     // 但话必须说 —— 静默才是红线
   })
 
   /**

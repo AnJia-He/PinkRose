@@ -285,18 +285,22 @@ body {
 ::selection { background: var(--accent-700); color: #fff; }
 
 /* ── 那个转圈（全站只有这一个形状）──────────────────────────────────
-   它出现在五个地方：上传前那句「正在打开照片…」、对话里那条「正在…」、
-   卡片那句「正在看这张照片能改什么…」、开机那句「正在打开…」、
-   作品页的「正在取…」。五处的**形状一模一样**，只有尺寸分三档。
+   它出现在六个地方：上传前那句「正在打开照片…」（`.hint`）、开机那句
+   「正在打开…」、作品页 / 会话页的「正在取…」、卡片那句「正在看这张照片
+   能改什么…」、生成中盖在照片上那层暗罩（`.canvas-veil`）。
+   六处的**形状一模一样**，只有尺寸分四档（12 / 14 / 16 / 20）。
    所以形状在这儿写一次，各处只写自己的宽高 —— 分开写的话，哪天调转速或
-   主色就得改五处，漏一处屏幕上就出现两个长得不一样的转圈。
+   主色就得改六处，漏一处屏幕上就出现两个长得不一样的转圈。
+   ★ 2026-10-06：对话里那条「正在…」气泡**退出了这个清单**（它的宽度/高度
+   那条规则也一起删了）—— 它换成了三颗跳动的点（`.pending-dots`，理由在
+   那一节）。上面那个"六"是**退掉它、加上暗罩之后**的数，别把它抄回去。
    ⚠️ 它不是装饰，是**状态指示器**：没有它，用户会以为到底了 / 卡住了，
    而不是"还在加载"（§3.5）。转得慢一点 —— 转得快会像卡住。 */
 .hint::before,
 .app-loading::before,
 .gallery-more::before,
 .sessions-more::before,
-.bubble.pending::before,
+.canvas-veil::before,
 .cards-now::before {
   content: ''; flex: none; border-radius: 50%;
   border: 2px solid var(--line-2); border-top-color: var(--accent);
@@ -734,7 +738,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    所以内联的宽高和圆心算法对得上。） */
 .canvas-marker {
   position: absolute;
-  /* ⚠️ 这是全站**唯一**一处故意不取令牌的颜色。它是画在**照片上**的记号，
+  /* ⚠️ 这是全站**少数几处**故意不取令牌的颜色之一（另一个是下面
+     `.canvas-veil` 那层暗罩）。它是画在**照片上**的记号，
      要满足的条件和界面配色完全不同：不管底下是红墙、黄灯还是蓝天都得看见。
      所以它不走令牌那一套 —— 跟着界面主色走反而更危险：主色是粉的时候，
      一枚粉圈压在粉色晚霞上就是一团糊。
@@ -744,6 +749,26 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   box-shadow: 0 0 0 2px rgba(0, 0, 0, .45);   /* 浅色照片上也要看得见 */
   pointer-events: none;         /* 别挡住下一次点击 */
 }
+
+/* ★ 2026-10-06：生成中给照片盖的那层**淡暗罩 + 转圈**（用户原话：「而且中途
+   思考要有一些加载动作比如正在思考，要让用户知道你在干嘛」——那十几秒里
+   照片原来完全没反应，用户不知道是在等还是坏了）。
+   ⚠️ 只有**生成**这一段会挂它（判据在 App：`busy === BUSY_GENERATING`）：
+   「正在思考…」那 1.5 秒不盖 —— 一闪一暗会闪。
+   ⚠️ `pointer-events: none`：它只是指示、**不挡操作**（「按住看原图」和图上
+   点选都是挂在 `.canvas-wrap` 上的，照常收得到）。
+   ⚠️ 罩色不走令牌：它压的是**照片**（不是界面面），要满足的条件和配色无关
+   —— 不管系统深浅、照片是夜景还是雪景，它都只是"把这张图压暗一档"。
+   （和上面那个红圈同一类：画在照片上的东西，不跟界面主题走。）
+   转圈（`::before`）在共享清单里，这儿只给尺寸 —— 它比别处那几档大一号：
+   它一个人占着一整张照片，小了像颗痣。 */
+.canvas-veil {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .22);
+  pointer-events: none;
+}
+.canvas-veil::before { width: 20px; height: 20px; }
 
 /* ── 上传前那一屏（2026-09-30 重做） ────────────────────────────────
    这是登录之后看到的第一张脸。原来是**一个虚线框、里面四个字**，浮在一整片
@@ -1209,13 +1234,40 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   border-bottom-left-radius: var(--sp-1);
 }
 /* 「正在…」那一条。**不用斜体** —— 中文字体没有真斜体，浏览器会把它掰成
-   一个歪掉的仿斜体，比不斜还难看。改成一个转圈的沙漏：它一边说明
-   "还在做事"，一边让这一格有动静（一动不动的一行字看着像卡住了）。 */
+   一个歪掉的仿斜体，比不斜还难看。它现在是"文字 + 三颗跳动的点"：
+   ★ 2026-10-06（用户原话：「而且中途思考要有一些加载动作比如正在思考，
+   要让用户知道你在干嘛」）那颗 12px 的小转圈退役了 —— 三颗错开的点读起来
+   是"还在说"，转圈读起来是"还在装"，而这条气泡说的正是"我还在想 / 还在改"
+   （点自己的规矩写在 `.pending-dots` 那一段）。 */
 .bubble.pending {
   display: flex; align-items: center; gap: var(--sp-2);
   color: var(--muted); background: transparent; border-style: dashed;
 }
-.bubble.pending::before { width: 12px; height: 12px; }
+/* ★ 2026-10-06：那**三颗跳动的点**（打字指示器那种）—— 挂在文字**后面**。
+   节奏：一颗跳起来、下一颗才起跳（`animation-delay` 错开 0.15s），三颗
+   连起来是一道从左往右的波浪 —— 同一个动画错开相位，比写三个关键帧省事，
+   改节奏也只改一处。
+   ⚠️ 动的是 `opacity` + `transform`（合成层），**别动 `content`** ——
+   伪元素每帧改文本会把这一段反复重排。
+   ⚠️ 关动效不用另写：文件末尾那条 `prefers-reduced-motion` 全站把 `animation`
+   关掉，三颗点就静静停着（还是看得见，只是不跳）。 */
+.pending-dots {
+  display: inline-flex; align-items: center; gap: 3px;
+  /* 它是 flex 子项（`.bubble.pending` 是 flex 行），别让它被压扁 */
+  flex: none;
+}
+.pending-dots i {
+  width: 4px; height: 4px; border-radius: 50%;
+  /* `currentColor` = 气泡那句话的颜色（--muted），不另写一个色号 */
+  background: currentColor; opacity: .3;
+  animation: pending-hop 1.2s ease-in-out infinite;
+}
+.pending-dots i:nth-child(2) { animation-delay: .15s; }
+.pending-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes pending-hop {
+  0%, 60%, 100% { opacity: .3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
 /* 「回到这一步」= 撤销。**它是这一栏里第二重要的东西**（spec §2.4：不设撤销
    按钮，翻聊天记录就是撤销），原来却是一颗 78×24 的小钮 —— 手机上够不着，
    正好是这个项目最在意的那种"点不到"。撑到 32px 高（触屏的最小可点尺寸），
@@ -1281,7 +1333,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
 /* ★ 2026-10-05（「回到这一步」Task 4）：确认条里那句提醒（"后面还有 N 步…"）。
    和上面那句**同一格、同一套字**，但它**不是加载态** —— 没有转圈
-   （`.cards-now::before` 那个圈是"正在看照片"专用的状态指示器）。
+   （`.cards-now::before` 那个圈是「正在看这张照片能改什么…」专用的状态指示器。
+     ⚠️ 它和对话那条「正在…」气泡**不是同一档**了：2026-10-06 起那条换成了
+     三颗跳动的点，这个圈照旧 —— 两处的句子、位置、出场时机本来就不是一件事。）
    `align-self: center`：这一格是 flex 行，它和旁边那几颗按钮对齐时居中。 */
 .cards-note {
   font-size: 12.5px; color: var(--muted); align-self: center;
@@ -1468,6 +1522,37 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   transition: border-color var(--dur-1) ease, transform var(--dur-2) var(--ease);
 }
 .bubble-thumb:hover { border-color: var(--accent); transform: scale(1.02); }
+
+/* ★ 2026-10-06：**生成中，图要出现的位置先摆的那一块**（骨架屏；用户原话
+   「要让用户知道你在干嘛」——原来那十几秒对话里只有一句话，图的位置是整个
+   空着的）。图到了原地换成真图。
+   ⚠️ 尺寸/圆角/描边**照着 `.bubble-thumb` 一笔一笔抄**：宽 120、圆角
+   `--r-sm`、描边 `--line-2` —— 换掉的那一下宽度上不许跳。
+   高度只能给一个常见比例（照片宽高比天生不一样，横竖都盖不住）：4:3 是
+   相机最常见的横幅，竖图会看到它矮一截 —— 换来的是这一个盒子**不依赖
+   任何测量**（上下跳一点比宽度跳好得多）。
+   外层的间距不用在这儿写：它挂成 `.msg` 的孩子，那层的 `gap: var(--sp-2)`
+   和"真缩略图外面 `.shot` 的 gap"是同一个数。 */
+.shot-skeleton {
+  position: relative; overflow: hidden;
+  width: 120px; max-width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-2);
+  background: var(--hover);
+}
+/* 一道微光**扫过去**（不是整块闪烁）：从左走到右、来回一遍。
+   闪烁读起来是"坏了"，扫光读起来是"还在做"。
+   ⚠️ 走位用 `transform`（合成层），别动 `background-position` —— 那个每帧
+   重算绘制。亮色那半用 `--glass-hi`（白，压在浅灰上才看得见），深色那半
+   它自己就是一层很淡的白 —— 同一个令牌在两边的"对的量"本来就不一样。 */
+.shot-skeleton::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 35%, var(--glass-hi) 50%, transparent 65%);
+  transform: translateX(-100%);
+  animation: skeleton-sweep 1.6s ease-in-out infinite;
+}
+@keyframes skeleton-sweep { to { transform: translateX(100%); } }
 
 /* ── 登录 / 注册（Task 7） ────────────────────────────────────────
    这是打开产品看到的第一屏。它和别的组件有一点不同：`.login` 和

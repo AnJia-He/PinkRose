@@ -15,6 +15,13 @@ type Props = {
   cards: SuggestCard[]
   /** 非 null 时显示"正在…"气泡，并禁用发送和卡片 */
   busy: string | null
+  /**
+   * ★ 2026-10-06（用户原话：「而且中途思考要有一些加载动作比如正在思考，要让
+   * 用户知道你在干嘛」）：这一趟是不是**真的在生成**（判据在 App：
+   * `busy === BUSY_GENERATING`）。为真时在气泡下面摆一块图位的占位块，
+   * 图到了原地换成真图 —— 「正在思考…」那 1.5 秒、上传/切会话那几句都不摆。
+   */
+  generating: boolean
   /** 正在等建议卡片。**它不拦人** —— 只是在这一格上挂一句"正在看…"，
    *  发送键照常能按（见 App.tsx 的 SUGGEST_WAIT_MS 那段）。 */
   suggesting: boolean
@@ -74,7 +81,7 @@ type Props = {
 }
 
 export default function ChatPanel({
-  messages, cards, busy, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
+  messages, cards, busy, generating, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
   jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
   currentId, futureSteps, replacing, onConfirmReplace, onCancelReplace,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
@@ -173,7 +180,21 @@ export default function ChatPanel({
         })}
         {busy && (
           <div className="msg assistant">
-            <div className="bubble assistant pending">{busy}</div>
+            {/* ★ 2026-10-06（用户原话：「要让用户知道你在干嘛」）：文字后面
+                三颗**跳动的点**（打字指示器那种），替掉了原来那个 12px 的小
+                转圈 —— 三颗错开的点读起来是"还在说"、转圈读起来是"还在装"，
+                而这条气泡说的正是"我还在想 / 还在改"。
+                ⚠️ `aria-hidden`：它只是动静，句子本身已经把话说完了。 */}
+            <div className="bubble assistant pending">
+              {busy}
+              <span className="pending-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            </div>
+            {/* ★ 2026-10-06：**图要出现的位置先摆一块占位**（骨架屏，图到了
+                原地换掉、不跳）。⚠️ 只在生成时摆 —— 「正在思考…」那会儿还
+                不知道要不要生成。
+                ⚠️ 不套 `.shot`：那一层是给"图 + 按钮"用的，而这里的间距已经由
+                `.msg` 自己的 gap 管了（和真缩略图那块是同一个数，见 CSS）。 */}
+            {generating && <div className="shot-skeleton" aria-hidden="true" />}
           </div>
         )}
       </div>
