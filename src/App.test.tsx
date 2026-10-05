@@ -3274,14 +3274,15 @@ describe('作品详情页：这张图怎么来的', () => {
     expect(range.value).toBe('80')
   })
 
-  it('★ 那张作品的滤镜已经删了：只套调色，并把这件事说出来', async () => {
+  it('★ 那张作品的滤镜已经删了：只套调色，手上那层也清掉，并把这件事说出来', async () => {
     // 清单里只剩另一条（黄昏被删了），而用户手上正套着它。套用之后：
     //   · 调色那半照常套上；
-    //   · 手上那层颜色**不动**（"只套调色"字面就是这个意思 —— 既不清掉、
-    //     也不换成配方里那个已经不存在的名字）；
+    //   · 手上那层颜色**清掉**（2026-10-05 审查裁定：这一格是**替换**、不是合并 ——
+    //     作品那套参数是在**黄昏**下调出来的，再叠一个无关的夕阳，出来的画面
+    //     两边都不是；而且套完再存一次，新作品的配方会悄悄记上那个被带来的夕阳）；
     //   · 少掉的那半**说出来** —— 不说的话他就是对着一个不是那张作品的样子，
     //     还以为整个配方都套上了。
-    // 变异：else 分支不调 noticeBad → ②红；顺手 `setLut(null)` → ③红。
+    // 变异：miss 分支不清手上那层（或压根不调 noticeBad）→ ② / ③ 红。
     vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [{ ...HUANGHUN, id: 2, name: '夕阳' }] })
     await renderApp()
     await uploadPhoto()
@@ -3301,10 +3302,11 @@ describe('作品详情页：这张图怎么来的', () => {
     expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 20 })
     // ② 把少掉的那半说出来
     expect(container.querySelector('.notice')?.textContent ?? '').toContain('那张作品用的滤镜已经删了')
-    // ③ 手上那层颜色不动
+    // ③ 手上那层也被清掉 —— 这一格由这张作品的配方**唯一决定**（替换，不是合并）
     await goNav('调色')
     await openLutPanel()
-    expect(tileNamed('夕阳').getAttribute('aria-pressed')).toBe('true')
+    expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
+    expect(tileNamed('夕阳').getAttribute('aria-pressed')).toBe('false')
   })
 
   it('★ 配方里没有滤镜（老作品连 lut 这个键都没有）：套用时把手上那层清掉', async () => {

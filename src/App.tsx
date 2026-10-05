@@ -2050,20 +2050,22 @@ export default function App() {
             setParams(p)
             // ★ 2026-10-05（滤镜，T12）：滤镜按**名字**找回清单里那一个
             //   （配方里只存名字 —— id 对已经烤好的图没有意义，见 shared/works.ts）。
-            if (!recipeLut) {
-              // 这张作品的配方里就没有滤镜 → 手上那层也清掉：留着的话"套上了"
-              // 的画面和这张作品的配方对不上，而且一句话都不说。
-              setLut(null)
-            } else {
-              const hit = lutsApi.luts.find((l) => sameLutName(l.name, recipeLut.name))
-              if (hit) {
-                setLut({ lutId: hit.id, amount: recipeLut.amount })
-              } else {
-                // 已经被删了 → **只套调色，并把这件事说出来**（不说就是悄悄少了
-                // 半套）。手上那层颜色不动 —— 用户自己选的，没有理由替他清掉。
-                noticeBad('那张作品用的滤镜已经删了，这次只套了调色。')
-              }
+            //
+            // ★★ 这一格是**替换**，不是合并（2026-10-05 审查）：params 是整体换、
+            //   命中时连 id 带强度一起换 —— 滤镜那一格就必须由这张作品的配方
+            //   **唯一决定**。miss 还留着手上一层的话，"套用"少决定了这一格：出来的
+            //   是个两边都不是的混合体（作品那套**在黄昏下调出来的**参数 + 手上那个
+            //   无关的夕阳），话（"这次只套了调色"）和屏幕（还亮着一层颜色）打架，
+            //   而且套完再存一次，那个无关的滤镜会被悄悄写进新作品的配方。
+            //   这也是仓库既有的规矩（`dropGoneLut`）：不存在的滤镜不留在手上。
+            const hit = recipeLut
+              ? lutsApi.luts.find((l) => sameLutName(l.name, recipeLut.name))
+              : undefined
+            if (recipeLut && !hit) {
+              // 已经被删了 → **只套调色，并把这件事说出来**（不说就是悄悄少了半套）。
+              noticeBad('那张作品用的滤镜已经删了，这次只套了调色。')
             }
+            setLut(hit && recipeLut ? { lutId: hit.id, amount: recipeLut.amount } : null)
             go({ kind: 'edit' })
           }}
         />
