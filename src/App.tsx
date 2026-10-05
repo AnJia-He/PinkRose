@@ -1336,10 +1336,15 @@ export default function App() {
     if (busy || !pendingReplace || !image) return
     const p = pendingReplace
     setPendingReplace(null)
-    const mid = say(p.reply)
+    // ★ 2026-10-06：只发号、**不插消息** —— `p.reply`（"好，这就去改。"那句）
+    //   由 `runGenerate` 在**生成成功那一刻**和图片一起说（用户原话：「对话区
+    //   AI 回复的太快，它跟图片应该是同时出的」）。原来在这儿 `say`，同样是
+    //   "先冒一句、再干等十来秒"。号仍然是这条助手消息的 id，由调用方先发。
+    const mid = nextId()
     void runGenerate(p.editPrompt, mid, params, lut, image.bitmap,
-      { stepId: p.stepId, keepFromMsg: p.keepFromMsg ?? mid })
-  }, [busy, pendingReplace, image, params, lut, say, runGenerate])
+      { stepId: p.stepId, keepFromMsg: p.keepFromMsg ?? mid }, p.reply)
+    // ⚠️ 依赖数组里去掉了 `say` —— 这个回调不再用它了（按"读到的才写进依赖"）。
+  }, [busy, pendingReplace, image, params, lut, runGenerate])
 
   const send = useCallback(async (text: string) => {
     const canvas = canvasElRef.current
@@ -1494,12 +1499,16 @@ export default function App() {
     if (!marker || !pendingText || !pendingKeepFrom || !image || cursorId === null) return
     const text = pendingText
     setPending(null)
-    // ★ 先说话、**拿这条消息的 id**，再拿它去调 runGenerate。
+    // ★ 先**发号**、拿这条消息的 id，再拿它去调 runGenerate —— 插消息那一步
+    //   （和图片同批落）在 runGenerate 的成功路径里，用的就是这个号。
     //   缩略图（`thumbs[m.id]`）和「回到这一步」（`jumpableIds.includes(m.id)`）
-    //   两处都是按消息 id 对号的：这里要是图省事写 `nextId()`，那个 id 没有任何
-    //   一条消息带着它 —— 两样会**一起静默失效**：用户点完圈，画面上什么都没多，
+    //   两处都是按消息 id 对号的：号必须和真正落下来的那条助手消息**同一个** ——
+    //   对不上的话两样会**一起静默失效**：用户点完圈，画面上什么都没多，
     //   也没法回到这一步。花钱买来的东西反而看不见，是这个项目最亏的一种错。
-    const mid = say('好，就改这里。')
+    //   ★ 2026-10-06：原来这行是 `say('好，就改这里。')`（话当场说、id 顺带拿）；
+    //   现在话留给 runGenerate 在**生成成功那一刻**说（和图片一起出，用户原话），
+    //   号还是在这里发 —— 它同时是 `messageId` 和这条助手消息的 id。
+    const mid = nextId()
     // 和 applyDecision / send / onCard 一样清掉建议卡片：卡片**会迟到**
     // （上传时那次请求超时后仍在后台跑、回来了照样贴上来），所以"确认条与卡片
     // 同时在屏上"真会发生。那批卡片是按**生成前那张照片**算出来的 —— 不清的话
@@ -1509,8 +1518,9 @@ export default function App() {
       const marked = markImage(image.bitmap, marker)
       // ★ 2026-10-05（滤镜）：传**当下**的 `lut`（这条路就是"此刻这张照片"，
       //   没有跳转，和 `params` 一样）。⚠️ 因此 `lut` 必须进下面那个依赖数组。
+      // ★ 2026-10-06：末参 `'好，就改这里。'` 那句话推迟到生成成功才说（见上）。
       await runGenerate(text, mid, params, lut, marked,
-        { stepId: cursorId, keepFromMsg: pendingKeepFrom })
+        { stepId: cursorId, keepFromMsg: pendingKeepFrom }, '好，就改这里。')
     } catch (e) {
       console.error(e)
       say('这一步没成功，再试一次？')
@@ -1586,15 +1596,20 @@ export default function App() {
       setPendingReplace({ stepId: id, editPrompt: target.prompt, reply: '好，又出了一版。' })
       return
     }
-    const mid = say('好，又出了一版。')
+    // ★ 2026-10-06：只发号、**不插消息** —— 那句话由 `runGenerate` 在**生成成功
+    //   那一刻**和图片一起说（用户原话：「对话区 AI 回复的太快，它跟图片应该是
+    //   同时出的」）。⚠️ 这个号同时是下一行 `keepFromMsg: mid` 的边界，必须在这里
+    //   先发（`runGenerate` 签名里那段把"先发号、后插消息"的约定写全了）。
+    const mid = nextId()
     // ★ 2026-10-05（滤镜，复审 Important）：**传 `target.lut`**，不是"手上这个"。
     //   `onJump` 里那句 `setLut(target.lut)` 是 state 更新，**这一轮渲染里不生效**
     //   —— `runGenerate` 直接读闭包的话，新那一步会记成**跳转前**的滤镜，
     //   而画面（跳转后）是另一回事：和刚修掉的"小图 vs 主画面"是同一种不一致，
     //   只是走「再来一版」这条窄路。`params` 一直是显式传参才躲过了这一条。
     void runGenerate(target.prompt, mid, target.params, target.lut, target.base.bitmap,
-      { stepId: id, keepFromMsg: mid })
-  }, [busy, history, onJump, say, runGenerate])
+      { stepId: id, keepFromMsg: mid }, '好，又出了一版。')
+    // ⚠️ 依赖数组里去掉了 `say` —— 这个回调不再用它了（按"读到的才写进依赖"）。
+  }, [busy, history, onJump, runGenerate])
 
 
   /**

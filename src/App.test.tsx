@@ -909,6 +909,64 @@ describe('对话式修图：钱花在对的地方', () => {
     expect(lastReply()).toContain('不太确定')
   })
 
+  /**
+   * ★ 2026-10-06（用户原话：「对话区 AI 回复的太快，我认为它跟图片应该是同时出的」）。
+   *
+   * 钉的是**时刻**：助手那句应答（"好，这就去改。"）和图片**同一个批次**落下来。
+   * 原来 `applyDecision` 在决策一出来就先 `say` 一句，用户先看到应答、再干等
+   * 十来秒（一次生成 4~8.5 秒起）才有图 —— 两半看起来像两条不相干的回复。
+   *
+   * 红的样子（改动前）：生成还挂着的那一段里，那句 reply 已经躺在 `.bubble-text`
+   * 里了（断言 ① 当场红）；改完是"放行生成 = 话和图一起到位"（断言 ②）。
+   */
+  it('★ 助手那句话跟着图一起出 —— 生成中不许先冒那句 reply，放行后话和图同时到', async () => {
+    // 把这一次生成**挂住不回**（"正在改…大约 10 秒"那十几秒的真形状），等用例放行。
+    const gate = makeGate<{ imageDataUrl: string; width: number; height: number }>()
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉后面的路人', reply: '好，这就去改。' }))
+    vi.mocked(api.postEdit).mockReturnValueOnce(gate.promise)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+
+    const texts = () => [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
+
+    // ① 生成还在半路：屏上只有"正在改…"，那句 reply **一个字都还没出**。
+    expect(container.textContent).toContain('正在改')
+    expect(texts()).not.toContain('好，这就去改。')
+
+    // ② 放行：那句话和图片（这一步的缩略图）**同一时刻**到位 ——
+    //    同一个 act 之后一次断言：少了任何一半，"同时出"就不成立。
+    await act(async () => {
+      gate.open(OK)
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(texts()).toContain('好，这就去改。')
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)  // 原图那张 + 新这一步的
+  })
+
+  /**
+   * ★ 2026-10-06：上面那条改动的**白捡好处** —— 生成失败时那句"好，这就去改。"
+   * 不再先冒出来（原来 `say` 抢在 `postEdit` 之前说，紧接着再补一句"没改成功"，
+   * 读起来像"先答应、后没做成"）。
+   * 失败路只说自己的话：这里钉住"那句 reply 一个字都不说、但失败的话必须在"。
+   */
+  it('★ 生成失败：那句 reply 不说 —— 只说「再试一次」', async () => {
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉后面的路人', reply: '好，这就去改。' }))
+    vi.mocked(api.postEdit).mockRejectedValue(
+      new api.ApiError('UPSTREAM_FAILED', 'AI 服务暂时没响应，再试一次'))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+
+    const texts = [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
+    expect(texts.some(t => t.includes('再试一次'))).toBe(true)   // 失败要说话，不能闷着
+    expect(texts).not.toContain('好，这就去改。')                 // 但没说成的事，不先答应
+  })
+
   it('生成失败时，用户已经调好的颜色一点都不能丢', async () => {
     vi.mocked(api.postRoute).mockResolvedValueOnce(
       decision({ route: 'both', paramDeltas: { exposure: 20 }, editPrompt: '换天空' }))

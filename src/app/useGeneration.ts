@@ -156,6 +156,19 @@ export function useGeneration(deps: GenerationDeps) {
      *   那个 state 拿到的是**跳转前**的值。每个调用点被编译期逼着表态。
      */
     origin: { stepId: number; keepFromMsg: number },
+    /**
+     * ★ 2026-10-06：助手那句应答（"好，这就去改。"这类）—— **到成功那一刻才说**。
+     *
+     * 用户原话：「对话区 AI 回复的太快，我认为它跟图片应该是同时出的」。原来
+     * `say` 在决策一出就抢先说，他先看到一句应答、再干等十来秒才有图，两半
+     * 像两条不相干的回复。现在这句话在**成功路径**里和图片一起落（见下面那段），
+     * 失败 / 「停止」两条路**不说它**（它们各自说自己那句）。
+     *
+     * ⚠️ **必填末参、不给默认值**：每个调用点被编译期逼着表态送哪一句 ——
+     *   将来新加一条生成路，忘了带它会在 `typecheck` 当场红，
+     *   而不是静默少一句应答。
+     */
+    reply: string,
   ) => {
     if (!editPrompt) return
     // ★ 一次生成 = 一个 controller。「停止」按的就是它（见 stopGeneration）。
@@ -239,6 +252,19 @@ export function useGeneration(deps: GenerationDeps) {
       if (origin.stepId !== tipId) {
         setMessages(m => m.filter(x => x.id <= origin.stepId || x.id >= origin.keepFromMsg))
       }
+      // ★ 2026-10-06（用户原话：「对话区 AI 回复的太快，我认为它跟图片应该是
+      //   同时出的」）：那句话**到这里才说** —— 和图片（这一步的 base + 缩略图）
+      //   落在同一个批次里。原来 `say` 在决策一出就抢先说，用户先看到一句
+      //   "好，这就去改。"、再干等十来秒才有图，两半像两条不相干的回复。
+      //   ⚠️ 消息 id 仍然是 `messageId`（"消息 id 就是步骤 id"那条老约定，
+      //   缩略图和「回到这一步」按它对号）—— id 由调用方**先发号、后插消息**，
+      //   别改成在这里 `nextId()`（那样 rerun 的 `keepFromMsg: mid` 就对不上了）。
+      //   ⚠️ 失败 / 「停止」那两条路**不说这句话**（它们各自说自己那句）——
+      //   顺带把"先承诺、后没做成"的观感也修掉了。
+      //   ⚠️ 放在切对话那个 filter **之后**：切口是按 id 区间切的
+      //   （`x.id <= stepId || x.id >= keepFromMsg`），先插再切虽然也留得住，
+      //   但"先切干净、再落新的一句"读起来才是这件事本身。
+      setMessages(m => [...m, { id: messageId, role: 'assistant', text: reply }])
       setImage(nextBase)
       // ★ 位置挪到新那一步（它是新的"最新"）。
       setCursorId(messageId)
@@ -360,8 +386,6 @@ export function useGeneration(deps: GenerationDeps) {
       return
     }
 
-    const mid = say(d.reply || '好了。')
-
     // 送**当前的 base**（= image.bitmap），不是最初那张原图 —— spec §3.5。
     // ⚠️ `image` 必须进依赖数组：漏了它，这个回调会永远捕获第一次 render 的
     // image（null），生成再也不会被触发——而且是静默的：气泡照出、回复照有，
@@ -370,12 +394,26 @@ export function useGeneration(deps: GenerationDeps) {
     //   所以传的是闭包里那个 `lut`，和上面 `params` 同一条口径。
     //   ⚠️ 它读 `lut`，所以 `lut` 必须进依赖数组（同 `image` 那条的理由）。
     if (isGen && image && cur !== null) {
+      // ★ 2026-10-06：生成这条路**只发号、不插消息** —— 那句话由 `runGenerate`
+      //   在**成功那一刻**和图片一起说（用户原话：「对话区 AI 回复的太快，它跟
+      //   图片应该是同时出的」）。原来这里是 `say(d.reply || '好了。')`，话抢先
+      //   说、图后到，两半像两条不相干的回复。
+      //   ⚠️ 号必须**在这边先发**：它就是这一步的 id —— 放进快照（缩略图按它对
+      //   号）、也是消息的 id；`runGenerate` 签名里那段把这条约定写全了。
+      //   （`nextId` 只碰 ref，按这个文件的口径不进依赖数组 —— `say` 自己也是
+      //   这么用它的。）
+      const mid = nextId()
       // ★ T11：传 `nextLut`（这一步做完之后那个），和 `nextParams` 对称 ——
       //   理由见上面滤镜那块。⚠️ 别"顺手"改回闭包的 `lut`。
       //   ⚠️ 切点用上面那个 `cur`（读一次、用两处 —— 见它那段注释）。
       await runGenerate(d.editPrompt, mid, nextParams, nextLut, image.bitmap,
-        { stepId: cur, keepFromMsg })
+        { stepId: cur, keepFromMsg }, d.reply || '好了。')
+      return
     }
+    // 纯参数 / 不生成这条：没有"等一张图"这回事，照旧**立刻说**。
+    // （`isGen` 为真但 `image` / `cur` 为空、走不到生成的那种退化情形也落在这里
+    //   —— 行为与改动前一致：话说、不动手。）
+    say(d.reply || '好了。')
     // ★ T11 又读了 `luts` / `setLut`（上面那块滤镜落地），两个都得进依赖数组 ——
     //   漏掉 `luts` 的话，清单刷新之后这个回调还在用旧的（名字换成错 id）；
     //   `setLut` 是 useState 的 setter（identity 稳定），进来只是守住这条规矩。
