@@ -952,6 +952,53 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   border: 1px dashed var(--line); border-radius: var(--r-md);
 }
 
+/* ── 滤镜格子（★ 2026-10-05，`LutPicker`）─────────────────────────────
+   微调区和对话区**共用这一个组件**（spec §5.2 / §5.3）—— 所以样式也只有这一份：
+   两处各写一套的后果是它们迟早长得不一样（和"主按钮只有一份"同一条规矩）。
+
+   ⚠️ 每格都是一个**真 `<button>`**（读屏念得出"选中没有"、键盘也走得到），
+   所以下面是**逐条按掉全局 `button{}` 那套方框**（灰底 + 描边 + 14px 内边距）
+   —— 少写一条那格就长回一块灰方框（和 `.presets-work` / `.account-row`
+   同款理由）。按下缩 3% 那条（`button:where(:active)`）**留着**：
+   小方格里那一点反馈是好的。
+
+   ⚠️ 格子是方的（`aspect-ratio`）：缩略图本来就是方的（渲染器裁成方形），
+   给格子也定成方形是为了让**"有图"和"没图"两种格子一样高** —— 不然没图那几格
+   只剩一行名字，会把整行格子拽得参差不齐。**没图那格的"占位"就是这个方框本身**：
+   `--raised` 的底 + 底下一行名字，不需要再画一个空 `<img>`。 */
+.lut-picker { display: flex; flex-direction: column; gap: var(--sp-3); }
+.lut-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: var(--sp-2);
+}
+.lut-tile {
+  display: flex; flex-direction: column; justify-content: flex-end;
+  width: 100%; aspect-ratio: 1 / 1; padding: 0;
+  background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-sm);
+  overflow: hidden; text-align: center; cursor: pointer;
+}
+/* 悬停只换描边：格子小、又密，整块变色在这个密度下太重（和 `.gallery-cell`
+   同一手感）。⚠️ 它**排在 `.on` 前面**：选中是比悬停更强的状态，两边的特异性
+   一样（0-2-0），靠文件顺序让选中的那格永远赢。 */
+.lut-tile:hover { border-color: var(--accent); }
+/* 选中的那一格才穿主色（描边 + 极淡的一点底色）—— 格子密的时候"我选了哪个"
+   是这一屏唯一的判断题，主色只花在这一个信息上。 */
+.lut-tile.on { border-color: var(--accent); background: var(--accent-tint); }
+/* 缩略图占满名字上面那整块。`object-fit: cover` 是保险：万一哪张不是方的，
+   裁掉多余的边总比把格子撑变形强。 */
+.lut-thumb { flex: 1; min-height: 0; width: 100%; object-fit: cover; }
+/* 名字：长名字一行截断，撑歪格子会把整行挤变形（和 `.gallery-name` 同一条）。 */
+.lut-tile-name {
+  display: block; padding: var(--sp-1) var(--sp-2);
+  font-size: 12px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lut-tile.on .lut-tile-name { color: var(--text); }
+/* 空态：「还没有导入过滤镜。」+ 一颗「去导入」。那颗按钮**不拉满一行** ——
+   它是"这一栏现在没东西"的出路，不是这一页的正事，拉满就成了块大牌。 */
+.lut-empty { margin: 0; font-size: 13px; color: var(--muted); }
+.lut-import-go { align-self: flex-start; }
+
 .slider {
   /* ⚠️ 标签列 2026-10-04 从 56px 加宽到 72px：「专业面板」那七条标签更长
      （自然饱和度 / 亮部颜色 / 洋红 — 绿），56px 里会折成两行（量出来最长
