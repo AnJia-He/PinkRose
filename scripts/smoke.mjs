@@ -35,8 +35,10 @@ const BASE = process.env.SMOKE_BASE ?? 'http://127.0.0.1:8787'
 //              否则模型会重构构图（实测地平线从 78% 漂到 65%）。
 //              原来这里送的是 1200×800 的原始字节却声明 1216×800 —— **声明与实物不符**，
 //              这个脚本因此是坏的。换成天然对齐的图，就再也不需要任何缩放处理（本脚本零 canvas）。
-const IMG = resolve('spike/evidence/real_1027.jpg')
-const EDIT_IMG = resolve('spike/evidence/input_scene.jpg')
+// ★ 2026-10-05：这两个底图原来在 `spike/evidence/` —— 项目整理时 `spike/` 整个
+//   收进了 `archive/`（历史实验归档），路径跟着改。文件本身没动过。
+const IMG = resolve('archive/spike/evidence/real_1027.jpg')
+const EDIT_IMG = resolve('archive/spike/evidence/input_scene.jpg')
 const EDIT_W = 1024
 const EDIT_H = 768
 const WANT_EDIT = process.argv.includes('--with-edit')

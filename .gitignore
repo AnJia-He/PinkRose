@@ -12,8 +12,9 @@ test-photos/
 *.heic
 
 # 例外：实验证据图要入库（设计文档引用它们，丢了就没法复现结论）
-!spike/evidence/*.jpg
-!spike/evidence/*.png
+# ★ 2026-10-05：`spike/` 收进 `archive/` 后路径跟着改（见 archive/README.md）
+!archive/spike/evidence/*.jpg
+!archive/spike/evidence/*.png
 
 # 例外：落地页的成品图要入库（2026-09-30）。
 # 它们**就是页面的内容**，不是素材也不是测试照片 —— 少一张那一屏就是空的，
@@ -73,7 +74,7 @@ output/
 
 # 小程序开发者工具生成的「本机私有配置」——微信官方模板默认不入库
 # （里面没有任何密钥，纯粹是每台机器不同的编辑器设置）
-spike/**/project.private.config.json
+archive/spike/**/project.private.config.json
 
 # 用户数据：数据库和照片。绝不提交
 # ⚠️ 开头的斜杠是**故意的**：写 `data/` 会匹配**任意层级**下叫 data 的目录，
