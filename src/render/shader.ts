@@ -187,7 +187,7 @@ void main() {
   c *= max(vig, 0.0);
 
   // 7. LUT (color lookup) -- ALWAYS THE LAST STEP. This is a contract, not a
-  //    preference (see the design doc 2026-10-05 §4.1): every saved work was
+  //    preference (see the design doc 2026-10-05 section 4.1): every saved work was
   //    rendered through this order, so moving the LUT earlier would change the
   //    colors of every existing photo. Do not reorder.
   //
