@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import type { RefObject } from 'react'
 import type { Recipe } from '../../shared/works.ts'
 import type { Adjustments } from '../../shared/adjustments.ts'
+import type { LutMeta, LutRef } from '../../shared/lut.ts'
 import { createWork, replaceWork } from '../api/works'
 import {
   blobToDataUrl, buildExportBlob, buildFilename, downloadImage, shareImage,
@@ -33,6 +34,11 @@ export type DeliveryDeps = {
   /** 配方里的两半：参数 + 用户说过的原话 */
   params: Adjustments
   messages: readonly ChatMessage[]
+  /** ★ 2026-10-05（滤镜，T12）：配方里的第三样 —— 这张照片正用着哪个滤镜。
+   *  ⚠️ 存进配方时只留**名字**（id 对已经烤好的图没有意义，见 `shared/works.ts`），
+   *  而名字得从清单里现查（id → 名字），所以清单也要一并给它。 */
+  lut: LutRef | null
+  luts: readonly LutMeta[]
   /** 通报一句"没成"（顶栏那条，留着等用户看完） */
   noticeBad: (text: string) => void
   /** 通报一句"成了"（顶栏那条，几秒后自己走） */
@@ -41,7 +47,8 @@ export type DeliveryDeps = {
 
 export function useDelivery(deps: DeliveryDeps) {
   const {
-    canvasEl, originalFile, savedId, setSavedId, params, messages, noticeBad, noticeOk,
+    canvasEl, originalFile, savedId, setSavedId, params, messages, lut, luts,
+    noticeBad, noticeOk,
   } = deps
 
   /** 正在导出的是哪一个按钮（null = 没在忙）。几个按钮共用一个"忙"，
@@ -154,7 +161,7 @@ export function useDelivery(deps: DeliveryDeps) {
   //    给一个「下载到电脑」—— §6.6 ①，§10 点名它「最容易漏」。
 
   /**
-   * **此刻**这一份配方：参数 + 用户在屏幕上说过的原话。
+   * **此刻**这一份配方：参数 + 用户在屏幕上说过的原话 + （★ 2026-10-05）用的滤镜。
    *
    * ★ 抽成一个函数只有一个理由：口径**只有一份**。`saveOnce` 平时现读它，
    * 而「上次那张要替换掉吗」那条路要在**问的那一刻**把它拍下来（终审 M4）——
@@ -166,10 +173,18 @@ export function useDelivery(deps: DeliveryDeps) {
    *   把卡片标签记成用户消息是**对的**，不是 bug）。
    *   **不记 `editPrompt`** —— 那是给图片模型的英文 prompt，是我们的实现细节。
    */
-  const recipeNow = useCallback((): Recipe => ({
-    params,
-    edits: messages.filter(m => m.role === 'user').map(m => m.text),
-  }), [params, messages])
+  const recipeNow = useCallback((): Recipe => {
+    // ★ 2026-10-05（T12）：滤镜只存**名字**（id 对已经烤好的图没有意义，见
+    //   `shared/works.ts`）。名字从清单里**现查** —— 查不到（刚被删）就记 null：
+    //   记一个显示不出来的 id，详情页那一行和「套到别的图上」都认不出来，
+    //   而屏幕上看起来一切正常（这一类静默失败正是这一轮反复在防的）。
+    const hit = lut ? luts.find((l) => l.id === lut.lutId) : undefined
+    return {
+      params,
+      edits: messages.filter(m => m.role === 'user').map(m => m.text),
+      lut: lut && hit ? { name: hit.name, amount: lut.amount } : null,
+    }
+  }, [params, messages, lut, luts])
 
   /**
    * 存一次。`replaceId` 非 null = 替换掉那一张，null = 新存一张。

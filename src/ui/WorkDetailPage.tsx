@@ -43,7 +43,9 @@ export function downloadName(w: WorkMeta): string {
 export function WorkDetailPage({ id, onBack, onApply, canApply }: {
   id: number
   onBack: () => void
-  onApply: (params: Adjustments) => void
+  /** ★ 2026-10-05（滤镜，T12）：**连名字和强度一起**交出去 —— App 那边按名字去
+   *  清单里找还没被删的那一个（配方里只存名字，id 对已经烤好的图没有意义）。 */
+  onApply: (params: Adjustments, lut: { name: string; amount: number } | null) => void
   canApply: boolean
 }) {
   const [work, setWork] = useState<WorkDetail | null>(null)
@@ -141,6 +143,18 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
    *  ⚠️ "动过没有"走 `isChanged` —— 调色面板点亮滑块问的是同一件事，
    *  两处各判一次的话，哪天判据变了会出现**两个屏幕对同一张图说法不一致**。 */
   const changed = PARAM_KEYS.filter(k => isChanged(params, k))
+  /** ★ 2026-10-05（滤镜，T12）：这一张配方里的滤镜。
+   *
+   *  ⚠️ **`?? null` 不是多余的**：2026-10-05 之前存的作品，库里那份 recipe JSON
+   *  **没有 `lut` 这个键**，而 `handleGetWork` 是把库里的 JSON **原样**返回的
+   *  （不走 `readRecipe`）—— 所以老作品读到的是 `undefined`，不是 `null`。
+   *  `shared/works.ts` 里那句"读的人不必再判"只对 `readRecipe` 那条出口成立。
+   *  在这一处归一化，下面显示 / 「原样」判据 / `onApply` 三处就都只剩 null 了。 */
+  const lut = work.recipe.lut ?? null
+  /** 「这一张是原样」那句的判据 —— ★ 2026-10-05：**带上滤镜**。
+   *  有滤镜就不是"原样"（哪怕十五个参数一个都没动）——
+   *  判据漏了它的话，屏幕上会一边列着「滤镜 黄昏」一边说"没有调过色"。 */
+  const recipeEmpty = changed.length === 0 && !lut
 
   return (
     <section className="detail">
@@ -218,7 +232,7 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
         <section className="recipe-box">
           <h3>调色</h3>
           <p className="recipe-note">这一套能套到别的图上</p>
-          {changed.length === 0
+          {recipeEmpty
             ? <p className="recipe-empty">这一张是原样，没有调过色。</p>
             : (
               <ul className="recipe-params">
@@ -230,9 +244,18 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
                     </span>
                   </li>
                 ))}
+                {/* ★ 2026-10-05（滤镜，T12）：**同一张表里**多一行 —— 滤镜也是这套
+                    配方的一部分（"能带走的东西"只有一处，新起一块就把它拆成两处）。
+                    存的是名字 + 强度；`amount` 是 0–100 的整数，直接跟一个 % 号。 */}
+                {lut && (
+                  <li>
+                    <span className="recipe-param-name">滤镜</span>
+                    <span className="recipe-param-value">{lut.name} {lut.amount}%</span>
+                  </li>
+                )}
               </ul>
             )}
-          <button className="recipe-apply" disabled={!canApply} onClick={() => onApply(params)}>
+          <button className="recipe-apply" disabled={!canApply} onClick={() => onApply(params, lut)}>
             把这套调色套用到我正在改的图
           </button>
           {/* §3.7：告诉用户"不行"的地方，都要同时告诉他"那怎么办" */}

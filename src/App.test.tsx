@@ -301,6 +301,10 @@ function jsonResponse(body: unknown, status = 200) {
 const WORK = (id: number, updatedAt: number, alias: string | null = null) =>
   ({ id, alias, createdAt: updatedAt, updatedAt, bytes: 100, hasThumb: true })
 
+/** 服务端上那条滤镜（`vi.mock('./api/luts')` 的默认清单就是它）。
+ *  ★ 2026-10-05（T12）：作品配方里只存滤镜的**名字**，「套到别的图上」凭它找回 id。 */
+const HUANGHUN: LutMeta = { id: 1, name: '黄昏', size: 2, bytes: 100, createdAt: 0 }
+
 /** 给 fetch 加上"取作品列表"这一条路。**只加不改** —— 别的请求仍然走原来的实现。
  *  （原来住在「作品页」那个 describe 里；Task 8 那一轮修使用情况时，用户管理页
  *   也要拉同一个接口 —— 照上面 WORK 那条注释的道理，两个用例组共用的桩子就一份。） */
@@ -3234,6 +3238,106 @@ describe('作品详情页：这张图怎么来的', () => {
     })
     expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 20 })
   })
+
+  // ── ★ 2026-10-05（T12，滤镜）：配方里那一行 ──────────────────────────
+  // 滤镜也是"这套配方"的一部分：详情页把它列在**同一张表**里，「套到别的图上」
+  // 连它一起带走。配方里只存**名字**（id 对已经烤好的图没有意义，见 shared/works.ts），
+  // 所以套用时按名字去清单里找现在那一条。
+
+  it('★ 配方里有滤镜：表里多一行「滤镜 黄昏 80%」，套用时连滤镜一起套', async () => {
+    // 变异：WorkDetailPage 不渲染那一行 → 头两句红；`onApply` 不把 lut 交出去 → 后两句红。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUANGHUN] })
+    await renderApp()
+    await uploadPhoto()                       // 「套到别的图上」要有照片才可用
+    await openWork({ params: { ...ZERO }, edits: [], lut: { name: '黄昏', amount: 80 } })
+
+    // ① 一行，而且就在那张表里（`.recipe-params`）—— 能带走的东西只有一处，
+    //    新起一块就成了两处（"滤镜也是配方"这件事本身也一起丢了）。
+    //    `?.` + `?? ''`：元素不在时要红成"少了一行"，不是测试自己崩在 null 上。
+    const row = container.querySelector('.recipe-params li')
+    expect(row?.querySelector('.recipe-param-name')?.textContent).toBe('滤镜')
+    expect(row?.querySelector('.recipe-param-value')?.textContent).toBe('黄昏 80%')
+    // ② ★ 有滤镜就不是"原样" —— 哪怕十五个参数一个都没动（这份配方就是全 ZERO）。
+    //    判据漏了滤镜的话，屏幕上会一边列着「滤镜 黄昏」一边说"没有调过色"。
+    expect(container.textContent ?? '').not.toContain('这一张是原样')
+
+    const apply = container.querySelector('.recipe-apply') as HTMLButtonElement | null
+    await act(async () => {
+      apply?.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    // ③ 连滤镜一起套：那一格是亮的，强度也是 80（不是选中时的默认 100）。
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+    const range = lutSection().querySelector('input[type="range"]') as HTMLInputElement
+    expect(range.value).toBe('80')
+  })
+
+  it('★ 那张作品的滤镜已经删了：只套调色，并把这件事说出来', async () => {
+    // 清单里只剩另一条（黄昏被删了），而用户手上正套着它。套用之后：
+    //   · 调色那半照常套上；
+    //   · 手上那层颜色**不动**（"只套调色"字面就是这个意思 —— 既不清掉、
+    //     也不换成配方里那个已经不存在的名字）；
+    //   · 少掉的那半**说出来** —— 不说的话他就是对着一个不是那张作品的样子，
+    //     还以为整个配方都套上了。
+    // 变异：else 分支不调 noticeBad → ②红；顺手 `setLut(null)` → ③红。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [{ ...HUANGHUN, id: 2, name: '夕阳' }] })
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await openLutPanel()
+    await act(async () => { tileNamed('夕阳').click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(tileNamed('夕阳').getAttribute('aria-pressed')).toBe('true')   // 前提：手上在用
+
+    await openWork({ params: { ...ZERO, exposure: 20 }, edits: [], lut: { name: '黄昏', amount: 80 } })
+    const apply = container.querySelector('.recipe-apply') as HTMLButtonElement | null
+    await act(async () => {
+      apply?.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // ① 调色那半真的套上了（"只套调色"不是一个说法）
+    expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 20 })
+    // ② 把少掉的那半说出来
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('那张作品用的滤镜已经删了')
+    // ③ 手上那层颜色不动
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('夕阳').getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('★ 配方里没有滤镜（老作品连 lut 这个键都没有）：套用时把手上那层清掉', async () => {
+    // 两件事一起钉：
+    //   ① "配方里没有滤镜" → 手上那层颜色要清掉。不清的话用户看到的画面和
+    //      这张作品的配方对不上（它本来就没滤镜），而且一句话都不说。
+    //   ② 2026-10-05 之前存的老作品，库里那份 recipe JSON **没有 `lut` 键** ——
+    //      `handleGetWork` 原样返回，读出来是 `undefined` 而不是 `null`；
+    //      这份夹具故意不写那个键，演的就是这个"类型系统拦不住"的形状
+    //      （`WorkDetailPage` 里那句 `?? null` 就是为它写的）。
+    // 变异：`onApply` 开头不写 `if (!recipeLut) setLut(null)` → 最后两句红。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUANGHUN] })
+    await renderApp()
+    await uploadPhoto()
+    // 先在手上套一个滤镜 —— 不然"被清掉"这件事根本没发生（测不到）
+    await goNav('调色')
+    await openLutPanel()
+    await act(async () => { tileNamed('黄昏').click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')   // 前提：手上在用
+
+    await openWork({ params: { ...ZERO, exposure: 20 }, edits: [] })      // ← 没有 lut 键
+    const apply = container.querySelector('.recipe-apply') as HTMLButtonElement | null
+    await act(async () => {
+      apply?.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    // 调色那半照常套上（别把整件事一起丢了）
+    expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 20 })
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
+  })
 })
 
 /**
@@ -3251,6 +3355,8 @@ describe('作品详情页：这张图怎么来的', () => {
  *      用户会去找一个屏幕上不存在的按钮）。
  *   ④ ②那条问句挂着的时候，**配方定格在问的那一刻**（终审 M4）：他回头又改了一版
  *      再回答「替换」，存的仍是那张图当时的调整 —— 图和配方不能来自两个时刻。
+ *   ⑤ 配方里记的滤镜是**名字 + 强度**，不是 id（★ 2026-10-05，T12）——
+ *      名字才是换一张图 / 换一次导入之后还认得出的那半。
  */
 describe('保存 = 存进作品集（Task 13）', () => {
   /**
@@ -3361,7 +3467,34 @@ describe('保存 = 存进作品集（Task 13）', () => {
     // 换成 `toEqual` 之后，配方里多出**任何**东西都会红 —— 英文 prompt 也在内，
     // 而且不再依赖"猜一个记号"。
     expect(body.recipe.edits).toEqual(['亮一点'])
-    expect(Object.keys(body.recipe).sort()).toEqual(['edits', 'params'])   // 两栏，不是一坨
+    // ★ 2026-10-05（T12）：配方多了第三栏 `lut`（记的是滤镜的**名字** + 强度；
+    //   这一趟没用滤镜，所以是**显式 null**，不是缺键 —— 老作品那个缺键的形状
+    //   只在"读 2026-10-05 之前存的行"时才出现，`WorkDetailPage` 那边兜着）。
+    //   `toEqual` 那个理由照旧：配方里多出**任何**东西都会红。
+    expect(Object.keys(body.recipe).sort()).toEqual(['edits', 'lut', 'params'])
+    expect(body.recipe.lut).toBeNull()
+  })
+
+  it('★ 保存时配方里记的是滤镜的**名字**和强度，不是 id', async () => {
+    // 作品详情页那一行、以及「套到别的图上」按名字找回那一条，全靠这里存的形状：
+    // 名字是**带得走**的那半，id 换个账号/换次导入就不是同一个东西了。
+    // 变异：`recipeNow` 不带 lut → 红；记 id / 记 "1" 这种 → 红。
+    const s = makeSession(7, 3, '上次那句', 'S7')
+    s.steps[s.steps.length - 1]!.lut = { lutId: 1, amount: 80 }
+    withSessions([s])
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUANGHUN] })
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      (url === '/api/works' && init?.method === 'POST') ? jsonResponse({ id: 9 }) : inner(url, init))
+
+    await renderApp()
+    // 前提：接回来的这张照片真的在用「黄昏」80（不然下面守的是个没发生的事）
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+
+    await clickTop('保存')
+    expect(savedBody().recipe.lut).toEqual({ name: '黄昏', amount: 80 })
   })
 
   it('★ 同一张照片存第二次，问「替换还是再存一张」（§3.4）', async () => {

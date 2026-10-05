@@ -36,7 +36,7 @@ import { markImage, type NormPoint } from './image/mark'
 import { useDelivery } from './app/useDelivery'
 import { useGeneration } from './app/useGeneration'
 import { useLuts } from './app/useLuts'
-import { normalizeLutRef, type LutRef } from '../shared/lut.ts'
+import { normalizeLutRef, sameLutName, type LutRef } from '../shared/lut.ts'
 import type { SuggestCard } from '../shared/protocol.ts'
 import type { WorkMeta } from '../shared/works.ts'
 
@@ -343,6 +343,9 @@ export default function App() {
       canvasEl: canvasElRef,
       originalFile: originalFileRef,
       savedId, setSavedId, params, messages, noticeBad, noticeOk,
+      // ★ 2026-10-05（T12）：配方里那一行 —— 滤镜只存**名字**，所以清单也要给它
+      //   （id → 名字的转换在 `recipeNow` 里现做）。
+      lut, luts: lutsApi.luts,
     })
   const idRef = useRef(0)
   /** 每次选图 +1。只做一件事：**认出"这句提示还该不该挂"** ——
@@ -2041,10 +2044,26 @@ export default function App() {
           id={view.id}
           onBack={() => go({ kind: 'gallery' })}
           canApply={image !== null}
-          onApply={(p) => {
+          onApply={(p, recipeLut) => {
             // ★ 裸调，和滑块 / 预设 / 重置**同级** —— 改 params 从来不 push 快照，
             //   「套用」也不该是例外（裁定 ⑤）。快照是给"生成式编辑"用的。
             setParams(p)
+            // ★ 2026-10-05（滤镜，T12）：滤镜按**名字**找回清单里那一个
+            //   （配方里只存名字 —— id 对已经烤好的图没有意义，见 shared/works.ts）。
+            if (!recipeLut) {
+              // 这张作品的配方里就没有滤镜 → 手上那层也清掉：留着的话"套上了"
+              // 的画面和这张作品的配方对不上，而且一句话都不说。
+              setLut(null)
+            } else {
+              const hit = lutsApi.luts.find((l) => sameLutName(l.name, recipeLut.name))
+              if (hit) {
+                setLut({ lutId: hit.id, amount: recipeLut.amount })
+              } else {
+                // 已经被删了 → **只套调色，并把这件事说出来**（不说就是悄悄少了
+                // 半套）。手上那层颜色不动 —— 用户自己选的，没有理由替他清掉。
+                noticeBad('那张作品用的滤镜已经删了，这次只套了调色。')
+              }
+            }
             go({ kind: 'edit' })
           }}
         />
