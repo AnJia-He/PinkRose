@@ -7,8 +7,13 @@
  * 清晰度和暗角**只有本文件有**：它们分别需要邻域像素和像素坐标，
  * tone.ts 的单像素函数表达不了，没有可对照的实现。
  *
- * 改任何一边都必须同步改另一边。**本渲染器没有自动化测试**——
- * WebGL 要真实 GPU，写死像素的测试会很脆；正确性靠 Task 7 的浏览器验收。
+ * 改任何一边都必须同步改另一边。**动这里的 GLSL 就必须跑 `scripts/check-lut.ts`**：
+ * 同目录的 `shader.test.ts` 里只有**字符串级哨兵**（管线顺序 / 采样器精度限定 /
+ * 不许有非 ASCII），而"编译得过不过、数值对不对"**只有那条真机探针看得见**
+ * （真 Chrome + 真 GPU，要起 dev 服务器，`npm run check:lut`）。
+ * 2026-10-05 抓到的那个 bug 就是这条规矩的来路：`uniform sampler3D uLut;`
+ * 少了精度限定，ANGLE 下**整个 program 编译不过** —— 每一张照片都是黑画布，
+ * 而单测 / typecheck / build / check:layout 四样全绿（它们对编译全都失明）。
  *
  * 另外：GLSL 字符串里的注释一律用 ASCII 英文。WebGL 规范对 shader source
  * 的字符集有限制，中文注释在无头 Chromium 里能过，但真实设备驱动上

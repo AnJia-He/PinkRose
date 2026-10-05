@@ -1,0 +1,32 @@
+{
+  // ★ 2026-10-05（Task 13 审查 Important）：**这条闸门以前对 `scripts/check-lut.ts`
+  //   根本不存在**。`npm run typecheck` 只跑三份配置，而这个文件一份都不在 include 里；
+  //   Node 24 跑 `.ts` 只做**类型擦除**、不做类型检查 —— 于是"探针跑过了"永远不等于
+  //   "它类型是干净的"（本仓库最恨的那种**假绿**）。
+  //
+  //   ⚠️ **不许并进 `tsconfig.node.json`**：那份给的是 vite.config.ts 的环境
+  //   （没有 DOM lib、也没有 allowImportingTsExtensions），而这个脚本两样都要 ——
+  //   它在**页面里** evaluate（document / HTMLCanvasElement / canvas 2D），
+  //   又按 `.ts` 后缀 import 源码（`../src/core/lut.ts`，和 check-mobile-layout.mjs
+  //   同一个路数：node 直接吃 .ts，不带后缀在 Node 里跑不起来）。
+  "compilerOptions": {
+    "target": "ES2022",
+    // DOM 是**必须的**：这个脚本的一大半跑在 `page.evaluate` 里（浏览器上下文）。
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    // 见上面：源码 import 一律带 `.ts` 后缀。
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    // allowImportingTsExtensions 的前提（要么 noEmit、要么只出声明）。
+    "noEmit": true,
+    // `Buffer` / `process` / `import.meta.url`（脚本在 Node 里跑）+ playwright 的类型。
+    "types": ["node"]
+  },
+  "include": ["scripts/check-lut.ts"]
+}

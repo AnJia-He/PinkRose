@@ -20,21 +20,35 @@ describe('管线顺序', () => {
     expect(FRAGMENT_SRC).toMatch(/uLutOn\s*\*\s*uLutAmount/)
   })
 
-  it('sampler3D 必须带精度限定 —— 少了整个程序编译不过', () => {
+  it('uniform 里的采样器都得带精度限定 —— 除 sampler2D / samplerCube 外没有默认精度', () => {
     // ★ 2026-10-05 补，为的是一个**真机探针才抓到**的 bug：
     //   原来写的是 `uniform sampler3D uLut;`，ANGLE（Chromium 的 GL 后端，
     //   也就是真 Chrome 走的那条路）报 "'sampler3D' : No precision specified"，
     //   **整个 program 链接失败** —— 不只是滤镜坏：每一张照片都画不出来，
     //   屏幕上只有一句「画面出问题了」。
-    //   根因：GLSL ES 3.00 只给 sampler2D / samplerCube 定了默认精度，
-    //   sampler3D 这类没有，必须自己写（`highp sampler3D`）。
+    //   根因：GLSL ES 3.00 **只给 sampler2D / samplerCube 定了默认精度**，
+    //   其余采样器类型（sampler3D / sampler2DArray / 各种 shadow / i·u 前缀的）
+    //   必须自己写。所以这一条**按类型泛化**，不只拉黑 sampler3D ——
+    //   同一个坑换个类型就是同一个 bug（审查 Minor 指的是这一条）。
+    //   ⚠️ 豁免清单要**整词相等**：写成裸 `sampler2D` 会前缀匹配上 sampler2DArray，
+    //      而后者恰恰是要查的那个。
     //   这一条是**快**的那道哨兵（不用起服务器、不用真 GPU）；真机那道在
-    //   scripts/check-lut.ts —— 它连的是"到底编译得过吗"。
-    const decls = [...FRAGMENT_SRC.matchAll(/uniform\s+[^;]*?sampler3D[^;]*;/g)].map((m) => m[0])
-    // 哨兵自己先别失效：哪天这句声明被改名/删掉，上面那个循环会空转、这一条会绿。
-    expect(decls.length).toBeGreaterThan(0)
-    for (const d of decls) {
-      expect(d, `这句 sampler3D 声明少了精度限定：${d}`).toMatch(/\b(lowp|mediump|highp)\b/)
+    //   scripts/check-lut.ts —— 它连的是"到底编译得过吗"。两份源码都扫。
+    const HAS_DEFAULT_PRECISION = new Set(['sampler2D', 'samplerCube'])
+    const found: { where: string; decl: string; type: string }[] = []
+    for (const [where, src] of [['片段', FRAGMENT_SRC], ['顶点', VERTEX_SRC]] as const) {
+      for (const m of src.matchAll(/uniform\s+([^;]*);/g)) {
+        const type = m[1]!.trim().split(/\s+/).find((t) => /^[iu]?sampler\w*$/.test(t))
+        if (type) found.push({ where, decl: m[0].trim(), type })
+      }
+    }
+    // 哨兵自己先别失效：哪天采样器声明被改名/删光，下面的循环会空转、这一条会绿。
+    expect(found.some((d) => !HAS_DEFAULT_PRECISION.has(d.type))).toBe(true)
+    for (const d of found) {
+      // 豁免的那两种（sampler2D / samplerCube）两种源码里都有合法默认精度。
+      if (HAS_DEFAULT_PRECISION.has(d.type)) continue
+      expect(d.decl, `${d.where}源码里这句 ${d.type} 声明少了精度限定：${d.decl}`)
+        .toMatch(/\b(lowp|mediump|highp)\b/)
     }
   })
 
