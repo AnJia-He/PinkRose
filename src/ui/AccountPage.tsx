@@ -247,14 +247,16 @@ export function AccountPage({
                   它是"画给人看"的那份。 */}
               <div className="usage-figure">
                 {/* ★ 2026-10-05（第六轮）：两个数**画进图形里**了（用户：「也要在图形中
-                    展现出来」）—— `used`/`total` 由页面用 `formatSize` 算好传进去；
+                    展现出来」）—— `used`/`rest` 由页面用 `formatSize` 算好传进去；
                     拿不到时（loading）不传，图上占位「…」。外面那行图例因此撤了
-                    （同一组数字不说两遍），stats 只剩「N 张作品」。 */}
+                    （同一组数字不说两遍），stats 只剩「N 张作品」。
+                    ★ 第八轮：「总共」换成「剩余」（用户：「我觉得应该显示剩余用量吧？」
+                    —— "还能存多少"才是行动信息；总共 = 已用 + 剩余，可推）。 */}
                 <UsagePie
                   pct={usage.state === 'loading' ? null : usage.bytes / usage.limit}
                   warn={usageWarn}
                   used={usage.state === 'loading' ? undefined : formatSize(usage.bytes)}
-                  total={usage.state === 'loading' ? undefined : formatSize(usage.limit)} />
+                  rest={usage.state === 'loading' ? undefined : formatSize(Math.max(0, usage.limit - usage.bytes))} />
                 <div className="account-stats">
                   {usage.state === 'loading' ? (
                     // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
@@ -352,12 +354,13 @@ export function modelValue(configs: PublicConfig[]): string {
  */
 export const MIN_SLICE_RATIO = 5 / 360
 
-export function UsagePie({ pct, warn, used, total }: {
+export function UsagePie({ pct, warn, used, rest }: {
   pct: number | null; warn: boolean
   /** 「已用 X」的说法（页面用 `formatSize` 算好传进来）；不传 = 还没拿到，占位「…」。 */
   used?: string
-  /** 「总共 Y」同理。 */
-  total?: string
+  /** 「剩余 Y」同理（★ 第八轮：原来是「总共」，用户「我觉得应该显示剩余用量吧？」
+      —— 对，"我还能存多少"才是行动信息；总共没丢，等于已用 + 剩余，可推）。 */
+  rest?: string
 }) {
   const ratio = pct === null ? null : Math.max(0, Math.min(1, pct))
   // 画扇形用的占比：真比例外面套一道"可见性下限"（0 除外 —— 一点没用就是没有）。
@@ -397,9 +400,9 @@ export function UsagePie({ pct, warn, used, total }: {
         <i className="usage-chart-dot usage-chart-dot-used" aria-hidden="true" />
         已用 <b>{used ?? '…'}</b>
       </span>
-      <span className="usage-chart-tag usage-chart-total">
-        <i className="usage-chart-dot usage-chart-dot-total" aria-hidden="true" />
-        总共 <b>{total ?? '…'}</b>
+      <span className="usage-chart-tag usage-chart-rest">
+        <i className="usage-chart-dot usage-chart-dot-rest" aria-hidden="true" />
+        剩余 <b>{rest ?? '…'}</b>
       </span>
       {/* 百分比那行（★ 2026-10-05 第八轮：用户看到裸着的 `<0.1%` 说
           「这个数字你得告诉用户是什么呀？对不对」—— 他说得对，原来这行没主语。

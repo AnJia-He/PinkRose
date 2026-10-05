@@ -3574,10 +3574,11 @@ describe('用户管理页', () => {
     expect(statsText()).toMatch(/^2\s*张作品/)
     expect(container.querySelectorAll('.stat')).toHaveLength(1)
     // ★ 2026-10-05：两个数**画在图形里**（用户：「没有总用量和实际用量呀」→
-    // 加了图例 → 又一句「也要在图形中展现出来」→ 搬进图形区域）。体积是服务端
-    // 算的，上限是 withUsage 铺的 5 GiB。
+    // 加了图例 → 「也要在图形中展现出来」→ 搬进图形区域 → 「我觉得应该显示
+    // 剩余用量吧？」→ 「总共」换成「剩余」）。体积是服务端算的，上限 5 GiB。
     expect(container.querySelector('.usage-chart-used')?.textContent).toContain('已用 10 MB')
-    expect(container.querySelector('.usage-chart-total')?.textContent).toContain('总共 5.0 GB')
+    // 5 GiB − 10 MB = 4.99 GiB → formatSize 一位小数 → 「5.0 GB」
+    expect(container.querySelector('.usage-chart-rest')?.textContent).toContain('剩余 5.0 GB')
     expect(container.querySelectorAll('.usage-chart-dot')).toHaveLength(2)
     // 10 MB / 5 GB = 0.2% —— 远没到 80%，那条提醒不该出现
     expect(container.querySelector('.account-quota-warn')).toBeNull()
@@ -3726,6 +3727,8 @@ describe('用户管理页', () => {
     expect(container.querySelector('.usage-pie-warn')).toBeTruthy()
     expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('84%')
     expect(container.querySelector('.usage-chart-used')?.textContent).toContain('4.2 GB')
+    // 「剩余」不是摆设：84% 时它必须给出真正的余量（5 GiB − 4.2 GiB = 0.8 GiB = 819 MB）
+    expect(container.querySelector('.usage-chart-rest')?.textContent).toContain('剩余 819 MB')
 
     // 出路是**一条真走得通的路**：点进去就是作品集（提醒不给出路 = 把人拉进没有门的房间）
     await act(async () => {
