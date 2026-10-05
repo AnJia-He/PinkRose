@@ -184,6 +184,7 @@ vi.mock('./api/luts', async (importOriginal) => {
 })
 
 import App from './App'
+import { PRESETS } from './core/presets'
 import { MIN_SLICE_RATIO, formatSize, modelValue, pie3dPaths } from './ui/AccountPage'
 import type { PublicConfig } from './api/models'
 import { matchToReference, type Rgb } from './core/colorMatch'
@@ -4528,7 +4529,9 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     const click = async (el: HTMLElement) => {
       await act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
     }
-    const preset = container.querySelector('.presets button') as HTMLButtonElement
+    // ★ 2026-10-05：预设从面板里那排药丸搬去了**照片左边那条预设栏**
+    //    （`.rail-tile`）—— 第 0 格是「原图」（归零 + 摘滤镜），第 1 格才是第一个预设。
+    const preset = container.querySelectorAll('.rail-tile')[1] as HTMLButtonElement
     await click(preset)
     await waitPersist()
 
@@ -4537,9 +4540,11 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     expect(puts).toHaveLength(2)
     const before = bodyOf(puts[0]!)
     const after = bodyOf(puts[1]!)
-    // 参数真的变了、而且送出来了（首个预设「日系通透」：exposure 8）
+    // 参数真的变了、而且送出来了 —— 而且送的是**整组**：套预设 = 整组赋值
+    // （`{...ZERO, …}` 的长拷贝），不是往当前参数上叠。这条比"exposure 是 8"
+    // 更严：谁把 `setParams({...p.adjustments})` 改成合并写法，这里就红。
     expect(after.params).not.toEqual(before.params)
-    expect(after.params.exposure).toBe(8)
+    expect(after.params).toEqual(PRESETS[0]!.adjustments)
     // 而这一趟**没有**新消息、没有新步骤 —— 它真的是"只动参数"那一路
     expect(after.messages).toEqual(before.messages)
     expect(after.steps).toHaveLength(before.steps.length)

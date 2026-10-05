@@ -7,7 +7,6 @@ import {
 } from '../../shared/adjustments.ts'
 import { workName, type WorkMeta } from '../../shared/works.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
-import { PRESETS } from '../core/presets'
 import { Slider } from './kit/Slider.tsx'
 import { ColorWheel } from './ColorWheel.tsx'
 import LutPicker from './LutPicker.tsx'
@@ -161,22 +160,12 @@ export default function AdjustmentPanel({
         <button onClick={onReset}>重置</button>
       </div>
 
-      <div className="presets">
-        {PRESETS.map(p => (
-          // 展开拷贝：PRESETS 是模块级共享对象，直接传引用会让拖滑块改坏预设。
-          // 这也是"套预设 = 新参数一并归零"那条行为的来路 —— 每个预设都是
-          // `{...ZERO, …}` 的长拷贝，所以色彩平衡/分离色调会被**写回 0**，
-          // 而不是原地留下上一份的色偏（测试：AdjustmentPanel.behavior.test.tsx）。
-          <button key={p.id} onClick={() => onChange({ ...p.adjustments })}>
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {/* 「照着这张调」**故意不摆进上面那一排**，两条理由：
-          · 那排是"按一下立刻出结果"的药丸，而这一颗点了会先展开来源
-            —— 混在一起，用户会以为按下去画面就该变；
-          · 上面那条注释写着"一排六个不许换行成两排"，多一颗长的就破了。
+      {/* 「照着这张调」**故意摆在最前**（那排药丸搬走之后它就是这一栏的第一颗），
+          两条理由：
+          · 它点了会先展开来源、**不是立刻生效** —— 和下面那些"拖一下就有结果"
+            的东西分开摆，用户才不会以为按下去画面就该变；
+          · 它和预设本来是同一类东西（都产出一组参数），所以摆在这一栏第一眼的位置
+            —— 和照片左边那条预设栏对着看，是"自己挑一个风格 / 让机器照着学一个"。
           而它跟上排**是同一类东西**（产出一组参数），所以紧挨着它们。
           ⚠️ 用真的 `<button>` 而不是 `<label>` 包一个 input：全站那套按钮的长相
           （底色/边框/悬停/按下/禁用）都在 CSS 的 `button` 那条通用规则里，
@@ -250,12 +239,16 @@ export default function AdjustmentPanel({
         }}
       />
 
+      {/* ★ 2026-10-05：那排**文字药丸**（日系通透/胶片/黄昏…）搬去照片左边那条
+          预设栏了（`ui/PresetRail`）—— 同一个功能在屏幕上出现两遍，用户会看见
+          两次一样的名字。这一屏的面板从此只有"滤镜 + 十五条参数"。
+
+          ⚠️ 原来那条注释（"这一栏是 `.presets` 的兄弟，因为 `.presets button`
+          的选择器特异性比 `.lut-tile` 强"）**随那排药丸一起失效了** —— `.presets`
+          那段 CSS 已经删掉。位置没动，是因为它本来就该在参数组前面。 */}
+
       {/* ★ 2026-10-05：滤镜那一栏（设计 §5.2）。**默认收着**是有意的 ——
           spec §8.3 记着用户原话「不要写个名字显示出来占空间」。
-
-          ⚠️ 它是 `.presets` 那个 div 的**兄弟**，不是它的孩子（位置就在这儿）：
-          `.presets button` 的选择器特异性 (0-1-1) 比 `.lut-tile` (0-1-0) 强，
-          嵌进去格子会被染成药丸（Task 7 审查逐条算过）。
 
           ⚠️ 展开才去要缩略图（每个滤镜各画一张当前照片，很贵）—— 收着的时候
           白画一遍是纯浪费，而用户看不见，也没人会报错。 */}

@@ -4,6 +4,7 @@ import Canvas from './ui/Canvas'
 import Uploader from './ui/Uploader'
 import AdjustEmpty from './ui/AdjustEmpty'
 import AdjustmentPanel from './ui/AdjustmentPanel'
+import PresetRail from './ui/PresetRail'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import { LoginPage } from './ui/LoginPage'
 import { GalleryPage } from './ui/GalleryPage'
@@ -25,6 +26,7 @@ import { decodeImageFile, type DecodedImage } from './image/decode'
 import { resizeBitmap } from './image/resize'
 import { samplePixels } from './image/sample'
 import { matchToReference } from './core/colorMatch'
+import { activePresetId } from './core/presets'
 import { fitToLimit, probeLimit } from './render/limits'
 import { applyDeltas, clampAdjustments, ZERO, type Adjustments } from '../shared/adjustments.ts'
 import { canShareImage, downloadImage } from './export/save'
@@ -1927,6 +1929,30 @@ export default function App() {
 
           {image && (
             <main className="workspace">
+              {/* ★ 2026-10-05：预设栏 —— 照片**左边**那条（用户：「放在照片区域的
+                  左侧」）。一格一张**用他这张照片现画**的效果小图，点一下整组套上。
+
+                  ⚠️ 三个决定写在别处、这里只接线：
+                    · 小图怎么画、什么时候作废 → `app/usePresetThumbs`；
+                    · 哪一格亮着 → `core/presets` 的 `activePresetId`
+                      （判全等、挂着滤镜时谁都不亮）；
+                    · 长相 → `ui/PresetRail`。
+                  ⚠️ 只在调色那一屏在（`view.kind === 'adjust'`）—— 别的屏旁边是
+                  对话栏，没有它的位置；而它一挂上就画十三张小图，
+                  挂错地方等于让对话页也白画一遍。 */}
+              {view.kind === 'adjust' && (
+                <PresetRail
+                  image={image}
+                  cube={lutsApi.cube}
+                  activeId={activePresetId(params, lut !== null)}
+                  // 展开拷贝：PRESETS 是模块级共享对象，直接传引用会让拖滑块改坏预设
+                  // （和面板上原来那排药丸同一条理由）。
+                  onPick={(p) => setParams({ ...p.adjustments })}
+                  // 「原图」= 参数归零 **+ 滤镜也摘掉**（和面板那颗「重置」同一件事：
+                  // 只归零参数的话，画面还是那套颜色，而用户以为按了"回到最初"）。
+                  onClear={() => { setParams(ZERO); setLut(null) }}
+                />
+              )}
               <div className="stage">
                 {/* params 直接传下去：[-100,100] → [-1,1] 的换算只发生在
                     TonePipeline.render 里（唯一入口）

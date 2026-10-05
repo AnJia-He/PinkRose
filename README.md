@@ -30,6 +30,7 @@
 | 上传照片（欢迎页照片球） | [WelcomeGlobe.tsx](src/ui/WelcomeGlobe.tsx) + [Uploader.tsx](src/ui/Uploader.tsx) |
 | 对话列表 | [SessionsPage.tsx](src/ui/SessionsPage.tsx) |
 | 调色面板（调色/微调） | [AdjustmentPanel.tsx](src/ui/AdjustmentPanel.tsx) + [ColorWheel.tsx](src/ui/ColorWheel.tsx) |
+| 预设栏（照片左边那排效果小图） | [PresetRail.tsx](src/ui/PresetRail.tsx) |
 | 作品集 | [GalleryPage.tsx](src/ui/GalleryPage.tsx) |
 | 作品详情 | [WorkDetailPage.tsx](src/ui/WorkDetailPage.tsx) |
 | 个人设置 | [AccountPage.tsx](src/ui/AccountPage.tsx) |

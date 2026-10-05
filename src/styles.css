@@ -561,7 +561,7 @@ button {
    特异性 **0-2-1** —— 比 `.nav-item.on`（0-2-0）还高。于是鼠标停在左栏当前
    那一项上时，这条通用规则把它的粉底顶掉，换成 `--hover` 的深灰底，而字色
    还是 `--accent-ink` —— **字和底糊在一起，几乎读不出来**。
-   受害者不止一个：`.bubble-jump`（0-2-0）、`.presets button`、`button.primary`
+   受害者不止一个：`.bubble-jump`（0-2-0）、`button.primary`
    全都被同一条压过，只是那几处的字色没跟着变，所以没那么显眼。
    `:where()` 之后，任何带类名的规则都能盖过它，以后加新按钮不必再数特异性。
    ⚠️ `.nav-item.on` 和 `.nav-item:hover` 特异性相同（0-2-0），靠**文件顺序**
@@ -626,6 +626,57 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 改：workspace 变成"左画布右对话"的一行 */
 .workspace { flex: 1; display: flex; min-height: 0; }
 .workspace .stage { flex: 1; min-width: 0; min-height: 0; }
+
+/* ── 预设栏（★ 2026-10-05，`PresetRail`）───────────────────────────────
+   照片**左边**那条：一格一张用**当前这张照片**现画的效果小图，点一下整组套上
+   （用户：「放在照片区域的左侧」+「像剪映一样」——他要的是"看着效果挑"）。
+   ⚠️ 竖着排、一行两个，不是横着铺一条：竖图两侧本来就空着好几百像素
+   （见 `.stage` 那段量的数：1080×2048 的竖图左右各空 487px），这条栏塞进去
+   **不用挤照片**；横着铺在照片底下则要拿走一截高度。
+   ⚠️ 底色和右边那道发丝线跟着 `--panel` 走：它和右边的微调面板是**同一块工具**，
+   两者之间不画线（照片和它之间才画）。 */
+.rail {
+  width: 200px; flex: none; min-height: 0; overflow-y: auto;
+  border-right: 1px solid var(--line); background: var(--panel);
+  padding: var(--sp-3) 10px var(--sp-4);
+  scrollbar-width: thin;
+}
+.rail-head {
+  margin: 0 0 var(--sp-3); color: var(--text); font-weight: 600; font-size: 13px;
+}
+.rail-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr);
+  gap: var(--sp-3) var(--sp-2); align-content: start;
+}
+/* 每格是**真 `<button>`**（读屏念得出选没选中、键盘走得到），所以逐条按掉全局
+   `button{}` 那套方框（灰底 + 描边 + 内边距）—— 少一条那格就长回一块灰方框
+   （和 `.lut-tile` / `.presets-work` 同款理由）。
+   ⚠️ 这一格的外框长在 `.rail-shot` 上、**不是按钮上**：名字要露在框外面
+   （剪映那样），框里只有那张小图。 */
+.rail-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  width: 100%; padding: 0; background: none; border: 0; border-radius: 0;
+  color: var(--muted); font-size: 12px; cursor: pointer; text-align: center;
+}
+/* 方框：**没图的时候它就是占位**（`--raised` 的底 + 底下一行名字）——
+   所以缺图那格不画空 `<img>`（那会是一个破图图标，看着像"加载失败"）。 */
+.rail-shot {
+  display: block; width: 100%; aspect-ratio: 1 / 1; overflow: hidden;
+  background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+.rail-thumb { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* 悬停只加深一档描边、**不许用主色**：格子密的时候"我选了哪个"是这一屏唯一的
+   判断题，主色只花在选中上 —— 悬停和选中穿同一件衣服那个亏，滤镜格子那边
+   真机截图里吃过一次（见 `.lut-tile:hover`）。`.on` 排在后面，同特异性靠顺序赢。 */
+.rail-tile:hover .rail-shot { border-color: var(--line-3); }
+.rail-tile.on { color: var(--accent); }
+.rail-tile.on .rail-shot { border-color: var(--accent); }
+.rail-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* 名字一行截断：长名字撑歪格子会把整行拽得参差不齐（和 `.lut-tile-name` 同条）。 */
+.rail-tile-name {
+  display: block; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* 改：画布不再用固定的 78vh，改为撑满给它的空间。
    ⚠️ 2026-10-01 翻粉底时多的那圈 `0 0 0 1px var(--photo-edge)`：浅色照片压在粉底上
@@ -891,13 +942,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   border-radius: var(--r-sm);
 }
 .panel-head button:hover { background: var(--hover); color: var(--text); }
-.presets { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-4); }
-/* 预设是"一键"的东西：药丸形，比普通按钮小一档 —— 一排六个不许换行成两排。 */
-.presets button {
-  border-radius: var(--r-pill); padding: 5px 14px; font-size: 13px;
-  background: var(--raised); border-color: var(--line);
-}
-.presets button:hover { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
+/* ★ 2026-10-05：这里原来是那排**预设药丸**（`.presets` / `.presets button`）——
+   预设搬去照片左边那条竖栏了（`PresetRail`，长相见上面 `.rail-*` 那一段），
+   药丸连同这几条规则一起退役。 */
 
 /* 「照着这张调」—— 从一张参考图生成一组参数，本质上是**自定义预设**，
    所以紧挨着上面那一排。但它**不是药丸**：
@@ -1307,6 +1354,14 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
   .workspace { flex-direction: column; }
   .workspace .stage { flex: 1 1 auto; }
+  /* ★ 2026-10-05：**窄屏上预设栏不出现**（桌面那一档才有）。
+     这一档里三样东西抢竖向空间，照片本来就只靠宽度那条链活着（见上），
+     再横塞一条预设栏要么把照片压小、要么得把面板挤掉一截。
+     ⚠️ 代价记在这儿：**窄屏上套不了预设**（药丸退役了，预设只剩这一条入口）。
+        要补的话，最省事的是让它在这一档变成"面板顶上一条横着滚的"，
+        但那会动到 `check:layout` 量的那几样（照片高度），**得连着一起看**。
+     理由的另一半在产品定位上：web 这版是给电脑用的，手机那头交给小程序。 */
+  .rail { display: none; }
   .chat {
     width: auto;
     flex: none;

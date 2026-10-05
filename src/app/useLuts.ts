@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listLuts, lutFileText } from '../api/luts.ts'
 import { parseCube, type Cube, type LutMeta, type LutRef } from '../../shared/lut.ts'
-import { createLutPreview, type LutPreview } from '../render/lutPreview.ts'
+import { useLutPreview } from './useLutPreview.ts'
 import type { DecodedImage } from '../image/decode'
 import type { Adjustments } from '../../shared/adjustments.ts'
 
@@ -46,7 +46,11 @@ export function useLuts({ lut, image, params: _params, onError }: {
 
   /** id → 解析好的 cube。取过一次就不再取（清单小、每个几十 KB~几 MB，够放） */
   const cubes = useRef(new Map<number, Cube>())
-  const preview = useRef<LutPreview | null>(null)
+  /**
+   * 画缩略图的那块离屏画布。**懒建 + 卸载时 dispose** 那套写在 `useLutPreview`
+   * 里（★ 2026-10-05 抽出去的：预设栏那边要用一模一样的写法，见那里的注释）。
+   */
+  const ensurePreview = useLutPreview()
   const lutId = lut?.lutId ?? null
   // 两条"这一趟还算不算数"的序号：切滤镜 / 换照片时各自作废前面的异步
   const cubeSeq = useRef(0)
@@ -58,14 +62,6 @@ export function useLuts({ lut, image, params: _params, onError }: {
    */
   const onErrorRef = useRef(onError)
   useEffect(() => { onErrorRef.current = onError }, [onError])
-
-  // ⚠️ 懒建 + 卸载时 dispose：**StrictMode 会把挂载重放一遍**，在 effect 里
-  //    建、在 cleanup 里 dispose 的话，第二次挂载拿到的是一个已经 dispose 的实例。
-  const ensurePreview = (): LutPreview => {
-    if (!preview.current) preview.current = createLutPreview()
-    return preview.current
-  }
-  useEffect(() => () => { preview.current?.dispose(); preview.current = null }, [])
 
   const loadCube = useCallback(async (id: number): Promise<Cube | null> => {
     const hit = cubes.current.get(id)

@@ -28,14 +28,12 @@ vi.mock('../api/works.ts', async (importOriginal) => {
 })
 
 /**
- * 面板是**受控**组件，值在壳子手里。
+ * 面板是**受控**组件，值在壳子手里（改动一律走 React 的 onChange）。
  *
- * ⚠️ `setFromTest` 是给测试留的**后门**：要验"套预设后新参数归零"就得先把值
- * 置出去，而"拖 Base UI 的受控滑块"在 jsdom 里不好驱动（它在真浏览器里靠
- * pointer 事件链，jsdom 里派不全）。置值走 state setter，是同一份数据流 ——
- * 预设点击那一下照样是真的走 React 的 onChange。
+ * ★ 2026-10-05：这里原来还有一个 `setFromTest` 后门（"先把值置出去，再验套预设
+ * 之后归零"）。预设药丸搬去 `PresetRail` 之后这一层不再需要它 —— 那件事的两半
+ * 现在住在 `core/presets.test.ts`（字段完整性）和 `App.test.tsx`（整组赋值）。
  */
-let setFromTest: (v: Adjustments) => void = () => {}
 /** 两条参考图来源交出去的东西 —— 面板只"交货"：本地文件 / 选中那张的元数据。 */
 let matchedRef: File | null = null
 let matchedWork: WorkMeta | null = null
@@ -53,7 +51,6 @@ let retriedLuts = 0
 
 function Harness() {
   const [v, setV] = useState<Adjustments>(ZERO)
-  setFromTest = setV
   return (
     <AdjustmentPanel
       value={v} onChange={setV} onReset={() => setV(ZERO)}
@@ -139,13 +136,16 @@ describe('面板的分组（2026-10-04）', () => {
     expect(ranges).toContain('100')                           // 强度
   })
 
-  it('★ 套一个预设 → 新参数一并归零（不许"套了预设色轮还留着"）', async () => {
-    const container = await mount(<Harness />)
-    await act(async () => { setFromTest({ ...ZERO, cbCyanRed: 60 }) })
-    expect(container.querySelector('.color-wheel')!.getAttribute('data-x')).not.toBe('0')
-    await click([...container.querySelectorAll('.presets button')][0]!)   // 点第一个预设
-    expect(container.querySelector('.color-wheel')!.getAttribute('data-x')).toBe('0')   // 色轮回中心 = 三轴归零
-  })
+  /**
+   * ★ 2026-10-05：原来这里有一条「套一个预设 → 新参数一并归零」（点面板上那排
+   * 药丸，看色轮回中心）。**那排药丸搬去照片左边的预设栏了**（`PresetRail`），
+   * 面板里不再有预设入口，所以这条测试跟着搬走 —— 它的两半现在住在这儿：
+   *   · "每个预设都是 `{...ZERO, …}` 的长拷贝、十五个键一个不缺"
+   *     → `core/presets.test.ts`（字段完整性那条）；
+   *   · "点一下 = **整组赋值**，不是往当前参数上叠"
+   *     → `App.test.tsx`「只动参数（不推快照、不说话）也要落盘」那条
+   *       （它现在断言 `after.params` 与预设**全等**）。
+   */
 })
 
 /**
