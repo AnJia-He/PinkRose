@@ -1,4 +1,5 @@
 import type { Adjustments } from '../../shared/adjustments.ts'
+import type { LutRef } from '../../shared/lut.ts'
 import type { DecodedImage } from '../image/decode'
 
 export type Snapshot = {
@@ -19,6 +20,29 @@ export type Snapshot = {
   prompt?: string
   base: DecodedImage
   params: Adjustments
+  /**
+   * 这一步用着哪个滤镜、强度多少（null = 没用）。
+   *
+   * ★ 2026-10-05（滤镜）：和 `params` 是**并列的两件事**（滤镜不是第十六个数字，
+   * 见设计 §3.2）。今天它有三个用处，都是**按步**的那一份：
+   *   · 落盘时跟着这一步一起上路（服务端 `mergeSteps` 是按 id 把客户端送来的
+   *     这几步**整条替换**的 —— 少送这一个字段，那几步的滤镜每次落盘都被
+   *     悄悄抹成"没有"）；
+   *   · 用户把某个滤镜删掉时，`App` 的 `dropGoneLut` 要把它从这几步里清掉；
+   *   · 从服务端接回来时它是 `SessionStep.lut` 的落点，最后一步那一份还会
+   *     被设回"当前滤镜"。
+   *
+   * ⚠️ **「回到这一步」（`onJump`）今天不还原它** —— 那是接线这一步有意的取舍：
+   *    跳回去只还原 base / params。理由是滤镜更像"此刻看画的那副眼镜"，
+   *    而**把它一起跳回去会更狠**：点一下老步骤就会把用户正开着的那层颜色
+   *    悄悄摘掉（他不会知道为什么）。要和 params 完全对称的话那是另一次改动，
+   *    别在没想清楚之前顺手加。
+   *
+   * ⚠️ **必填，不是可选**：定成可选的话，多一个构造点忘了写它就是"这一步的滤镜
+   * 静默丢了"（`useGeneration` 推快照 / 恢复会话那两处各是一个）。定成必填，
+   * 每个构造点都被编译期逼着表态 —— **原图那一步就是 `lut: null`**。
+   */
+  lut: LutRef | null
   /** 原图。这一条永远不会被挤出去。 */
   isOriginal: boolean
   /**

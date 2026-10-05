@@ -863,6 +863,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   font-size: 12px; letter-spacing: .06em; transform: none;
 }
 .panel-group-head:hover { color: var(--text); }
+/* ★ 2026-10-05（滤镜）：正在用滤镜时把「滤镜」那一栏的标题点亮（设计 §5.2：
+   "和滑块'动过'同一个 `on` 待遇"）。⚠️ 少了这一条，组件上那个 `on` 类名就是个
+   **什么也不做的装饰** —— 看着对、其实没点亮，而没人会报错。 */
+.panel-group-head.on { color: var(--text); }
 .panel-group-head .chev { transition: transform var(--dur-1) var(--ease); }
 .panel-group-head .chev.folded { transform: rotate(-90deg); }
 .panel-group-body {

@@ -4,10 +4,15 @@ import type { DecodedImage } from '../image/decode'
 import type { NormPoint } from '../image/mark'
 import { markerRadius } from '../image/mark'
 import type { Adjustments } from '../../shared/adjustments.ts'
+import type { Cube } from '../../shared/lut.ts'
 
 type Props = {
   image: DecodedImage | null
   params: Adjustments
+  /** 当前滤镜的样子（null = 没装）；和 `params` 一样是"画在哪"的输入 */
+  lutCube: Cube | null
+  /** 强度 0–100（没装 = 0） */
+  lutAmount: number
   /** 「按住看原图」用的预览（data URL）。null = 没有，按钮就不响应。 */
   originalPreview: string | null
   /** App 需要拿到 canvas 元素来做导出 */
@@ -47,7 +52,7 @@ export function describeFailure(e: unknown): string {
 
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
 export default function Canvas({
-  image, params, originalPreview, canvasRef, picking, marker, onPickPoint, onFail,
+  image, params, lutCube, lutAmount, originalPreview, canvasRef, picking, marker, onPickPoint, onFail,
 }: Props) {
   const innerRef = useRef<HTMLCanvasElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -103,13 +108,25 @@ export default function Canvas({
     }
   }, [image, report])
 
-  // ② 换图后、以及拖滑块时，都只更新 uniform 重绘一次。
+  // ② 滤镜换了才传纹理 —— 上传一次 64³ 纹理不便宜（`setLut` 每次都会整块
+  //    `texImage3D` 重传，见 `render/pipeline.ts` 那段）。
+  //    ⚠️ **依赖数组里只能有 `lutCube` 和 `report`**：把 params 或强度放进来，
+  //    拖一下强度滑块就是每帧重传 1MB 的 3D 纹理，而画面看起来完全正常。
+  //    `report` 要留着：它一变，上面那条 effect 会把 pipeline **整个重建**，
+  //    新管线手里是 1×1×1 的占位纹理 —— 不跟着重传，滤镜会静默消失。
+  //    ⚠️ **它必须声明在下面渲染那条之前**：挂载时 effect 按声明顺序跑，
+  //    `setLut` 没跑过的话第一次 `render` 画的是"没有滤镜"的画面。
+  useEffect(() => {
+    try { pipeRef.current?.setLut(lutCube) } catch (e) { report(e) }
+  }, [lutCube, report])
+
+  // ③ 换图后、以及拖滑块时，都只更新 uniform 重绘一次。
   //    不碰纹理、不碰画布尺寸（spec §5.2：拖滑块只更新 uniform → 60fps）。
   useEffect(() => {
     const pipe = pipeRef.current
     if (!pipe || !image) return
-    pipe.render(params)
-  }, [image, params])
+    pipe.render(params, lutAmount)
+  }, [image, params, lutAmount])
 
   /**
    * 量出**画布**相对 wrapper 的盒子。红圈的定位基准就是这个，不是 wrapper。

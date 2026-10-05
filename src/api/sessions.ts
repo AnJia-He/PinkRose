@@ -1,6 +1,7 @@
 import { get, post, put, del } from './client'
 import type { SessionDetail, SessionMeta, SessionMessage, SessionStep } from '../../shared/sessions.ts'
 import type { Adjustments } from '../../shared/adjustments.ts'
+import type { LutRef } from '../../shared/lut.ts'
 
 /**
  * 会话的接口。图**不从这里走** —— 和作品那套同一条规矩：图是 `<img src>`
@@ -42,6 +43,15 @@ export type SessionPatch = {
    *   而验收线第 1 条写着「上传 → 说一句话 → 刷新 → 照片、对话、**参数全在**」。
    */
   params?: Adjustments
+  /**
+   * **现在这一版的滤镜**（`{ lutId, amount }`，null = 没用滤镜）。
+   *
+   * ★ 2026-10-05（滤镜）：它和 `params` 是**同一条路、同一个理由** ——
+   *   套滤镜 / 拖强度**都不推快照**（裁定 ⑤），所以不单独送它的话，
+   *   用户选完滤镜刷新一下，那层颜色就没了（屏幕上什么都不说）。
+   *   服务端把它写在**最后一步**上（`handleUpdateSession`），和 params 一样。
+   */
+  lut?: LutRef | null
   /**
    * 改标题。
    *

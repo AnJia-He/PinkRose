@@ -6,9 +6,11 @@ import {
   type Adjustments,
 } from '../../shared/adjustments.ts'
 import { workName, type WorkMeta } from '../../shared/works.ts'
+import type { LutMeta, LutRef } from '../../shared/lut.ts'
 import { PRESETS } from '../core/presets'
 import { Slider } from './kit/Slider.tsx'
 import { ColorWheel } from './ColorWheel.tsx'
+import LutPicker from './LutPicker.tsx'
 
 type Props = {
   value: Adjustments
@@ -32,6 +34,23 @@ type Props = {
    * （`api/works.ts` 里写着这个分工），面板只是给出网址。
    */
   onMatchWork: (w: WorkMeta) => void
+  /**
+   * ★ 2026-10-05（滤镜，设计 §5.2）：清单、现在用着哪个、缩略图。
+   *
+   * 面板只**摆**这些东西，状态全在 App 那边 —— 和上面两条「照着这张调」同一个
+   * 分层：这一层管长相，取字节 / 解析 cube / 画缩略图都在 App 和 `app/useLuts`。
+   */
+  luts: readonly LutMeta[]
+  /** 现在用着哪个（null = 不用）。**有它的时候这一栏的标题点亮**（§5.2）。 */
+  lut: LutRef | null
+  /** 缩略图：`byId` 是 id → dataURL（缺的那格画占位），`none` 是「不用」那格。 */
+  lutThumbs: { none: string | null; byId: Record<number, string> }
+  onPickLut: (lutId: number | null) => void
+  onLutAmount: (amount: number) => void
+  /** 这一栏**展开那一刻**叫一次 —— 缩略图很贵（每个滤镜各画一张），收着时不画。 */
+  onNeedLutThumbs: () => void
+  /** 一个滤镜都没有时那颗「去导入」（跳到设置里那一页）。 */
+  onGoImport: () => void
 }
 
 /**
@@ -64,13 +83,21 @@ const GRADIENTS: Partial<Record<keyof Adjustments, string>> = {
   splitLoHue: 'linear-gradient(90deg,#ff2d2d,#ffef00,#00e000,#00e5e5,#0048ff,#e000ff,#ff2d2d)',
 }
 
-export default function AdjustmentPanel({ value, onChange, onReset, onMatchReference, onMatchWork }: Props) {
+export default function AdjustmentPanel({
+  value, onChange, onReset, onMatchReference, onMatchWork,
+  luts, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport,
+}: Props) {
   const refInput = useRef<HTMLInputElement>(null)
 
   // 收起了哪几组。**只有 id 的集合**，真值仍然只有 `value` 一个来源 ——
   // 折叠是"看哪儿"的问题，不属于那张参数表，也不该进网址（刷新后全展开是对的：
   // 收起来过的那几组是上一眼的事，不是这份作品的一部分）。
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+
+  // ★ 2026-10-05：「滤镜」那一栏开着没有。**默认收着**（设计 §5.2 / spec §8.3：
+  //   用户原话「不要写个名字显示出来占空间」）—— 所以它不在上面那个
+  //   `collapsed` 集合里：那套的默认是"全展开"，这一栏的默认是"收着"。
+  const [lutOpen, setLutOpen] = useState(false)
 
   /**
    * 「放置预期效果照片」展开出来的两个来源（★ 2026-10-05）。
@@ -218,6 +245,34 @@ export default function AdjustmentPanel({ value, onChange, onReset, onMatchRefer
           e.target.value = ''
         }}
       />
+
+      {/* ★ 2026-10-05：滤镜那一栏（设计 §5.2）。**默认收着**是有意的 ——
+          spec §8.3 记着用户原话「不要写个名字显示出来占空间」。
+
+          ⚠️ 它是 `.presets` 那个 div 的**兄弟**，不是它的孩子（位置就在这儿）：
+          `.presets button` 的选择器特异性 (0-1-1) 比 `.lut-tile` (0-1-0) 强，
+          嵌进去格子会被染成药丸（Task 7 审查逐条算过）。
+
+          ⚠️ 展开才去要缩略图（每个滤镜各画一张当前照片，很贵）—— 收着的时候
+          白画一遍是纯浪费，而用户看不见，也没人会报错。 */}
+      <section className="panel-group">
+        <button className={lut ? 'panel-group-head on' : 'panel-group-head'}
+          aria-expanded={lutOpen}
+          onClick={() => {
+            const next = !lutOpen
+            setLutOpen(next)
+            if (next) onNeedLutThumbs()      // 打开才去画缩略图（很贵，别在收着时白画）
+          }}>
+          <span className="panel-group-title">滤镜</span>
+          <ChevronDown size={14} className={lutOpen ? 'chev' : 'chev folded'} aria-hidden="true" />
+        </button>
+        {lutOpen && (
+          <div className="panel-group-body">
+            <LutPicker luts={luts} value={lut} thumbs={lutThumbs.byId} noneThumb={lutThumbs.none}
+              onPick={onPickLut} onAmount={onLutAmount} onGoImport={onGoImport} />
+          </div>
+        )}
+      </section>
 
       {/* ★ 2026-10-04：十五条参数按 `PARAM_GROUPS` 分组（光效 / 色彩 / 色彩平衡 /
           分离色调 / 效果），每组可折叠。**分栏只发生在每一组的肚子里**（见

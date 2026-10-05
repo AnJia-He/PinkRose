@@ -58,6 +58,9 @@ describe('网址 ↔ 界面', () => {
       { kind: 'work', id: 7 } as const,
       { kind: 'account' } as const,
       { kind: 'models' } as const,
+      // ★ 2026-10-05（滤镜）：设置里那一页。上面的循环同时守着"认得出来 +
+      //   拼得回去"两头 —— 少一头就是"按 F5 被扔回修图页"或者"点了跳不动"。
+      { kind: 'luts' } as const,
     ]) {
       expect(viewFromPath(pathOf(v))).toEqual(v)
     }

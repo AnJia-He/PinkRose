@@ -14,6 +14,7 @@ import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkMeta } from '../../shared/works.ts'
+import type { LutMeta, LutRef } from '../../shared/lut.ts'
 import AdjustmentPanel from './AdjustmentPanel.tsx'
 import { ZERO, type Adjustments } from '../../shared/adjustments.ts'
 
@@ -38,6 +39,14 @@ let setFromTest: (v: Adjustments) => void = () => {}
 /** 两条参考图来源交出去的东西 —— 面板只"交货"：本地文件 / 选中那张的元数据。 */
 let matchedRef: File | null = null
 let matchedWork: WorkMeta | null = null
+/** ★ 2026-10-05（滤镜）：那一栏要的四样。面板只管摆 —— 挑哪张 / 强度多少 是 App 的事，
+ *  所以这里记的是"面板有没有按下去"。 */
+let lutsFromTest: LutMeta[] = []
+let lutFromTest: LutRef | null = null
+let lutThumbsFromTest: { none: string | null; byId: Record<number, string> } = { none: null, byId: {} }
+let needThumbsCalls = 0
+let pickedLut: number | null | 'x' = 'x'
+let wentImport = false
 
 function Harness() {
   const [v, setV] = useState<Adjustments>(ZERO)
@@ -47,6 +56,13 @@ function Harness() {
       value={v} onChange={setV} onReset={() => setV(ZERO)}
       onMatchReference={f => { matchedRef = f }}
       onMatchWork={w => { matchedWork = w }}
+      luts={lutsFromTest}
+      lut={lutFromTest}
+      lutThumbs={lutThumbsFromTest}
+      onPickLut={id => { pickedLut = id }}
+      onLutAmount={() => {}}
+      onNeedLutThumbs={() => { needThumbsCalls++ }}
+      onGoImport={() => { wentImport = true }}
     />
   )
 }
@@ -75,7 +91,12 @@ function groupOf(container: HTMLElement, title: string): HTMLElement {
 describe('面板的分组（2026-10-04）', () => {
   it('五个组标题都在（光效/色彩/色彩平衡/分离色调/效果）', async () => {
     const container = await mount(<Harness />)
-    const titles = [...container.querySelectorAll('.panel-group-title')].map(e => e.textContent)
+    // ⚠️ 数的是 **`.panel-groups` 里面**那几组（★ 2026-10-05）：从滤镜那一栏进来
+    //    之后，「滤镜」也是一个 `.panel-group`（同样的折叠长相），但它是**参数组
+    //    之外的**一段（设计 §5.2 有意沿用同一个语言）。不圈定范围的话，这条会
+    //    把"滤镜"也算进"五组参数"里 —— 那两件事就混了。
+    const titles = [...container.querySelectorAll('.panel-groups .panel-group-title')]
+      .map(e => e.textContent)
     expect(titles).toEqual(['光效', '色彩', '色彩平衡', '分离色调', '效果'])
   })
 
@@ -94,7 +115,9 @@ describe('面板的分组（2026-10-04）', () => {
 
   it('★ 点组标题 → 收起；再点 → 展开', async () => {
     const container = await mount(<Harness />)
-    const head = container.querySelector('.panel-group-head')!
+    // ⚠️ **第一颗** `.panel-group-head` 现在可能是「滤镜」那一栏（★ 2026-10-05：
+    //    它排在参数组前面）—— 圈定在 `.panel-groups` 里，这条才对得上"点参数组标题"。
+    const head = container.querySelector('.panel-groups .panel-group-head')!
     const before = container.querySelectorAll('.slider').length
     await click(head)
     expect(container.querySelectorAll('.slider').length).toBeLessThan(before)
@@ -215,5 +238,72 @@ describe('「照着这张调」的两个来源（2026-10-05）', () => {
     await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })) })
     expect(matchedRef).toBe(file)
     expect(container.querySelector('.presets-sources')).toBeNull()
+  })
+})
+
+/**
+ * ★ 2026-10-05（滤镜，设计 §5.2）：微调区那一栏。
+ *
+ * 这一层只测**面板自己管得着的那几件事**：默认收着、**点开才去要缩略图**
+ * （每个滤镜都要拿当前照片重画一张，很贵）、以及"点下去交出去的是什么"。
+ * 清单怎么来、cube 怎么解析、选完怎么落盘，全在 App 那一层
+ * （`App.test.tsx` 的「滤镜」那一组）。
+ */
+describe('滤镜那一栏（2026-10-05）', () => {
+  const LUT: LutMeta = { id: 1, name: '黄昏', size: 2, bytes: 100, createdAt: 0 }
+  /** 「滤镜」那个组头（按文字找 —— 位置是排版的事）。 */
+  const headOf = (c: HTMLElement) =>
+    [...c.querySelectorAll<HTMLElement>('.panel-group-head')]
+      .find(b => (b.textContent ?? '').includes('滤镜'))!
+
+  beforeEach(() => {
+    lutsFromTest = []
+    lutFromTest = null
+    lutThumbsFromTest = { none: null, byId: {} }
+    needThumbsCalls = 0
+    pickedLut = 'x'
+    wentImport = false
+  })
+
+  it('★ 默认收着 —— 而且**收着的时候一次缩略图都不去要**', async () => {
+    lutsFromTest = [LUT]
+    const c = await mount(<Harness />)
+    // 默认收着（spec §8.3：用户原话「不要写个名字显示出来占空间」）
+    expect(c.querySelector('.lut-tile')).toBeNull()
+    // 没用滤镜 → 标题不点亮（点亮那个类名是"正在用"的信号）
+    expect(headOf(c).className).not.toContain('on')
+    // ⚠️ 这一句才是这条用例的重点：每张缩略图 = 用当前照片 + 当前参数重画一遍。
+    //    收着的时候白画一遍，用户看不见、也没人会报错。
+    expect(needThumbsCalls).toBe(0)
+
+    await click(headOf(c))
+    expect(c.querySelectorAll('.lut-tile')).toHaveLength(2)   // 「不用」+ 黄昏
+    expect(needThumbsCalls).toBe(1)
+  })
+
+  it('在用滤镜 → 标题点亮（`.on`）', async () => {
+    lutsFromTest = [LUT]
+    lutFromTest = { lutId: 1, amount: 80 }
+    const c = await mount(<Harness />)
+    expect(headOf(c).className).toContain('on')
+  })
+
+  it('点格子 → 交出去的是那个 id；点「不用」→ null', async () => {
+    lutsFromTest = [LUT]
+    const c = await mount(<Harness />)
+    await click(headOf(c))
+    const tiles = [...c.querySelectorAll<HTMLButtonElement>('.lut-tile')]
+    await click(tiles[1]!)                    // 黄昏
+    expect(pickedLut).toBe(1)
+    await click(tiles[0]!)                    // 不用
+    expect(pickedLut).toBeNull()
+  })
+
+  it('一个滤镜都没有 → 「去导入」把这件事交出去（去设置里那一页）', async () => {
+    const c = await mount(<Harness />)
+    await click(headOf(c))
+    expect(c.textContent).toContain('还没有导入过滤镜')
+    await click(c.querySelector('.lut-import-go')!)
+    expect(wentImport).toBe(true)
   })
 })

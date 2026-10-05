@@ -34,6 +34,8 @@ import { GALLERY_THUMB_MAX_SIDE, THUMB_MAX_SIDE, bitmapToDataUrl, makeThumbnail 
 import { markImage, type NormPoint } from './image/mark'
 import { useDelivery } from './app/useDelivery'
 import { useGeneration } from './app/useGeneration'
+import { useLuts } from './app/useLuts'
+import { normalizeLutRef, type LutRef } from '../shared/lut.ts'
 import type { SuggestCard } from '../shared/protocol.ts'
 import type { WorkMeta } from '../shared/works.ts'
 
@@ -150,6 +152,35 @@ export default function App() {
 
   const [image, setImage] = useState<DecodedImage | null>(null)
   const [params, setParams] = useState<Adjustments>(ZERO)
+  /**
+   * ★ 2026-10-05（滤镜）：这张照片现在用着哪个滤镜、强度多少。null = 不用。
+   *
+   * ⚠️ 它**不进 `params`** —— 那是个"十五个数字"的 record，被 toUnit / 范围表 /
+   * 提示词 / 照调那几处当数字消费（设计 §3.2）。它和 `params` 是**并列的两件事**，
+   * 但走的是同一条路：拖强度 / 套滤镜**都不推快照**（裁定 ⑤），只落盘。
+   */
+  const [lut, setLut] = useState<LutRef | null>(null)
+  /**
+   * `lut` 的**影子**。只为 `refreshLuts` 照镜子时用：那个回调挂在"离开
+   * `/app/luts`"那个 effect 上，把 `lut` 放进它的依赖数组就等于**每选一次滤镜
+   * 都重建它**（连带那个 effect 跟着重跑）—— 而它要的只是"**跑的时候**当下是哪个"。
+   */
+  const lutRef = useRef<LutRef | null>(null)
+  useEffect(() => { lutRef.current = lut }, [lut])
+  /**
+   * 滤镜那一摊（清单 / 当前的 cube / 缩略图，见 `app/useLuts`）。
+   *
+   * ⚠️ 它挂在**组件顶上**、每一次渲染都调：这是一个 hook，不许被条件包起来。
+   * 它不碰画布、不碰 history —— 只认"清单 + 当前这个 id + 当前这张照片"。
+   */
+  const lutsApi = useLuts({ lut, image, params })
+  /**
+   * 单拎出来一个 `reload`（★ 2026-10-05）—— `lutsApi` 是每次渲染新造的**对象**，
+   * 拿它当依赖的话，挂在 `refreshLuts` 上那个 effect 每次渲染都要重跑一遍
+   * （今天有守卫、不会出事，但那是"碰巧没事"）。`reload` 自己是 `useCallback([])`
+   * 的，身份稳定。**别把这个解构挪进 `refreshLuts` 的依赖数组里写 `lutsApi`。**
+   */
+  const reloadLuts = lutsApi.reload
   /** 非 null 时既是"正在忙"的标志，也是要显示给用户的那句话 */
   const [busy, setBusy] = useState<string | null>(null)
   /** 本设备能不能把图交给系统分享面板。只在挂载时算一次：设备能力不会中途变。
@@ -248,6 +279,37 @@ export default function App() {
   /** 通报一句"成了"。和 `noticeBad` 一样，身份必须稳定（两者都会进
    *  `useDelivery` 的依赖数组）。 */
   const noticeOk = useCallback((text: string) => setNotice({ text, tone: 'ok' }), [])
+
+  /**
+   * ★ 2026-10-05（滤镜）：「当前用的滤镜没了」—— **唯一**处理它的地方
+   * （离开设置里那一页、刷新完清单之后照一次镜子，设计 §6.4 客户端那半）。
+   *
+   * 三件事**一起**做，少一件都是"错了不报错"：
+   *   · 清状态 —— 不清的话画面上还照着那个 cube 调色，而 cube 是缓存里那份；
+   *   · **把历史里那几步也清掉** —— 每一步的 `lut` 是**独立一份**（`Snapshot.lut`），
+   *     只清状态的话，下一次落盘会把那个**已经不存在的 id** 原样写回去；
+   *   · 说一句 —— 用户眼前的照片少了一层颜色，不说就是悄悄改了他的图。
+   */
+  const dropGoneLut = useCallback((id: number) => {
+    setLut((cur) => (cur?.lutId === id ? null : cur))
+    setHistory((prev) => prev.map((s) => (s.lut?.lutId === id ? { ...s, lut: null } : s)))
+    noticeBad('那个滤镜刚被你删掉了，这张照片上的也去掉了。')
+  }, [noticeBad])
+
+  /**
+   * 重新拉一遍清单，然后照镜子（离开 `/app/luts` 时叫一次）。
+   *
+   * 为什么非得拉一次：那一页上刚导入的滤镜要**立刻能用**、刚删的要**立刻消失**，
+   * 而清单是 App 挂载时拉的那一份。
+   *
+   * ⚠️ 读当下的 `lut` 用的是**影子**（`lutRef`），不是把它写进依赖：写进去的话
+   * 这个回调和挂在它上面的那个 effect 会跟着**每一次选滤镜**重建/重跑一遍。
+   */
+  const refreshLuts = useCallback(async () => {
+    const list = await reloadLuts()
+    const cur = lutRef.current            // 用一个 ref 读当下那个 id，别把它写进依赖
+    if (cur && !list.some((l) => l.id === cur.lutId)) dropGoneLut(cur.lutId)
+  }, [reloadLuts, dropGoneLut])
 
   // "成了"的通报自己会走：它是**回执**，不是待办。
   // 用函数式更新加一道守卫 —— 这几秒里用户可能已经触发了别的通报，
@@ -570,8 +632,10 @@ export default function App() {
         if (s.reusesPrev && prev) {
           // 和上一步是**同一张图**，小图直接接着用（重做一遍只会得到像素级不同、
           // 肉眼一样的两张 —— 而这正是"刷新前后长得不一样"里最没必要的一种）。
+          // ★ 2026-10-05：`lut` 走 `normalizeLutRef`（老步骤没有这个键 = 没用滤镜），
+          //   和 params 过 `clampAdjustments` 同一条规矩 —— 归一化是唯一入口。
           steps.push({ id: s.id, label: s.label, base: prev.base,
-                       params: clampAdjustments(s.params),
+                       params: clampAdjustments(s.params), lut: normalizeLutRef(s.lut),
                        isOriginal: false, thumb: prev.thumb, prompt: s.prompt })
           continue
         }
@@ -579,6 +643,7 @@ export default function App() {
         const bitmap = await createImageBitmap(blob)
         if (stale()) { bitmap.close(); return discard('恢复：这次接回来的已经不作数了（页面换了，或者用户自己动手了）') }
         steps.push({ id: s.id, label: s.label, params: clampAdjustments(s.params),
+                     lut: normalizeLutRef(s.lut),
                      base: { bitmap, width: bitmap.width, height: bitmap.height },
                      isOriginal: steps.length === 0, thumb: thumbOf(bitmap), prompt: s.prompt })
       }
@@ -651,6 +716,12 @@ export default function App() {
       })
       setImage(lastStep.base)
       setParams(lastStep.params)
+      // ★ 2026-10-05（滤镜）：最后一步的滤镜跟着回来。
+      //   ⚠️ `?? null` 那半不是多余的：`SessionStep.lut` 是**可选**的（老会话
+      //   没有这个键，服务端给的是显式 null，但"直接手搓的详情"可能真是 undefined）
+      //   —— 漏了它，`lut` 会变成 `undefined` 而不是 null，后面每一处 `lut?.lutId`
+      //   都还是安全的，但**类型上已经不是 `LutRef | null` 了**，别让它在状态里过夜。
+      setLut(lastStep.lut ?? null)
       setMessages(detail.messages)
       // ★ 走 `setCurrentSession` 那道门（影子和 state 一起改，见它的注释）——
       // 这行在 'open' 那趟里改的正是"现在人站在哪条会话上"，而落盘的应答
@@ -774,7 +845,7 @@ export default function App() {
    */
   const { say, runGenerate, stopGeneration, applyDecision, loadCards, nextId } =
     useGeneration({
-      image, setImage, params, setParams,
+      image, setImage, params, setParams, lut,
       baseSeqRef, idRef, setBusy, setUser, noticeBad,
       setCards, setPending, pendingRef, setMessages, setHistory,
     })
@@ -837,7 +908,7 @@ export default function App() {
       // 缩过就得说。紧跟欢迎语，用户往下看第一眼就撞上，不会滑过去。
       if (note) say(note)
       setHistory([
-        { id: welcomeId, label: '原图', base: img, params: ZERO, isOriginal: true, thumb: '' },
+        { id: welcomeId, label: '原图', base: img, params: ZERO, lut: null, isOriginal: true, thumb: '' },
       ])
 
       // 卡片是**可选件，绝不能让用户等它**：这里只把它挂到后台去跑，
@@ -923,6 +994,10 @@ export default function App() {
     setMessages([])
     setCards([])
     setParams(ZERO)
+    // ★ 2026-10-05（滤镜）：滤镜跟参数一起归零 —— 它是"这张照片上盖着的那层
+    //   颜色"，照片都没了还留着它，下一张照片一进来就被盖上一层（而且因为
+    //   `useLuts` 挂在 `image` 上，缩略图也跟着作废了，格子上还亮着，很怪）。
+    setLut(null)
     setSavedId(null)
     // ⚠️ 归零 = "这一趟还没挂到服务端上"（下一次上传会建一条新的）。不归零的话，
     //   落盘那个 effect 会带着**新照片**的消息和步骤去写**上一条**会话。
@@ -1296,6 +1371,13 @@ export default function App() {
     const changed = baseSeqRef.current !== lastPersistedBaseSeqRef.current
     const snapshot = history.map((s) => ({
       id: s.id, label: s.label, params: s.params, prompt: s.prompt, at: 0,
+      // ★ 2026-10-05（滤镜）：**每一步各自的** `lut` 也得跟着上路。
+      //   ⚠️ 不写这一行的后果是**静默丢东西**：服务端 `mergeSteps` 是按 id 把
+      //   客户端送来的这几步**整条替换**库里那几步的（它自己那一侧写着
+      //   `lut: normalizeLutRef(o.lut)`，就是等着收这一份）—— 缺了它，
+      //   中间那几步的滤镜每次落盘都被悄悄抹成"没有"，而屏幕上什么都不说。
+      //   （`patch.lut` 只管**最后一步**，和 `params` 一样 —— 两个都要。）
+      lut: s.lut,
     }))
     // ⚠️ `ChatMessage` 上**没有 `at`**（这个客户端不显示消息时间），而
     //   `SessionMessage.at` 是必填的 —— 送 0 = "这个信息我们没有"（服务端
@@ -1310,6 +1392,12 @@ export default function App() {
     //   所以只盯 `[history, messages]` 的话，用户拖完滑块**一次都不会落盘**，
     //   刷新一下回到拖之前的样子 —— 而验收线第 1 条写着"参数全在"。
     const paramsNow = params
+    // ★ 2026-10-05（滤镜）：**和 `params` 同一条路子、同一条理由** ——
+    //   套滤镜 / 拖强度也不推快照（裁定 ⑤），所以它必须自己走这一趟；
+    //   不送的话用户选完滤镜刷新一下，那一层颜色就没了（屏幕上什么都不说）。
+    //   ⚠️ 也一样**必须进依赖数组**：只盯 history / messages 的话，选滤镜
+    //   这一下没有任何东西会再触发这个副作用，那个 PUT 根本不会发。
+    const lutNow = lut
     // ★★ 画布**在这一刻**拿到手，不在发的时候现读（2026-10-01 终审 C1）。
     //
     //   为什么不能在 `run` 里现读 `canvasElRef.current`：画布只在「修图」那一屏
@@ -1344,7 +1432,9 @@ export default function App() {
       const sending = baseSeqRef.current
       void (async () => {
         try {
-          const patch: SessionPatch = { messages: messagesNow, steps: snapshot, params: paramsNow }
+          const patch: SessionPatch = {
+            messages: messagesNow, steps: snapshot, params: paramsNow, lut: lutNow,
+          }
           if (changed) {
             if (!el) {
               // ⚠️ 这一句**到得了**（2026-10-01 终审更正：旧注释说它到不了，是错的）。
@@ -1424,7 +1514,8 @@ export default function App() {
     return () => clearTimeout(timer)
     // ⚠️ `sessionId` **必须在依赖里** —— 它一到，这个副作用得再跑一遍，
     //   否则"上传之后立刻动的那一下"落不了盘（见 `sessionId` 那段长注释）。
-  }, [history, messages, params, sessionId])
+    // ⚠️ `params` 同一条（见 `paramsNow` 那段）；★ 2026-10-05 起 `lut` 也一样。
+  }, [history, messages, params, lut, sessionId])
 
   /**
    * 页面**要走了**（刷新 / 关标签页 / 切到后台）—— 把还没到点的那趟落盘立刻发出去。
@@ -1509,6 +1600,29 @@ export default function App() {
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
+
+  /**
+   * ★ 2026-10-05（滤镜，设计 §5 那三条入口里的第二条）：**离开「滤镜」那一页时**
+   * 重新拉一次清单，顺手照一次镜子（`refreshLuts`）。
+   *
+   * 为什么非要这一下：那一页上刚导入的滤镜要**立刻能用**、刚删的要**立刻消失**，
+   * 而清单是 App 挂载时拉的那一份（`useLuts` 里那个 effect）—— 不重拉的话，
+   * 用户回来看见的还是老清单：删掉的那个还亮着（点一下就送一个不存在的 id
+   * 去落盘），新导的找不到。
+   *
+   * ⚠️ **判据是"从 luts 走到别的"这个边沿，不是"现在在不在 luts 上"**：写成
+   * 后者的话，人一落到那一页就会拉一遍，而这趟拉回来的清单在那一页上根本没人看
+   * （那一页自己管自己的清单）。上一条路由的旧值只能记在 ref 里 —— 放进 state
+   * 就是多一个会吵起来的真相来源。
+   * ⚠️ 依赖里放的是 `refreshLuts`（它自己盯着稳定的 `reloadLuts`），不是
+   * `lutsApi` 那个每渲染新造的对象 —— 见那边那段注释。
+   */
+  const wasOnLutsPageRef = useRef(false)
+  useEffect(() => {
+    const here = view.kind === 'luts'
+    if (wasOnLutsPageRef.current && !here) void refreshLuts()
+    wasOnLutsPageRef.current = here
+  }, [view.kind, refreshLuts])
 
   /**
    * 已经登录的人打开 `/`（落地页）→ **直接送去 App**。
@@ -1740,10 +1854,17 @@ export default function App() {
             <main className="workspace">
               <div className="stage">
                 {/* params 直接传下去：[-100,100] → [-1,1] 的换算只发生在
-                    TonePipeline.render 里（唯一入口） */}
+                    TonePipeline.render 里（唯一入口）
+                    ★ 2026-10-05（滤镜）：滤镜走**另外两个 prop**（`lutCube` /
+                    `lutAmount`）—— cube 是一次性的纹理上传（只跟着 `lut` 变），
+                    强度是每帧的 uniform。合成一个 prop 的话，拖强度就会连带
+                    把 1MB 的 3D 纹理重传一遍（Canvas 那两个 effect 分得开，
+                    是为这件事）。 */}
                 <Canvas
                   image={image}
                   params={params}
+                  lutCube={lutsApi.cube}
+                  lutAmount={lut?.amount ?? 0}
                   canvasRef={canvasElRef}
                   originalPreview={originalPreview}
                   picking={picking}
@@ -1820,9 +1941,25 @@ export default function App() {
                 <AdjustmentPanel
                   value={params}
                   onChange={setParams}
-                  onReset={() => setParams(ZERO)}
+                  // ★ 2026-10-05（滤镜）：「重置」= 参数归零 **+ 滤镜也清掉**。
+                  //   只归零参数的话，用户按了重置、画面还是那套颜色（滤镜是
+                  //   另一条路，不归 params 管），而面板上那格还亮着 —— 他会以为
+                  //   是重置坏了。
+                  onReset={() => { setParams(ZERO); setLut(null) }}
                   onMatchReference={file => void matchReference(file)}
                   onMatchWork={w => void matchWork(w)}
+                  // ★ 2026-10-05（滤镜，设计 §5.2）：面板只摆样子，状态和副作用
+                  //   全在 App / `useLuts` 那边。
+                  //   ⚠️ `onNeedLutThumbs` 传的是**当下的** image / params（不是在
+                  //      hook 里存一份）：缩略图要画的就是"用户此刻看到的这张照片、
+                  //      这套参数 + 那个滤镜"。
+                  luts={lutsApi.luts}
+                  lut={lut}
+                  lutThumbs={lutsApi.thumbs}
+                  onPickLut={(id) => setLut(id === null ? null : { lutId: id, amount: 100 })}
+                  onLutAmount={(amount) => setLut((cur) => (cur ? { ...cur, amount } : cur))}
+                  onNeedLutThumbs={() => lutsApi.ensureThumbs(image, params)}
+                  onGoImport={() => go({ kind: 'luts' })}
                 />
               )}
             </main>

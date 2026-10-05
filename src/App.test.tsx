@@ -15,6 +15,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteDecision, SuggestResponse } from '../shared/protocol.ts'
 import { ZERO, type Adjustments } from '../shared/adjustments.ts'
+import type { LutMeta } from '../shared/lut.ts'
 import type {
   SessionDetail, SessionMessage, SessionMeta, SessionStep,
 } from '../shared/sessions.ts'
@@ -143,6 +144,45 @@ vi.mock('./api/client', async (importOriginal) => {
   return { ...actual, postRoute: vi.fn(), postSuggest: vi.fn(), postEdit: vi.fn() }
 })
 
+// ── 假扮：滤镜那两条网络 + 缩略图渲染器（要 2D 画布）─────────────────
+/**
+ * 一个 **2 级恒等 cube** 的原文（`LUT_3D_SIZE 2` 的 8 个格子，红变最快）。
+ * 解析出来等于"什么都不改"，所以拿它当"服务端上那个滤镜的文件"最省事。
+ *
+ * ⚠️ 必须走 `vi.hoisted`：`vi.mock` 的工厂会被提到**所有 import 之前**执行，
+ * 而工厂里就要用这个串 —— 直接写一个顶层 `const` 的话，工厂跑的时候它还在
+ * TDZ 里（`Cannot access 'CUBE2_TEXT' before initialization`）。
+ * 文件里 `canvasProps` 用的是同一个路数。
+ */
+const CUBE2_TEXT = vi.hoisted(() => [
+  'LUT_3D_SIZE 2',
+  '0 0 0', '1 0 0', '0 1 0', '1 1 0',
+  '0 0 1', '1 0 1', '0 1 1', '1 1 1',
+].join('\n'))
+
+/** 缩略图渲染器：jsdom 里 `getContext('2d')` 回 null，真跑会抛。
+ *  假成"每张图一个固定的 dataURL"，断言只关心**格子有没有图**。 */
+vi.mock('./render/lutPreview', () => ({
+  createLutPreview: () => ({
+    setImage: vi.fn().mockResolvedValue(undefined),
+    render: vi.fn().mockReturnValue('data:,thumb'),
+    dispose: vi.fn(),
+  }),
+}))
+/** 滤镜那两条网络。**默认**给一条「黄昏」+ 一份能解析的 cube 文本 ——
+ *  各用例要"清单里没有它"的样子，自己在用例里盖 `mockResolvedValue`。
+ *  ⚠️ 这两条**必须**接住：掉进那个兜底的 blob 形状的话，`listLuts` 每挂一次
+ *  App 就往控制台刷一行「滤镜清单没取回来」—— 噪声会盖住真话（和会话列表同一条理由）。 */
+vi.mock('./api/luts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./api/luts')>()
+  return {
+    ...actual,
+    listLuts: vi.fn().mockResolvedValue({ luts: [{ id: 1, name: '黄昏', size: 2, bytes: 100, createdAt: 0 }] }),
+    lutFileText: vi.fn().mockResolvedValue(CUBE2_TEXT),
+    createLut: vi.fn(), renameLut: vi.fn(), deleteLut: vi.fn(), lutUsage: vi.fn(),
+  }
+})
+
 import App from './App'
 import { MIN_SLICE_RATIO, formatSize, modelValue, pie3dPaths } from './ui/AccountPage'
 import type { PublicConfig } from './api/models'
@@ -156,6 +196,7 @@ import * as saveMod from './export/save'
 import * as thumbMod from './core/thumbnail'
 import * as markMod from './image/mark'
 import * as sampleMod from './image/sample'
+import * as lutsMod from './api/luts'
 
 // ── 每张"底"带一个记号，好认出送上去的到底是哪一张 ──────────────────
 let bitmapSeq = 0
@@ -352,6 +393,109 @@ function decision(over: Partial<RouteDecision> = {}): RouteDecision {
     needsDisambiguation: false,
     degraded: false,
     ...over,
+  }
+}
+
+// ── 「造一条真会话」的三件套 ─────────────────────────────────────────
+// ★ 2026-10-05（滤镜 T8）从「恢复」那个 describe 里**整段挪到这儿**的
+//   （原文照搬，注释一条没丢）—— 理由和上面 `WORK` 那条一模一样：
+//   滤镜那组也要"让 GET /api/sessions 回一条真会话"，**造两份**的话哪天
+//   服务端的形状变了，只会有一份跟着改。
+
+/** 一条会话的元数据。`updatedAt` 决定它在列表里排第几（服务端按它倒序给）。 */
+const SMETA = (id: number, over: Partial<SessionMeta> = {}): SessionMeta => ({
+  id, title: null, originalName: '古镇.jpg', createdAt: 0, updatedAt: id * 100,
+  hasThumb: true, stepCount: 1, ...over,
+})
+
+/**
+ * 造一条 n 步的会话。
+ *
+ * ⚠️ **id 走真挂载会长出来的那个序列**（2026-10-01 评审后改的，原来是
+ * `id*100+i` 那种"永远不会撞"的号）：欢迎语 = 1，而它同时就是第 1 步的 id
+ * （`onPick` 里那个 `say()` 拿到的号给了消息和快照两边）；之后每一步吃掉
+ * 两个号（用户那条 + 助手那条），助手那条 = 这一步的 id。所以步骤 id 是
+ * 1、3、5…，最后一条用户消息接着往下走。
+ *
+ * ⚠️ 为什么**必须**是这样：真会话的号就在 1、2、3 这一段（每个会话各自从 1
+ * 开始，服务端原样存回来）。用 700 这种号造，就永远测不出"恢复之后本地那个
+ * 计数器有没有跟着跳过去"—— 而那正是「接着说话不许撞号」那条用例要盯的事。
+ *
+ * `tag` 只用来让两条会话的助手消息**一眼分得开**（"上一条的话跟过来没有"）。
+ */
+function makeSession(
+  id: number, n: number, words: string, tag: string,
+): SessionDetail {
+  const steps: SessionStep[] = []
+  const messages: SessionMessage[] = []
+  for (let i = 0; i < n; i++) {
+    const sid = 2 * i + 1
+    steps.push({
+      id: sid,
+      label: i === 0 ? '原图' : '生成式编辑',
+      params: { ...ZERO, exposure: i },
+      at: 0,
+      // 第 2 步和第 1 步**用的是同一张图**（`reusesPrev`）—— 恢复时它该省一次下载
+      reusesPrev: i === 1,
+      ...(i === 0 ? {} : { prompt: `make it step ${i}` }),
+    })
+    if (i > 0) messages.push({ id: sid - 1, role: 'user', text: `make it step ${i}`, at: 0 })
+    messages.push({ id: sid, role: 'assistant', text: `${tag}第 ${i} 步`, at: 0 })
+  }
+  messages.push({ id: 2 * n, role: 'user', text: words, at: 0 })
+  return { ...SMETA(id, { stepCount: n }), messages, steps }
+}
+
+/** 盖上一整条会话的路：列表、详情、原图、每一步的图。只加不改。
+ *
+ *  返回的 `serve` 用来演"换一条会话"（重开一次页面时服务端那边最近动过的
+ *  已经换成另一条了）—— 今天"切到另一条"的现实形态就是这个，会话列表由
+ *  Task 6 做。 */
+function withSessions(initial: SessionDetail[], opts: { originalFails?: boolean } = {}) {
+  let rows = [...initial]
+  const stepGets: string[] = []
+  let originalGets = 0
+  let listGets = 0
+  const inner = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET'
+    if (url === '/api/sessions' && method === 'GET') {
+      // 服务端按 `updated_at` 倒序给（§5）—— 最上面那条就是"上次动过的"
+      listGets++
+      return jsonResponse({ sessions: [...rows].sort((a, b) => b.updatedAt - a.updatedAt) })
+    }
+    const one = /^\/api\/sessions\/(\d+)$/.exec(url)
+    if (one && method === 'GET') {
+      const d = rows.find(x => x.id === Number(one[1]))
+      if (!d) return jsonResponse({ error: { code: 'NOT_FOUND', message: '没有这条' } }, 404)
+      return jsonResponse(d)
+    }
+    // 删一条（Task 6 的列表上那颗「删掉」）。**必须接住**：掉进下面那个兜底的
+    // blob 形状的话，`deleteSession` 读正文那一步会炸 —— 而"删失败了"这条路上
+    // App 那边什么都不做，测试于是绿在一个**报错的路径**上。
+    if (one && method === 'DELETE') {
+      rows = rows.filter(x => x.id !== Number(one[1]))
+      return jsonResponse({ ok: true })
+    }
+    if (/^\/api\/sessions\/\d+\/file\/original$/.test(url)) {
+      originalGets++
+      // `originalFails` 演的是"原图这一趟取不回来"（文件没了、网断了）。
+      // 形状故意跟另外几条一样：**请求回来了、读正文时炸** —— App 那边就是
+      // `(await fetch(...)).blob()` 抛出去，走进那个 catch。
+      if (opts.originalFails) return { blob: async () => { throw new Error('原图取不回来') } }
+      return { blob: async () => new Blob(['ORIGINAL'], { type: 'image/jpeg' }) }
+    }
+    if (/^\/api\/sessions\/\d+\/file\/step\/\d+$/.test(url)) {
+      stepGets.push(url)
+      return { blob: async () => new Blob([url], { type: 'image/jpeg' }) }
+    }
+    return inner(url, init)
+  })
+  return {
+    stepGets,
+    originalCount: () => originalGets,
+    listCount: () => listGets,
+    serve: (next: SessionDetail[]) => { rows = [...next] },
   }
 }
 
@@ -618,6 +762,23 @@ async function waitPersist() {
 function bodyOf(call: unknown[]) {
   return JSON.parse(String((call[1] as RequestInit).body))
 }
+
+// ── 滤镜（★ 2026-10-05 T8 建，T9 / T11 / T12 共用）────────────────────
+// 四个都按**文字**或**类名**找，不按位置 —— 位置是排版的事，文字才是用户的认知。
+
+/** 微调区那一栏（`App.tsx` 里 `view.kind === 'adjust'` 才挂）。 */
+const adjustPanel = () => container.querySelector('.panel') as HTMLElement
+/** 打开微调区那一栏「滤镜」。**它默认是收着的**（spec §8.3），所以每一条都要先点一下。 */
+async function openLutPanel() {
+  const head = [...adjustPanel().querySelectorAll('.panel-group-head')]
+    .find(b => (b.textContent ?? '').includes('滤镜')) as HTMLButtonElement
+  await act(async () => { head.click(); await new Promise(r => setTimeout(r, 0)) })
+}
+const lutTiles = () => [...adjustPanel().querySelectorAll('.lut-tile')] as HTMLButtonElement[]
+const tileNamed = (name: string) => lutTiles().find(t => (t.textContent ?? '').includes(name))!
+/** 面板里「滤镜」那一组（`section`）—— 强度滑块要**在这一组里面**找，别数全屏的滑块。 */
+const lutSection = () => [...adjustPanel().querySelectorAll('.panel-group')]
+  .find(g => g.querySelector('.panel-group-title')?.textContent === '滤镜') as HTMLElement
 
 // ── 测试 ─────────────────────────────────────────────────────────
 
@@ -4095,103 +4256,6 @@ describe('会话落盘：上传建会话、每一步更新', () => {
  * 少了它两边都不报错，只是三颗按钮**一起点了没反应**。下面第一条钉着它。
  */
 describe('恢复：打开就接着上次那条', () => {
-  /** 一条会话的元数据。`updatedAt` 决定它在列表里排第几（服务端按它倒序给）。 */
-  const SMETA = (id: number, over: Partial<SessionMeta> = {}): SessionMeta => ({
-    id, title: null, originalName: '古镇.jpg', createdAt: 0, updatedAt: id * 100,
-    hasThumb: true, stepCount: 1, ...over,
-  })
-
-  /**
-   * 造一条 n 步的会话。
-   *
-   * ⚠️ **id 走真挂载会长出来的那个序列**（2026-10-01 评审后改的，原来是
-   * `id*100+i` 那种"永远不会撞"的号）：欢迎语 = 1，而它同时就是第 1 步的 id
-   * （`onPick` 里那个 `say()` 拿到的号给了消息和快照两边）；之后每一步吃掉
-   * 两个号（用户那条 + 助手那条），助手那条 = 这一步的 id。所以步骤 id 是
-   * 1、3、5…，最后一条用户消息接着往下走。
-   *
-   * ⚠️ 为什么**必须**是这样：真会话的号就在 1、2、3 这一段（每个会话各自从 1
-   * 开始，服务端原样存回来）。用 700 这种号造，就永远测不出"恢复之后本地那个
-   * 计数器有没有跟着跳过去"—— 而那正是「接着说话不许撞号」那条用例要盯的事。
-   *
-   * `tag` 只用来让两条会话的助手消息**一眼分得开**（"上一条的话跟过来没有"）。
-   */
-  function makeSession(
-    id: number, n: number, words: string, tag: string,
-  ): SessionDetail {
-    const steps: SessionStep[] = []
-    const messages: SessionMessage[] = []
-    for (let i = 0; i < n; i++) {
-      const sid = 2 * i + 1
-      steps.push({
-        id: sid,
-        label: i === 0 ? '原图' : '生成式编辑',
-        params: { ...ZERO, exposure: i },
-        at: 0,
-        // 第 2 步和第 1 步**用的是同一张图**（`reusesPrev`）—— 恢复时它该省一次下载
-        reusesPrev: i === 1,
-        ...(i === 0 ? {} : { prompt: `make it step ${i}` }),
-      })
-      if (i > 0) messages.push({ id: sid - 1, role: 'user', text: `make it step ${i}`, at: 0 })
-      messages.push({ id: sid, role: 'assistant', text: `${tag}第 ${i} 步`, at: 0 })
-    }
-    messages.push({ id: 2 * n, role: 'user', text: words, at: 0 })
-    return { ...SMETA(id, { stepCount: n }), messages, steps }
-  }
-
-  /** 盖上一整条会话的路：列表、详情、原图、每一步的图。只加不改。
-   *
-   *  返回的 `serve` 用来演"换一条会话"（重开一次页面时服务端那边最近动过的
-   *  已经换成另一条了）—— 今天"切到另一条"的现实形态就是这个，会话列表由
-   *  Task 6 做。 */
-  function withSessions(initial: SessionDetail[], opts: { originalFails?: boolean } = {}) {
-    let rows = [...initial]
-    const stepGets: string[] = []
-    let originalGets = 0
-    let listGets = 0
-    const inner = fetchMock.getMockImplementation()!
-    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-      const method = init?.method ?? 'GET'
-      if (url === '/api/sessions' && method === 'GET') {
-        // 服务端按 `updated_at` 倒序给（§5）—— 最上面那条就是"上次动过的"
-        listGets++
-        return jsonResponse({ sessions: [...rows].sort((a, b) => b.updatedAt - a.updatedAt) })
-      }
-      const one = /^\/api\/sessions\/(\d+)$/.exec(url)
-      if (one && method === 'GET') {
-        const d = rows.find(x => x.id === Number(one[1]))
-        if (!d) return jsonResponse({ error: { code: 'NOT_FOUND', message: '没有这条' } }, 404)
-        return jsonResponse(d)
-      }
-      // 删一条（Task 6 的列表上那颗「删掉」）。**必须接住**：掉进下面那个兜底的
-      // blob 形状的话，`deleteSession` 读正文那一步会炸 —— 而"删失败了"这条路上
-      // App 那边什么都不做，测试于是绿在一个**报错的路径**上。
-      if (one && method === 'DELETE') {
-        rows = rows.filter(x => x.id !== Number(one[1]))
-        return jsonResponse({ ok: true })
-      }
-      if (/^\/api\/sessions\/\d+\/file\/original$/.test(url)) {
-        originalGets++
-        // `originalFails` 演的是"原图这一趟取不回来"（文件没了、网断了）。
-        // 形状故意跟另外几条一样：**请求回来了、读正文时炸** —— App 那边就是
-        // `(await fetch(...)).blob()` 抛出去，走进那个 catch。
-        if (opts.originalFails) return { blob: async () => { throw new Error('原图取不回来') } }
-        return { blob: async () => new Blob(['ORIGINAL'], { type: 'image/jpeg' }) }
-      }
-      if (/^\/api\/sessions\/\d+\/file\/step\/\d+$/.test(url)) {
-        stepGets.push(url)
-        return { blob: async () => new Blob([url], { type: 'image/jpeg' }) }
-      }
-      return inner(url, init)
-    })
-    return {
-      stepGets,
-      originalCount: () => originalGets,
-      listCount: () => listGets,
-      serve: (next: SessionDetail[]) => { rows = [...next] },
-    }
-  }
-
   /** 屏幕上所有气泡的文字（用户的和助手的都在里面）。 */
   const bubbleTexts = () =>
     [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
@@ -5148,5 +5212,163 @@ describe('恢复：打开就接着上次那条', () => {
     expect(wheel?.getAttribute('data-y')).toBe('0')
     // ④ 屏幕上不许出现 NaN（`undefined` 一路飘到底时渲染出来的就是这个字样）
     expect(container.textContent ?? '').not.toContain('NaN')
+  })
+})
+
+/**
+ * 滤镜（★ 2026-10-05，设计 §5.2 / §6.4 客户端那半）。
+ *
+ * 这一层守的是**接线的几件事，每一件错了都不报错**：
+ *   · 选了滤镜之后**落盘**的 patch 里带不带它（漏了 → 刷新回到没滤镜的样子）；
+ *   · 「重置」清不清它（不清 → 按了重置画面还是那套颜色）；
+ *   · 恢复会话时最后一步的 lut 跟不跟着回来（不跟 → 刷新掉一层）；
+ *   · 换一张照片清不清它（不清 → 新照片上盖着上一张的滤镜）；
+ *   · "服务端上这个滤镜被删了"（`dropGoneLut`）：状态、历史、话，三样一起。
+ */
+describe('滤镜', () => {
+  const HUT: LutMeta = { id: 1, name: '黄昏', size: 2, bytes: 100, createdAt: 0 }
+
+  /** 点一下 + 让 React 把状态刷完（和 `goNav` 里那一下同款）。 */
+  const click = async (el: HTMLElement) => {
+    await act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
+  }
+  /** 这一趟落盘的那笔 PUT 的请求体（最后一笔）。 */
+  const lastPutBody = () => {
+    const puts = fetchMock.mock.calls.filter(([u, init]) =>
+      String(u).includes('/api/sessions/') && (init as RequestInit | undefined)?.method === 'PUT')
+    expect(puts.length).toBeGreaterThan(0)
+    return bodyOf(puts[puts.length - 1]!)
+  }
+  /**
+   * 演"人走到另一条网址上"。`/app/luts` 那一页本身是 T10 的活（这一轮还没有），
+   * 但**「离开那一页时刷新清单」这条接线是这一轮的** —— 网址 + `popstate`
+   * 就够把它走到（`view` 本来就是从网址推出来的）。
+   */
+  const gotoPath = async (path: string) => {
+    await act(async () => {
+      window.history.pushState(null, '', path)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+  /** 按「新的一张」—— 它是"换一张照片"那条路上**唯一**的入口（`resetEditor`）。 */
+  const newOne = () => click([...container.querySelectorAll('.actions button')]
+    .find(b => (b.textContent ?? '').includes('新的一张')) as HTMLButtonElement)
+
+  it('★ 微调区选中一个滤镜后：格子亮着、落盘的 patch 里带着它', async () => {
+    // 变异：落盘那条 `patch` 少写一个 `lut`（或依赖数组里少了它）→ 最后那句红。
+    // 两者都是静默的：屏幕上格子亮得好好的，刷新一下那层滤镜就没了。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await openLutPanel()
+    await click(tileNamed('黄昏'))
+
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+    await waitPersist()
+    const body = lastPutBody()
+    // 满强度：选中一个滤镜的默认强度是 100（用户再自己拖）
+    expect(body.lut).toEqual({ lutId: 1, amount: 100 })
+    // 而它**没有**新推一步快照 —— 套滤镜和拖滑块同级，不产生步骤（裁定 ⑤）
+    expect(body.steps).toHaveLength(1)
+  })
+
+  it('★ 「重置」把滤镜也清掉', async () => {
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await openLutPanel()
+    await click(tileNamed('黄昏'))
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+
+    await click(adjustPanel().querySelector('.panel-head button') as HTMLButtonElement)
+
+    expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('★ 恢复一条会话时，最后一步的滤镜跟着回来（强度也回得来）', async () => {
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    const s = makeSession(7, 3, '上次那句', 'S7')
+    s.steps[s.steps.length - 1]!.lut = { lutId: 1, amount: 80 }
+    withSessions([s])
+
+    await renderApp()
+    await goNav('调色')
+    await openLutPanel()
+
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+    // 强度那根只在这一组里找（全屏有十五条别的滑块）
+    const range = lutSection().querySelector('input[type="range"]') as HTMLInputElement
+    expect(range.value).toBe('80')
+
+    // 接回来不算完：这一版落盘时，**那一步的 `lut` 也要原样跟着上路** ——
+    // 服务端 `mergeSteps` 是按 id 把客户端送来的每一步**整条替换**库里那一步的，
+    // 少写这一个字段 = 每次落盘都把历史里那几步的滤镜悄悄抹掉（它那边什么都不说）。
+    // 变异：`snapshot` 那个映射里去掉 `lut:` → 这一句红。
+    await waitPersist()
+    expect((lastPutBody().steps.at(-1) as { lut?: unknown }).lut)
+      .toEqual({ lutId: 1, amount: 80 })
+  })
+
+  it('★ 换一张照片 = 滤镜清掉', async () => {
+    // `resetEditor` 是「新的一张」和「上传新照片」共同的那道门 —— 它不清滤镜的话，
+    // 上一张的滤镜会盖在**新照片**上，而屏幕上没有任何东西说明这件事。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await openLutPanel()
+    await click(tileNamed('黄昏'))
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+
+    await newOne()          // 回到"选一张照片"那一屏（同时也是清空这道门）
+    await uploadPhoto()     // 第二张
+    await goNav('调色')
+    await openLutPanel()
+
+    expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('★ 服务端上这个滤镜被删了 —— 状态、历史、话，三样一起收拾', async () => {
+    // 用户手上这张照片正用着「黄昏」（它落在**接回来的最后一步**上），他跑到
+    // `/app/luts` 把那个滤镜删了再回来接着改（设计 §6.4 客户端那半）。
+    //
+    // ⚠️ 为什么非得走"恢复"这条路：快照里的 `lut` 是**按步**记的，而光在微调区
+    //    选一下只会改 App 的 `lut` 状态、**不推快照**（裁定 ⑤）—— 那种走法下
+    //    `history` 里根本没有这个 id，历史那一半的清理就成了**空的**（测不到）。
+    //    从服务端接回来的会话，最后一步是真带着 lut 的，这一步才咬得住。
+    //
+    // 变异：`dropGoneLut` 里去掉 `setHistory(…)` 那一行 → 下面 ② 红。
+    const s = makeSession(7, 3, '上次那句', 'S7')
+    s.steps[s.steps.length - 1]!.lut = { lutId: 1, amount: 80 }
+    withSessions([s])
+    vi.mocked(lutsMod.listLuts)
+      .mockResolvedValueOnce({ luts: [HUT] })      // App 挂载那一次：还在
+      .mockResolvedValue({ luts: [] })             // 离开设置页那一次：已经删了
+
+    await renderApp()
+    await goNav('调色')
+    await openLutPanel()
+    // 前提：它真的在用（不然下面那几句守的是个没发生的事）
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+
+    await gotoPath('/app/luts')
+    await goNav('修图')                            // 离开那一页 → 刷新清单 + 照镜子
+
+    // ① 说一句 —— 那张照片上少了一层颜色，不说是"看着对、其实被悄悄改了"
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('刚被你删掉了')
+    await waitPersist()
+    // ② 状态清了、历史也清了：这一趟落盘里没有任何一处还提着那个 id
+    const body = lastPutBody()
+    expect(body.lut).toBeNull()
+    expect(body.steps.every((x: { lut?: unknown }) => !x.lut)).toBe(true)
+    // ③ 清单里已经没有它了
+    await goNav('调色')
+    await openLutPanel()
+    expect(adjustPanel().textContent ?? '').toContain('还没有导入过滤镜')
   })
 })

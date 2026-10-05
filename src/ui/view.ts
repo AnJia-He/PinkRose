@@ -48,6 +48,14 @@ export type View =
   // 模型设置（§7.4）。**挂在用户管理底下**：从那一页的「模型」那一行进去，
   // 和 §3.6 那张图长的一样 —— 它不是一级导航，是设置里的一格。
   | { kind: 'models' }
+  // ★ 2026-10-05（滤镜）：设置里新一页「滤镜」（设计 §5.1）—— 导入/改名/删除
+  //   `.cube`。和「模型」一样挂在用户管理底下、不是一级导航，但**仍然要有自己的
+  //   网址**（F5 / 收藏 / 转发都要认，见下面几条的老规矩）。
+  //
+  //   ⚠️ 这一支是**接线那一步先落下来的**（微调区那颗「去导入」要跳它，
+  //   `go({ kind: 'luts' })` 得先是个合法的 `View`）；那一页本身随后就到。
+  //   在那之前走到这一支会看到一屏空的 —— 有网址、还认不出来才是更坏的形状。
+  | { kind: 'luts' }
 
 /** App 的地盘。写在这儿是为了让"它挪过窝"这件事只有一处要说。 */
 const APP = '/app'
@@ -85,6 +93,8 @@ export function viewFromPath(path: string): View {
   // 模型设置也可以直接打开（F5、收藏、别人发来的一条链接）——
   // 少认这一行，用户按 F5 就被扔回修图页，而他明明还在这页上。
   if (path === `${APP}/models`) return { kind: 'models' }
+  // 滤镜那一页（★ 2026-10-05）—— 同上：少认这一行，按 F5 的人被扔回修图页。
+  if (path === `${APP}/luts`) return { kind: 'luts' }
   // 调色（★ 2026-10-04）—— 和上面几个一样要**认得出来**（F5、收藏、别人发来的
   // 一条链接）。少认这一行，按 F5 的人会被扔回修图页，而他明明正开着调色面板。
   if (path === `${APP}/adjust`) return { kind: 'adjust' }
@@ -100,6 +110,7 @@ export function pathOf(v: View): string {
   if (v.kind === 'work') return `${APP}/works/${v.id}`
   if (v.kind === 'account') return `${APP}/account`
   if (v.kind === 'models') return `${APP}/models`
+  if (v.kind === 'luts') return `${APP}/luts`
   if (v.kind === 'adjust') return `${APP}/adjust`
   return APP
 }

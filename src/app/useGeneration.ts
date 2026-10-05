@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react'
 import { applyDeltas, type Adjustments } from '../../shared/adjustments.ts'
+import type { LutRef } from '../../shared/lut.ts'
 import type { RouteDecision, SuggestCard } from '../../shared/protocol.ts'
 import { ApiError, isAbort, isUnauthorized, postEdit, postSuggest } from '../api/client'
 import { bitmapsToClose, pushSnapshot, type Snapshot } from '../core/history'
@@ -30,6 +31,12 @@ export type GenerationDeps = {
   /** 当前参数。参数那半立刻生效（本地、免费），生成那半只把它当**文本上下文**。 */
   params: Adjustments
   setParams: (p: Adjustments) => void
+  /**
+   * 当前滤镜（★ 2026-10-05）。它跟着 `paramsAtStep` 一起写进这一步的快照 ——
+   * 和 params 同一条道理：**推快照那一刻手上用着哪个滤镜，那一步就记着哪个**。
+   * 生成本身不碰它，只负责记下来（落盘要按步送、用户删滤镜时要按步清）。
+   */
+  lut: LutRef | null
   /** 底图换到第几版了（上传 +1、每次生成 +1）。它是"这一版还算不算数"的闸门。 */
   baseSeqRef: { current: number }
   /** 消息号发号器（和 App 那边共用同一个计数器 —— 快照要对得上号）。 */
@@ -52,7 +59,7 @@ export type GenerationDeps = {
 
 export function useGeneration(deps: GenerationDeps) {
   const {
-    image, setImage, params, setParams, baseSeqRef, idRef, setBusy, setUser,
+    image, setImage, params, setParams, lut, baseSeqRef, idRef, setBusy, setUser,
     noticeBad, setCards, setPending, pendingRef, setMessages, setHistory,
   } = deps
 
@@ -157,6 +164,10 @@ export function useGeneration(deps: GenerationDeps) {
           //   （"保留人脸"那半句是服务端 buildEditPrompt 补的，重跑同样会补。）
           prompt: editPrompt,
           base: nextBase, params: paramsAtStep, isOriginal: false, thumb: '',
+          // ★ 2026-10-05（滤镜）：这一步推入时手上用着哪个滤镜。生成本身
+          //   **不碰 params、也不碰滤镜**（铁律）—— 只是把它记在这一步上：
+          //   落盘要**按步**送上去，用户删掉那个滤镜时也要按步清。
+          lut,
         })
         // 被挤出去的位图要释放；原图永远不关（"回到原图"还要用它）。
         // close() 是幂等的，StrictMode 双调用 updater 也安全。
@@ -186,7 +197,12 @@ export function useGeneration(deps: GenerationDeps) {
       if (editAbortRef.current === ac) editAbortRef.current = null
       setBusy(null)
     }
-  }, [noticeBad, say])
+    // ⚠️ `lut` **必须在依赖里**（★ 2026-10-05 加的）：它被读进了上面那个
+    //    `pushSnapshot` 的载荷里，而这个回调是在**点击那一刻**造出来的 ——
+    //    漏了它，用户选完滤镜再生成，推进去的那一步记的是**上一次的**滤镜
+    //    （甚至永远是最初那个 null），而画面上一切正常，只有"回到这一步"/刷新
+    //    之后那一层颜色对不上。和 `applyDecision` 里 `image` 那条是同一类坑。
+  }, [noticeBad, say, lut])
 
   /**
    * 「停止」—— 把这一次生成掐掉。

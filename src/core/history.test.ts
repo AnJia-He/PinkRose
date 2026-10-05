@@ -6,6 +6,9 @@ import { ZERO } from '../../shared/adjustments.ts'
 const fakeBitmap = (tag: string) => ({ tag }) as unknown as DecodedImage
 const mk = (id: number, isOriginal = false): Snapshot => ({
   id, label: `第${id}步`, base: fakeBitmap(`b${id}`), params: ZERO, isOriginal, thumb: '',
+  // 这个模块的纯函数不看滤镜（它们只排数组、关位图）—— 夹具给 null 就行，
+  // 但**必须给**：`Snapshot.lut` 是必填的，那是"每个构造点都得表态"那道闸。
+  lut: null,
 })
 const tagOf = (b: DecodedImage) => (b as unknown as { tag: string }).tag
 
@@ -54,7 +57,7 @@ describe('jumpTo', () => {
 
 describe('attachThumb', () => {
   const snap = (id: number, thumb = ''): Snapshot =>
-    ({ id, label: `${id}`, base: fakeBitmap(`${id}`), params: ZERO, isOriginal: id === 1, thumb })
+    ({ id, label: `${id}`, base: fakeBitmap(`${id}`), params: ZERO, isOriginal: id === 1, thumb, lut: null })
 
   it('把缩略图挂到指定那一步上', () => {
     const list = [snap(1), snap(2), snap(3)]
