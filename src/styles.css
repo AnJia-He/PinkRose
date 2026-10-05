@@ -1804,7 +1804,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    720px），是给"模型那一行太长了"加的**第一版**答案。用户当天第二次指着那一行说
    「跟这个长度差不多就行」（配的是左栏那颗按钮的截图）—— 他要的是**一颗按钮
    那么大**，不是"窄一点的横条"。那一行改成按内容收紧之后，这层壳就没有任何
-   可见作用了，留着是块死代码（下面 `.account-rows` 那段写着为什么不许再拉满宽）。 */
+   可见作用了，留着是块死代码（下面 `.account-grid` 那段写着为什么不许再拉满宽）。 */
 
 /* ★ 2026-10-04（晚）：这一页**第一次有了标题**。用户看完这一页说
    「布局看着都不合理」—— 原来第一行是「用户名」+ 一个名字，像张资料卡、
@@ -1846,6 +1846,12 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    下面展开的表单 / 确认块跟着它走，宽度才是齐的。
    ⚠️ 别再退回 `fit-content` —— "参差"就是这么来的。
 
+   ★★ 2026-10-05：用户说「**因为整体的空间还有很多空余，所以我想设计成一个个小框架**」
+   —— 那一列 420px 的窄卡右边永远空着一大片。现在拆成**三个小框架排一行**
+   （`.account-grid`，一类一框：账号 / 模型配置 / 作品空间用量），列宽由网格说了算；
+   `min(420px, 100%)` 那条**随之作废**（窄屏由 `auto-fit + minmax` 兜着叠）。
+   `fit-content` 的禁令照旧有效 —— 病根（每一块各长各的）没变。
+
    ★ 2026-10-04（当天第四遍，就是这一版）：用户发来一张别人家的产品截图说
    「**人家的好有质感**」。那张图里"贵"的是四件小事，这一版全落在这儿：
      ① **面是半透明磨砂**（`--glass` + `backdrop-filter`），浮在底上，不是实心白贴上去；
@@ -1855,10 +1861,25 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      ④ **底下有一层很淡的光**给它透（`.account` 的 `--wash`，见上面那段）。
    这一版**先只做这一页**，是样板 —— 往别的屏铺之前先想文件头那条
    "主框架一律无色"（照片旁边能不能铺，是另一个问题）。 */
-.account-rows {
-  display: flex; flex-direction: column;
-  width: min(420px, 100%);
+/* 三个小框架的网格（★ 2026-10-05，见上面那段）。`auto-fit + minmax` 负责叠：
+   宽屏三列铺满、中屏两列、手机一列 —— 不用手写媒体查询。 */
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--sp-5);
   margin-top: var(--sp-5);
+  align-items: start;
+}
+/* 一框 = 小标题 + 卡（+ 展开的表单 / 确认）。gap 管"卡和展开块之间那口气"。 */
+.account-tile { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+/* 框外那行小标题 —— 和「对话」列表的分组标题（`.gallery-day-title`）一个语言：
+   小一号、压成 muted，说清"这框是哪一类"。 */
+.account-tile-title { margin: 0 0 0 2px; font-size: 13px; font-weight: 600; color: var(--muted); }
+
+/* 卡还是原来那张卡（磨砂 / 发丝线 / 大圆角 / 两层影子）—— 只是宽度不再自己定：
+   由所在的格说了算。 */
+.account-card {
+  display: flex; flex-direction: column;
   background: var(--glass);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
@@ -1925,8 +1946,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .account-form,
 .account-danger {
   display: flex; flex-direction: column; gap: var(--sp-3);
-  width: min(420px, 100%);
-  margin-top: var(--sp-3);
+  /* ★ 2026-10-05：宽度跟着**所在的框**（`.account-tile` 的列）走；上边那口气由
+     tile 的 gap 给 —— 原来自己 `margin-top`，进框之后会双份。 */
+  width: 100%;
   padding: var(--sp-4);
   background: var(--glass);
   -webkit-backdrop-filter: blur(14px);
@@ -1966,7 +1988,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* §6.6「用到 80% 主动说」：那一格数字**变色**，下面跟一句带出路的提醒。
    ⚠️ 不能等用户存不进去了才说 —— 那一刻他正想保存，等于把他堵在门口。 */
 .stat-warn b { color: var(--danger); }
-.account-quota-warn { margin-top: var(--sp-3); font-size: 13px; color: var(--text); }
+.account-quota-warn { margin: 0; font-size: 13px; color: var(--text); }   /* ★ 10-05 进框后间距由 tile gap 给 */
 .account-quota-go {
   padding: 0; background: none; border: 0; border-radius: 0;
   color: var(--accent); text-decoration: underline; transform: none;
