@@ -1515,6 +1515,12 @@ describe('图上点选消歧', () => {
     expect(api.postEdit).not.toHaveBeenCalled()          // 不许先动手
     expect(canvasProps.props.at(-1)?.picking).toBe(true) // 但请用户点一下
     expect(lastReply()).toContain('不太确定')
+
+    // ★ 2026-10-05（Task 4 修正）：点选那条路**保留**那句 reply —— 它一直是两条
+    //   气泡（"好。" + "我不太确定…"），先问再做那半句不能因为确认条那次重构丢掉。
+    const texts = [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
+    expect(texts).toContain('好。')                      // 那句 reply 又回来了
+    expect(texts.at(-1)).toContain('不太确定')            // 最后一条仍是那句问句
   })
 
   it('点一下 → 画面上出现标记，**还是没花钱**', async () => {
