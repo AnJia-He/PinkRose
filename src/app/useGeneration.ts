@@ -3,7 +3,7 @@ import { applyDeltas, type Adjustments } from '../../shared/adjustments.ts'
 import { sameLutName, type LutMeta, type LutRef } from '../../shared/lut.ts'
 import type { RouteDecision, SuggestCard } from '../../shared/protocol.ts'
 import { ApiError, isAbort, isUnauthorized, postEdit, postSuggest } from '../api/client'
-import { bitmapsToClose, pushSnapshot, type Snapshot } from '../core/history'
+import { bitmapsToClose, cutAfter, pushSnapshot, type Snapshot } from '../core/history'
 import type { DecodedImage } from '../image/decode'
 import { prepareForModel, prepareForRouting, type Sizable } from '../image/prepare'
 import type { ChatMessage } from '../ui/ChatPanel'
@@ -63,18 +63,28 @@ export type GenerationDeps = {
   /** 建议卡片：换了底图、或者开始生成，那批卡片就作废。 */
   setCards: (c: SuggestCard[]) => void
   /** 模型说拿不准时，请用户在图上点一下。 */
-  setPending: (p: { text: string; marker: null }) => void
+  setPending: (p: { text: string; marker: null; keepFrom: number }) => void
   /** 用户**这一趟说过的那句原话**（点选兜底要留到确认那一刻）。 */
   pendingRef: { current: string | null }
   setMessages: (fn: (m: ChatMessage[]) => ChatMessage[]) => void
   /** 推一步快照（生成那一步要挂上去，「回到这一步」靠它）。 */
   setHistory: (fn: (h: Snapshot[]) => Snapshot[]) => void
+  /**
+   * ★ 2026-10-05：现在站在哪一步（`cursorId`）+ 最新一步的 id（`tipId`）。
+   * 前者是切口的切点、后者判"要不要先问一句"（Task 4）。都**必须进依赖数组**：
+   * 它们变了（跳转）而回调还在用旧值时，切口会切错位置 —— 不报错的那种错。
+   */
+  cursorId: number | null
+  tipId: number | null
+  /** 推完新步把"站的位置"挪过去（新那步就是新的最新）。 */
+  setCursorId: (id: number) => void
 }
 
 export function useGeneration(deps: GenerationDeps) {
   const {
     image, setImage, params, setParams, lut, setLut, luts, baseSeqRef, idRef, setBusy, setUser,
-    noticeBad, setCards, setPending, pendingRef, setMessages, setHistory,
+    noticeBad, setCards, setPending, pendingRef, setMessages, setHistory, cursorId, tipId,
+    setCursorId,
   } = deps
 
   /**
@@ -127,6 +137,15 @@ export function useGeneration(deps: GenerationDeps) {
   const runGenerate = useCallback(async (
     editPrompt: string, messageId: number, paramsAtStep: Adjustments,
     lutAtStep: LutRef | null, source: Sizable,
+    /**
+     * ★ 2026-10-05：这一版是从哪长出来的 —— 切口的**切点** + 切对话时
+     * "从哪条消息起保留"（设计 §4.2/4.3）。
+     *
+     * ⚠️ **必填、不读 state**：理由和 `paramsAtStep` / `lutAtStep` 一字不差
+     *   ——「再来一版」是**先跳转、再在同一个 tick 里**调进来的，读 `cursorId`
+     *   那个 state 拿到的是**跳转前**的值。每个调用点被编译期逼着表态。
+     */
+    origin: { stepId: number; keepFromMsg: number },
   ) => {
     if (!editPrompt) return
     // ★ 一次生成 = 一个 controller。「停止」按的就是它（见 stopGeneration）。
@@ -176,7 +195,10 @@ export function useGeneration(deps: GenerationDeps) {
       baseSeqRef.current++
 
       setHistory(prev => {
-        const next = pushSnapshot(prev, {
+        // ★ 2026-10-05（切口）：从 `origin.stepId` **之后**的步骤全部切掉（含）。
+        //   放在这里（= 生成**成功之后**、和推新步同一个 updater）不是随手的：
+        //   失败和「停止」都在前面 `return` 掉了 —— 花了一次没成，后面的不该陪葬。
+        const next = pushSnapshot(cutAfter(prev, origin.stepId), {
           id: messageId, label: '生成式编辑',
           // ★ 记住用户当初那句话 —— 「再来一版」靠它重跑（见 onRerun）。
           //   存的是**模型给的那句英文 editPrompt**（`applyDecision` 从决策里
@@ -189,14 +211,27 @@ export function useGeneration(deps: GenerationDeps) {
           //   不是闭包里"此刻手上"的那个 —— 理由见函数头（`onRerun` 先跳再重掷）。
           lut: lutAtStep,
         })
-        // 被挤出去的位图要释放；原图永远不关（"回到原图"还要用它）。
-        // close() 是幂等的，StrictMode 双调用 updater 也安全。
+        // 被切掉的 + 被挤出去的位图都要释放；原图永远不关。close() 幂等，
+        // StrictMode 双调用 updater 也安全。
         for (const s of bitmapsToClose(prev, next, { protectOriginal: true })) {
           s.bitmap.close()
         }
         return next
       })
+      // ★ 切对话：**两个 id 之间**的才是旧未来（设计 §4.3）。
+      //   ⚠️ 不能只写 `x.id > origin.stepId` 一刀切 —— 用户刚说的那句话、
+      //   模型刚回的那几句，id **也大于**步骤 id，一刀切会把它们一起删掉。
+      //   ⚠️ 而且**站在最新一步生成时不切**（设计 §4.1 的原话是"从一个**不是最新**
+      //   的步骤出发"才切）：那段区间里可能躺着**不推步骤的消息** —— 恢复回来的
+      //   一句没收尾的话、参数类的来回（"再亮一点"不产生步骤）。它们不属于任何
+      //   "旧未来"，切了就是用户没同意过的一段话凭空消失（旧用例「接着说话不许
+      //   撞号」当场抓到过：站在 tip 上生成，把前面那句普通的话一起删了）。
+      if (origin.stepId !== tipId) {
+        setMessages(m => m.filter(x => x.id <= origin.stepId || x.id >= origin.keepFromMsg))
+      }
       setImage(nextBase)
+      // ★ 位置挪到新那一步（它是新的"最新"）。
+      setCursorId(messageId)
       // ↑ 只换 base。params 原封不动继续生效 —— 整个数据模型的基石。
     } catch (e) {
       // ★ 用户按了「停止」——**这不是失败**。
@@ -220,7 +255,10 @@ export function useGeneration(deps: GenerationDeps) {
     // ⚠️ 依赖里**没有 `lut`**（2026-10-05 复审定下的）：这一步的滤镜是**传参**
     //    进来的（`lutAtStep`），读闭包那个正是这次修掉的 bug。同理也没有 `params`。
     //    ⚠️ 别看这里干净就去删 `deps.lut` —— `applyDecision` 还读它（见那边）。
-  }, [noticeBad, say])
+    // ★ 2026-10-05：`tipId` **要进** —— 切对话那道闸门拿它判"出发的那一步是不是
+    //   最新"（见上面那行 `if`）。它变了（又推了一步）而回调还在用旧值时，
+    //   站在新 tip 上生成会被当成"从旧步骤出发"—— 用户没同意过的一段话就没了。
+  }, [noticeBad, say, tipId])
 
   /**
    * 「停止」—— 把这一次生成掐掉。
@@ -241,7 +279,7 @@ export function useGeneration(deps: GenerationDeps) {
   }, [])
 
   /** 应用一个决策：参数走本地立刻生效，生成式走云端。 */
-  const applyDecision = useCallback(async (d: RouteDecision) => {
+  const applyDecision = useCallback(async (d: RouteDecision, keepFromMsg: number) => {
     // 铁律：增量的叠加与钳制交给确定性代码，LLM 只负责"大概要多少"。
     // 这里显式算出新值（而不是用函数式更新），因为生成那一步的快照要用它。
     const nextParams = (d.route === 'params' || d.route === 'both')
@@ -288,7 +326,7 @@ export function useGeneration(deps: GenerationDeps) {
       // 标记清空 —— 还没点。（pendingRef 为 null 只有"没人说过话就走到了这里"
       // 才会发生，今天走不到；空串和原来的 null 一样是"没有原话"，
       // canConfirmMark 照样不会亮。）
-      setPending({ text: pendingRef.current ?? '', marker: null })
+      setPending({ text: pendingRef.current ?? '', marker: null, keepFrom: keepFromMsg })
       return
     }
 
@@ -299,15 +337,18 @@ export function useGeneration(deps: GenerationDeps) {
     // ★ 2026-10-05（滤镜）：这条路（send / 卡片触发的路由决策）**就是"此刻"**——
     //   所以传的是闭包里那个 `lut`，和上面 `params` 同一条口径。
     //   ⚠️ 它读 `lut`，所以 `lut` 必须进依赖数组（同 `image` 那条的理由）。
-    if ((d.route === 'generate' || d.route === 'both') && image) {
+    if ((d.route === 'generate' || d.route === 'both') && image && cursorId !== null) {
       // ★ T11：传 `nextLut`（这一步做完之后那个），和 `nextParams` 对称 ——
       //   理由见上面滤镜那块。⚠️ 别"顺手"改回闭包的 `lut`。
-      await runGenerate(d.editPrompt, mid, nextParams, nextLut, image.bitmap)
+      await runGenerate(d.editPrompt, mid, nextParams, nextLut, image.bitmap,
+        { stepId: cursorId, keepFromMsg })
     }
     // ★ T11 又读了 `luts` / `setLut`（上面那块滤镜落地），两个都得进依赖数组 ——
     //   漏掉 `luts` 的话，清单刷新之后这个回调还在用旧的（名字换成错 id）；
     //   `setLut` 是 useState 的 setter（identity 稳定），进来只是守住这条规矩。
-  }, [params, say, runGenerate, image, lut, luts, setLut])
+    // ★ 2026-10-05：`cursorId` 同上 —— 生成分支读它（切口的切点），漏了它，
+    //   跳转之后这个回调还在用上一轮的位置，切口切错地方，而且不报错。
+  }, [params, say, runGenerate, image, lut, luts, setLut, cursorId])
 
   /**
    * 拉建议卡片。

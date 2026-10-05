@@ -6116,3 +6116,92 @@ describe('滤镜', () => {
     expect(text()).not.toContain('还没到手')
   })
 })
+
+/**
+ * ★ 2026-10-05：「回到这一步」不再删后面的步骤（用户原话：「用户点击回到
+ * 这一步后，应该保留更改的那一步」）。
+ *
+ * 这一条守的是**用户看得见的那件事**：跳回去之后后面的图和按钮一个不少。
+ * 变异：`onJump` 里把 `cutAfter` 那一套加回去 → 第一条当场红。
+ */
+describe('「回到这一步」不再删后面的步骤', () => {
+  const OK = { imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800 }
+  /**
+   * 一步一个：`<button.bubble-jump>` 或 `<span.bubble-current>` **都算**
+   * （Task 5 起"当前那一步"显示的是位置标记而不是按钮）。顺序 = 消息顺序。
+   *
+   * ⚠️ 用它能写出**跨 Task 5 仍然成立**的计数和索引 —— 别改回只数
+   * `.bubble-jump`（那样 T5 一落地，这个 describe 里的数字全错位）。
+   */
+  const stepItems = () =>
+    [...container.querySelectorAll<HTMLElement>('.bubble-jump, .bubble-current')]
+  const bubbleTexts = () =>
+    [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
+
+  /** 上传 + 生成两版：history = [原图, 第 1 版, 第 2 版]，对话 5 条。 */
+  async function twoVersions() {
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '改一下' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')
+    await say('再改一次')
+  }
+
+  it('★ 跳到旧步骤 → 后面的图和按钮一个不少，还能再点回去', async () => {
+    await twoVersions()
+    expect(stepItems()).toHaveLength(3)      // 原图 + 两次生成
+
+    // 退回原图
+    await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    // ⚠️ 原图那张位图**不在 `decodedBitmaps` 里** —— 那份只收 `createImageBitmap`
+    //    解出来的（生成回来的图、恢复回来的步骤），而原图走的是 `decodeImageFile`，
+    //    记号是 `upload`。所以按 `__tag` 认（`canvasProps.images` 的类型只有
+    //    width/height，读 `bitmap` 得这样写 —— 这个文件里那几处都是同一个路数）。
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })  // 画面回到原图
+
+    // ★ 后面两步**还在** —— 一步一个（按钮/标记）、小图一张不少
+    expect(stepItems()).toHaveLength(3)
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(3)
+
+    // 而且还能再跳回去（点最后一个 = 第 2 版）
+    await act(async () => { stepItems()[2]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    const back = canvasProps.images.at(-1) as unknown as { bitmap: ImageBitmap }
+    expect(back.bitmap).toBe(decodedBitmaps[1])
+  })
+
+  it('★ 从旧步骤再生成 → 后面的步骤和那一段对话一起被切；**刚说的那句话留着**', async () => {
+    await twoVersions()
+    await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    await say('换个方向')
+
+    // 新的一条是从**原图**改的
+    const last = vi.mocked(api.postEdit).mock.calls.at(-1)![0] as { imageDataUrl: string }
+    expect(last.imageDataUrl).toContain('MODEL:upload')
+
+    // ★ 旧未来那一段对话没了（连用户当时说的话一起收）
+    expect(bubbleTexts()).not.toContain('先改一次')
+    expect(bubbleTexts()).not.toContain('再改一次')
+    // ★ 但**刚说的这句**必须活着 —— 一刀切 `> stepId` 会把它的 id 也切掉
+    expect(bubbleTexts()).toContain('换个方向')
+
+    // 步骤：原图 + 新那一步
+    expect(stepItems()).toHaveLength(2)
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+  })
+
+  it('★ 从旧步骤生成**失败** → 后面的步骤一个不少（切只发生在成功之后）', async () => {
+    await twoVersions()
+    await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    vi.mocked(api.postEdit).mockRejectedValue(
+      new api.ApiError('UPSTREAM_FAILED', 'AI 服务暂时没响应，再试一次'))
+    await say('换个方向')
+
+    expect(lastReply()).toContain('再试一次')      // 失败要说话
+    expect(stepItems()).toHaveLength(3)            // ★ 后面的没陪葬
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(3)
+  })
+})

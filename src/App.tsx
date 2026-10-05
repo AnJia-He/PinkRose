@@ -32,7 +32,7 @@ import { applyDeltas, clampAdjustments, ZERO, type Adjustments } from '../shared
 import { canShareImage, downloadImage } from './export/save'
 import { prepareForRouting } from './image/prepare'
 import { ApiError, isUnauthorized, postRoute } from './api/client'
-import { bitmapsToClose, attachThumb, cutAfter, type Snapshot } from './core/history'
+import { bitmapsToClose, attachThumb, type Snapshot } from './core/history'
 import { GALLERY_THUMB_MAX_SIDE, THUMB_MAX_SIDE, bitmapToDataUrl, makeThumbnail } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
 import { useDelivery } from './app/useDelivery'
@@ -143,7 +143,16 @@ function closeBitmaps(imgs: readonly DecodedImage[]): void {
  *   点过一次也还在（marker 非空），否则用户点歪了就没法换个地方再点 ——
  *   见 onPickPoint。
  */
-type PendingMark = { text: string; marker: NormPoint | null }
+type PendingMark = {
+  text: string
+  marker: NormPoint | null
+  /**
+   * ★ 2026-10-05：**本条指令的第一条消息**（send / 卡片插进去的那条用户消息）。
+   * 切口切对话时"从它起保留"（设计 §4.3）—— 不带着它，点选那条路
+   * （点「就改这里」才生成）就没有"现在"和"过去"的分界，会把用户刚说的话切掉。
+   */
+  keepFrom: number
+}
 
 export default function App() {
   /** 当前登录的人。null = 没登录（或者还在问后端）。 */
@@ -257,11 +266,31 @@ export default function App() {
   /** 图上点选那一整条流程的状态（见 PendingMark）。null = 没在等用户点。 */
   const [pending, setPending] = useState<PendingMark | null>(null)
 
-  // 下面三样**从 `pending` 推出来**，不再各自是一个 state —— 推出来的东西不可能
+  /**
+   * ★ 2026-10-05：**现在站在哪一步**（步骤 id = 那条助手消息的 id，老约定）。
+   *
+   * 「回到这一步」只动它、不再截断 history（设计 §3）—— 被跳过的步骤留在
+   * history 里，图/按钮都还在，随时能再点回去。
+   *
+   * 不变量：有照片 ⇒ history 非空 ⇒ 它不是 null 且指向 history 里真存在的一步。
+   * 赋值点**全表**（少一处就是"你在这里"标错地方 / 切口切错位置，两种都不报错）：
+   *   · 上传建原图那一步 → welcomeId（`onPick`）
+   *   · 一次生成成功推入新步 → messageId（`useGeneration` 的 `runGenerate`）
+   *   · 跳转 → 目标 id（`onJump`）
+   *   · 恢复会话 → 最后一步 id（`loadSession`）
+   *   · 归零（换照片 / 删会话 / 新的一张）→ null（`resetEditor`）
+   *
+   * ⚠️ 必须是 useState 不能是 ref：它喂给「你在这里」和两条确认条，ref 变了
+   *   不重渲染（`sessionId` 当初踩过同一个坑）。
+   */
+  const [cursorId, setCursorId] = useState<number | null>(null)
+
+  // 下面四样**从 `pending` 推出来**，不再各自是一个 state —— 推出来的东西不可能
   // 互相不同步，这正是折成一个对象的意义。名字保留，读代码时不必重新认路。
   const picking = pending !== null
   const marker = pending?.marker ?? null
   const pendingText = pending?.text ?? null
+  const pendingKeepFrom = pending?.keepFrom ?? null   // ★ 见 PendingMark
 
   /** 这一趟修图（同一张上传的照片）里，上一次存进去的是哪个。
    *  **换图时清零** —— 它记的是"这张照片"，换一张就该重新问（§3.4）。 */
@@ -777,6 +806,9 @@ export default function App() {
       //   —— 漏了它，`lut` 会变成 `undefined` 而不是 null，后面每一处 `lut?.lutId`
       //   都还是安全的，但**类型上已经不是 `LutRef | null` 了**，别让它在状态里过夜。
       setLut(lastStep.lut ?? null)
+      // ★ 2026-10-05：恢复出来人站在**最新一步**（和 `setImage(lastStep.base)`
+      //   是同一件事的两面）。"站的位置"不落盘（设计 §9）：刷新后回到最新。
+      setCursorId(lastStep.id)
       setMessages(detail.messages)
       // ★ 走 `setCurrentSession` 那道门（影子和 state 一起改，见它的注释）——
       // 这行在 'open' 那趟里改的正是"现在人站在哪条会话上"，而落盘的应答
@@ -898,6 +930,9 @@ export default function App() {
    * 而且是静默的"那一条）。传进去的 `baseSeqRef` / `pendingRef` / `idRef`
    * 都是 ref（身份稳定），所以原来写 `[]` 的那几条依旧写 `[]`。
    */
+  // ★ 2026-10-05：最新一步的 id —— `applyDecision` 判"要不要先问一句"用它。
+  const tipId = history.length > 0 ? history[history.length - 1]!.id : null
+
   const { say, runGenerate, stopGeneration, applyDecision, loadCards, nextId } =
     useGeneration({
       image, setImage, params, setParams, lut,
@@ -906,6 +941,7 @@ export default function App() {
       setLut, luts: lutsApi.luts,
       baseSeqRef, idRef, setBusy, setUser, noticeBad,
       setCards, setPending, pendingRef, setMessages, setHistory,
+      cursorId, tipId, setCursorId,
     })
 
 
@@ -968,6 +1004,8 @@ export default function App() {
       setHistory([
         { id: welcomeId, label: '原图', base: img, params: ZERO, lut: null, isOriginal: true, thumb: '' },
       ])
+      // ★ 2026-10-05：位置从"原图那一步"开始 —— 原图挂在欢迎语那条消息上。
+      setCursorId(welcomeId)
 
       // 卡片是**可选件，绝不能让用户等它**：这里只把它挂到后台去跑，
       // 发送键立刻就是可用的（见 SUGGEST_WAIT_MS 那段）。
@@ -1049,6 +1087,7 @@ export default function App() {
     closeBitmaps(bitmapsToClose(history, []))
     setImage(null)
     setHistory([])
+    setCursorId(null)
     setMessages([])
     setCards([])
     setParams(ZERO)
@@ -1223,7 +1262,10 @@ export default function App() {
     // 不清的话，他改完别的再回头点一下「就改这里」，会把**已经不作数的那件事**
     // 花掉一次生成的钱（12,900 tokens），而且用的是他当时点的那张图。
     setPending(null)
-    setMessages(m => [...m, { id: nextId(), role: 'user', text }])
+    // ★ 2026-10-05：id 要留着 —— 它是"本条指令的第一条消息"（切口切对话时
+    //   从它起保留，设计 §4.3）。原来的内联 `nextId()` 拿不到它。
+    const uid = nextId()
+    setMessages(m => [...m, { id: uid, role: 'user', text }])
     setCards([])
     setBusy('正在看照片…')
     try {
@@ -1239,7 +1281,7 @@ export default function App() {
         luts: lutsApi.luts.map((l) => ({ id: l.id, name: l.name })),
         lut,
       })
-      await applyDecision(decision)
+      await applyDecision(decision, uid)
     } catch (e) {
       console.error(e)
       // 同上：票失效不是"出了点问题"，是"你得再登录一次"——而这句话只有在
@@ -1267,7 +1309,10 @@ export default function App() {
     // 再点那条「就改这里」，会把**已经被取代的那件事**又花一次（12,900 tokens），
     // 而且用的是旧标记 + 旧话。
     setPending(null)
-    setMessages(m => [...m, { id: nextId(), role: 'user', text: card.label }])
+    // ★ 2026-10-05：和 send 一样 —— `uid` 是"本条指令的第一条消息"（切口靠它
+    //   划出"现在"和"过去"）。
+    const uid = nextId()
+    setMessages(m => [...m, { id: uid, role: 'user', text: card.label }])
     setCards([])
 
     // 纯参数卡片：deltas 是上传时就算好的，**零延迟、零 API 成本**。
@@ -1294,7 +1339,7 @@ export default function App() {
       // ★ 2026-10-05（滤镜 T11）：卡片不碰滤镜（`SuggestCard` 里没有这个字段，
       //   今天推荐卡片只说调色和结构性改动）—— 新增字段就要在这里表态。
       lut: null,
-    })
+    }, uid)
   }, [busy, applyDecision, say])
 
   /** 用户在图上点了一下（画布已经把屏幕坐标换算成 0~1 了）。 */
@@ -1322,7 +1367,7 @@ export default function App() {
     // （见 onCard 里的清理）。没有它，两份 postEdit 会并发跑起来，
     // 两轮 setHistory / bitmap.close() 的记账也跟着并发。
     if (busy) return
-    if (!marker || !pendingText || !image) return
+    if (!marker || !pendingText || !pendingKeepFrom || !image || cursorId === null) return
     const text = pendingText
     setPending(null)
     // ★ 先说话、**拿这条消息的 id**，再拿它去调 runGenerate。
@@ -1340,29 +1385,28 @@ export default function App() {
       const marked = markImage(image.bitmap, marker)
       // ★ 2026-10-05（滤镜）：传**当下**的 `lut`（这条路就是"此刻这张照片"，
       //   没有跳转，和 `params` 一样）。⚠️ 因此 `lut` 必须进下面那个依赖数组。
-      await runGenerate(text, mid, params, lut, marked)
+      await runGenerate(text, mid, params, lut, marked,
+        { stepId: cursorId, keepFromMsg: pendingKeepFrom })
     } catch (e) {
       console.error(e)
       say('这一步没成功，再试一次？')
     }
-  }, [busy, marker, pendingText, image, params, lut, runGenerate, say])
+  }, [busy, marker, pendingText, pendingKeepFrom, image, cursorId, params, lut, runGenerate, say])
 
   const onJump = useCallback((id: number) => {
     const target = history.find(s => s.id === id)
     if (!target) return
     // ★ 「回到这一步」也是"改主意了"：上一条歧义就此翻篇 —— 和 send / onCard
     //   里那几行同一个道理，所以用同一个 cancelPick。
-    //   这条路径**不需要任何竞态**就够得到：「回到这一步」和缩略图是全仓唯二
-    //   没有 busy 闸门的控件，而点选期间 busy 恰好是空的（模型说完"拿不准"
-    //   就收工了）。不清的话：点选期间跳走 → 确认条和红圈都还在 → 点「就改这里」
-    //   → confirmMark 的四道守卫全过 → 把**旧标记**画在**换过的底图**上、
-    //   配旧那句话，然后扣一次生成的钱。
+    //   （原来的那两条竞态理由照旧成立，见 git 历史。）
     cancelPick()
-    setHistory(prev => {
-      const next = cutAfter(prev, id)
-      closeBitmaps(bitmapsToClose(prev, next, { protectOriginal: true }))
-      return next
-    })
+    // ★ 2026-10-05：「回到这一步」**不再删后面的步骤**（用户原话：「用户点击回到
+    //   这一步后，应该保留更改的那一步」）。它只做一件事：移动"现在站在哪一步"。
+    //   被跳过的步骤留在 history 里 —— 图、小图、两颗按钮都还在，随时能再点回去；
+    //   它们的位图也不再提前释放（那是"还能再回去"的本钱）。
+    //   真正会切掉后面的只有一条路：**从这个位置再生成**（`runGenerate` 的
+    //   `origin`，设计 §4）—— 而且那一步会先问一句。
+    setCursorId(id)
     setImage(target.base)
     // 参数也回到那一步。只还原 base 会让画面和滑块对不上，
     // 用户看到的和面板里显示的是两回事。
@@ -1410,7 +1454,8 @@ export default function App() {
     //   —— `runGenerate` 直接读闭包的话，新那一步会记成**跳转前**的滤镜，
     //   而画面（跳转后）是另一回事：和刚修掉的"小图 vs 主画面"是同一种不一致，
     //   只是走「再来一版」这条窄路。`params` 一直是显式传参才躲过了这一条。
-    void runGenerate(target.prompt, mid, target.params, target.lut, target.base.bitmap)
+    void runGenerate(target.prompt, mid, target.params, target.lut, target.base.bitmap,
+      { stepId: id, keepFromMsg: mid })
   }, [busy, history, onJump, say, runGenerate])
 
 
