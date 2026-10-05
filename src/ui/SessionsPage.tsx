@@ -68,9 +68,9 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
    * 进去的路只有一条：某行菜单里的【多选】。
    */
   const [selecting, setSelecting] = useState(false)
-  /** 勾了哪几段。**出去就清空**；部分失败时剩下的就是"还没删掉的那些"。 */
+  /** 勾了哪几条。**出去就清空**；部分失败时剩下的就是"还没删掉的那些"。 */
   const [selectedIds, setSelectedIds] = useState<number[]>([])
-  /** 批量删除的**就地确认**开着没有（删前一律先问 —— 一段会话比一句话重得多）。 */
+  /** 批量删除的**就地确认**开着没有（删前一律先问 —— 一条会话比一句话重得多）。 */
   const [confirmAsk, setConfirmAsk] = useState(false)
   /** 批删的循环正在跑（逐条 await）。跑着的时候按钮全禁用 —— 防连点。 */
   const [deleting, setDeleting] = useState(false)
@@ -81,7 +81,7 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
     setSelectedIds([])
     setConfirmAsk(false)
   }
-  /** 勾 / 取消勾一段（勾选框、整行两个入口都走它）。 */
+  /** 勾 / 取消勾一条（勾选框、整行两个入口都走它）。 */
   function togglePick(id: number) {
     setSelectedIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])
   }
@@ -91,7 +91,7 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
    * 同一个接口，删目录 / 连着缩略图一起收拾那套它自己会做）。
    *
    * ⚠️ **部分失败不清场**：删成功的当场从名单里拿掉，没删掉的**留在列表和勾里**，
-   *   上面加一句"有 N 段没删掉"—— 用户直接再点一次【删除】就是重试。
+   *   上面加一句"有 N 条没删掉"—— 用户直接再点一次【删除】就是重试。
    *   全军覆没装作没事、或"没删掉却装作删掉了"，都是这个项目最恨的那类失败
    *   （错了不报错，只是悄悄丢东西）。
    */
@@ -114,7 +114,7 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
     }
     setDeleting(false)
     if (failed.length > 0) {
-      setDelFailed(`有 ${failed.length} 段没删掉，再试一次？`)
+      setDelFailed(`有 ${failed.length} 条没删掉，再试一次？`)
       return
     }
     exitSelect()
@@ -328,14 +328,14 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
       {/* ★ 2026-10-06 下午：**选择模式底下那条操作条**。它是滚动区的最后一个
           孩子 + `position: sticky; bottom: 0` —— 不管滚到哪儿它都吸在视野底下
           （勾了一段滚下去找按钮的事不该发生），滚到底就归位。
-          两副面孔：平时「已选 N 段 ｜ 删除 ｜ 取消」；点【删除】之后就地问一句
+          两副面孔：平时「已选 N 条 ｜ 删除 ｜ 取消」；点【删除】之后就地问一句
           （全站"不弹窗"的规矩，和对话区那条 `.chat-select` 同一套）。 */}
       {selecting && (
         <div className="sessions-select">
           {confirmAsk ? (
             <>
               <span className="sessions-select-note">
-                {`删掉选中的 ${selectedIds.length} 段？删了就找不回来了。`}
+                {`删掉选中的 ${selectedIds.length} 条？删了就找不回来了。`}
               </span>
               {/* 两颗里只有「确认删除」穿危险色（文案短、长得像，颜色是唯一
                   还分得开的地方 —— 和 `.session-del.danger` 同一条规矩）。 */}
@@ -347,7 +347,7 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
             </>
           ) : (
             <>
-              <span className="sessions-select-count">{`已选 ${selectedIds.length} 段`}</span>
+              <span className="sessions-select-count">{`已选 ${selectedIds.length} 条`}</span>
               {/* 一段没勾 = 点了什么也不会发生 → 直接禁用（不留点了没反应的按钮） */}
               <button className="sessions-select-del"
                 disabled={deleting || selectedIds.length === 0}

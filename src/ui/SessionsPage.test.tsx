@@ -322,7 +322,7 @@ describe('对话列表', () => {
 // ── 多选批删（★ 2026-10-06 下午）────────────────────────────────────
 //
 // 他看过勾选框截图之后选的"两个都要"里的第二条路：菜单里的【多选】进"选择模式"
-// ——每行一个勾选框、点行 = 勾选、底下一条操作条「已选 N 段 ｜ 删除 ｜ 取消」。
+// ——每行一个勾选框、点行 = 勾选、底下一条操作条「已选 N 条 ｜ 删除 ｜ 取消」。
 // 删前一律先问一句（一段会话里挂着照片、每一步的快照 —— 比一句话重得多）。
 // 逐条调现成的 `deleteSession`（服务端零改动）；**部分失败不清场**：没删掉的
 // 留在列表和勾里，用户可以直接再点一次。
@@ -344,7 +344,7 @@ describe('多选批删', () => {
 
     expect(container.querySelectorAll('.session-pick')).toHaveLength(2)
     expect(container.querySelectorAll('.session-more')).toHaveLength(0)   // 「…」全收
-    expect(texts()).toContain('已选 0 段')
+    expect(texts()).toContain('已选 0 条')
     expect(btn('删除')!.disabled).toBe(true)     // 一段没勾 → 禁用（不留点了没用的按钮）
     expect(btn('取消')).not.toBeNull()
   })
@@ -356,12 +356,12 @@ describe('多选批删', () => {
 
     await click(boxOf('第 7 条'))
     expect(boxOf('第 7 条').checked).toBe(true)
-    expect(texts()).toContain('已选 1 段')
+    expect(texts()).toContain('已选 1 条')
     expect(btn('删除')!.disabled).toBe(false)
 
     await click(boxOf('第 7 条'))                  // 再点一下 = 取消
     expect(boxOf('第 7 条').checked).toBe(false)
-    expect(texts()).toContain('已选 0 段')
+    expect(texts()).toContain('已选 0 条')
 
     await click(rowOf('第 8 条')!.querySelector('.session-open'))   // 点行 = 勾
     expect(boxOf('第 8 条').checked).toBe(true)
@@ -388,11 +388,11 @@ describe('多选批删', () => {
     await click(rowOf('第 8 条')!.querySelector('.session-open'))
 
     await click(btn('删除'))
-    expect(texts()).toContain('删掉选中的 2 段？')
+    expect(texts()).toContain('删掉选中的 2 条？')
     expect(api.deleteSession).not.toHaveBeenCalled()
 
     await click(btn('算了'))
-    expect(texts()).toContain('已选 2 段')          // 退回操作条、勾还在
+    expect(texts()).toContain('已选 2 条')          // 退回操作条、勾还在
     expect(boxOf('第 7 条').checked).toBe(true)
     expect(boxOf('第 8 条').checked).toBe(true)
   })
@@ -416,7 +416,7 @@ describe('多选批删', () => {
     // 快照全靠这一声跟着走（单条那条已有的一整套）。
     expect(onDeleted).toHaveBeenCalledWith(7)
     expect(onDeleted).toHaveBeenCalledWith(8)
-    // 全删成功 → 选择模式自己收掉（留着一条"已选 0 段"的空条子才奇怪）
+    // 全删成功 → 选择模式自己收掉（留着一条"已选 0 条"的空条子才奇怪）
     expect(container.querySelector('.sessions-select')).toBeNull()
     expect(container.querySelectorAll('.session-pick')).toHaveLength(0)
   })
@@ -437,10 +437,10 @@ describe('多选批删', () => {
 
     expect(rowOf('第 7 条')).toBeNull()            // 删掉的当场走人
     expect(rowOf('第 8 条')).not.toBeNull()        // 没删掉的**不许装作删掉了**
-    expect(texts()).toContain('有 1 段没删掉')
+    expect(texts()).toContain('有 1 条没删掉')
     // 失败那条还勾着、还在选择模式里 —— 再点一次【删除】就是重试
     expect(boxOf('第 8 条').checked).toBe(true)
-    expect(texts()).toContain('已选 1 段')
+    expect(texts()).toContain('已选 1 条')
     // 那一声只喊**成功**的那条（喊错了 App 会把用户手上的活儿当别人的扔了）
     expect(onDeleted).toHaveBeenCalledTimes(1)
     expect(onDeleted).toHaveBeenCalledWith(7)
