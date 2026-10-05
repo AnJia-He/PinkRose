@@ -286,8 +286,11 @@ export default function App() {
    *
    * 三件事**一起**做，少一件都是"错了不报错"：
    *   · 清状态 —— 不清的话画面上还照着那个 cube 调色，而 cube 是缓存里那份；
-   *   · **把历史里那几步也清掉** —— 每一步的 `lut` 是**独立一份**（`Snapshot.lut`），
-   *     只清状态的话，下一次落盘会把那个**已经不存在的 id** 原样写回去；
+   *   · **把历史里那几步也清掉** —— 历史是本地的真相（画布、小图、跳回去都看它），
+   *     留着一个**已经不存在的 id** 在里头，就是让本地这份数据自己不自洽；
+   *     （⚠️ 服务端那边有 `resolveLutRef` 兜着，悬空 id 进不了库 —— 所以这条
+   *      **不是**在防"把死 id 写回服务端"，而是在防"客户端自己的 state 走岔了"。
+   *      2026-10-05 审查更正过一次：之前的注释把服务端那半说重了。）
    *   · 说一句 —— 用户眼前的照片少了一层颜色，不说就是悄悄改了他的图。
    */
   const dropGoneLut = useCallback((id: number) => {
@@ -1294,6 +1297,14 @@ export default function App() {
     // 参数也回到那一步。只还原 base 会让画面和滑块对不上，
     // 用户看到的和面板里显示的是两回事。
     setParams(target.params)
+    // ★ 2026-10-05（滤镜，审查 Important-2）：**滤镜也得跟着回**，和参数**对称**。
+    //   `Snapshot.lut` 是**按步**记的，而滤镜这一步做错了用户看得见两处：
+    //     · 每一步的小图是从**带滤镜的画面**上抓的（`makeThumbnail(canvas)`）——
+    //       不还原它，跳回去之后主画面和那条气泡上的小图对不上；
+    //     · 「原图」那一步永远是 `lut: null`，而「回到原图」却留着那层颜色 ——
+    //       那已经不是原图了。
+    //   ⚠️ 依赖数组不用动：`target` 来自 `history`，它本来就在里面。
+    setLut(target.lut)
   }, [history, cancelPick])
 
   /**
@@ -1371,12 +1382,15 @@ export default function App() {
     const changed = baseSeqRef.current !== lastPersistedBaseSeqRef.current
     const snapshot = history.map((s) => ({
       id: s.id, label: s.label, params: s.params, prompt: s.prompt, at: 0,
-      // ★ 2026-10-05（滤镜）：**每一步各自的** `lut` 也得跟着上路。
-      //   ⚠️ 不写这一行的后果是**静默丢东西**：服务端 `mergeSteps` 是按 id 把
-      //   客户端送来的这几步**整条替换**库里那几步的（它自己那一侧写着
-      //   `lut: normalizeLutRef(o.lut)`，就是等着收这一份）—— 缺了它，
-      //   中间那几步的滤镜每次落盘都被悄悄抹成"没有"，而屏幕上什么都不说。
-      //   （`patch.lut` 只管**最后一步**，和 `params` 一样 —— 两个都要。）
+      // ★ 2026-10-05（滤镜）：每一步各自的 `lut` 也按 `SessionStep` 的形状带上。
+      //   ⚠️ **今天它是无效载荷**（2026-10-05 审查更正 —— 之前这里写的是反的）：
+      //   服务端 `mergeSteps` 对**库里已有的 id** 是 `if (old) { out.push(old); continue }`
+      //   —— 原样保留库里那条，payload 里这一步的 params / prompt / lut 一个字都
+      //   不采纳；真正从 payload 构造的只有**新步骤**，而新步骤紧接着又被顶层
+      //   `patch.lut`（`handleUpdateSession` 里、在 mergeSteps **之后**）盖成当前滤镜。
+      //   留着它的理由：这是线上的**形状**（`SessionStep.lut` 是协议的一部分），
+      //   哪天服务端改成"客户端赢"或这里多出"一次 PUT 带好几个新步骤"的走法，
+      //   少这一个字段就会静默丢滤镜。**别因为"今天没人看"把它删掉。**
       lut: s.lut,
     }))
     // ⚠️ `ChatMessage` 上**没有 `at`**（这个客户端不显示消息时间），而

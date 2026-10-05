@@ -5304,9 +5304,13 @@ describe('滤镜', () => {
     const range = lutSection().querySelector('input[type="range"]') as HTMLInputElement
     expect(range.value).toBe('80')
 
-    // 接回来不算完：这一版落盘时，**那一步的 `lut` 也要原样跟着上路** ——
-    // 服务端 `mergeSteps` 是按 id 把客户端送来的每一步**整条替换**库里那一步的，
-    // 少写这一个字段 = 每次落盘都把历史里那几步的滤镜悄悄抹掉（它那边什么都不说）。
+    // 接回来不算完：这一版落盘时，**那一步的 `lut` 也要按 `SessionStep` 的形状
+    // 跟着上路**（它就是线上那一份形状）。
+    // ⚠️ 别把它读成"服务端靠它存滤镜"：`server/sessions.ts` 的 `mergeSteps` 对
+    // **库里已有的 id** 是 `if (old) { out.push(old); continue }` —— 原样保留库里
+    // 那条、客户端送来的这一步一个字都不采纳（2026-10-05 审查更正过一次）。
+    // 这条断言守的是**载荷形状**：形状里少一个字段，哪天服务端改成"客户端赢"、
+    // 或者一次 PUT 带好几个新步骤，就是静默丢滤镜（今天它顶多是白送一个没人看的字段）。
     // 变异：`snapshot` 那个映射里去掉 `lut:` → 这一句红。
     await waitPersist()
     expect((lastPutBody().steps.at(-1) as { lut?: unknown }).lut)
@@ -5329,6 +5333,33 @@ describe('滤镜', () => {
     await goNav('调色')
     await openLutPanel()
 
+    expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('★ 「回到这一步」跟着那一步把滤镜也还原（和参数对称）', async () => {
+    // 2026-10-05 审查 Important-2：`params` 在 `onJump` 里是还原的，滤镜一开始没有 ——
+    // 用户看得见两处对不上：① 每个气泡上的小图是**从带滤镜的画面上**抓的，跳回去
+    // 之后主画面和那张小图不一致；② 「原图」那一步永远是 `lut: null`，而「回到原图」
+    // 却留着那层颜色 —— 那已经不是原图了。
+    // 变异：`onJump` 里去掉 `setLut(target.lut)` → 下面最后两句红。
+    const s = makeSession(7, 3, '上次那句', 'S7')
+    s.steps[s.steps.length - 1]!.lut = { lutId: 1, amount: 80 }
+    withSessions([s])
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+
+    await renderApp()
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')   // 前提：在用
+
+    // 「回到这一步」那排按钮在**对话区**（只有修图那一屏有）
+    await goNav('修图')
+    const jumps = container.querySelectorAll('.bubble-jump')
+    await click(jumps[0] as HTMLButtonElement)          // 第 0 个 = 原图那一步
+
+    await goNav('调色')
+    await openLutPanel()
     expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
   })

@@ -122,11 +122,21 @@ export default function Canvas({
 
   // ③ 换图后、以及拖滑块时，都只更新 uniform 重绘一次。
   //    不碰纹理、不碰画布尺寸（spec §5.2：拖滑块只更新 uniform → 60fps）。
+  //
+  //    ⚠️ **`lutCube` 也必须在依赖里**（2026-10-05 审查 Critical）：
+  //    `setLut` 只上传纹理、记下 `lutOn`，**它自己一帧都不画**（`drawArrays`
+  //    只在 `render` 里）。而这个 cube 是**异步**到手的（`useLuts` 里那条
+  //    "取它的 cube"要过一次网络 + 解析）：那条路走完时，变的**只有 `lutCube`**。
+  //    依赖里没它的话这条 effect 一次都不跑，画布就停在"还没滤镜"那一帧：
+  //    用户眼前"选了滤镜没反应"，得去拖任何一根滑块才会突然出现，**全程不报错**。
+  //    换滤镜（强度不变）和 F5 恢复会话是同一条路。
+  //    ⚠️ 这是**渲染**那条 effect，和上面那条 `setLut` 的依赖是两件事、别抄错：
+  //    上面只能有 `[lutCube, report]`（amount 进去就是每帧重传 1MB 纹理）。
   useEffect(() => {
     const pipe = pipeRef.current
     if (!pipe || !image) return
     pipe.render(params, lutAmount)
-  }, [image, params, lutAmount])
+  }, [image, params, lutAmount, lutCube])
 
   /**
    * 量出**画布**相对 wrapper 的盒子。红圈的定位基准就是这个，不是 wrapper。
