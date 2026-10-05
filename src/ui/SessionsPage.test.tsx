@@ -146,6 +146,27 @@ const rowOf = (name: string) =>
     .find((r) => namesIn(r).includes(name)) ?? null
 const texts = () => container.textContent ?? ''
 
+/**
+ * 某一行末尾那颗「…」（★ 2026-10-06 下午：行操作收进了菜单）。
+ * ⚠️ 图标键 —— 只能按类名找（和左栏「个人设置」那颗同一条规矩）。
+ */
+function moreIn(row: Element): HTMLButtonElement {
+  const el = row.querySelector('.session-more')
+  if (!el) throw new Error('这一行上没有「…」')
+  return el as HTMLButtonElement
+}
+/** 一行和它下面可能开着的菜单是**一对**：菜单挂在同一个块里、是行的兄弟。 */
+function blockOf(name: string): HTMLElement {
+  const r = rowOf(name)
+  if (!r) throw new Error(`没有「${name}」这一行`)
+  return r.parentElement as HTMLElement
+}
+/** 「…」→ 菜单里点某一项（改名 / 删除）—— 行操作现在都要**先点开菜单**。 */
+async function viaMenu(name: string, item: string) {
+  await click(moreIn(rowOf(name)!))
+  await click(inPart(blockOf(name), item))
+}
+
 // ── 测试 ───────────────────────────────────────────────────────────
 
 describe('对话列表', () => {
@@ -179,9 +200,11 @@ describe('对话列表', () => {
     const confirmSpy = vi.spyOn(window, 'confirm')
     await show()
 
-    await click(inPart(rowOf('第 7 条')!, '删除'))
-    // 问在**原处**：那一行里冒出「删掉这条？」，而不是浏览器那个模态框
+    await viaMenu('第 7 条', '删除')
+    // 问在**原处**：那一行里冒出「删掉这条？」，而不是浏览器那个模态框；
+    // 而且菜单**自己收掉了**（点完【删除】它就该走，别挂着）
     expect(texts()).toContain('删掉这条？')
+    expect(inPart(blockOf('第 7 条'), '删除')).toBeNull()
     expect(confirmSpy).not.toHaveBeenCalled()
     // 还没答话，谁也不许删
     expect(api.deleteSession).not.toHaveBeenCalled()
@@ -192,7 +215,7 @@ describe('对话列表', () => {
     expect(rowOf('第 7 条')).not.toBeNull()
 
     // 再来一次，这回认了
-    await click(inPart(rowOf('第 7 条')!, '删除'))
+    await viaMenu('第 7 条', '删除')
     await click(inPart(rowOf('第 7 条')!, '删掉'))
     expect(api.deleteSession).toHaveBeenCalledWith(7)
     // 那一行当场走人（等下次刷新才消失的话，用户会以为没删掉）
@@ -251,7 +274,7 @@ describe('对话列表', () => {
     deleteFailed = new Error('没删掉，再试一次？')
     await show()
 
-    await click(inPart(rowOf('那条删不掉的')!, '删除'))
+    await viaMenu('那条删不掉的', '删除')
     await click(inPart(rowOf('那条删不掉的')!, '删掉'))
 
     expect(api.deleteSession).toHaveBeenCalledWith(7)
@@ -265,6 +288,34 @@ describe('对话列表', () => {
     expect(onDeleted).not.toHaveBeenCalled()
     // 变异：删失败也往 `failed` 那个状态上写 → 最后两条红；
     // 把 `onDeleted` 挪到 `await` 前面（或者 try 外面）→ 这一条红。
+  })
+  it('★ 行操作收进「…」菜单：点开有【改名】【删除】；再点一下收起；一次只开一条', async () => {
+    // ★ 2026-10-06 下午（用户原话：「我看豆包是这种做法，放个这个图标在每段
+    //   对话的最后，点击这个符号后里面有删除选项」）—— 说的就是这一页：
+    //   原来行尾并排两颗裸按钮（改名 / 删除），现在收进一颗「…」里。
+    rows = [ses(7), ses(8)]
+    await show()
+
+    // 平时：整页没有裸的「改名」「删除」按钮，只有每行末尾那颗「…」
+    expect(btn('改名')).toBeNull()
+    expect(btn('删除')).toBeNull()
+    expect(container.querySelectorAll('.session-more')).toHaveLength(2)
+
+    // 点开：菜单里就是那两项（【删除】在菜单里也还叫「删除」）
+    await click(moreIn(rowOf('第 7 条')!))
+    expect(inPart(blockOf('第 7 条'), '改名')).not.toBeNull()
+    expect(inPart(blockOf('第 7 条'), '删除')).not.toBeNull()
+
+    // 再点一下「…」→ 收起（和对话区那颗同一个开关逻辑）
+    await click(moreIn(rowOf('第 7 条')!))
+    expect(inPart(blockOf('第 7 条'), '改名')).toBeNull()
+
+    // 开 A、再开 B：只剩 B 的菜单（一次一条 —— 两条菜单并排挂着的话，
+    // 点「删除」删的是哪一条会变得要猜）
+    await click(moreIn(rowOf('第 7 条')!))
+    await click(moreIn(rowOf('第 8 条')!))
+    expect(inPart(blockOf('第 7 条'), '改名')).toBeNull()
+    expect(inPart(blockOf('第 8 条'), '改名')).not.toBeNull()
   })
 })
 
@@ -280,7 +331,7 @@ describe('改名', () => {
     rows = [ses(7)]
     await show()
 
-    await click(inPart(rowOf('第 7 条')!, '改名'))
+    await viaMenu('第 7 条', '改名')
     const box = container.querySelector('.session-rename') as HTMLInputElement | null
     expect(box).toBeTruthy()             // 没进编辑态的话下面会崩得看不懂
     expect(box!.value).toBe('第 7 条')    // 预填的是**当前显示名**
@@ -305,7 +356,7 @@ describe('改名', () => {
   it('名字没变 → 一个字都不发（别拿一趟白请求去顶那一行的位置）', async () => {
     rows = [ses(7)]
     await show()
-    await click(inPart(rowOf('第 7 条')!, '改名'))
+    await viaMenu('第 7 条', '改名')
     // 什么都不改，直接回车
     await act(async () => {
       container.querySelector('.session-rename')!.dispatchEvent(
@@ -320,7 +371,7 @@ describe('改名', () => {
   it('Esc 取消：退出编辑态，名字原样', async () => {
     rows = [ses(7)]
     await show()
-    await click(inPart(rowOf('第 7 条')!, '改名'))
+    await viaMenu('第 7 条', '改名')
     const box = container.querySelector('.session-rename') as HTMLInputElement
     box.value = '改了一半不想要了'
     await act(async () => {
@@ -337,7 +388,7 @@ describe('改名', () => {
     // 中文产品的改名框，这是主路径不是边角。
     rows = [ses(7)]
     await show()
-    await click(inPart(rowOf('第 7 条')!, '改名'))
+    await viaMenu('第 7 条', '改名')
     const box = container.querySelector('.session-rename') as HTMLInputElement
     box.value = '海'
     await act(async () => {
@@ -355,7 +406,7 @@ describe('改名', () => {
     // "回退"两个字无从谈起
     expect(names()).toEqual(['第 7 条'])
 
-    await click(inPart(rowOf('第 7 条')!, '改名'))
+    await viaMenu('第 7 条', '改名')
     const box = container.querySelector('.session-rename') as HTMLInputElement
     box.value = ''
     await act(async () => {
@@ -370,7 +421,7 @@ describe('改名', () => {
   it('点走（blur）也保存 —— 和回车是同一套手势', async () => {
     rows = [ses(7)]
     await show()
-    await click(inPart(rowOf('第 7 条')!, '改名'))
+    await viaMenu('第 7 条', '改名')
     const box = container.querySelector('.session-rename') as HTMLInputElement
     box.value = '海边那张'
     // ⚠️ React 17 起 `onBlur` 走的是原生的 **focusout**（它才冒泡），派 `blur`
@@ -387,7 +438,7 @@ describe('改名', () => {
     rows = [ses(7)]
     renameFail = new Error('没改成，再试一次')
     await show()
-    await click(inPart(rowOf('第 7 条')!, '改名'))
+    await viaMenu('第 7 条', '改名')
     const box = container.querySelector('.session-rename') as HTMLInputElement
     box.value = '新名字'
     await act(async () => {

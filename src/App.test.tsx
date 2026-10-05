@@ -5417,7 +5417,14 @@ describe('恢复：打开就接着上次那条', () => {
     expect(texts).not.toContain('S7第 0 步')
   })
 
-  /** 列表上把某一条删掉：先点行尾那颗「删除」，再点确认条上的「删掉」。 */
+  /**
+   * 列表上把某一条删掉：先点行尾那颗「…」，再点菜单里的「删除」，最后点确认条
+   * 上的「删掉」。
+   *
+   * ★ 2026-10-06 下午：行操作收进了「…」菜单（用户要的豆包式）—— 原来常驻的
+   *   「删除」按钮没有了。⚠️ 「…」是图标键（没有可见文字）只能按类名找；菜单
+   *   是行的**兄弟节点**，得从行外面（它的父元素）找。
+   */
   async function deleteRow(name: string) {
     const row = [...container.querySelectorAll('.session-row')].find(
       r => (r.textContent ?? '').includes(name))
@@ -5428,7 +5435,13 @@ describe('恢复：打开就接着上次那条', () => {
       expect(b).toBeTruthy()
       await act(async () => { b!.click(); await new Promise(r => setTimeout(r, 0)) })
     }
-    await hit('删除')
+    const step = async (el: Element | null | undefined) => {
+      expect(el, '会话行上没有「…」或菜单里没有【删除】').toBeTruthy()
+      await act(async () => { (el as HTMLButtonElement).click(); await new Promise(r => setTimeout(r, 0)) })
+    }
+    await step(row!.querySelector('.session-more'))
+    await step([...(row!.parentElement ?? row!).querySelectorAll('button')].find(
+      x => (x.textContent ?? '').trim() === '删除'))
     await hit('删掉')
   }
 

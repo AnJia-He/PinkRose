@@ -1358,6 +1358,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    ⚠️ hover 这条要把颜色**再写一遍**：全局那条 `button:where(:hover)` 也在改底色。 */
 .msg-menu-del { color: var(--danger); }
 .msg-menu-del:hover:not(:disabled) { color: var(--danger); border-color: transparent; background: var(--danger-bg); }
+/* 【多选】的悬停。⚠️ 必须自己写：上面 `.msg-menu button` 那条 (0,1,1) 把
+   `background: transparent` 定死了，压得过全局 `button:where(:hover)` 的 (0,0,1)
+   —— 不写的话鼠标停上去一点动静都没有。 */
+.msg-menu-pick:hover:not(:disabled) { color: var(--text); background: var(--hover); }
 
 /* ★ 2026-10-06 下午：选择模式里那条消息旁的**勾选框**（多选批删）。
    用**系统原生**那款 —— 用户给的那张截图里就是它（蓝勾、圆角方框），
@@ -2022,29 +2026,66 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .session-steps { flex: none; font-size: 12px; color: var(--muted); }
 
-/* 删除：一行里最不常按的一颗，所以长得最轻（默认就是裸按钮，悬停才现出形状）。 */
+/* 删除（**只在就地确认那一档里** —— ★ 2026-10-06 下午起，常态里的「删除」收进
+   了「…」菜单，见下面 `.session-more` 那条）。
+   ⚠️ 确认态里那两颗只有「删掉」是危险的，取消跟着一起变红就等于没区分
+   （这两颗按错一次东西就没了，颜色是唯一还分得开的地方）。 */
 .session-del {
   flex: none; padding: var(--sp-1) var(--sp-2);
   font-size: 12px; color: var(--muted);
   background: none; border-color: transparent;
 }
-/* 悬停才现出形状 —— 这一条**只在没进确认态的行里**：
-   确认态那两颗按钮里只有「删掉」是危险的，取消跟着一起变红就等于没区分
-   （这两颗按错一次东西就没了，颜色是唯一还分得开的地方）。 */
-.session-row:not(.confirming) .session-del:hover:not(:disabled) { color: var(--danger); border-color: var(--line-2); }
 /* 确认态里「取消」的悬停：只给形状，不给危险色 */
 .session-row.confirming .session-del:not(.danger):hover:not(:disabled) { color: var(--text); border-color: var(--line-2); }
 
-/* 行尾的中性操作（「改名」）——和「删除」同一副骨架，只有悬停不同色：
-   「删除」悬停变红（它危险），它只给形状。
-   ⚠️ 加行内按钮时**别顺手挂 `.session-del` 的类**：上面那条 `:not(.confirming)`
-   会把悬停染红 —— 一颗「改名」按钮上一抹红，用户以为点下去要出事。 */
-.session-act {
-  flex: none; padding: var(--sp-1) var(--sp-2);
-  font-size: 12px; color: var(--muted);
+/* ★ 2026-10-06 下午：**行尾那一颗「…」** —— 原来并排的「改名」「删除」两颗裸
+   按钮收进了它点开的菜单（用户原话：「我看豆包是这种做法，放个这个图标在每段
+   对话的最后，点击这个符号后里面有删除选项」）。
+   长相照 `.session-del` 那份最轻的：平时裸的、悬停才现形状（它也是一行里最不常
+   按的一颗，不该跟名字抢眼）；多出来的只有"开着的时候点亮"。 */
+.session-more {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--muted);
   background: none; border-color: transparent;
 }
-.session-act:hover:not(:disabled) { color: var(--text); border-color: var(--line-2); }
+.session-more:hover:not(:disabled) { color: var(--text); border-color: var(--line-2); }
+/* 菜单开着时点亮（和对话区那颗 `.msg-more` 同一条语言：开着的东西要有记号）。
+   ⚠️ 这一条和上面那条特异性打平（都是 0-2-0），靠文件顺序分胜负 —— 点亮在后。 */
+.session-more[aria-expanded="true"] { color: var(--text); border-color: var(--line-2); background: var(--hover); }
+
+/* 那一行的「开着」相：跟着亮一下（不然菜单飘在下面、行还是灰的）。
+   下边距收一档，把那截空让给菜单。 */
+.session-row.menu-open {
+  border-color: var(--line-3); background: var(--raised);
+  margin-bottom: var(--sp-1);
+}
+
+/* ★「…」点开的菜单（就地展开，不弹浮层 —— 全站规矩）。贴住它那一行的右下角
+   （「…」就在那儿）。
+   长相和对话区那条 `.msg-menu` **故意一样**（同一种"菜单"全站一张脸）；类名
+   不共用只是因为它俩挂在两处，改一边不该动另一边。 */
+.session-menu {
+  display: flex; flex-direction: column; align-items: stretch;
+  width: fit-content;
+  margin: 0 0 var(--sp-2) auto;
+  padding: var(--sp-1);
+  border: 1px solid var(--line-2); border-radius: var(--r-md);
+  background: var(--raised);
+}
+/* 菜单里的项：按掉全局 `button` 那副长相（`--raised` 底 + 描边 + 那份内边距）。
+   ⚠️ 这也意味着**悬停的样子得自己写**：`.session-menu button` 是 (0,1,1)，
+   压得过全局那条 `button:where(:hover)` 的 (0,0,1) —— 不写的话悬停什么都不发生。 */
+.session-menu button {
+  padding: 6px 14px; font-size: 12.5px; text-align: left;
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  background: transparent;
+}
+.session-menu-act:hover:not(:disabled) { color: var(--text); background: var(--hover); }
+/* 「删除」穿危险色 —— 菜单里的"删除"就该是这个颜色（豆包 / 微信都是这么干的），
+   和对话区那条菜单同一套语言，理由在那边的注释里写着。 */
+.session-menu-del { color: var(--danger); }
+.session-menu-del:hover:not(:disabled) { color: var(--danger); border-color: transparent; background: var(--danger-bg); }
 
 /* 改名编辑框 —— 照 `.rename-input`（作品详情页那颗）的**同一个语言**：底色
    `--bg`、边框 `--accent` + `--ring`（它一出现就 autoFocus、失焦即提交退出，

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { MoreHorizontal } from 'lucide-react'
 import { Btn } from './kit/Btn.tsx'
 import { listSessions, deleteSession, updateSession, sessionThumbUrl } from '../api/sessions'
 import { groupByDay } from '../../shared/works.ts'
@@ -51,6 +52,15 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
   const [renaming, setRenaming] = useState<number | null>(null)
   /** 改名失败。⚠️ 和 `delFailed` 同一套：列表上面加一句，**名单原样不动** */
   const [renameFailed, setRenameFailed] = useState<string | null>(null)
+  /**
+   * ★ 2026-10-06 下午：**哪一行的「…」菜单开着**（null = 都收着）。
+   *
+   * 用户原话：「我看豆包是这种做法，放个这个图标在每段对话的最后，点击这个
+   * 符号后里面有删除选项」—— 原来行尾并排两颗裸按钮（改名 / 删除），现在收进
+   * 这一条菜单里。一个数装全部状态 = 一次只开一条（两条菜单并排挂着的话，
+   * 点「删除」删的是哪一条会变得要猜）；再点一下「…」收起。
+   */
+  const [menuId, setMenuId] = useState<number | null>(null)
   /** 「现在」只取一次：显示名要判断"是不是今年"，一次会话里不会跨年 */
   const now = useMemo(() => Date.now(), [])
 
@@ -164,55 +174,69 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
               这也是 visibleGroups 按天取整的理由 */}
           <h2 className="gallery-day-title">{g.label} · {g.works.length} 条</h2>
           {g.works.map(s => (
-            <div key={s.id} className={
-              renaming === s.id ? 'session-row renaming'
-                : confirming === s.id ? 'session-row confirming' : 'session-row'}>
-              <button className="session-open" onClick={() => onOpen(s.id)}>
-                {/* `alt` 给名字：图上没字，读屏软件只能靠它 */}
-                <img className="session-thumb" src={sessionThumbUrl(s.id, s.updatedAt)}
-                     alt={sessionTitle(s)} loading="lazy" />
-                <span className="session-name">{sessionTitle(s)}</span>
-                <span className="session-steps">{s.stepCount} 步</span>
-              </button>
-              {renaming === s.id ? (
-                /* 改名 —— 和作品详情页那颗同名按钮**同一套手势**：回车 / 点走保存、
-                   Esc 取消，没有「好/取消」按钮。预填**显示名**（非受控），清空提交
-                   = 回退；`placeholder` 就是那时候露出来的"会变回这个名字"。 */
-                <input
-                  className="session-rename"
-                  autoFocus
-                  defaultValue={sessionTitle(s)}
-                  placeholder={sessionTitle(s)}
-                  maxLength={60}
-                  aria-label="对话名字"
-                  onBlur={(e) => void doRename(s.id, e.target.value)}
-                  onKeyDown={(e) => {
-                    // ⚠️ `isComposing`：中文输入法**选词**也是回车 —— 不挡的话
-                    //    用户打个"海边"选词，名字会半截存成"海"（一声不吭）。
-                    if (e.key === 'Enter' && !e.nativeEvent.isComposing)
-                      void doRename(s.id, (e.target as HTMLInputElement).value)
-                    if (e.key === 'Escape') setRenaming(null)
-                  }} />
-              ) : confirming === s.id ? (
-                <>
-                  <span className="session-ask">删掉这条？</span>
-                  {/* ⚠️ 「删掉」要自己的类（`danger`），**别靠 DOM 位置选**：
-                      它上面还有个 `display:none` 的 `.session-open`（还是第一个
-                      `button` 兄弟），`:first-of-type` 之类的选择器选不中它 ——
-                      选不中的后果是**它和「取消」长得一模一样**，而文案都短、
-                      点错一次东西就没了。见 styles.css 里那条 `.session-del.danger`。 */}
-                  <button className="session-del danger" onClick={() => void doDelete(s.id)}>删掉</button>
-                  <button className="session-del" onClick={() => setConfirming(null)}>取消</button>
-                </>
-              ) : (
-                <>
-                  {/* ⚠️ 「改名」挂 `.session-act` 而**不是** `.session-del`：后者的
-                      悬停是红色的（危险的语言），改名不危险。见 styles.css。 */}
-                  <button className="session-act"
-                          onClick={() => { setRenameFailed(null); setRenaming(s.id) }}>改名</button>
-                  <button className="session-del"
-                          onClick={() => { setConfirming(s.id); setDelFailed(null) }}>删除</button>
-                </>
+            /* 行和它下面那颗「…」开出来的菜单是**一对**：菜单是行的兄弟节点
+               （`.session-row` 是 flex 单行，菜单塞进去会被挤成一行里的第四格）。 */
+            <div key={s.id} className="session-block">
+              <div className={
+                (renaming === s.id ? 'session-row renaming'
+                  : confirming === s.id ? 'session-row confirming' : 'session-row')
+                + (menuId === s.id ? ' menu-open' : '')}>
+                <button className="session-open" onClick={() => onOpen(s.id)}>
+                  {/* `alt` 给名字：图上没字，读屏软件只能靠它 */}
+                  <img className="session-thumb" src={sessionThumbUrl(s.id, s.updatedAt)}
+                       alt={sessionTitle(s)} loading="lazy" />
+                  <span className="session-name">{sessionTitle(s)}</span>
+                  <span className="session-steps">{s.stepCount} 步</span>
+                </button>
+                {renaming === s.id ? (
+                  /* 改名 —— 和作品详情页那颗同名按钮**同一套手势**：回车 / 点走保存、
+                     Esc 取消，没有「好/取消」按钮。预填**显示名**（非受控），清空提交
+                     = 回退；`placeholder` 就是那时候露出来的"会变回这个名字"。 */
+                  <input
+                    className="session-rename"
+                    autoFocus
+                    defaultValue={sessionTitle(s)}
+                    placeholder={sessionTitle(s)}
+                    maxLength={60}
+                    aria-label="对话名字"
+                    onBlur={(e) => void doRename(s.id, e.target.value)}
+                    onKeyDown={(e) => {
+                      // ⚠️ `isComposing`：中文输入法**选词**也是回车 —— 不挡的话
+                      //    用户打个"海边"选词，名字会半截存成"海"（一声不吭）。
+                      if (e.key === 'Enter' && !e.nativeEvent.isComposing)
+                        void doRename(s.id, (e.target as HTMLInputElement).value)
+                      if (e.key === 'Escape') setRenaming(null)
+                    }} />
+                ) : confirming === s.id ? (
+                  <>
+                    <span className="session-ask">删掉这条？</span>
+                    {/* ⚠️ 「删掉」要自己的类（`danger`），**别靠 DOM 位置选**：
+                        它上面还有个 `display:none` 的 `.session-open`（还是第一个
+                        `button` 兄弟），`:first-of-type` 之类的选择器选不中它 ——
+                        选不中的后果是**它和「取消」长得一模一样**，而文案都短、
+                        点错一次东西就没了。见 styles.css 里那条 `.session-del.danger`。 */}
+                    <button className="session-del danger" onClick={() => void doDelete(s.id)}>删掉</button>
+                    <button className="session-del" onClick={() => setConfirming(null)}>取消</button>
+                  </>
+                ) : (
+                  /* ★ 2026-10-06 下午：行尾就这一颗「…」（原来并排的「改名」
+                     「删除」收进了它点开的菜单）。图标键 —— `aria-label` 是读屏
+                     和"按标签找元素"的唯一依据；`aria-expanded` 报开合。 */
+                  <button className="session-more" aria-label="更多操作"
+                    aria-expanded={menuId === s.id}
+                    onClick={() => setMenuId(cur => (cur === s.id ? null : s.id))}>
+                    <MoreHorizontal size={15} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+              {/* ★ 菜单（就地展开、不弹浮层；长相和对话区那条 `.msg-menu` 故意一样） */}
+              {menuId === s.id && (
+                <div className="session-menu">
+                  <button className="session-menu-act"
+                          onClick={() => { setMenuId(null); setRenameFailed(null); setRenaming(s.id) }}>改名</button>
+                  <button className="session-menu-del"
+                          onClick={() => { setMenuId(null); setConfirming(s.id); setDelFailed(null) }}>删除</button>
+                </div>
               )}
             </div>
           ))}
