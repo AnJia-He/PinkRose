@@ -220,8 +220,10 @@ export function LutSettings() {
     <section className="luts">
       <h1 className="luts-title">滤镜</h1>
       {/* 顶上说明一句：这一页是干嘛的、导入之后在哪儿用得上。
-          ⚠️ 不吹"多少款滤镜"这类做不到的话 —— 内容全是用户自己导进来的。 */}
-      <p className="luts-lede">导入 .cube 滤镜，套在照片上改颜色。微调区和对话里都能用。</p>
+          ⚠️ 不吹"多少款滤镜"这类做不到的话 —— 内容全是用户自己导进来的。
+          ⚠️ 两个宿主叫「调色」和「对话」：界面上的名字只有这两个（曾经的
+          「微调区」是 09-30 改名前的老叫法，同一个能力不许两个叫法）。 */}
+      <p className="luts-lede">导入 .cube 滤镜，套在照片上改颜色。调色和对话里都能用。</p>
 
       <div className="luts-actions">
         {/* 藏起来的文件输入框由这颗按钮去点它（`.luts-file` 是 display:none，

@@ -127,6 +127,20 @@ export function useLuts({ lut, image, params: _params, onError }: {
   /**
    * 打开格子时叫一次：把还没有的缩略图补齐。
    * ⚠️ 每个滤镜**先把 cube 取到手**再画 —— 没取到就不画那一格（格子会显示占位）。
+   *
+   * ★ 2026-10-05 终审：**边画边给**（原来是所有格子全画完才发唯一一次
+   *   `setThumbs`）。一次发的后果：打开「滤镜」这一栏先看到的是一整屏**灰方块**
+   *   —— 30 个滤镜要等好几秒，每一格都像"加载失败"。现在 `setImage` 一回来就把
+   *   「不用」那一格 + **手上已经有的**缩略图先发出去（重开这一栏时上回画好的
+   *   直接摆出来，不再空屏），之后每画好一格补发一格。
+   *
+   * ⚠️ 两件事别动：
+   *   · `seq !== thumbSeq.current` 的作废判据（每格等回来的地方都查一次 ——
+   *     换照片 / 关掉这一栏时这条协程必须停得住，见上面 `thumbSeq` 那段）；
+   *   · 每次都用**函数式更新拿最新的 `prev`** 拼：闭包里那份 `byId` 是发车
+   *     那一刻的旧值，拿它拼会把路途中已经补上的格子抹掉。
+   *   签名照旧是同步的 `void`，**不许改成 async 返回 Promise** —— 三个调用点
+   *   （App 两处、面板一处）都按"叫一声就走"用，不该跟着改。
    */
   const ensureThumbs = useCallback((imageNow: DecodedImage | null, paramsNow: Adjustments) => {
     if (!imageNow) return
@@ -136,14 +150,15 @@ export function useLuts({ lut, image, params: _params, onError }: {
       await p.setImage(imageNow)
       if (seq !== thumbSeq.current) return
       const none = p.render(paramsNow, null)
-      const byId: Record<number, string> = {}
+      // 第一发：「不用」那一格 + 已经有的（`prev.byId` 原样带着）
+      setThumbs((prev) => ({ ...prev, none }))
       for (const l of luts) {
         const c = await loadCube(l.id)
         if (seq !== thumbSeq.current) return
         const t = c ? p.render(paramsNow, c) : null
-        if (t) byId[l.id] = t
+        if (!t) continue
+        setThumbs((prev) => ({ ...prev, byId: { ...prev.byId, [l.id]: t } }))
       }
-      setThumbs({ none, byId })
     })().catch((e) => console.error('滤镜缩略图没画出来：', e))
   }, [luts, loadCube])
 

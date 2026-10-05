@@ -982,9 +982,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   overflow: hidden; text-align: center; cursor: pointer;
 }
 /* 悬停只换描边：格子小、又密，整块变色在这个密度下太重（和 `.gallery-cell`
-   同一手感）。⚠️ 它**排在 `.on` 前面**：选中是比悬停更强的状态，两边的特异性
+   同一手感）。★ 2026-10-05 终审：描边是**加深一档的灰**（`--line-3`，和
+   `button:where(:hover)` / `.session-row:hover` 同一个做法），**不是主色** ——
+   真机截图里用主色那版，鼠标停在一格上看起来像"同时选了**两个**"（悬停格和
+   选中格穿同一件衣服）。主色从此只属于"选中"这一个意思。
+   ⚠️ 它**排在 `.on` 前面**：选中是比悬停更强的状态，两边的特异性
    一样（0-2-0），靠文件顺序让选中的那格永远赢。 */
-.lut-tile:hover { border-color: var(--accent); }
+.lut-tile:hover { border-color: var(--line-3); }
 /* 选中的那一格才穿主色（描边 + 极淡的一点底色）—— 格子密的时候"我选了哪个"
    是这一屏唯一的判断题，主色只花在这一个信息上。 */
 .lut-tile.on { border-color: var(--accent); background: var(--accent-tint); }
@@ -2301,6 +2305,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 导入那一行：按钮 + （满 30 个时）那句说明。说明**和按钮并排站着** ——
    只把按钮禁掉不说话，用户只会以为按钮坏了。 */
 .luts-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); margin-top: var(--sp-4); }
+/* ★ 2026-10-05 终审：「导入 .cube」做成**药丸**（照 `.composer-go` 那个先例的
+   形状）—— 这一页和兄弟页（模型设置）那一族按钮全是药丸，之前只有它一颗是
+   方角实心块（方角来自全局 `button{}` 的 `--r-sm`）。颜色一个字没动：
+   还是 `.btn-primary` 那套主色，这里只管形状。 */
+.luts-import { border-radius: var(--r-pill); padding: 8px 20px; }
 /* 藏起来的文件输入框，由那颗按钮去点它（和 `.composer-file` 同一个做法 ——
    `display:none` 的元素不进可访问性树，可读的名字在按钮上，不在这里）。 */
 .luts-file { display: none; }
