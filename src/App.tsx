@@ -1497,6 +1497,13 @@ export default function App() {
   useEffect(() => {
     const last = history[history.length - 1]
     if (sessionId === null || !last) return
+    // ★ 2026-10-05：「现在这一版参数 / 滤镜」在服务端是落在**最后一步**上的
+    //   （`handleUpdateSession`）—— 所以只有**站在最后一步**时它才等于
+    //   "现在这一版"。跳回旧步骤之后照旧送的话，服务端会把旧步骤的参数写进
+    //   最新那一步：刷新后画面是最新的、滑块是旧的，谁都不报错。
+    //   ⚠️ 跳过这一趟不是"少存了"：站在旧步骤上根本没有"现在这一版参数"这回事，
+    //   跳转本身也不该产生一个改 steps 的 PUT（设计 §5）。
+    const atTip = cursorId === last.id
     // 底图这一版存过没有？`lastPersistedBaseSeqRef` 只在**写成功**之后才跟进
     // （见 ⑤）——它的初值 -1 表示"一版都还没存过"。
     const changed = baseSeqRef.current !== lastPersistedBaseSeqRef.current
@@ -1567,7 +1574,10 @@ export default function App() {
       void (async () => {
         try {
           const patch: SessionPatch = {
-            messages: messagesNow, steps: snapshot, params: paramsNow, lut: lutNow,
+            messages: messagesNow, steps: snapshot,
+            // ★ 只有站在最新一步才送这两样（见上面 `atTip` 那段）——
+            //   不送 = 服务端一个字节都不动（判据是 `!== undefined`）。
+            ...(atTip ? { params: paramsNow, lut: lutNow } : {}),
           }
           if (changed) {
             if (!el) {
@@ -1649,7 +1659,9 @@ export default function App() {
     // ⚠️ `sessionId` **必须在依赖里** —— 它一到，这个副作用得再跑一遍，
     //   否则"上传之后立刻动的那一下"落不了盘（见 `sessionId` 那段长注释）。
     // ⚠️ `params` 同一条（见 `paramsNow` 那段）；★ 2026-10-05 起 `lut` 也一样。
-  }, [history, messages, params, lut, sessionId])
+    // ⚠️ `cursorId` 也在依赖里：它变了（跳转）而 effect 没重跑的话，
+    //   下一趟落盘会拿着旧的"在不在最新一步"去判 —— 又是静默那种错。
+  }, [history, messages, params, lut, sessionId, cursorId])
 
   /**
    * 页面**要走了**（刷新 / 关标签页 / 切到后台）—— 把还没到点的那趟落盘立刻发出去。

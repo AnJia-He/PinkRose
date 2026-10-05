@@ -4797,6 +4797,27 @@ describe('恢复：打开就接着上次那条', () => {
     await waitPersist()
   })
 
+  it('★ 跳到旧步骤 → 不把"现在这一版参数"写到服务端的**最后一步**上', async () => {
+    // 服务端把 `patch.params`/`patch.lut` 写在**最后一步**上
+    // （`server/sessions.ts` 的 `handleUpdateSession`）。跳转会把 App 里的
+    // params 换成旧步骤的 —— 照旧送上去的话，服务端就把**旧步骤的参数**
+    // 写进了最新那一步：刷新之后画面是最新的、滑块是旧的，谁都不报错。
+    // 变异：patch 里无条件带上 params/lut → 下面两句红。
+    withSessions([makeSession(7, 3, '上次那句', 'S7')])
+    await renderApp()
+
+    const jumps = [...container.querySelectorAll('.bubble-jump')] as HTMLButtonElement[]
+    await act(async () => { jumps[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    await waitPersist()
+
+    const body = bodyOf(putCalls('/api/sessions/7').at(-1)!)
+    // ① 步骤还是全部（跳转不删）—— id 是 1、3、5
+    expect((body.steps as { id: number }[]).map(s => s.id)).toEqual([1, 3, 5])
+    // ② "现在这一版参数"没送（服务端那边 = 不动）
+    expect(body.params).toBeUndefined()
+    expect(body.lut).toBeUndefined()
+  })
+
   it('★ 恢复出来的**每一步**都带着小图 —— 刷新前后同一条对话长得一样（spec §5）', async () => {
     // 服务端不存每一步的缩略图（spec §5：「客户端本来就会给每一步生成缩略图…
     // 恢复的时候现生成就行」）—— 而恢复那条路原来给每一步塞的是 `thumb: ''`，
