@@ -61,6 +61,64 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
    * 点「删除」删的是哪一条会变得要猜）；再点一下「…」收起。
    */
   const [menuId, setMenuId] = useState<number | null>(null)
+
+  /**
+   * ★ 2026-10-06 下午：**选择模式**（多选批删）。开着的这一档里：每行一个勾选框
+   * （点行 = 勾选、**不打开会话**）、行尾的「…」全收、底下吸着一条操作条。
+   * 进去的路只有一条：某行菜单里的【多选】。
+   */
+  const [selecting, setSelecting] = useState(false)
+  /** 勾了哪几段。**出去就清空**；部分失败时剩下的就是"还没删掉的那些"。 */
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
+  /** 批量删除的**就地确认**开着没有（删前一律先问 —— 一段会话比一句话重得多）。 */
+  const [confirmAsk, setConfirmAsk] = useState(false)
+  /** 批删的循环正在跑（逐条 await）。跑着的时候按钮全禁用 —— 防连点。 */
+  const [deleting, setDeleting] = useState(false)
+
+  /** 退出选择模式（「取消」和"全删成功"都走它）：勾清空、确认条收掉。 */
+  function exitSelect() {
+    setSelecting(false)
+    setSelectedIds([])
+    setConfirmAsk(false)
+  }
+  /** 勾 / 取消勾一段（勾选框、整行两个入口都走它）。 */
+  function togglePick(id: number) {
+    setSelectedIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])
+  }
+
+  /**
+   * 批量删：**逐条调现成的 `deleteSession`**（服务端零改动 —— 和单条那条走的是
+   * 同一个接口，删目录 / 连着缩略图一起收拾那套它自己会做）。
+   *
+   * ⚠️ **部分失败不清场**：删成功的当场从名单里拿掉，没删掉的**留在列表和勾里**，
+   *   上面加一句"有 N 段没删掉"—— 用户直接再点一次【删除】就是重试。
+   *   全军覆没装作没事、或"没删掉却装作删掉了"，都是这个项目最恨的那类失败
+   *   （错了不报错，只是悄悄丢东西）。
+   */
+  async function doBatchDelete() {
+    setConfirmAsk(false)
+    setDelFailed(null)
+    setDeleting(true)
+    const failed: number[] = []
+    for (const id of selectedIds) {
+      try {
+        await deleteSession(id)
+        // 当场从名单里拿掉（和单条那条一个道理：等下次刷新才消失，用户会以为没删掉）
+        setRows(rs => rs?.filter((r) => r.id !== id) ?? null)
+        // 每成功一条喊一声 —— App 靠它判断"删的是不是手上那条"
+        onDeleted(id)
+        setSelectedIds(ids => ids.filter((x) => x !== id))
+      } catch {
+        failed.push(id)
+      }
+    }
+    setDeleting(false)
+    if (failed.length > 0) {
+      setDelFailed(`有 ${failed.length} 段没删掉，再试一次？`)
+      return
+    }
+    exitSelect()
+  }
   /** 「现在」只取一次：显示名要判断"是不是今年"，一次会话里不会跨年 */
   const now = useMemo(() => Date.now(), [])
 
@@ -181,14 +239,25 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
                 (renaming === s.id ? 'session-row renaming'
                   : confirming === s.id ? 'session-row confirming' : 'session-row')
                 + (menuId === s.id ? ' menu-open' : '')}>
-                <button className="session-open" onClick={() => onOpen(s.id)}>
+                {/* ★ 2026-10-06 下午：选择模式里行首那颗勾选框（用户给的那张
+                    截图里就在这个位置）。系统原生那款，颜色跟主色走。 */}
+                {selecting && (
+                  <input type="checkbox" className="session-pick"
+                    checked={selectedIds.includes(s.id)} disabled={deleting}
+                    onChange={() => togglePick(s.id)}
+                    aria-label="选中这段对话" />
+                )}
+                {/* ⚠️ 选择模式里点整行 = **勾选，不是打开**（微信式：那一档里
+                    没有"进去看看"这回事）。 */}
+                <button className="session-open"
+                        onClick={() => (selecting ? togglePick(s.id) : onOpen(s.id))}>
                   {/* `alt` 给名字：图上没字，读屏软件只能靠它 */}
                   <img className="session-thumb" src={sessionThumbUrl(s.id, s.updatedAt)}
                        alt={sessionTitle(s)} loading="lazy" />
                   <span className="session-name">{sessionTitle(s)}</span>
                   <span className="session-steps">{s.stepCount} 步</span>
                 </button>
-                {renaming === s.id ? (
+                {!selecting && (renaming === s.id ? (
                   /* 改名 —— 和作品详情页那颗同名按钮**同一套手势**：回车 / 点走保存、
                      Esc 取消，没有「好/取消」按钮。预填**显示名**（非受控），清空提交
                      = 回退；`placeholder` 就是那时候露出来的"会变回这个名字"。 */
@@ -227,13 +296,22 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
                     onClick={() => setMenuId(cur => (cur === s.id ? null : s.id))}>
                     <MoreHorizontal size={15} aria-hidden="true" />
                   </button>
-                )}
+                ))}
               </div>
               {/* ★ 菜单（就地展开、不弹浮层；长相和对话区那条 `.msg-menu` 故意一样） */}
               {menuId === s.id && (
                 <div className="session-menu">
                   <button className="session-menu-act"
                           onClick={() => { setMenuId(null); setRenameFailed(null); setRenaming(s.id) }}>改名</button>
+                  {/* ★ 2026-10-06 下午：进选择模式（【删除】还是排最后 —— 危险的那项
+                      永远在最下面，手机桌面都是这么排的）。 */}
+                  <button className="session-menu-act"
+                          onClick={() => {
+                            setMenuId(null)
+                            setSelectedIds([])
+                            setConfirmAsk(false)
+                            setSelecting(true)
+                          }}>多选</button>
                   <button className="session-menu-del"
                           onClick={() => { setMenuId(null); setConfirming(s.id); setDelFailed(null) }}>删除</button>
                 </div>
@@ -246,6 +324,40 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
       {/* ⚠️ 那个圈**必须转**：没有它，用户会以为到底了（§3.5） */}
       {more && <div ref={sentinel} className="sessions-more">正在取…</div>}
       {!more && groups.length > 0 && <p className="sessions-end">没有更多了</p>}
+
+      {/* ★ 2026-10-06 下午：**选择模式底下那条操作条**。它是滚动区的最后一个
+          孩子 + `position: sticky; bottom: 0` —— 不管滚到哪儿它都吸在视野底下
+          （勾了一段滚下去找按钮的事不该发生），滚到底就归位。
+          两副面孔：平时「已选 N 段 ｜ 删除 ｜ 取消」；点【删除】之后就地问一句
+          （全站"不弹窗"的规矩，和对话区那条 `.chat-select` 同一套）。 */}
+      {selecting && (
+        <div className="sessions-select">
+          {confirmAsk ? (
+            <>
+              <span className="sessions-select-note">
+                {`删掉选中的 ${selectedIds.length} 段？删了就找不回来了。`}
+              </span>
+              {/* 两颗里只有「确认删除」穿危险色（文案短、长得像，颜色是唯一
+                  还分得开的地方 —— 和 `.session-del.danger` 同一条规矩）。 */}
+              <button className="sessions-select-del danger"
+                disabled={deleting || selectedIds.length === 0}
+                onClick={() => void doBatchDelete()}>确认删除</button>
+              <button className="sessions-select-cancel" disabled={deleting}
+                onClick={() => setConfirmAsk(false)}>算了</button>
+            </>
+          ) : (
+            <>
+              <span className="sessions-select-count">{`已选 ${selectedIds.length} 段`}</span>
+              {/* 一段没勾 = 点了什么也不会发生 → 直接禁用（不留点了没反应的按钮） */}
+              <button className="sessions-select-del"
+                disabled={deleting || selectedIds.length === 0}
+                onClick={() => setConfirmAsk(true)}>删除</button>
+              <button className="sessions-select-cancel" disabled={deleting}
+                onClick={exitSelect}>取消</button>
+            </>
+          )}
+        </div>
+      )}
     </section>
   )
 }

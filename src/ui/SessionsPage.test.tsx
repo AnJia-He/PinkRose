@@ -319,6 +319,134 @@ describe('对话列表', () => {
   })
 })
 
+// ── 多选批删（★ 2026-10-06 下午）────────────────────────────────────
+//
+// 他看过勾选框截图之后选的"两个都要"里的第二条路：菜单里的【多选】进"选择模式"
+// ——每行一个勾选框、点行 = 勾选、底下一条操作条「已选 N 段 ｜ 删除 ｜ 取消」。
+// 删前一律先问一句（一段会话里挂着照片、每一步的快照 —— 比一句话重得多）。
+// 逐条调现成的 `deleteSession`（服务端零改动）；**部分失败不清场**：没删掉的
+// 留在列表和勾里，用户可以直接再点一次。
+describe('多选批删', () => {
+  /** 进选择模式：某一行「…」→【多选】。 */
+  async function enterSelect(name: string) {
+    await click(moreIn(rowOf(name)!))
+    await click(inPart(blockOf(name), '多选'))
+  }
+  const boxOf = (name: string) =>
+    rowOf(name)!.querySelector('.session-pick') as HTMLInputElement
+
+  it('菜单里的【多选】→ 选择模式：每行一个勾选框、「…」全收、底下出现操作条', async () => {
+    rows = [ses(7), ses(8)]
+    await show()
+    await click(moreIn(rowOf('第 7 条')!))
+    expect(inPart(blockOf('第 7 条'), '多选')).not.toBeNull()
+    await click(inPart(blockOf('第 7 条'), '多选'))
+
+    expect(container.querySelectorAll('.session-pick')).toHaveLength(2)
+    expect(container.querySelectorAll('.session-more')).toHaveLength(0)   // 「…」全收
+    expect(texts()).toContain('已选 0 段')
+    expect(btn('删除')!.disabled).toBe(true)     // 一段没勾 → 禁用（不留点了没用的按钮）
+    expect(btn('取消')).not.toBeNull()
+  })
+
+  it('勾一段算一段：点勾选框、点那一行都能勾；点行**不会**打开会话', async () => {
+    rows = [ses(7), ses(8)]
+    await show()
+    await enterSelect('第 7 条')
+
+    await click(boxOf('第 7 条'))
+    expect(boxOf('第 7 条').checked).toBe(true)
+    expect(texts()).toContain('已选 1 段')
+    expect(btn('删除')!.disabled).toBe(false)
+
+    await click(boxOf('第 7 条'))                  // 再点一下 = 取消
+    expect(boxOf('第 7 条').checked).toBe(false)
+    expect(texts()).toContain('已选 0 段')
+
+    await click(rowOf('第 8 条')!.querySelector('.session-open'))   // 点行 = 勾
+    expect(boxOf('第 8 条').checked).toBe(true)
+    // ⚠️ 选择模式里点行**不许打开会话** —— 不然"勾一段"和"进去看看"抢同一个点击
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
+  it('「取消」退出选择模式：勾选框没了、「…」回来', async () => {
+    rows = [ses(7)]
+    await show()
+    await enterSelect('第 7 条')
+    await click(btn('取消'))
+
+    expect(container.querySelectorAll('.session-pick')).toHaveLength(0)
+    expect(container.querySelectorAll('.session-more')).toHaveLength(1)
+    expect(texts()).not.toContain('已选')
+  })
+
+  it('点【删除】先问一句；「算了」什么都没变、勾还都在', async () => {
+    rows = [ses(7), ses(8)]
+    await show()
+    await enterSelect('第 7 条')
+    await click(rowOf('第 7 条')!.querySelector('.session-open'))
+    await click(rowOf('第 8 条')!.querySelector('.session-open'))
+
+    await click(btn('删除'))
+    expect(texts()).toContain('删掉选中的 2 段？')
+    expect(api.deleteSession).not.toHaveBeenCalled()
+
+    await click(btn('算了'))
+    expect(texts()).toContain('已选 2 段')          // 退回操作条、勾还在
+    expect(boxOf('第 7 条').checked).toBe(true)
+    expect(boxOf('第 8 条').checked).toBe(true)
+  })
+
+  it('★「确认删除」→ 勾的一起删：两段都发了请求、都喊了 onDeleted、删完退出选择模式', async () => {
+    rows = [ses(7), ses(8)]
+    await show()
+    await enterSelect('第 7 条')
+    await click(rowOf('第 7 条')!.querySelector('.session-open'))
+    await click(rowOf('第 8 条')!.querySelector('.session-open'))
+
+    await click(btn('删除'))
+    await click(btn('确认删除'))
+
+    expect(api.deleteSession).toHaveBeenCalledTimes(2)
+    expect(api.deleteSession).toHaveBeenCalledWith(7)
+    expect(api.deleteSession).toHaveBeenCalledWith(8)
+    expect(rowOf('第 7 条')).toBeNull()
+    expect(rowOf('第 8 条')).toBeNull()
+    // 每删成功一条都要喊一声：删掉**正在改**的那条时，App 手上那份照片 / 对话 /
+    // 快照全靠这一声跟着走（单条那条已有的一整套）。
+    expect(onDeleted).toHaveBeenCalledWith(7)
+    expect(onDeleted).toHaveBeenCalledWith(8)
+    // 全删成功 → 选择模式自己收掉（留着一条"已选 0 段"的空条子才奇怪）
+    expect(container.querySelector('.sessions-select')).toBeNull()
+    expect(container.querySelectorAll('.session-pick')).toHaveLength(0)
+  })
+
+  it('★ 部分失败：没删掉的留在列表里、**还在勾里**，上面说一句 —— 直接再点一次就能重试', async () => {
+    rows = [ses(7), ses(8)]
+    await show()
+    // 让 8 号删不掉（7 号照常）
+    vi.mocked(api.deleteSession).mockImplementation(async (id) => {
+      if (id === 8) throw new Error('没删掉，再试一次？')
+      rows = (rows ?? []).filter((r) => r.id !== id)
+    })
+    await enterSelect('第 7 条')
+    await click(rowOf('第 7 条')!.querySelector('.session-open'))
+    await click(rowOf('第 8 条')!.querySelector('.session-open'))
+    await click(btn('删除'))
+    await click(btn('确认删除'))
+
+    expect(rowOf('第 7 条')).toBeNull()            // 删掉的当场走人
+    expect(rowOf('第 8 条')).not.toBeNull()        // 没删掉的**不许装作删掉了**
+    expect(texts()).toContain('有 1 段没删掉')
+    // 失败那条还勾着、还在选择模式里 —— 再点一次【删除】就是重试
+    expect(boxOf('第 8 条').checked).toBe(true)
+    expect(texts()).toContain('已选 1 段')
+    // 那一声只喊**成功**的那条（喊错了 App 会把用户手上的活儿当别人的扔了）
+    expect(onDeleted).toHaveBeenCalledTimes(1)
+    expect(onDeleted).toHaveBeenCalledWith(7)
+  })
+})
+
 // ── 改名（2026-10-05）────────────────────────────────────────────────
 //
 // 手势和作品详情页那颗「改名」**是同一套**（回车 / 点走保存、Esc 取消），所以

@@ -2100,6 +2100,37 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .session-rename:focus { outline: none; }
 .session-rename::placeholder { color: var(--muted-2); }
 
+/* ★ 2026-10-06 下午：选择模式里行首那颗勾选框（多选批删）。
+   用户给的那张截图里它就在这个位置（列表行最左边）；系统原生那款，颜色跟主色走。 */
+.session-pick {
+  flex: none; width: 16px; height: 16px;
+  margin-left: var(--sp-3);
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ★ 2026-10-06 下午：**选择模式底下那条操作条**（多选批删）。
+   吸在滚动区的底下（`position: sticky; bottom: 0`，它是 `.sessions` 的最后一个
+   孩子 —— 见 SessionsPage.tsx 里那段）：不管滚到哪儿它都在视野里，滚到底归位。
+   ⚠️ 底色必须**不透明**（它底下滚过去的是会话行）、再加一层阴影把它托起来。
+   长相和对话区那条 `.chat-select` 同一套语言（同一件事的两种皮肤）。 */
+.sessions-select {
+  position: sticky; bottom: 0;
+  display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
+  margin-top: var(--sp-4);
+  padding: var(--sp-3);
+  border: 1px solid var(--line-2); border-radius: var(--r-md);
+  background: var(--panel); box-shadow: var(--shadow-2);
+}
+/* 左边那句计数 / 问话吃掉中间的空，把两颗按钮顶到右边（和 `.chat-select` 同款）。 */
+.sessions-select-count, .sessions-select-note { flex: 1; }
+.sessions-select-count { font-size: 13px; color: var(--muted); }
+.sessions-select-note { font-size: 12.5px; color: var(--text); }
+/* 只有「确认删除」穿危险色（和 `.session-del.danger` / `.chat-select-del.danger`
+   同一条规矩：两颗短文案长得很像，点错一次东西就没了）。 */
+.sessions-select-del.danger { border-color: var(--danger); color: var(--danger); }
+.sessions-select-del.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
 /* 改名态让位（和确认态同一条理由：窄屏一行塞不下"缩略图 + 名字 + 输入框"，
    见上面 `.session-row.confirming` 那段）。 */
 .session-row.renaming { justify-content: flex-end; padding: var(--sp-2) var(--sp-3); }
