@@ -63,6 +63,7 @@
      ⚠️ 对话气泡**不跟这条走**（它是大面积的"面"不是小按钮）：见 `.bubble.user`
      那条，两种模式都保持"深蓝底 + 白字"。 */
   --accent-tint: light-dark(#eef3fc, #123330); /* 强调色的极淡底（选中的行、悬停的卡片）；深色档比面板亮一档（上面的字 11.1:1）；★ 2026-10-05 深色半从蓝调换薄荷调 */
+  --ring-glow: light-dark(rgba(27, 98, 214, .30), rgba(45, 212, 191, .50)); /* ★ 2026-10-05 用量圆环的发光（`filter: drop-shadow` 用）；跟着主色走，别写死 */
   /* ⚠️ 这里原来还有 `--rose-100`（最浅那档）和 `--leaf`（叶子那点绿）两个
      声明了却一次没用过的色号，2026-09-30 按"用到再加"删掉了 —— 颜色令牌
      不像间距尺（`--sp-7` 空着无所谓，那是一整条尺度），孤立的色号摆着
@@ -1827,24 +1828,44 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    `baseline` 对齐：按底边对齐的话 15px 的数字和 13px 的字会看着差半行。 */
 .account-stats { display: flex; gap: var(--sp-5); }
 
-/* 用量圆环（★ 2026-10-05）。经典 donut：`r=15.9155` → 周长恰好 100，
-   `stroke-dasharray` 直接吃百分数。前景从**正上方**起笔（转 -90°）、圆角端帽；
-   极小比例会显示成一个小点 —— 那不是 bug，是真实的 0.3%。 */
-.usage-ring-wrap { position: relative; flex: none; width: 68px; height: 68px; }
+/* 用量圆环（★ 2026-10-05；用户当晚上升过一轮要求：「立体的大一点的圆盘图表」）。
+   立体感的配方（和 `AccountPage.UsageRing` 的注释是一件事的两半）：
+   ① 粗环（14/120）+ 渐变描边：左上亮、右下深（光从左上来）；
+   ② 进度弧的**发光**（drop-shadow，颜色走 `--ring-glow`，跟着主色走）——
+      "亮起来一圈"；
+   ③ 内缘一道半透白的细高光弧（`.usage-ring-gloss`）—— "光打在上缘"。
+   ⚠️ 前景弧和轨道都从正上方起笔（转 -90°）。 */
+.usage-ring-wrap { position: relative; flex: none; width: 160px; height: 160px; }
 .usage-ring { display: block; width: 100%; height: 100%; }
 .usage-ring-track { stroke: var(--line-2); }
-.usage-ring-fill {
-  stroke: var(--accent);
+.usage-ring-fill,
+.usage-ring-gloss {
   transform: rotate(-90deg); transform-origin: 50% 50%;
   transition: stroke-dasharray var(--dur-2) var(--ease);
 }
+.usage-ring-fill { filter: drop-shadow(0 0 7px var(--ring-glow)); }
+.usage-ring-gloss { stroke: rgba(255, 255, 255, .35); }
+/* 渐变的两档（SVG `stop` 的颜色走 CSS —— 浅/深成对由 token 自己管） */
+.ring-stop-hi { stop-color: var(--accent-500); }
+.ring-stop-lo { stop-color: var(--accent-400); }
+.ring-stop-danger { stop-color: var(--danger); }
 /* 用到八成往上：环和数字一起变红（和 `.stat-warn` 是同一句话的两种说法） */
-.usage-ring-warn .usage-ring-fill { stroke: var(--danger); }
+.usage-ring-warn .usage-ring-fill {
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--danger) 55%, transparent));
+}
 .usage-ring-pct {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+  font-size: 22px; font-weight: 600; letter-spacing: -.01em;
+  color: var(--text); font-variant-numeric: tabular-nums;
 }
 .usage-ring-warn .usage-ring-pct { color: var(--danger); }
+
+/* 用量框：整块让给图表（用户：「这一整块都可以先放作品用量」）——
+   圆盘居中在上、两个数字在下面中心。 */
+.usage-figure {
+  display: flex; flex-direction: column; align-items: center;
+  gap: var(--sp-4); padding: var(--sp-5) var(--sp-4);
+}
 .stat { display: flex; align-items: baseline; gap: var(--sp-2); }
 .stat b { font-size: 15px; font-variant-numeric: tabular-nums; }
 .stat span { font-size: 13px; color: var(--muted); }

@@ -3529,9 +3529,9 @@ describe('用户管理页', () => {
   })
 
   it('★ 用量圆环画的也是**真比例** —— 0.2% 也配拥有它的一个小点（2026-10-05 用户要的）', async () => {
-    // 用户原话「磁盘用量可视化一下用圆盘表示」。钉两样：中心的百分比文字、
-    // 和环的 `stroke-dasharray`（= 占比 × 周长 100 —— donut 的 15.9155 半径
-    // 让周长恰好是 100，这里算出来直接可比）。
+    // 用户原话「磁盘用量可视化一下用圆盘表示」（当晚又放大成立体大圆盘）。
+    // 钉两样：中心的百分比文字、和环的 `stroke-dasharray`
+    //（= 占比 × 周长，半径 52 的周长 = 2π·52 ≈ 326.7）。
     const MIB = 1024 * 1024
     const LIMIT = 5 * 1024 ** 3
     withUsage({ count: 2, bytes: 10 * MIB })     // 10 MB / 5 GiB ≈ 0.195%
@@ -3540,10 +3540,22 @@ describe('用户管理页', () => {
 
     expect(container.querySelector('.usage-ring-pct')?.textContent).toBe('0.2%')
     const dash = container.querySelector('.usage-ring-fill')?.getAttribute('stroke-dasharray') ?? ''
-    expect(parseFloat(dash)).toBeCloseTo((10 * MIB) / LIMIT * 100, 1)   // ≈ 0.20
+    expect(parseFloat(dash)).toBeCloseTo((10 * MIB) / LIMIT * 2 * Math.PI * 52, 1)   // ≈ 0.64
     // 远没到八成：环不带警告类（圆和数字"一起变红"那条规矩的另一半）
     expect(container.querySelector('.usage-ring-warn')).toBeNull()
     // 变异：把比例写成写死的数（或 0）→ 前两条红
+  })
+
+  it('★ 极小用量**不许显示成「0.0%」**（那是句假话）—— 显示「<0.1%」', async () => {
+    // 495 KB / 5 GiB ≈ 0.0094% —— 四舍五入到一位小数就是 "0.0%"，读起来是
+    // "一个字节都没有"。用户在真机截图里抓到的就是这一刻 —— 和「0 张作品」
+    // 同一条罪（《文案规范》：先问"这句话在什么情况下是假的"）。
+    withUsage({ count: 1, bytes: 495 * 1024 })
+    await renderApp()
+    await openAccount()
+
+    expect(container.querySelector('.usage-ring-pct')?.textContent).toBe('<0.1%')
+    // 变异：把 `<0.05` 那一档删掉（退回 toFixed(1)）→ 这一条红
   })
 
   it('★ 服务端没给用量时**那一格整个不出现** —— 不硬凑 0，也不硬凑体积', async () => {

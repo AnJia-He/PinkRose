@@ -239,11 +239,11 @@ export function AccountPage({
           <section className="account-tile">
             <h2 className="account-tile-title">作品空间用量</h2>
             <div className="account-card">
-              <div className="account-row account-row-static">
-                {/* ★ 2026-10-05：用量圆环（用户：「磁盘用量可视化一下用圆盘表示」）。
-                    环画的是**占比**、中心百分比是同一件事的数字；右边的两个数才是
-                    绝对值。⚠️ 整个环 `aria-hidden` —— 语义真值在右边的数字里，
-                    它是"画给人看"的那一份。 */}
+              {/* ★ 2026-10-05：用量圆环（用户：「这一整块都可以先放作品用量，
+                  用那个立体的大一点的圆盘图表表示」）—— **整块让给图表**：
+                  大圆盘居中在上、两个数字在下面中心（`.usage-figure`）。
+                  环 `aria-hidden`：语义真值在数字里，它是"画给人看"的那份。 */}
+              <div className="usage-figure">
                 <UsageRing
                   pct={usage.state === 'loading' ? null : usage.bytes / usage.limit}
                   warn={usageWarn} />
@@ -316,31 +316,62 @@ export function modelValue(configs: PublicConfig[]): string {
 }
 
 /**
- * 用量圆环（★ 2026-10-05，用户原话：「磁盘用量可视化一下用圆盘表示」）。
+ * 用量圆环（★ 2026-10-05。用户原话先是「磁盘用量可视化一下用圆盘表示」，
+ * 当晚又升了一级：「**这一整块都可以先放作品用量，用那个立体的大一点的
+ * 圆盘图表表示**」——所以它是 160px、带立体质感的那个大环）。
  *
  * 环画的是**占比**（已用 / 上限），中心的百分比是同一件事的数字。`pct === null`
  * = 还在取：画一个空轨道、**不画中心数字**（「0%」对着一个存过东西的人是一句
  * 假话，和「0 张作品」同罪 —— 见上面 `Usage` 那段）。
  *
- * 实现是经典 donut：`r = 15.9155` 时圆周长恰好 100（2πr），`dasharray` 就能
- * 直接吃百分数。⚠️ 圆角端帽（round）在极小比例下会显示成**一个小点** ——
- * 那不是 bug，是真实的 0.3%。
+ * **立体感的配方**（都在这一小段里，别拆散）：
+ *   ① 粗环（14/120）+ 渐变描边：左上亮、右下深（光从左上来）；
+ *   ② 进度弧的**发光**（`filter: drop-shadow`，颜色走 `--ring-glow`）——
+ *      "亮起来一圈"，浮在面上的感觉就是它；
+ *   ③ 内缘一道半透白的细高光弧 —— "光打在上缘"。
+ * ⚠️ 百分比文字**绝不显示「0.0%」**：那是句假话（读作"一个字节都没有"），
+ *    不到 0.05% 一律「<0.1%」（495 KB 的用量就落在这档）。
  */
 export function UsageRing({ pct, warn }: { pct: number | null; warn: boolean }) {
-  const C = 2 * Math.PI * 15.9155
+  const R = 52
+  const C = 2 * Math.PI * R
   const ratio = pct === null ? null : Math.max(0, Math.min(1, pct))
   const shown = ratio === null ? null : ratio * C
-  // 百分比文字：不到 10% 留一位小数（0.3% 不能显示成 0% —— 那是另一句假话），
-  // 10% 往上取整（多出来的小数位没有信息）。
+  // 高光弧在内缘（半径小一档），dasharray 要按**它自己的周长**算，不然接近满时
+  // 会比主弧多绕出去一截。
+  const Cg = 2 * Math.PI * 47
+  const shownG = ratio === null ? null : ratio * Cg
   const n = ratio === null ? 0 : ratio * 100
-  const label = ratio === null ? '' : `${n < 10 ? n.toFixed(1) : Math.round(n)}%`
+  const label = ratio === null ? ''
+    : n < 0.05 ? '<0.1%'
+    : n < 10 ? `${n.toFixed(1)}%`
+    : `${Math.round(n)}%`
   return (
     <div className={warn ? 'usage-ring-wrap usage-ring-warn' : 'usage-ring-wrap'} aria-hidden="true">
-      <svg className="usage-ring" viewBox="0 0 36 36">
-        <circle className="usage-ring-track" cx="18" cy="18" r="15.9155" fill="none" strokeWidth="3.4" />
-        {shown !== null && (
-          <circle className="usage-ring-fill" cx="18" cy="18" r="15.9155" fill="none" strokeWidth="3.4"
-                  strokeLinecap="round" strokeDasharray={`${shown} ${C - shown}`} />
+      <svg className="usage-ring" viewBox="0 0 120 120">
+        <defs>
+          {/* ⚠️ id 固定 —— 这一页同时只会有一个用量环（真出现第二个再加 useId） */}
+          <linearGradient id="usageRingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            {warn ? (
+              <stop offset="0%" className="ring-stop-danger" />
+            ) : (
+              <>
+                <stop offset="0%" className="ring-stop-hi" />
+                <stop offset="100%" className="ring-stop-lo" />
+              </>
+            )}
+          </linearGradient>
+        </defs>
+        <circle className="usage-ring-track" cx="60" cy="60" r={R} fill="none" strokeWidth="14" />
+        {shown !== null && shownG !== null && (
+          <>
+            <circle className="usage-ring-fill" cx="60" cy="60" r={R} fill="none"
+                    stroke="url(#usageRingGrad)" strokeWidth="14" strokeLinecap="round"
+                    strokeDasharray={`${shown} ${C - shown}`} />
+            <circle className="usage-ring-gloss" cx="60" cy="60" r="47" fill="none"
+                    strokeWidth="3.5" strokeLinecap="round"
+                    strokeDasharray={`${shownG} ${Cg - shownG}`} />
+          </>
         )}
       </svg>
       {label !== '' && <span className="usage-ring-pct">{label}</span>}
