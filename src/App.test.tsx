@@ -3596,6 +3596,9 @@ describe('用户管理页', () => {
     await openAccount()
 
     expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('0.2%')
+    // ★ 第八轮：百分比不许裸着 —— 前面必须有「已用」两个字（用户：「这个数字你得
+    // 告诉用户是什么呀」）。变异：把这个标签删掉 → 这一条红
+    expect(container.querySelector('.usage-pie-pct-label')?.textContent).toBe('已用')
     // 扇形画的是"真比例套一道**可见性下限**"（2026-10-05 第七轮：0.195% 只有一根
     // 看不见的针，用户连说三轮"图上没有已用"→ 小于 5° 的按 5° 画；数字全是真的。
     // ⚠️ 别再加末端圆点/珠子 —— 第七轮加过，用户否了：「大圆圈也不好看呀」）。

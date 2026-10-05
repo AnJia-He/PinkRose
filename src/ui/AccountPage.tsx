@@ -401,7 +401,16 @@ export function UsagePie({ pct, warn, used, total }: {
         <i className="usage-chart-dot usage-chart-dot-total" aria-hidden="true" />
         总共 <b>{total ?? '…'}</b>
       </span>
-      {label !== '' && <span className="usage-pie-pct">{label}</span>}
+      {/* 百分比那行（★ 2026-10-05 第八轮：用户看到裸着的 `<0.1%` 说
+          「这个数字你得告诉用户是什么呀？对不对」—— 他说得对，原来这行没主语。
+          补上「已用」前缀，和图上那条「已用 X」标签同一个句式；数字仍然是大字，
+          「已用」是 muted 小字 —— 读屏读出来也是「已用 0.2%」，不再是一个孤零零的数。 */}
+      {label !== '' && (
+        <span className="usage-pie-pct-line">
+          <span className="usage-pie-pct-label">已用</span>
+          <span className="usage-pie-pct">{label}</span>
+        </span>
+      )}
     </div>
   )
 }
