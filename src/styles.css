@@ -64,11 +64,12 @@
      那条，两种模式都保持"深蓝底 + 白字"。 */
   --accent-tint: light-dark(#eef3fc, #123330); /* 强调色的极淡底（选中的行、悬停的卡片）；深色档比面板亮一档（上面的字 11.1:1）；★ 2026-10-05 深色半从蓝调换薄荷调 */
   --ring-glow: light-dark(rgba(27, 98, 214, .30), rgba(45, 212, 191, .50)); /* ★ 2026-10-05 用量环/饼的发光（`filter: drop-shadow` 用）；跟着主色走，别写死 */
-  /* 3D 饼图的三个面（★ 2026-10-05 第三版）：剩余是**深青灰**（和薄荷同族的暗档，
-     空盘不再是一坨中性灰）；两组侧壁各比自己的顶面暗一档 —— "面亮壁暗"是
+  /* 3D 饼图的三个面（★ 2026-10-05 第三版）：剩余是**明亮的蓝**（用户看了深青灰一版
+     说「没彩色呀」—— 他要的是样板图那种每块都有颜色的观感；薄荷 + 蓝两块都是
+     高饱和色，饼才有"彩色"）；两组侧壁各比自己的顶面暗一档 —— "面亮壁暗"是
      立体饼图的常识做法（光照）。深色档的 used-side 就是 --accent-700 那个值。 */
-  --pie-rest: light-dark(#d7dee3, #2b3c42);
-  --pie-rest-side: light-dark(#bcc6cd, #1d2a2f);
+  --pie-rest: light-dark(#d7dee3, #3d74e8);
+  --pie-rest-side: light-dark(#bcc6cd, #2c55b8);
   --pie-used-side: light-dark(#0f5f58, #0f766e);
   /* ⚠️ 这里原来还有 `--rose-100`（最浅那档）和 `--leaf`（叶子那点绿）两个
      声明了却一次没用过的色号，2026-09-30 按"用到再加"删掉了 —— 颜色令牌
@@ -1909,6 +1910,24 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   color: var(--text); font-variant-numeric: tabular-nums;
 }
 .usage-pie-warn .usage-pie-pct { color: var(--danger); }
+
+/* 用量图例（★ 2026-10-05 第五轮，用户：「没有总用量和实际用量呀」）——
+   两个色点对上饼的两块：薄荷 = 已用、蓝 = 容量盘；两个数走 formatSize 的说法。
+   字形和 `.stat` 同款（数字亮、说明 muted），它就是 stats 家族的第三、四格。 */
+.usage-legend { display: flex; gap: var(--sp-5); }
+.usage-legend-item {
+  display: flex; align-items: center; gap: var(--sp-2);
+  font-size: 13px; color: var(--muted);
+}
+.usage-legend-item b {
+  font-size: 15px; font-weight: 600; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.usage-legend-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.usage-legend-used { background: var(--accent-500); }
+.usage-legend-rest { background: var(--pie-rest); }
+/* 用到八成往上：图例里的"已用"点也跟着变红（和饼、数字同一句话的第四种说法）。 */
+.usage-figure-warn .usage-legend-used { background: var(--danger); }
 
 /* 用量框：整块让给图表（用户：「这一整块都可以先放作品用量」）——
    圆盘居中在上、两个数字在下面中心。 */

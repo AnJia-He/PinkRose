@@ -245,26 +245,41 @@ export function AccountPage({
                   **整块让给图表**：饼图居中在上、百分比 + 两个数字在下面
                   （`.usage-figure`）。盘 `aria-hidden`：语义真值在数字里，
                   它是"画给人看"的那份。 */}
-              <div className="usage-figure">
+              <div className={usageWarn ? 'usage-figure usage-figure-warn' : 'usage-figure'}>
                 <UsagePie
                   pct={usage.state === 'loading' ? null : usage.bytes / usage.limit}
                   warn={usageWarn} />
+                {/* ★ 2026-10-05（当天第五轮）：**图例**。用户看了 3D 版之后说
+                    「没彩色呀，而且**没有总用量和实际用量**呀」—— 两个色点对上饼的
+                    两块（薄荷 = 已用、蓝 = 容量盘），两个数就是他嘴里的那两个词：
+                    「已用 X」= 实际用量、「总共 Y」= 总用量。
+                    ⚠️ 原来那格「X 占的空间」并进这里了 —— 同一个数不说两遍。 */}
+                {usage.state === 'loading' ? (
+                  // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
+                  // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
+                  <div className="usage-legend">
+                    <span className="usage-legend-item">
+                      <i className="usage-legend-dot usage-legend-used" aria-hidden="true" />已用 <b>…</b>
+                    </span>
+                    <span className="usage-legend-item">
+                      <i className="usage-legend-dot usage-legend-rest" aria-hidden="true" />总共 <b>…</b>
+                    </span>
+                  </div>
+                ) : (
+                  <div className="usage-legend">
+                    <span className="usage-legend-item">
+                      <i className="usage-legend-dot usage-legend-used" aria-hidden="true" />已用 <b>{formatSize(usage.bytes)}</b>
+                    </span>
+                    <span className="usage-legend-item">
+                      <i className="usage-legend-dot usage-legend-rest" aria-hidden="true" />总共 <b>{formatSize(usage.limit)}</b>
+                    </span>
+                  </div>
+                )}
                 <div className="account-stats">
                   {usage.state === 'loading' ? (
-                    // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
-                    // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
                     <div className="stat"><b>…</b><span>张作品</span></div>
                   ) : (
-                    <>
-                      <div className="stat"><b>{usage.count}</b><span>张作品</span></div>
-                      {/* 体积：只有算得出来、而且确实存着东西的时候才画（0 张时
-                          「0 KB」是句没用的话）。 */}
-                      {usage.count > 0 && (
-                        <div className={usageWarn ? 'stat stat-warn' : 'stat'}>
-                          <b>{formatSize(usage.bytes)}</b><span>占的空间</span>
-                        </div>
-                      )}
-                    </>
+                    <div className="stat"><b>{usage.count}</b><span>张作品</span></div>
                   )}
                 </div>
               </div>
