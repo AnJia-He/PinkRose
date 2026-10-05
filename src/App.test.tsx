@@ -2598,7 +2598,11 @@ describe('左栏导航：切界面不丢工作', () => {
     //   少了前一半，这一格会**静默读成空串**（断言红在最后一项，看着像少了一颗按钮）。
     const 格子 = () => [...container.querySelectorAll('.nav-item')]
       .map(b => b.getAttribute('aria-label') || b.textContent)
-    expect(格子()).toEqual(['修图', '调色', '对话', '作品', '产品介绍', '个人设置'])
+    // ★ 2026-10-05：**「滤镜」进了左栏**（用户：「把滤镜导入放到导航里吧，然后我没看到
+    //   怎么去调用 lut 文件」——他找不到那个页面，也找不到"调用"的地方）。
+    //   位置紧挨着「调色」：导入/管理滤镜是**为这张照片**做的事，和修图/调色同一组
+    //   （后面那两支说的是别的照片）。
+    expect(格子()).toEqual(['修图', '调色', '滤镜', '对话', '作品', '产品介绍', '个人设置'])
 
     await goNav('调色')
     expect(location.pathname).toBe('/app/adjust')
@@ -4234,6 +4238,35 @@ describe('用户管理页', () => {
     expect(line).toBeTruthy()
     expect(line?.textContent).toContain('2 级')
     expect(line?.textContent).toContain('1 KB')
+  })
+
+  /**
+   * ★ 2026-10-05：**左栏那颗「滤镜」**（用户：「把滤镜导入放到导航里吧，然后我没看到
+   * 怎么去调用 lut 文件」）——他找不到那一页，也找不到**调用**的地方。
+   *
+   * 这一条把新开的那条路整条走一遍：左栏点「滤镜」→ 那一页 → 点「去套在照片上」
+   * → 落到**调色**屏，而且面板里那一栏**是开着的**（不用再自己找一次 —— 他刚
+   * 说过找不到）。少了最后那半截，新按钮只是把人送回一屏他刚才没找到东西的地方。
+   */
+  it('★ 左栏「滤镜」进得去那一页；那儿的「去套在照片上」落到调色、而且那一栏是开着的', async () => {
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [LUTM(1, { name: '黄昏' })] })
+    await renderApp()
+    await uploadPhoto()
+
+    await goNav('滤镜')
+    expect(location.pathname).toBe('/app/luts')
+    expect(container.querySelector('.nav-item.on')?.textContent).toBe('滤镜')
+
+    // 那一颗只在**真有滤镜**时出现（一个都没有时它把人送去一个空 picker，
+    // 而该做的事明明是先导入 —— 见组件里那段）
+    const go = [...container.querySelectorAll('.luts-go-use')][0] as HTMLButtonElement
+    expect(go).toBeTruthy()
+    await act(async () => { go.click(); await settle() })
+
+    expect(location.pathname).toBe('/app/adjust')
+    expect(container.querySelector('.nav-item.on')?.textContent).toBe('调色')
+    // 到地方了，而且**已经是开着的**（不用再点一次「滤镜」那一行）
+    expect(container.querySelector('.lut-grid')).toBeTruthy()
   })
 
   it('★ 第 4 格右边写的是**真数**（N 个）', async () => {

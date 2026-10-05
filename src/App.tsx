@@ -204,6 +204,18 @@ export default function App() {
   const lutRef = useRef<LutRef | null>(null)
   useEffect(() => { lutRef.current = lut }, [lut])
   /**
+   * ★ 2026-10-05：「下一趟进调色屏时，把面板里「滤镜」那一栏**展开**」。
+   *
+   * 唯一的来源是「滤镜」那一页那颗「去调色里套一张」（用户：「我没看到怎么去
+   * 调用 lut 文件」）—— 用 ref 而不是 state：它是**一件只发生一次的事**（面板挂载
+   * 那一刻读一下初值），不是"这个界面现在长什么样"。放进 state 会多一次没必要的
+   * 重渲染，而且"用完了要记得清"那件事在 state 上更容易忘。
+   *
+   * ⚠️ 清掉它那条 effect 在**下面**（`view` 声明之后）—— 写在这儿会踩 TDZ
+   *    （`Cannot access 'view' before initialization`，整个 App 当场白屏）。
+   */
+  const lutOpenNext = useRef(false)
+  /**
    * 滤镜那一摊（清单 / 当前的 cube / 缩略图，见 `app/useLuts`）。
    *
    * ⚠️ 它挂在**组件顶上**、每一次渲染都调：这是一个 hook，不许被条件包起来。
@@ -1637,6 +1649,16 @@ export default function App() {
   const [view, setView] = useState<View>(() => viewFromPath(location.pathname))
 
   /**
+   * ★ 2026-10-05：`lutOpenNext` 的清场（那个 ref 声明在上面 `lut` 那一段旁边）。
+   *
+   * **离开调色屏就清掉** —— 不清的话，以后每次点左栏「调色」都会替用户把那一栏
+   * 拉开（那是他上一次从滤镜页过来时授权的"这一次"，不是"以后都这样"）。
+   * ⚠️ 这条 effect 必须住在 `view` **后面**：写在 ref 那儿会踩 TDZ，整个 App 白屏
+   *（`App.test.tsx` 163 条一起红，报错是一句 `Cannot access 'view' before initialization`）。
+   */
+  useEffect(() => { if (view.kind !== 'adjust') lutOpenNext.current = false }, [view.kind])
+
+  /**
    * 点导航：改状态，顺手把地址栏换成对应的那条。
    *
    *  这两条语句**谁先谁后无所谓**：`pushState` 不会触发 `popstate`（规范就这么定的），
@@ -2057,6 +2079,9 @@ export default function App() {
                 <AdjustmentPanel
                   value={params}
                   onChange={setParams}
+                  // ★ 2026-10-05：从「滤镜」那一页按「去调色里套一张」过来的那一趟，
+                  //   这一栏**进来就是开着的**（见 `lutOpenNext` 那段）。
+                  defaultLutOpen={lutOpenNext.current}
                   // ★ 2026-10-05（滤镜）：「重置」= 参数归零 **+ 滤镜也清掉**。
                   //   只归零参数的话，用户按了重置、画面还是那套颜色（滤镜是
                   //   另一条路，不归 params 管），而面板上那格还亮着 —— 他会以为
@@ -2163,7 +2188,9 @@ export default function App() {
           （左栏一直在，出去走左栏就是了）—— 两页的走法不该长成两个样子。
           ⚠️ 出去时**重拉一次清单**是上面那个 effect（看 `view.kind` 的边沿）干的，
           不在这句 JSX 里；`LutSettings` 这边只管自己那一份。 */}
-      {view.kind === 'luts' && <LutSettings />}
+      {view.kind === 'luts' && (
+        <LutSettings onUse={() => { lutOpenNext.current = true; go({ kind: 'adjust' }) }} />
+      )}
     </div>
   )
 }

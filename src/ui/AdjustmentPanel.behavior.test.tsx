@@ -49,14 +49,15 @@ let pickedLut: number | null | 'x' = 'x'
 let wentImport = false
 let retriedLuts = 0
 
-function Harness() {
+function Harness({ lutOpen = false, luts = lutsFromTest }: { lutOpen?: boolean; luts?: LutMeta[] } = {}) {
   const [v, setV] = useState<Adjustments>(ZERO)
   return (
     <AdjustmentPanel
       value={v} onChange={setV} onReset={() => setV(ZERO)}
+      defaultLutOpen={lutOpen}
       onMatchReference={f => { matchedRef = f }}
       onMatchWork={w => { matchedWork = w }}
-      luts={lutsFromTest}
+      luts={luts}
       lutsKnown={lutsKnownFromTest}
       lut={lutFromTest}
       lutThumbs={lutThumbsFromTest}
@@ -113,6 +114,26 @@ describe('面板的分组（2026-10-04）', () => {
     expect(group.querySelector('.color-wheel')).toBeTruthy()
     const labels = [...group.querySelectorAll('.slider-label')].map(e => e.textContent)
     expect(labels).toEqual(['青 — 红', '洋红 — 绿', '黄 — 蓝'])
+  })
+
+  /**
+   * ★ 2026-10-05：`defaultLutOpen` —— 从「滤镜」那一页按「去套在照片上」过来时，
+   * 面板里那一栏**进来就该是开着的**。
+   *
+   * 为什么值得一条测试：这一栏的默认是"收着"（spec §8.3 用户原话「不要写个名字
+   * 显示出来占空间」），所以"传进来的那个 true 有没有接上"只看代码是看不出来的
+   * —— 两条路长得一模一样，差别只在**用户落地那一刻**。写反/漏掉的表现正是
+   * 用户刚抱怨的那件事：人到了，东西还得自己再找一遍。
+   */
+  it('★ defaultLutOpen：传 true 时进来就是展开的（默认仍然收着）', async () => {
+    // ⚠️ 判据是 `.lut-picker` 在不在 —— 它**只在那一栏开着时**渲染。
+    //    别改成 `.lut-grid`：那是"格子"那一层，一个滤镜都没有时这一栏也开着
+    //    （显示的是「还没有导入过滤镜。」），两个形状在这条测试里长得不一样。
+    const open = await mount(<Harness lutOpen />)
+    expect(open.querySelector('.lut-picker')).not.toBeNull()
+
+    const shut = await mount(<Harness />)
+    expect(shut.querySelector('.lut-picker')).toBeNull()
   })
 
   it('★ 点组标题 → 收起；再点 → 展开', async () => {
@@ -286,6 +307,29 @@ describe('滤镜那一栏（2026-10-05）', () => {
     await click(headOf(c))
     expect(c.querySelectorAll('.lut-tile')).toHaveLength(2)   // 「不用」+ 黄昏
     expect(needThumbsCalls).toBe(1)
+  })
+
+  /**
+   * ★ 2026-10-05 **真机抓到的那条**：那一栏开着的时候**清单变了，要再要一次**。
+   *
+   * 场景正是新开的那条路走出来的：在「滤镜」那一页导完一个、按「去调色里套一张」
+   * 过来 —— 面板挂载那一刻，App 手上那份清单**还是旧的（空的）**（它要等"离开
+   * 那一页"才重拉）。只在"打开那一刻"叫一次的话，这一次一条都画不出来，而
+   * **没有任何东西会再叫第二次**：用户看到一栏开着、格子里全是灰方块，永远不变
+   * （真机探针量到的：2 格只有 1 张图）。
+   */
+  it('★ 开着的时候清单变了（导完就过来那一瞬间）→ 再要一次缩略图', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    // 挂载那一刻手上是**空**清单 —— 就是 bug 的现场
+    await act(async () => { root.render(<Harness lutOpen luts={[]} />) })
+    expect(needThumbsCalls).toBe(0)     // 空清单时不叫：那时这一栏没有格子要画
+
+    // 清单到手 → 再要一次，格子才有图
+    await act(async () => { root.render(<Harness lutOpen luts={[LUT]} />) })
+    expect(needThumbsCalls).toBe(1)
+    expect(container.querySelectorAll('.lut-tile')).toHaveLength(2)
   })
 
   it('在用滤镜 → 标题点亮（`.on`）', async () => {

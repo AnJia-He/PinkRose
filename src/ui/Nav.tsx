@@ -59,6 +59,19 @@ export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
           地方**（`ui/AdjustEmpty.tsx` 那句「还没有照片。」），不是这一格。*/}
       <button className={`nav-item${here === 'adjust' ? ' on' : ''}`}
               onClick={() => onGo({ kind: 'adjust' })}>调色</button>
+      {/* ★ 2026-10-05：**「滤镜」也进了这一列**（用户：「把滤镜导入放到导航里吧，
+          然后我没看到怎么去调用 lut 文件」）。
+
+          在那之前这一页几乎**没有入口**：调色面板里"一个滤镜都没有"时那颗
+          「去导入」（用过一次就消失了），外加「个人设置」里有一行 —— 而那是
+          **管理**，不是"我要去用它"。用户找不到，就是这条路太深。
+
+          ⚠️ 位置紧挨着「调色」（不是挪到「作品」旁边）：导入/管理滤镜是**为这张
+          照片**做的事，和修图/调色同一组；后面那两支说的是别的照片。
+          ⚠️ 它和「调色」不一样，**没有照片也能进** —— 那一页是管理自己的滤镜库，
+          和手上有没有照片无关。 */}
+      <button className={`nav-item${here === 'luts' ? ' on' : ''}`}
+              onClick={() => onGo({ kind: 'luts' })}>滤镜</button>
       <button className={`nav-item${here === 'sessions' ? ' on' : ''}`}
               onClick={() => onGo({ kind: 'sessions' })}>对话</button>
       <button className={`nav-item${here === 'gallery' ? ' on' : ''}`}

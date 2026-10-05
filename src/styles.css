@@ -2365,6 +2365,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    方角实心块（方角来自全局 `button{}` 的 `--r-sm`）。颜色一个字没动：
    还是 `.btn-primary` 那套主色，这里只管形状。 */
 .luts-import { border-radius: var(--r-pill); padding: 8px 20px; }
+/* ★ 2026-10-05：「去调色里套一张」——**"怎么调用它"那条路**（用户原话：
+   「我没看到怎么去调用 lut 文件」）。形状跟这一页另外那颗同一族（药丸，
+   理由同上面那段）；**颜色一个字不动**：它是**次要动作**，走全局 `button{}`
+   那身灰底 + 描边 —— 主色只留给「导入 .cube」。 */
+.luts-go-use { border-radius: var(--r-pill); padding: 8px 20px; }
 /* 藏起来的文件输入框，由那颗按钮去点它（和 `.composer-file` 同一个做法 ——
    `display:none` 的元素不进可访问性树，可读的名字在按钮上，不在这里）。 */
 .luts-file { display: none; }

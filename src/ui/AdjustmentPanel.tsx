@@ -50,6 +50,14 @@ type Props = {
   onLutAmount: (amount: number) => void
   /** 这一栏**展开那一刻**叫一次 —— 缩略图很贵（每个滤镜各画一张），收着时不画。 */
   onNeedLutThumbs: () => void
+  /**
+   * ★ 2026-10-05：「滤镜」那一栏**进来就展开**（默认收着）。
+   *
+   * 只有一条路会传 true：从「滤镜」那一页按「去调色里套一张」过来（用户原话
+   * 「我没看到怎么去调用 lut 文件」——他找不到，那就别再让他找第二遍）。
+   * ⚠️ 它是**初始值**不是受控值：之后用户自己开合，这边不再插手。
+   */
+  defaultLutOpen?: boolean
   /** 一个滤镜都没有时那颗「去导入」（跳到设置里那一页）。 */
   onGoImport: () => void
   /** 清单没到手时那颗「再试一次」（重拉一次清单）。 */
@@ -89,6 +97,7 @@ const GRADIENTS: Partial<Record<keyof Adjustments, string>> = {
 export default function AdjustmentPanel({
   value, onChange, onReset, onMatchReference, onMatchWork,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
+  defaultLutOpen = false,
 }: Props) {
   const refInput = useRef<HTMLInputElement>(null)
 
@@ -100,7 +109,24 @@ export default function AdjustmentPanel({
   // ★ 2026-10-05：「滤镜」那一栏开着没有。**默认收着**（设计 §5.2 / spec §8.3：
   //   用户原话「不要写个名字显示出来占空间」）—— 所以它不在上面那个
   //   `collapsed` 集合里：那套的默认是"全展开"，这一栏的默认是"收着"。
-  const [lutOpen, setLutOpen] = useState(false)
+  //   `defaultLutOpen` 只从「滤镜」那一页那条路来（见 Props 那段）。
+  const [lutOpen, setLutOpen] = useState(defaultLutOpen)
+
+  /**
+   * 这一栏**开着**的时候去要缩略图（很贵：每个滤镜各画一张当前照片）。
+   *
+   * ⚠️ **依赖里必须有 `luts`**（★ 2026-10-05 真机抓到的那条）：
+   *    从「滤镜」那一页导完一个、按「去调色里套一张」过来的那一刻，App 手上那份
+   *    清单**可能还是旧的（空的）** —— 它是在离开那一页之后才重拉的。只在"打开
+   *    那一刻"叫一次的话，这一次会一条都画不出来，而**没有任何东西会再叫第二次**：
+   *    用户看到的是一栏开着、格子里全是**灰方块**（看着像加载失败），永远不变。
+   *    （真机探针量到的：`.lut-tile` 2 格、`.lut-tile img` 只有 1 张。）
+   * ⚠️ 清单是空的时**不叫**：那种时候这一栏显示的是「还没有导入过滤镜。」，
+   *    一张缩略图都用不上（原来那颗按钮的 onClick 是无条件叫的，白画一趟）。
+   */
+  useEffect(() => {
+    if (lutOpen && luts.length > 0) onNeedLutThumbs()
+  }, [lutOpen, luts])
 
   /**
    * 「放置预期效果照片」展开出来的两个来源（★ 2026-10-05）。
@@ -255,11 +281,10 @@ export default function AdjustmentPanel({
       <section className="panel-group">
         <button className={lut ? 'panel-group-head on' : 'panel-group-head'}
           aria-expanded={lutOpen}
-          onClick={() => {
-            const next = !lutOpen
-            setLutOpen(next)
-            if (next) onNeedLutThumbs()      // 打开才去画缩略图（很贵，别在收着时白画）
-          }}>
+          onClick={() => setLutOpen((o) => !o)}>
+          {/* ⚠️ 缩略图不在这颗按钮的 onClick 里要了 —— 那件事现在是上面那条
+              effect 的活（"开着 + 清单非空"就是全部条件）。两处都叫的话，打开
+              那一下会连画两趟（第二趟把第一趟作废，纯白烧）。 */}
           <span className="panel-group-title">滤镜</span>
           <ChevronDown size={14} className={lutOpen ? 'chev' : 'chev folded'} aria-hidden="true" />
         </button>

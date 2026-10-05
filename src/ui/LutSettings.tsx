@@ -67,7 +67,17 @@ function readText(file: File): Promise<string> {
   })
 }
 
-export function LutSettings() {
+export function LutSettings({ onUse }: {
+  /**
+   * ★ 2026-10-05：「**怎么调用它**」那一步（用户：「我没看到怎么去调用 lut 文件」）。
+   *
+   * 导入只是把文件放进库里；真正"套在照片上"的地方在**调色那一屏的面板里**，
+   * 而那一栏**默认是收着的** —— 所以这一颗不只是跳过去，落地时那一栏是**开着**的
+   * （`defaultLutOpen`，接线在 `App.tsx`）。少了后半截，它只是把人送回一屏他刚
+   * 才没找到东西的地方。
+   */
+  onUse: () => void
+}) {
   const [load, setLoad] = useState<LutsState>({ s: 'idle' })
   /** 导入中（那颗按钮同时会变成「正在导入…」）。 */
   const [busy, setBusy] = useState(false)
@@ -249,6 +259,17 @@ export function LutSettings() {
           }}
         />
         {full && <span className="luts-hint">{LUT_LIMIT_REACHED(MAX_LUTS)}</span>}
+
+        {/* ★ 2026-10-05：**"怎么调用它"那条路**（用户原话：「我没看到怎么去调用
+            lut 文件」）。它就摆在「导入 .cube」旁边 —— 这一页的两件事从此一眼看全：
+            往里放 / 拿出去用。
+            ⚠️ 只在**真有滤镜**时出现：一个都没有时它把人送到一个空 picker 前面，
+            而那时候该做的事明明是先导一个（下面那句「还没有导入过滤镜。」管这个）。
+            ⚠️ 它是**次要动作**：不穿主按钮那身（`.luts-import` 才是这一页的主按钮），
+            走全站那颗普通按钮的长相。 */}
+        {load.s === 'ready' && load.list.length > 0 && (
+          <button type="button" className="luts-go-use" onClick={onUse}>去调色里套一张</button>
+        )}
       </div>
 
       {err && <p className="luts-error">{err}</p>}
