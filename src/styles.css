@@ -1209,10 +1209,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .msg { display: flex; flex-direction: column; gap: var(--sp-2); max-width: 88%; }
 .msg.user { align-self: flex-end; align-items: flex-end; }
 .msg.assistant { align-self: flex-start; align-items: flex-start; }
-/* 第二块：那一步的画面 + 它下面那两颗按钮。
-   ⚠️ 小图可能**还没生成完**（`thumbs[id]` 是空串那一阵），这时候这一块里只有
-   两颗按钮 —— 它照样要在，别让它跟着图一起消失。 */
-.shot { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
+/* ★ 2026-10-06：这里原来有一条 `.shot`（"那一步的画面 + 它下面那两颗按钮"那一块
+   的外壳）。操作行不再归"图"管了 —— 它现在**每段都有**（末尾还挂着那颗「…」，
+   见 `.msg-more`），所以外壳退役：图和操作行都直接挂在 `.msg` 下面，间距由
+   `.msg` 自己的 `gap` 管（和原来 `.shot` 的 gap 是同一个数）。 */
 
 .bubble {
   border-radius: var(--r-md); padding: 9px 13px;
@@ -1320,24 +1320,53 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    ⚠️ 现形靠 `opacity` 不是 `display`：`opacity: 0` 时它**仍然可点**，而鼠标
      一旦停在它上面（它还是 `.msg` 的孩子，算 hover 到父级）它就现形 ——
      不会留一块"看不见但能点"的死区。键盘走 `:focus-visible` 同一条。 */
-.msg { position: relative; }
-.msg-del {
-  position: absolute; top: 0;
-  width: 22px; height: 22px; padding: 0;
+/* ★ 2026-10-06：末尾那排里那颗「…」（写在 `ChatPanel.tsx`，排最后一个）。
+   **它替掉了原来那颗 ✕** —— 那是悬在气泡外侧、平时 opacity 0、鼠标停在整条
+   消息上才浮出来的一颗。用户看过之后点名要豆包那种：「放个这个图标在每段对话
+   的最后，点击这个符号后里面有删除选项」—— 所以它**一直看得见**（他上次找不到
+   删除键，就是"悬停才出现"害的）、也不悬在气泡外面了。
+   长相：灰的、和「回到这一步 / 再来一版」同一副药丸骨架，只是窄一号（图标键）。 */
+.msg-more {
   display: inline-flex; align-items: center; justify-content: center;
-  border-radius: var(--r-sm);
-  background: transparent; border-color: transparent; color: var(--muted-2);
-  opacity: 0;
-  transition: opacity var(--dur-1) ease, color var(--dur-1) ease, border-color var(--dur-1) ease;
+  padding: 6px 10px;
+  border-radius: var(--r-pill);
+  background: transparent; border-color: var(--line-2); color: var(--muted);
 }
-.msg.assistant .msg-del { right: -26px; }
-.msg.user .msg-del { left: -26px; }
-.msg:hover .msg-del, .msg-del:focus-visible { opacity: 1; }
-.msg-del:hover:not(:disabled) { color: var(--danger); border-color: var(--line-2); }
-/* 忙碌时那颗是禁用的。**必须专门写一条**：上面那条 `opacity: 1`（0-2-0）比
-   全局的 `button:where(:disabled)`（0-0-1）重，不写的话"禁用"就只剩点不动
-   —— 悬停照样满亮，看着完全能点（这个项目最不喜欢的一种按钮）。 */
-.msg:hover .msg-del:disabled { opacity: .45; }
+.msg-more:hover:not(:disabled) { color: var(--accent-300); border-color: var(--accent); background: var(--accent-tint); }
+/* 菜单开着时这颗是**点亮**的（和输入框那颗加号同一条语言：开着的东西要有记号）。
+   ⚠️ 直接按 `[aria-expanded="true"]` 选 —— 状态只有这一个来源，不另挂 class。 */
+.msg-more[aria-expanded="true"] { color: var(--accent-300); border-color: var(--accent); background: var(--accent-tint); }
+/* 忙的时候禁用。上面那条 `hover:not(:disabled)` 自己就把禁用挡在悬停之外了，
+   这里补的是"不悬停时"的颜色 —— 灰下去、描边收一档（和「再来一版」同一个道理：
+   全局那条 `button:where(:disabled)` 只降透明度、管不到颜色）。
+   ⚠️ 顺序不能动：这一条和上面 `[aria-expanded]` 那条特异性打平（都是 0-2-0），
+   靠文件里**谁在后面**分胜负 —— 禁用必须赢。 */
+.msg-more:disabled { color: var(--muted-2); border-color: var(--line); background: transparent; }
+
+/* ★ 2026-10-06：「…」点开的**菜单**（就地展开的那一条，不弹浮层 —— 全站规矩）。
+   目前只有【删除】一项；以后消息上的动作往这儿排，所以写成竖列、一项一行。
+   ⚠️ 底和描边**不能省**：它就落在消息列表里，不给底的话这一行读起来还是
+   "一段话"而不是一个菜单。
+   对齐不用写：它是 `.msg` 的孩子，跟着那层的 `align-items` 走（助手贴左、
+   用户的话贴右）。 */
+.msg-menu {
+  display: inline-flex; flex-direction: column; align-items: stretch;
+  padding: var(--sp-1);
+  border: 1px solid var(--line-2); border-radius: var(--r-md);
+  background: var(--raised);
+}
+/* 菜单里的项：按掉全局 `button` 那副长相（`--raised` 底 + 描边 + 那份内边距），
+   只在悬停时给底。（`.msg-menu button` 是 (0,1,1)，压得过全局 `button` 的 (0,0,1)。） */
+.msg-menu button {
+  padding: 6px 14px; font-size: 12.5px; text-align: left;
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  background: transparent;
+}
+/* 【删除】穿危险色 —— 菜单里的"删除"就该是这个颜色（豆包 / 微信都是这么干的），
+   和确认条上那颗「确认删除」是同一套语言，只是这儿没有边框。
+   ⚠️ hover 这条要把颜色**再写一遍**：全局那条 `button:where(:hover)` 也在改底色。 */
+.msg-menu-del { color: var(--danger); }
+.msg-menu-del:hover:not(:disabled) { color: var(--danger); border-color: transparent; background: var(--danger-bg); }
 
 /* 带图那条的**就地确认**（不弹窗，全站规矩）：一句话 + 两颗按钮。
    形状照作品详情页那条 `.detail-confirm` —— 它是一个**正在问你的问题**，
@@ -1538,13 +1567,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
     border-left: none;
     border-top: 1px solid var(--line);
   }
-  /* ★ 2026-10-06：窄屏（触屏）上没有"悬停"这回事 —— 上面那颗 ✕ 平时收着的
-     规矩在这一档**不成立**，否则它永远浮不出来、手机上根本删不了记录。
-     同理，26px 的悬出在这一档也收紧一点：390px 宽时 `.chat-log` 的左右留白
-     各 16px，外侧空出来的那 12% 只剩 ~40px。 */
-  .msg-del { opacity: 1; }
-  .msg.assistant .msg-del { right: -24px; }
-  .msg.user .msg-del { left: -24px; }
+  /* ★ 2026-10-06：这里原来有三条 `.msg-del` 的窄屏补丁（"悬停才现形"那套在
+     触屏上的补救）。「…」现在**一直看得见**、也不再悬出气泡外了 —— 三条一起
+     退役，触屏和鼠标在这一格上没有区别。 */
 
   /* ★ 2026-10-05：微调面板在窄屏上**变回"照片在上、微调在下"** ——
      这一档的 `.workspace` 本来就翻成竖排（见上），面板自然落到照片底下；
@@ -1594,7 +1619,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    （1:3 那种）骨架会比真图矮一截，换图那一下正好把这次要修的"跳"又造回来；
    列宽不够时两边一起收，"到上限就不再长"的表现因此是一致的。
    外层的间距不用在这儿写：它挂成 `.msg` 的孩子，那层的 `gap: var(--sp-2)`
-   和"真缩略图外面 `.shot` 的 gap"是同一个数。 */
+   和缩略图那一格的间距是同一个数。 */
 .shot-skeleton {
   position: relative; overflow: hidden;
   width: 120px; max-width: 100%;

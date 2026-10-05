@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
-import { Plus, RotateCw, SlidersHorizontal, Undo2, X } from 'lucide-react'
+import { MoreHorizontal, Plus, RotateCw, SlidersHorizontal, Undo2 } from 'lucide-react'
 import LutPicker from './LutPicker.tsx'
 
 export type ChatMessage = {
@@ -86,17 +86,17 @@ type Props = {
   onRetryLuts: () => void
   /**
    * ★ 2026-10-06（用户原话：「在会话里的单条记录我怎么还是没有删除的按钮」）：
-   * **「原图」那一步的消息 id** —— 它的消息上**不摆**删除键（它是这条会话的锚）。
-   * 欢迎语和原图那一步是同一条消息（同一个 id），所以欢迎那条也没有 ✕ ——
+   * **「原图」那一步的消息 id** —— 它的消息上**不摆**「…」（它是这条会话的锚）。
+   * 欢迎语和原图那一步是同一条消息（同一个 id），所以欢迎那条也没有「…」——
    * 这是对的：删了它，这一屏就没有落脚的地方了。
    * `null` = 还没有原图（没有会话 / 没有照片）。
    */
   originalId: number | null
   /**
-   * 点某条消息的 ✕ → 请 App 把这条记录删掉。
+   * 点某条消息菜单里的【删除】→ 请 App 把这条记录删掉。
    *
    * ⚠️ **带图那条不直接调它**：那一条身后挂着一整步（图 / 参数 / 滤镜），
-   *   点 ✕ 先在**就地问一句**（下面的 `confirmingId`，照 SessionsPage /
+   *   点【删除】先在**就地问一句**（上面的 `confirmingId`，照 SessionsPage /
    *   作品详情页那套"不弹窗"的规矩），点「确认删除」才走到这个回调。
    *   纯文字那条（身后没有一步）不用确认，一点就删 —— 删错一句话的代价
    *   和删掉一张花过钱的图不是一回事。
@@ -130,6 +130,19 @@ export default function ChatPanel({
    * 这个界面上没有弹窗文化）。一次只问一条：这个数就是全部状态。
    */
   const [confirmingId, setConfirmingId] = useState<number | null>(null)
+
+  /**
+   * ★ 2026-10-06：**哪一条的「…」菜单开着**（null = 都收着）。
+   *
+   * 「…」是那条菜单**唯一**的开关（再点一下收起，和输入框那颗加号同一个逻辑）；
+   * 一个数装全部状态 = 一次只开一条 —— 两条菜单并排挂着的话，"点删除"删的是
+   * 哪一条会变得要猜。
+   *
+   * 菜单目前只有【删除】一项。做成菜单而不是直接摆一颗删除键（豆包的样子，
+   * 也是他看了豆包截图之后点名的形状）：以后要加的每一条消息上的动作，都往
+   * 这一条里排，不用在消息末尾越堆越多。
+   */
+  const [menuId, setMenuId] = useState<number | null>(null)
 
   /**
    * 这一栏**开着**的时候去要缩略图（很贵：每个滤镜各画一张当前照片）。
@@ -166,75 +179,94 @@ export default function ChatPanel({
           const delable = m.id !== originalId
           return (
             <div key={m.id} className={`msg ${m.role}`}>
-              {/* ★ 2026-10-06：删这一条记录。平时收着（opacity 0），鼠标停在这一条
-                  上才浮出来 —— 它是一行里最不常按的那颗，不该跟内容抢眼。
-                  ⚠️ 键盘也够得着：`:focus-visible` 时同样现形（见 styles.css）。
-                  ⚠️ `busy` 时禁用（和「就改这里」同款）：忙的时候删等于在一次生成
-                  还在飞的时候动账本（App 的 `onDeleteMessage` 里还有一道真闸门）。
-                  ⚠️ 确认条开着时这颗收掉（`confirmingId !== m.id`）—— 那条已经在
-                  问同一个问题了，两颗并存会像"删除按钮点了没反应"。 */}
-              {delable && confirmingId !== m.id && (
-                <button className="msg-del" aria-label="删除这条记录" disabled={!!busy}
-                  onClick={() => {
-                    if (isStep) setConfirmingId(m.id)
-                    else onDeleteMessage(m.id)
-                  }}>
-                  {/* 图标不进 textContent（svg 天生如此）—— 按文字找按钮的地方
-                      和读屏软件看到的都只有 `aria-label` 那个名字。 */}
-                  <X size={13} aria-hidden="true" />
-                </button>
-              )}
               {/* ① 上面那一块：话 */}
               <div className={`bubble ${m.role}`}>
                 <div className="bubble-text">{m.text}</div>
               </div>
-              {/* ② 下面那一块：那一步的画面 + 挂在它下面的两颗按钮 */}
-              {(shot || acts) && (
-                <div className="shot">
-                  {shot && (
-                    <img
-                      className="bubble-thumb"
-                      src={thumbs[m.id]}
-                      alt="这一步的效果"
-                      onClick={() => jumpableIds.includes(m.id) && onJump(m.id)}
-                    />
-                  )}
-                  {acts && (
-                    <div className="bubble-actions">
-                      {/* ★ 2026-10-05：站在的那一步**不是一颗按钮**，是一个位置标记
-                          （设计 §6.1）。在最新一步上，那颗「回到这一步」本来就是
-                          点了没反应的按钮 —— 换成它顺手把那个毛病修掉，而且任何
-                          时刻"我在哪"都有答案。span 不是 button：读屏和"按文字找
-                          按钮"的地方都能分清。 */}
-                      {jumpableIds.includes(m.id) && (
-                        m.id === currentId
-                          ? <span className="bubble-current" aria-current="step">你在这里</span>
-                          : <button className="bubble-jump" onClick={() => onJump(m.id)}>
-                              <Undo2 size={13} aria-hidden="true" />
-                              回到这一步
-                            </button>
-                      )}
-                      {/* 「再来一版」= 同一句话重掷一次。**和「回到这一步」并排但不同**：
-                          一个是回去，一个是回去**并且立刻重来**（靠 ↶ / ↻ 区分）。
-                          ⚠️ 它是这两颗里**唯一**要禁用的那颗 —— 忙的时候再掷一次
-                          就是两次生成同时在跑，钱是两倍（「回到这一步」不禁用是有意的，
-                          见 App.tsx 的 onJump 那段）。
-                          ★ 2026-10-01：两个箭头以前是 CSS 的 `content: '↶' / '↻'`，
-                          现在是 lucide 图标。**仍然是装饰**（`aria-hidden`）：
-                          图标是 svg，进不了 textContent，所以按文字找按钮的地方
-                          和读屏软件看到的都还只有「回到这一步」/「再来一版」这五个字。 */}
-                      {rerunnable.includes(m.id) && (
-                        <button className="bubble-rerun" disabled={!!busy} onClick={() => onRerun(m.id)}>
-                          <RotateCw size={13} aria-hidden="true" />
-                          再来一版
+              {/* ② 那一步的画面（`thumbs` 还没生成完 = 空串时，这块整个不摆） */}
+              {shot && (
+                <img
+                  className="bubble-thumb"
+                  src={thumbs[m.id]}
+                  alt="这一步的效果"
+                  onClick={() => jumpableIds.includes(m.id) && onJump(m.id)}
+                />
+              )}
+              {/* ③ 末尾那一排：回到这一步 / 再来一版 / 「…」。
+                  ★ 2026-10-06：它不再套在 `.shot` 里了 —— 这一排现在是**每段都有**
+                  的（用户要的豆包式：「放个这个图标在每段对话的最后」）：纯文字
+                  那条只有「…」一颗；「原图」那条没有「…」（它是这条会话的锚），
+                  但站着的那格「你在这里」照旧。间距由 `.msg` 自己的 gap 管。 */}
+              {(acts || delable) && (
+                <div className="bubble-actions">
+                  {/* ★ 2026-10-05：站在的那一步**不是一颗按钮**，是一个位置标记
+                      （设计 §6.1）。在最新一步上，那颗「回到这一步」本来就是
+                      点了没反应的按钮 —— 换成它顺手把那个毛病修掉，而且任何
+                      时刻"我在哪"都有答案。span 不是 button：读屏和"按文字找
+                      按钮"的地方都能分清。 */}
+                  {jumpableIds.includes(m.id) && (
+                    m.id === currentId
+                      ? <span className="bubble-current" aria-current="step">你在这里</span>
+                      : <button className="bubble-jump" onClick={() => onJump(m.id)}>
+                          <Undo2 size={13} aria-hidden="true" />
+                          回到这一步
                         </button>
-                      )}
-                    </div>
+                  )}
+                  {/* 「再来一版」= 同一句话重掷一次。**和「回到这一步」并排但不同**：
+                      一个是回去，一个是回去**并且立刻重来**（靠 ↶ / ↻ 区分）。
+                      ⚠️ 它是这两颗里**唯一**要禁用的那颗 —— 忙的时候再掷一次
+                      就是两次生成同时在跑，钱是两倍（「回到这一步」不禁用是有意的，
+                      见 App.tsx 的 onJump 那段）。
+                      ★ 2026-10-01：两个箭头以前是 CSS 的 `content: '↶' / '↻'`，
+                      现在是 lucide 图标。**仍然是装饰**（`aria-hidden`）：
+                      图标是 svg，进不了 textContent，所以按文字找按钮的地方
+                      和读屏软件看到的都还只有「回到这一步」/「再来一版」这五个字。 */}
+                  {rerunnable.includes(m.id) && (
+                    <button className="bubble-rerun" disabled={!!busy} onClick={() => onRerun(m.id)}>
+                      <RotateCw size={13} aria-hidden="true" />
+                      再来一版
+                    </button>
+                  )}
+                  {/* ★ 2026-10-06：「…」——**一直看得见**（不搞悬停才浮出来那套：
+                      他这次会提，就是因为上一种入口是悬停才出现的，找不到），
+                      但灰灰小小的，不跟内容抢眼。点开**就地展开**菜单，不弹浮层
+                      （全站规矩）。永远排在最后一个（豆包也是主操作在前、
+                      「…」收尾）。
+                      ⚠️ `aria-label` 是读屏和"按标签找元素"的唯一依据（图标键和
+                      左栏「个人设置」同一条规矩）；`aria-expanded` 报开合。
+                      ⚠️ `busy` 时禁用（和「就改这里」同款）：忙的时候删等于在一次
+                      生成还在飞的时候动账本（App 的 `onDeleteMessage` 里还有一道
+                      真闸门）。
+                      ⚠️ 确认条开着时这颗收掉（`confirmingId !== m.id`）—— 那条
+                      已经在问同一个问题了，两颗并存会像"删除按钮点了没反应"。 */}
+                  {delable && confirmingId !== m.id && (
+                    <button className="msg-more" aria-label="更多操作"
+                      aria-expanded={menuId === m.id} disabled={!!busy}
+                      onClick={() => setMenuId(cur => (cur === m.id ? null : m.id))}>
+                      {/* 图标不进 textContent（svg 天生如此）—— 按文字找按钮的
+                          地方和读屏软件看到的都只有 `aria-label` 那个名字。 */}
+                      <MoreHorizontal size={15} aria-hidden="true" />
+                    </button>
                   )}
                 </div>
               )}
+              {/* ★ 2026-10-06：「…」点开的**菜单**（就地展开，不弹浮层 —— 和全站
+                  "没有弹窗文化"同一条规矩；再点一下「…」收起，和输入框那颗加号
+                  同一个开关逻辑）。目前一项【删除】；以后消息上的动作都往这条里排。
+                  ⚠️ 点【删除】分两路：带图那条转成下面的就地确认（`confirmingId`），
+                  纯文字那条直接请 App 删（见 `onDeleteMessage` 那段 props 注释）。 */}
+              {menuId === m.id && (
+                <div className="msg-menu">
+                  <button className="msg-menu-del" disabled={!!busy}
+                    onClick={() => {
+                      setMenuId(null)
+                      if (isStep) setConfirmingId(m.id)
+                      else onDeleteMessage(m.id)
+                    }}>删除</button>
+                </div>
+              )}
               {/* ★ 2026-10-06：带图那条的**就地确认**（只有这一支会走到这儿 ——
-                  纯文字那条点 ✕ 直接删，见上面那颗按钮）。
+                  纯文字那条菜单里点【删除】直接删，见上面那条菜单）。
                   形状照作品详情页那条 `.detail-confirm`：一句话 + 两颗按钮，
                   **不弹窗**（和 SessionsPage 那条"就地确认"是同一条**规矩**）。
                   ⚠️ 文案的出处是 `src/ui/LutSettings.tsx`（滤镜删除确认块）——

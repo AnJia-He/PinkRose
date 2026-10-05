@@ -1540,8 +1540,13 @@ describe('历史缩略图：每一步都看得见', () => {
    * 长句子"，可它们其实是两件事：他跟我说的那句话 / 我交给他的那张图。
    * 判据按**结构**钉（用 `:scope >`，不认"图在气泡的哪个角落里"这种松判据）：
    * 图**不在**文字那个气泡里，它在下面那一块。
+   *
+   * ★ 2026-10-06：那一块**不再套 `.shot`** —— 操作行不再归"图"管：它现在管着
+   *   每一段末尾那颗「…」（纯文字那条也有一排，用户要的豆包式）。图、操作行
+   *   都直接挂在 `.msg` 下面，间距由 `.msg` 自己的 gap 管（和原来 `.shot` 的
+   *   gap 是同一个数）。
    */
-  it('★ 文字一块、图（和那两颗按钮）一块 —— 图不在文字气泡里面', async () => {
+  it('★ 文字一块、图一块、操作一排 —— 图不在文字气泡里面', async () => {
     await renderApp()
     await uploadPhoto()
     const msg = container.querySelector('.msg.assistant')
@@ -1550,9 +1555,9 @@ describe('历史缩略图：每一步都看得见', () => {
     const bubble = msg!.querySelector(':scope > .bubble.assistant')
     expect(bubble?.textContent).toBe('准备好啦，说说想怎么改？')
     expect(bubble?.querySelector('.bubble-thumb')).toBeNull()
-    // 下面那一块：图和操作都在这儿
-    expect(msg!.querySelector(':scope > .shot .bubble-thumb')).toBeTruthy()
-    expect(msg!.querySelector(':scope > .shot .bubble-actions')).toBeTruthy()
+    // 下面：图和操作行都直接挂在消息上
+    expect(msg!.querySelector(':scope > .bubble-thumb')).toBeTruthy()
+    expect(msg!.querySelector(':scope > .bubble-actions')).toBeTruthy()
   })
 
   it('⚠️ 缩略图必须是**画面画完之后**抓的，不能是上一步的颜色', async () => {
@@ -6784,16 +6789,21 @@ describe('「回到这一步」不再删后面的步骤', () => {
 })
 
 /**
- * ★ 2026-10-06（用户原话：「在会话里的单条记录我怎么还是没有删除的按钮」）。
+ * ★ 2026-10-06（先是他原话：「在会话里的单条记录我怎么还是没有删除的按钮」，
+ *   随后他看了豆包：「放个这个图标在每段对话的最后，点击这个符号后里面有删除选项」）。
  *
- * 语义是控制器问过一轮之后他选的 —— **都能删**：
- *   · 纯文字那条（身后没有"一步"）点 ✕ **直接删**，不用确认；
- *   · 带图那条（身后挂着一整步：图 / 参数 / 滤镜都在它上面）点 ✕ **先就地
+ * 入口 = **每段消息末尾那颗「…」**（排在动作行最后一个，一直看得见、不用悬停）。
+ * 点开就地展开一条菜单，目前里面一项【删除】（以后加东西就往这条里排）。
+ *
+ * 语义（控制器问过一轮之后他选的 —— **都能删**）：
+ *   · 纯文字那条（身后没有"一步"）点【删除】**直接删**，不用确认；
+ *   · 带图那条（身后挂着一整步：图 / 参数 / 滤镜都在它上面）点【删除】**先就地
  *     问一句**（「删了就找不回来了。」），确认之后**连那一步一起删**；
- *   · 「原图」那条（欢迎语和它是同一条消息）不给删除键 —— 它是这条会话的锚。
+ *   · 「原图」那条（欢迎语和它是同一条消息）不给「…」—— 它是这条会话的锚。
  *
- * 这一组钉的都是**用户看得见的行为**：消息没了、小图少一张、画面换到哪一张、
- * 那一趟落盘送出去的是不是干净的，以及忙的时候点不动。
+ * 这一组钉的都是**用户看得见的行为**：菜单开合（开关、一次只开一条）、
+ * 消息没了、小图少一张、画面换到哪一张、那一趟落盘送出去的是不是干净的，
+ * 以及忙的时候点不动。
  */
 describe('单条记录能删 —— 带图那条连同那一步', () => {
   /** 屏幕上所有气泡的文字（用户的和助手的都在里面）。 */
@@ -6808,19 +6818,35 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
     [...container.querySelectorAll<HTMLElement>('.bubble-jump, .bubble-current')]
 
   /**
-   * 某条消息上那颗 ✕。
+   * 某条消息末尾那颗「…」。
    *
-   * ⚠️ 先按**气泡文字**认那条消息，再在它里面找 `.msg-del` —— ✕ 是图标键、
+   * ⚠️ 先按**气泡文字**认那条消息，再在它里面找 `.msg-more` —— 「…」是图标键、
    *   没有可见文字，不能像别的按钮那样按文字找（和左栏「个人设置」那颗同一条
    *   规矩：图标键只能按类名 / `aria-label` 找）。
    */
-  function delBtnOf(text: string): HTMLButtonElement {
+  function moreBtnOf(text: string): HTMLButtonElement {
     const msg = [...container.querySelectorAll<HTMLElement>('.msg')].find(
       m => (m.querySelector('.bubble-text')?.textContent ?? '') === text)
     expect(msg, `屏幕上没有「${text}」这条消息`).toBeTruthy()
-    const btn = msg!.querySelector('.msg-del') as HTMLButtonElement | null
-    expect(btn, `「${text}」这条上没有删除按钮`).toBeTruthy()
+    const btn = msg!.querySelector('.msg-more') as HTMLButtonElement | null
+    expect(btn, `「${text}」这条上没有「…」`).toBeTruthy()
     return btn!
+  }
+
+  /** 某条消息的菜单里那颗【删除】（点开「…」之后才在）。 */
+  function menuDelOf(text: string): HTMLButtonElement {
+    const msg = [...container.querySelectorAll<HTMLElement>('.msg')].find(
+      m => (m.querySelector('.bubble-text')?.textContent ?? '') === text)
+    expect(msg, `屏幕上没有「${text}」这条消息`).toBeTruthy()
+    const btn = msg!.querySelector('.msg-menu .msg-menu-del') as HTMLButtonElement | null
+    expect(btn, `「${text}」这条的菜单里没有【删除】`).toBeTruthy()
+    return btn!
+  }
+
+  /** 「…」→【删除】两下 —— 单条删除就这一条路。 */
+  async function delVia(text: string) {
+    await clickEl(moreBtnOf(text))
+    await clickEl(menuDelOf(text))
   }
 
   async function clickEl(el: HTMLElement) {
@@ -6837,47 +6863,74 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
     await say('先改一次')
   }
 
-  it('纯文字那条：点 ✕ 直接删 —— 不问、小图不跟着走、钱一分不花', async () => {
+  it('纯文字那条：点开「…」→【删除】直接删 —— 不问、小图不跟着走、钱一分不花', async () => {
     await oneVersion()
     expect(bubbleTexts()).toEqual(['准备好啦，说说想怎么改？', '先改一次', '好，改好了。'])
     expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)   // 原图 + 这一步
     const posts = vi.mocked(api.postEdit).mock.calls.length
 
-    await clickEl(delBtnOf('先改一次'))
+    // ① 点「…」之前没有菜单；点开之后菜单里有【删除】
+    expect(container.querySelector('.msg-menu')).toBeNull()
+    await clickEl(moreBtnOf('先改一次'))
+    expect(menuDelOf('先改一次').textContent).toBe('删除')
+    await clickEl(menuDelOf('先改一次'))
 
-    // ① 那条话**立刻**没了（身后没有一步，不用确认）
+    // ② 那条话**立刻**没了（身后没有一步，不用确认）
     expect(bubbleTexts()).not.toContain('先改一次')
     expect(container.querySelectorAll('.msg')).toHaveLength(2)
-    // ② 没有确认条
+    // ③ 没有确认条；菜单也跟着那条消息一起没了（别留一条悬着的菜单）
     expect(container.textContent).not.toContain('删了就找不回来了')
-    // ③ 它身后没有一步：小图一张不少、也没花什么钱
+    expect(container.querySelector('.msg-menu')).toBeNull()
+    // ④ 它身后没有一步：小图一张不少、也没花什么钱
     expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
     expect(api.postEdit).toHaveBeenCalledTimes(posts)
   })
 
-  it('带图那条：✕ 先就地问一句；「算了」→ 什么都没变', async () => {
+  it('带图那条：菜单里【删除】先就地问一句；「算了」→ 什么都没变', async () => {
     await oneVersion()
     const msgs = container.querySelectorAll('.msg').length
     const thumbs = container.querySelectorAll('.bubble-thumb').length
     const posts = vi.mocked(api.postEdit).mock.calls.length
 
-    await clickEl(delBtnOf('好，改好了。'))
+    await delVia('好，改好了。')
 
-    // 条子出来了 —— 但还没删任何东西
+    // ① 菜单收掉了（问的话在条子上，菜单不再挂着）
+    expect(container.querySelector('.msg-menu')).toBeNull()
+    // ② 条子出来了 —— 但还没删任何东西
     expect(container.textContent).toContain('删了就找不回来了。')
     expect(bubbleTexts()).toContain('好，改好了。')
     expect(container.querySelectorAll('.msg')).toHaveLength(msgs)
     expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(thumbs)
     expect(api.postEdit).toHaveBeenCalledTimes(posts)      // 钱也没花
+    // ③ 正在问它的这条上，「…」先收掉（两颗并存会像"删除点了没反应"）
+    const asking = [...container.querySelectorAll<HTMLElement>('.msg')].find(
+      m => m.querySelector('.msg-confirm'))
+    expect(asking!.querySelector('.msg-more')).toBeNull()
 
     await clickByText('算了')
 
-    // 条子收了，一切照旧（连那颗 ✕ 都回来了）
+    // 条子收了，一切照旧（连那颗「…」都回来了）
     expect(container.textContent).not.toContain('删了就找不回来了')
     expect(bubbleTexts()).toContain('好，改好了。')
     expect(container.querySelectorAll('.msg')).toHaveLength(msgs)
     expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(thumbs)
-    expect(delBtnOf('好，改好了。').disabled).toBe(false)
+    expect(moreBtnOf('好，改好了。').disabled).toBe(false)
+  })
+
+  it('「…」是开关：再点一下就收起；开一条时别的自己收 —— 一次只开一条', async () => {
+    await oneVersion()
+    // 点开 → 一条菜单；同一个「…」再点 → 收起
+    await clickEl(moreBtnOf('先改一次'))
+    expect(container.querySelectorAll('.msg-menu')).toHaveLength(1)
+    await clickEl(moreBtnOf('先改一次'))
+    expect(container.querySelectorAll('.msg-menu')).toHaveLength(0)
+    // 开 A、再开 B：只剩 B 那条（A 自己收起来，不会两条菜单并排挂着）
+    await clickEl(moreBtnOf('先改一次'))
+    await clickEl(moreBtnOf('好，改好了。'))
+    const menus = container.querySelectorAll('.msg-menu')
+    expect(menus).toHaveLength(1)
+    expect(menus[0]!.closest('.msg')?.querySelector('.bubble-text')?.textContent)
+      .toBe('好，改好了。')
   })
 
   it('★「确认删除」→ 那条话和那一步一起没；站在哪一步删它，画面就挪到**剩下的最后一步**', async () => {
@@ -6897,7 +6950,7 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
     await clickEl(stepItems()[1]!)                         // 跳到第 1 版那一步
     expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: decodedBitmaps[0] })
 
-    await clickEl(delBtnOf('第一版好了。'))
+    await delVia('第一版好了。')
     await clickByText('确认删除')
 
     // ① 那条话没了；② 小图少一张；③ 消息少一条（剩下欢迎 + 两句用户话 + 第2版）
@@ -6936,7 +6989,7 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
     const shown = canvasProps.images.at(-1)                // 画面上现在是第 2 版
     expect(shown).toMatchObject({ bitmap: decodedBitmaps[1] })
 
-    await clickEl(delBtnOf('第一版好了。'))                 // 删的是中间那一步
+    await delVia('第一版好了。')             // 删的是中间那一步
     await clickByText('确认删除')
 
     // ① 那条话和那一步没了（小图 3 → 2），但**画面一动不动**（站的是第 2 版）
@@ -6971,7 +7024,7 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
     const before = putCalls('/api/sessions/1').length
     expect(bodyOf(putCalls('/api/sessions/1').at(-1)!).thumb).toBeTruthy()
 
-    await clickEl(delBtnOf('第二版好了。'))               // 站在第 2 版上删掉它
+    await delVia('第二版好了。')             // 站在第 2 版上删掉它
     await clickByText('确认删除')
     await waitPersist()
 
@@ -6993,15 +7046,15 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
     expect(decodedBitmaps[0]!.close).not.toHaveBeenCalled()
   })
 
-  it('「原图」那条没有 ✕ —— 它是这条会话的锚', async () => {
+  it('「原图」那条没有「…」—— 它是这条会话的锚', async () => {
     await oneVersion()
     const msgs = [...container.querySelectorAll<HTMLElement>('.msg')]
     const welcome = msgs.find(
       m => (m.querySelector('.bubble-text')?.textContent ?? '').includes('准备好啦'))
     expect(welcome).toBeTruthy()
-    expect(welcome!.querySelector('.msg-del')).toBeNull()
+    expect(welcome!.querySelector('.msg-more')).toBeNull()
     // ⚠️ 这不是"选择器没找着"：别的消息上那颗照常在（用户话 + 回复，两条）
-    expect(msgs.filter(m => m.querySelector('.msg-del'))).toHaveLength(2)
+    expect(msgs.filter(m => m.querySelector('.msg-more'))).toHaveLength(2)
   })
 
   it('删完之后落盘那一趟：被删的步骤 id 和那句话都不在 PUT 里', async () => {
@@ -7009,7 +7062,7 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
     // 所以这一趟 PUT 的 body 就是删除本身 —— 它脏了，删除就没生效
     // （或者更糟：把别的记录也带走了）。
     await oneVersion()
-    await clickEl(delBtnOf('好，改好了。'))
+    await delVia('好，改好了。')
     await clickByText('确认删除')
     await waitPersist()
 
@@ -7023,7 +7076,7 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
     expect(body.steps.map((s: { id: number }) => s.id)).toContain(1)
   })
 
-  it('忙的时候 ✕ 是禁用的 —— 点了也删不动', async () => {
+  it('忙的时候「…」是禁用的 —— 点了也删不动', async () => {
     // 用**路由**那一段挂住（「正在思考…」，还没开始生成）：钉的是 `busy` 这个
     // 总闸门，不是"生成中"那一格。
     const gate = makeGate<RouteDecision>()
@@ -7034,10 +7087,11 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
     await say('先改一次')
     expect(canvasProps.props.at(-1)?.busy).toBe(false)     // 这趟还没走到生成
 
-    const btn = delBtnOf('先改一次')
+    const btn = moreBtnOf('先改一次')
     expect(btn.disabled).toBe(true)
 
-    await clickEl(btn)                                     // 点了也删不动
+    await clickEl(btn)                                     // 点了也打不开菜单
+    expect(container.querySelector('.msg-menu')).toBeNull()
     expect(bubbleTexts()).toContain('先改一次')
 
     // 放行，让这一趟收工（不留下挂着的 promise）
