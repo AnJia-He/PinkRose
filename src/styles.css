@@ -63,7 +63,6 @@
      ⚠️ 对话气泡**不跟这条走**（它是大面积的"面"不是小按钮）：见 `.bubble.user`
      那条，两种模式都保持"深蓝底 + 白字"。 */
   --accent-tint: light-dark(#eef3fc, #123330); /* 强调色的极淡底（选中的行、悬停的卡片）；深色档比面板亮一档（上面的字 11.1:1）；★ 2026-10-05 深色半从蓝调换薄荷调 */
-  --ring-glow: light-dark(rgba(27, 98, 214, .30), rgba(45, 212, 191, .50)); /* ★ 2026-10-05 用量环/饼的发光（`filter: drop-shadow` 用）；跟着主色走，别写死 */
   /* 3D 饼图的三个面（★ 2026-10-05 第三版）：剩余是**明亮的蓝**（用户看了深青灰一版
      说「没彩色呀」—— 他要的是样板图那种每块都有颜色的观感；薄荷 + 蓝两块都是
      高饱和色，饼才有"彩色"）；两组侧壁各比自己的顶面暗一档 —— "面亮壁暗"是
@@ -1882,8 +1881,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    这一版是斜俯视的厚饼：顶面椭圆 + 侧壁厚度，几何全在 `pie3dPaths` 里）。
    四个面各一个类（画序即层序，见组件）：
    · rest-top / rest-side —— 剩余：深青灰面 + 更暗的侧壁（空盘不再是一坨灰）；
-   · used-top —— 已用顶面：薄荷渐变 + **一圈发光**（`--ring-glow`）——
-     0.x% 时就靠这根发光的细针证明"真的用了一点点"；
+   · used-top —— 已用顶面：薄荷渐变（0.x% 时是一小瓣 + 末端珠子，见组件注释）；
    · used-side —— 已用侧壁：深青（深色档就是 --accent-700）。
    ⚠️ 百分比数字在饼**下面**（顶面上压字对比度随占比漂，见组件注释）。 */
 .usage-pie-wrap {
@@ -1894,14 +1892,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .usage-pie { display: block; width: 160px; height: 160px; }
 .usage-pie-rest-top { fill: var(--pie-rest); }
 .usage-pie-rest-side { fill: var(--pie-rest-side); }
-.usage-pie-used-top { filter: drop-shadow(0 0 6px var(--ring-glow)); }
 .usage-pie-used-side { fill: var(--pie-used-side); }
-/* 「已用」的视觉锚点（★ 2026-10-05 第七轮）：弧尽头一颗发光的珠子 ——
-   0.3% 的扇形靠最小可见角只有一小瓣，这颗珠子才是"变色块"的落点（见组件注释）。 */
-.usage-pie-dot {
-  fill: var(--accent-500);
-  filter: drop-shadow(0 0 6px var(--ring-glow));
-}
+/* 「已用」的视觉锚点（★ 2026-10-05 第七轮）：弧尽头一颗珠子 ——
+   0.3% 的扇形靠最小可见角只有一小瓣，这颗珠子才是"变色块"的落点（见组件注释）。
+   ⚠️ 曾经带一圈 drop-shadow 发光，被 taste 审掉（"NO neon / outer glows by default"
+   —— AI 味的招牌动作；用户的样板图也没有发光）。珠子靠**本体颜色**在蓝盘上对比，
+   不需要光晕也能看见。 */
+.usage-pie-dot { fill: var(--accent-500); }
 .usage-pie-warn .usage-pie-dot { fill: var(--danger); }
 /* 渐变的两档（SVG `stop` 的颜色走 CSS —— 浅/深成对由 token 自己管） */
 .ring-stop-hi { stop-color: var(--accent-500); }
@@ -1909,9 +1906,6 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .ring-stop-danger { stop-color: var(--danger); }
 /* 用到八成往上：饼和数字一起变红（和 `.stat-warn` 是同一句话的两种说法）。
    侧壁走 color-mix 压暗一档红色 —— 和两个顶面"面亮壁暗"是同一条光照规则。 */
-.usage-pie-warn .usage-pie-used-top {
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--danger) 55%, transparent));
-}
 .usage-pie-warn .usage-pie-used-side { fill: color-mix(in srgb, var(--danger) 62%, #000); }
 .usage-pie-pct {
   font-size: 22px; font-weight: 600; letter-spacing: -.01em;
