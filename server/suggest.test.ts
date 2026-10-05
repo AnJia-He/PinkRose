@@ -14,6 +14,7 @@ const cfg: Config = {
   dbPath: ':memory:',
   // 这两个是 Config 上的必填字段（起服务要它），这个文件既不碰账号也不碰图
   photoDir: 'unused',
+  lutDir: 'unused',
   sessionSecret: 'test-secret',
 }
 

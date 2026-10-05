@@ -27,6 +27,11 @@ const db = openDb(config.dbPath)
 // 根目录来自 config.photoDir（默认 data/photos，同样跟着 cwd 走）。
 const storage = createStorage(config.photoDir)
 
+// 滤镜文件那一层。和照片**同一个实现、不同的根目录** ——
+// storage.ts 是"只有那个文件碰它的根目录"，建两个实例各自守一个根，比让
+// 照片和 .cube 混在 data/photos 里干净。
+const lutStorage = createStorage(config.lutDir)
+
 // ⚠️ 全仓库**只有这一处**构造队列实例 —— 三个端点都只从 deps 拿这个注入的对象。
 // 谁自己 new 一个，全局串行就静默失效：RPM/TPM 限流保护与对话的因果顺序同时没了。
 // onRetry 只打 label / 次数 / 延迟 / error.message，**绝不打印请求头或 key** ——
@@ -61,6 +66,7 @@ const server = createApp({  config,
   // 这里拿到的必然是配置好的那一把，没有"默认值"这条退路。
   auth: { db, secret: config.sessionSecret },
   storage,
+  lutStorage,
   models: { db, vault },
 })
 

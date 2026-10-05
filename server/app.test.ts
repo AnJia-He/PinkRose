@@ -52,6 +52,8 @@ const cfg: Config = {
   dbPath: ':memory:',
   // Config 上的必填字段（起服务要它），这个文件不碰图 —— 真建目录的是 newStorage
   photoDir: 'unused',
+  // 同上：真建目录的是 newLutStorage（滤镜和照片是两个根）
+  lutDir: 'unused',
   // 签名钥匙：测试里随便一串就行，反正网络那头没有别人
   sessionSecret: 'test-session-secret',
 }
@@ -98,6 +100,20 @@ function newStorage(): Storage {
   return createStorage(root)
 }
 
+/**
+ * 滤镜文件那一层：**另一个**临时目录。
+ *
+ * 和照片分开是结构上的（`config.lutDir` 对 `config.photoDir`，见 index.ts 那段）——
+ * 这个文件里也照这个形状建，不然"两个根"在测试里长成一个根，
+ * 生产上真分开了也没人量得出来。和 `lutStorage` 是 AppDeps 上的必填字段是同一件事：
+ * 少接这根线要是编译错误（滤镜导入一次 500 那种最贵的坏）。
+ */
+function newLutStorage(): Storage {
+  const root = mkdtempSync(join(tmpdir(), 'ruixing-app-luts-'))
+  openedDirs.push(root)
+  return createStorage(root)
+}
+
 /** 只给下面那组"裸 socket 路径穿越"用例用的静态根。
  *  **诱饵在它的上一层** —— 穿出去才够得着。 */
 const siteRoot = join(mkdtempSync(join(tmpdir(), 'ruixing-traversal-')), 'site')
@@ -107,6 +123,8 @@ async function boot(extra: Partial<AppDeps> = {}): Promise<string> {
   const auth = extra.auth ?? newAuth()
   server = createApp({
     config: cfg, auth, storage: extra.storage ?? newStorage(),
+    // 滤镜那一层同样是必填，同样每次起 app 建一个新的（理由见 newLutStorage）
+    lutStorage: extra.lutStorage ?? newLutStorage(),
     // 模型设置那一层。**和账号共用同一个库** —— model_configs 和 users 是同一件
     // 事的两半（两个指针就挂在 users 上），各开一个库会让"这条配置是谁的"有两个答案。
     // 保险箱的主钥匙照生产来：从 SESSION_SECRET 派生（用途分隔符见 keyvault.ts）。

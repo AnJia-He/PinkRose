@@ -129,6 +129,24 @@ export const MIGRATIONS: readonly string[] = [
   // ⚠️ 口径：这一列是"这条会话名下的文件一共多少字节"（原图 + 各步的底 + 缩略图），
   //    和 `files` 那份名单是一套东西的两面 —— 加文件的地方两个都要动。
   `ALTER TABLE sessions ADD COLUMN bytes INTEGER NOT NULL DEFAULT 0;`,
+  // 6 —— 滤镜（LUT，2026-10-05）。设计：docs/superpowers/specs/2026-10-05-lut-design.md
+  //
+  // ⚠️ `name` 上的 COLLATE NOCASE：对话里靠**名字**对号，"Sunset" 和 "sunset"
+  //    同时存在会让模型和用户都认不出该选哪个；中文没有大小写，不受影响。
+  // ⚠️ 文件在 data/luts（不在这张表里）——名字由 storage 层发，和照片同一套规矩。
+  `
+  CREATE TABLE luts (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name        TEXT    NOT NULL COLLATE NOCASE,
+      stored_name TEXT    NOT NULL,
+      size        INTEGER NOT NULL,
+      bytes       INTEGER NOT NULL,
+      created_at  INTEGER NOT NULL,
+      UNIQUE(user_id, name)
+    );
+    CREATE INDEX luts_user ON luts(user_id);
+  `,
 ]
 
 /**

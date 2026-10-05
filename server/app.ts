@@ -16,6 +16,7 @@ import {
   resolveSecretById, updateConfig, type ModelConfigDeps, type ModelKind,
 } from './models.ts'
 import { assertModelHostAllowed, assertResolvedHostAllowed } from './hostGuard.ts'
+import { createLut, deleteLut, handleLutFile, listLuts, lutUsage, renameLut } from './luts.ts'
 import { QUOTA_BYTES, storedBytes } from './quota.ts'
 import { createLimiter, type Limiter } from './ratelimit.ts'
 import { probeConnection } from './modeltest.ts'
@@ -66,6 +67,8 @@ export type AppDeps = {
    * 传进来的实现换掉（比如以后换云存储），这一层以上一个字都不用动。
    */
   storage: Storage
+  /** 滤镜文件那一层（2026-10-05）。**必填**，理由同 storage —— 缺了就是运行期才炸。 */
+  lutStorage: Storage
   /**
    * 用户接进来的模型（§7）。**必填**，理由同 auth / storage：
    * 少接这一根线的后果是"用户配了自己的钥匙但一次都没用上" ——
@@ -606,6 +609,53 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     if (req.method === 'DELETE' && modelRoute) {
       const user = requireUser(deps, req, res)
       sendJson(res, 200, deleteConfig(Number(modelRoute[1]), user, deps.models))
+      return
+    }
+    // ── 滤镜（LUT，2026-10-05）。设计：docs/superpowers/specs/2026-10-05-lut-design.md
+    // 顺序和别处一致：先认人，再读体；GET / DELETE 不读体。
+    if (req.method === 'GET' && path === '/api/luts') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, listLuts(user, { db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now }))
+      return
+    }
+    if (req.method === 'POST' && path === '/api/luts') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, await createLut(await readJsonBody(req), user, {
+        db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now,
+      }))
+      return
+    }
+    const lutFileRoute = /^\/api\/luts\/(\d+)\/file$/.exec(path)
+    if (req.method === 'GET' && lutFileRoute) {
+      const user = requireUser(deps, req, res)
+      const { bytes, contentType } = await handleLutFile(Number(lutFileRoute[1]), user, {
+        db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now,
+      })
+      sendBytes(res, 200, bytes, contentType)
+      return
+    }
+    const lutUsageRoute = /^\/api\/luts\/(\d+)\/usage$/.exec(path)
+    if (req.method === 'GET' && lutUsageRoute) {
+      const user = requireUser(deps, req, res)
+      // 同步 handler：别写成 await（那会变成 Promise，sendJson 会序列化成 {}）
+      sendJson(res, 200, lutUsage(Number(lutUsageRoute[1]), user, {
+        db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now,
+      }))
+      return
+    }
+    const lutOneRoute = /^\/api\/luts\/(\d+)$/.exec(path)
+    if (req.method === 'PATCH' && lutOneRoute) {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, renameLut(Number(lutOneRoute[1]), await readJsonBody(req), user, {
+        db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now,
+      }))
+      return
+    }
+    if (req.method === 'DELETE' && lutOneRoute) {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, await deleteLut(Number(lutOneRoute[1]), user, {
+        db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now,
+      }))
       return
     }
     if (req.method === 'POST' && path === '/api/route') {

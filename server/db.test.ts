@@ -81,6 +81,8 @@ describe('openDb', () => {
     '069f9a05b04ec339c0ccb3e3d15da306330a10b0476c749d09e1f8c9878de6e9',
     // 5 —— sessions.bytes（2026-10-04，为 §6.6 的 5 GB 配额）
     '30ac6b003f0a9ac162d9b565eb4b374cded3cc967c224eff910e14307f1cd115',
+    // 6 —— luts（2026-10-05，滤镜）
+    'e2364c7b713dd1bcb314d7e0248f02a2e8a8b2c040a749364fab3bc17032f2d4',
   ]
 
   it('★ 已发布的迁移一个字都不许改 —— 指纹对不上 = "老库和新库从此是两个形状"', () => {

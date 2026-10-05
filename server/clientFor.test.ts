@@ -14,7 +14,7 @@ const CONFIG = {
   //   在下面对每一处断言里都会立刻现形，不会因为两边长得像而蒙混过去。
   chat: { apiKey: 'sk-chat-default', baseUrl: 'https://apihub.agnes-ai.com/v1', model: 'agnes-2.5-flash' },
   image: { apiKey: 'sk-img-default', baseUrl: 'https://token.sensenova.cn/v1', model: 'sensenova-u1.5-fast' },
-  port: 8787, dbPath: ':memory:', photoDir: '/tmp', sessionSecret: 's',
+  port: 8787, dbPath: ':memory:', photoDir: '/tmp', lutDir: '/tmp/luts', sessionSecret: 's',
 }
 
 function fresh(lookupHost: HostLookup = async () => ['93.184.216.34']): ClientDeps {

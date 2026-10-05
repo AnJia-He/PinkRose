@@ -29,6 +29,8 @@ export type Config = {
   dbPath: string
   /** 图片文件放哪 —— Storage 那一层的根目录。和 dbPath 一样，默认落在仓库根的 data/ 下 */
   photoDir: string
+  /** 滤镜文件放哪 —— 和 photoDir 同一套规矩 */
+  lutDir: string
   /** 会话签名用的钥匙。**没有默认值** —— 见 loadConfig 里那一抛。 */
   sessionSecret: string
 }
@@ -87,6 +89,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: Number.isInteger(portRaw) && portRaw > 0 ? portRaw : DEFAULT_PORT,
     dbPath: env.DB_PATH?.trim() || resolve(process.cwd(), 'data', 'ruixing.db'),
     photoDir: env.PHOTO_DIR?.trim() || resolve(process.cwd(), 'data', 'photos'),
+    lutDir: env.LUT_DIR?.trim() || resolve(process.cwd(), 'data', 'luts'),
     sessionSecret,
   }
 }
