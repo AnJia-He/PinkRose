@@ -882,9 +882,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    根源（竖图上尤其明显：高度就是它的全部）。现在整列通高、自己滚。
    ⚠️ 窄屏（≤640）在下面那条媒体查询里变回"底下一整条"（今天的样子）。
    ⚠️ 2026-09-30 的历史仍然成立：十五条滑块**不横铺满整屏** —— 分栏落在
-   每一组的肚子里（`.panel-group-body`），面板本身仍是"头 / 预设 / 组"的竖列。 */
+   每一组的肚子里（`.panel-group-body`），面板本身仍是"头 / 预设 / 组"的竖列。
+   ★ 2026-10-05：跟着对话栏一起放宽一档（`clamp(360px, 30vw, 500px)`）——
+   两栏同一套算法这条规矩不变，见 `.chat` 那段的理由。 */
 .panel {
-  width: clamp(340px, 26vw, 440px); flex: none; min-height: 0;
+  width: clamp(360px, 30vw, 500px); flex: none; min-height: 0;
   border-left: 1px solid var(--line); background: var(--panel);
   /* ⚠️ `padding-top` **必须是 0**（2026-10-05 实测定下）：组头的吸顶位置
      跟着滚动容器的内容上沿走 —— 留 16px 内边距的话，吸顶位置就比面板上沿
@@ -1157,9 +1159,14 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      · 1280 及以下**和以前一模一样**（26vw 到不了 340，下限接住）；
      · 1440 的屏上 ~374、1800 的屏上 440 —— 大屏上照片左右本来全是空地
        （竖图够不到那么宽），把那一截分给它，照片**一个像素都不损失**。
+   ★ 2026-10-05：用户又说了一次「**对话区范围再向左边扩大一点**」（原话），
+   那一版 26vw 在 1440 上只有 374px，他截图里助手那句回复还是折了两行。
+   于是整条抬一档：`clamp(360px, 30vw, 500px)` —— 1280 上 384、1440 上 432、
+   1800 上 500。⚠️ **两个值一起改**（`.panel` 用的是同一套），只动一个的话
+   在「修图」和「调色」之间来回切会看到那一格宽度跳一下。
    ⚠️ 改它之前/之后都要跑 `node scripts/check-mobile-layout.mjs`。 */
 .chat {
-  width: clamp(340px, 26vw, 440px); flex: none; display: flex; flex-direction: column; min-height: 0;
+  width: clamp(360px, 30vw, 500px); flex: none; display: flex; flex-direction: column; min-height: 0;
   border-left: 1px solid var(--line); background: var(--panel);
 }
 .chat-log {
