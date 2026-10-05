@@ -745,6 +745,17 @@ function lastReply(): string {
   return bubbles.length ? (bubbles[bubbles.length - 1].textContent ?? '') : ''
 }
 
+/** 生成回来的图（`postEdit` 的应答）。三处用例共用一份。 */
+const OK = { imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800 }
+
+/** 按文字点一颗按钮（确认条那两颗走它 —— 不按位置找）。 */
+async function clickByText(text: string) {
+  const btn = [...container.querySelectorAll('button')]
+    .find(b => (b.textContent ?? '').trim() === text) as HTMLButtonElement
+  expect(btn, `屏幕上没有「${text}」这颗按钮`).toBeTruthy()
+  await act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)) })
+}
+
 /** 点左栏导航。按**文字**找，不按位置 —— 位置是排版的事，文字才是用户的认知。 */
 async function goNav(name: string) {
   const btn = [...container.querySelectorAll('.nav button')].find(
@@ -873,6 +884,8 @@ describe('对话式修图：钱花在对的地方', () => {
     await act(async () => { (jumps[0] as HTMLButtonElement).click() })
 
     await say('再来一次')
+    // ★ 2026-10-05（Task 4）：站在旧步骤上生成，先过一下确认条（设计 §4.5）。
+    await clickByText('继续改')
 
     const calls = vi.mocked(api.postEdit).mock.calls
     const last = (calls[calls.length - 1][0] as { imageDataUrl: string }).imageDataUrl
@@ -1028,8 +1041,6 @@ describe('★ 再来一版：同一句话重掷一次', () => {
     await say('天空换成黄昏')
   }
 
-  const OK = { imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800 }
-
   it('★ 重跑的是**当初那句话**，而且从**那一版的底图**跑 —— 且不再过一遍路由', async () => {
     vi.mocked(api.postEdit).mockResolvedValue(OK)
     await twoVersions()
@@ -1042,6 +1053,8 @@ describe('★ 再来一版：同一句话重掷一次', () => {
       (btns[0] as HTMLButtonElement).click()
       await new Promise(r => setTimeout(r, 0))
     })
+    // ★ 2026-10-05（Task 4）：第 0 颗在**旧步骤**上 —— 先问一句（设计 §4.5）。
+    await clickByText('继续改')
 
     const calls = vi.mocked(api.postEdit).mock.calls
     expect(calls.length).toBe(3)
@@ -1692,6 +1705,31 @@ describe('图上点选消歧', () => {
     await act(async () => { cancel.click() })
 
     expect(canvasProps.props.at(-1)?.picking).toBe(false)
+  })
+
+  it('★ 站在旧步骤上点选：确认条里带提醒，「就改这里」一次点到位（切 + 生成）', async () => {
+    // 恢复一条 3 步的会话（站在最新）→ 跳回原图 → 模型说拿不准 →
+    // 点一下 → 条子里该有"后面还有 2 步" → 「就改这里」= 直接切 + 生成。
+    withSessions([makeSession(7, 3, '上次那句', 'S7')])
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '去掉那个人', needsDisambiguation: true }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    const steps = [...container.querySelectorAll<HTMLElement>('.bubble-jump, .bubble-current')]
+    await act(async () => { steps[0]!.click(); await new Promise(r => setTimeout(r, 0)) })  // = 原图那步
+    await say('把后面那个人去掉')
+    await tapPhoto()
+
+    expect(container.textContent).toContain('后面还有 2 步')     // 提醒并进来了
+    expect(api.postEdit).not.toHaveBeenCalled()                  // 还没花钱
+
+    await clickByText('就改这里')
+
+    expect(api.postEdit).toHaveBeenCalledTimes(1)
+    // 切了：只剩原图 + 新那一步
+    expect(container.querySelectorAll('.bubble-jump, .bubble-current')).toHaveLength(2)
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
   })
 })
 
@@ -5871,6 +5909,8 @@ describe('滤镜', () => {
     const reruns = container.querySelectorAll('.bubble-rerun')
     // 第 0 颗 = 第 2 步（id 3，第一颗带 prompt 的助手气泡）
     await click(reruns[0] as HTMLButtonElement)
+    // ★ 2026-10-05（Task 4）：第 2 步是**旧步骤** —— 先问一句（设计 §4.5）。
+    await clickByText('继续改')
     await waitPersist()
 
     const body = lastPutBody()
@@ -6146,7 +6186,6 @@ describe('滤镜', () => {
  * 变异：`onJump` 里把 `cutAfter` 那一套加回去 → 第一条当场红。
  */
 describe('「回到这一步」不再删后面的步骤', () => {
-  const OK = { imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800 }
   /**
    * 一步一个：`<button.bubble-jump>` 或 `<span.bubble-current>` **都算**
    * （Task 5 起"当前那一步"显示的是位置标记而不是按钮）。顺序 = 消息顺序。
@@ -6197,6 +6236,8 @@ describe('「回到这一步」不再删后面的步骤', () => {
     await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
 
     await say('换个方向')
+    // ★ 2026-10-05（Task 4）：从旧步骤生成要先点一下「继续改」才真的动手。
+    await clickByText('继续改')
 
     // 新的一条是从**原图**改的
     const last = vi.mocked(api.postEdit).mock.calls.at(-1)![0] as { imageDataUrl: string }
@@ -6220,9 +6261,121 @@ describe('「回到这一步」不再删后面的步骤', () => {
     vi.mocked(api.postEdit).mockRejectedValue(
       new api.ApiError('UPSTREAM_FAILED', 'AI 服务暂时没响应，再试一次'))
     await say('换个方向')
+    // ★ 2026-10-05（Task 4）：确认之后才轮到 postEdit 抛。
+    await clickByText('继续改')
 
     expect(lastReply()).toContain('再试一次')      // 失败要说话
     expect(stepItems()).toHaveLength(3)            // ★ 后面的没陪葬
     expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(3)
+  })
+
+  it('★ 从旧步骤再说话 → 先问一句；「算了」= 什么都没花、什么都没切', async () => {
+    await twoVersions()
+    await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    vi.mocked(api.postEdit).mockClear()
+
+    await say('换个方向')
+
+    // ★ 条子在、钱没花（生成一个字都没发出去）
+    expect(container.textContent).toContain('后面还有 2 步')
+    expect(api.postEdit).not.toHaveBeenCalled()
+
+    await clickByText('算了')
+
+    expect(api.postEdit).not.toHaveBeenCalled()
+    expect(stepItems()).toHaveLength(3)                               // 一个都没切
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(3)
+    expect(lastReply()).toContain('那就不动这一步')                     // 有话收尾
+    expect(container.textContent).not.toContain('后面还有 2 步')        // 条子收了
+  })
+
+  it('★ 「继续改」→ 到这一步才说话、才生成、才切', async () => {
+    await twoVersions()
+    await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    vi.mocked(api.postEdit).mockClear()
+
+    await say('换个方向')
+    await clickByText('继续改')
+
+    expect(api.postEdit).toHaveBeenCalledTimes(1)
+    const req = vi.mocked(api.postEdit).mock.calls.at(-1)![0] as { imageDataUrl: string }
+    expect(req.imageDataUrl).toContain('MODEL:upload')                // 从原图改的
+    expect(bubbleTexts()).not.toContain('先改一次')                    // 旧未来切了
+    expect(bubbleTexts()).toContain('换个方向')                        // 刚说的还在
+    expect(lastReply()).toContain('好')                                // 那句 reply 到这时才说
+  })
+
+  it('★ 确认条挂着时跳走 → 条子收了（不会切到别处）', async () => {
+    await twoVersions()
+    await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    await say('换个方向')
+    expect(container.textContent).toContain('后面还有 2 步')
+
+    // 跳到最后一个步骤（按钮和标记合着数，`.at(-1)` 两种世界下都是可点的那颗）
+    await act(async () => { stepItems().at(-1)!.click(); await new Promise(r => setTimeout(r, 0)) })
+    // ⚠️ 断的是「后面还有」整句，不是「后面还有 2 步」：跳到最后一步之后
+    //    `futureSteps` 本来就会变 0（条子会改口说"0 步"）—— 断那个数字的话，
+    //    `onJump` 里漏掉 `cancelReplace()` 这条**根本红不了**（实测过），
+    //    而漏掉它的后果是：条子停着还能点，「继续改」切的是**已经跳走的那一步**。
+    expect(container.textContent).not.toContain('后面还有')
+  })
+
+  it('★ 确认条挂着时切到另一条会话 → 条子收了（不会切在别人那条上）', async () => {
+    // 「换照片」那一类失效（`loadSession` 里那批"上一条照片的临时状态"）：
+    // 切会话 = 屏幕上换了一张照片。不清的话，条子会停在**别人那条**会话上
+    // —— N 按新的 history 算（甚至算出 0），点「继续改」切的是 B 的步骤。
+    const a = { ...makeSession(9, 3, 'A 的话', 'TA'), originalName: '九号.jpg' }
+    const b = { ...makeSession(7, 3, 'B 的话', 'TB'), originalName: '七号.jpg' }
+    withSessions([a, b])
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '改一下' }))
+
+    await renderApp()                                  // 接回最近动过的那条（A = id 9）
+    const steps = [...container.querySelectorAll<HTMLElement>('.bubble-jump, .bubble-current')]
+    await act(async () => { steps[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    await say('换个方向')
+    expect(container.textContent).toContain('后面还有 2 步')
+
+    // 走真入口切到 B：左栏「对话」→ 点「七号」那一行
+    await goNav('对话')
+    const row = [...container.querySelectorAll('.session-row')].find(
+      r => (r.textContent ?? '').includes('七号'))
+    expect(row).toBeTruthy()
+    await act(async () => {
+      ;(row!.querySelector('.session-open') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await waitPersist()
+    await goNav('修图')
+
+    expect(container.textContent).not.toContain('后面还有')
+  })
+
+  it('★ 站在最新一步说话 → 不弹条（正常流程一个字都没多）', async () => {
+    await twoVersions()
+    await say('再改一次')
+    expect(container.textContent).not.toContain('后面还有')
+    expect(api.postEdit).toHaveBeenCalledTimes(3)
+  })
+
+  it('★ 旧步骤上点「再来一版」→ 同样先问；最新一步上直接重掷（不弹条）', async () => {
+    await twoVersions()
+    const reruns = () =>
+      [...container.querySelectorAll('.bubble-rerun')] as HTMLButtonElement[]
+    vi.mocked(api.postEdit).mockClear()
+
+    // 旧步骤（第 1 版）→ 先问
+    await act(async () => { reruns()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(container.textContent).toContain('后面还有 1 步')
+    expect(api.postEdit).not.toHaveBeenCalled()
+
+    await clickByText('继续改')
+    expect(api.postEdit).toHaveBeenCalledTimes(1)
+
+    // 最新一步 → 直接重掷，没有条子
+    vi.mocked(api.postEdit).mockClear()
+    await act(async () => { reruns().at(-1)!.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(container.textContent).not.toContain('后面还有')
+    expect(api.postEdit).toHaveBeenCalledTimes(1)
   })
 })

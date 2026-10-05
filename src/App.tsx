@@ -154,6 +154,19 @@ type PendingMark = {
   keepFrom: number
 }
 
+/**
+ * ★ 2026-10-05（设计 §4.5）：从**旧步骤**继续改之前那条确认。
+ *
+ * `keepFromMsg` 缺席 = "确认那一刻才知道"：「再来一版」那条路没有新的用户消息，
+ * 切对话的保留边界就是确认之后 `say(reply)` 拿到的那个 id（`mid`）。
+ */
+type PendingReplace = {
+  stepId: number
+  editPrompt: string
+  reply: string
+  keepFromMsg?: number
+}
+
 export default function App() {
   /** 当前登录的人。null = 没登录（或者还在问后端）。 */
   const [user, setUser] = useState<AccountUser | null>(null)
@@ -284,6 +297,9 @@ export default function App() {
    *   不重渲染（`sessionId` 当初踩过同一个坑）。
    */
   const [cursorId, setCursorId] = useState<number | null>(null)
+
+  /** 从旧步骤继续改之前那条确认（`PendingReplace`，见它的定义）。null = 没在问。 */
+  const [pendingReplace, setPendingReplace] = useState<PendingReplace | null>(null)
 
   // 下面四样**从 `pending` 推出来**，不再各自是一个 state —— 推出来的东西不可能
   // 互相不同步，这正是折成一个对象的意义。名字保留，读代码时不必重新认路。
@@ -818,6 +834,10 @@ export default function App() {
       // 同一个道理）：点选流程、"替换上次那张"的问句。不清的话，红圈会钉在
       // **另一张照片**上，而「就改这里」会拿旧标记 + 旧那句话花掉一次生成的钱。
       setPending(null)
+      // ★ 2026-10-05（设计 §4.5，Task 4）：那条"要切掉后面吗"也是同一批 ——
+      //   切会话 = 屏幕上换了一张照片。不清的话它会停在**别人那条**会话上
+      //   （N 还是按新的 history 算的，读数都不对），点「继续改」切的是别处。
+      setPendingReplace(null)
       setSavedId(null)
       dismissAsk()
       // 建议卡片也不留：它是照着**上一张**照片算出来的，点一下就是花钱去改
@@ -941,6 +961,8 @@ export default function App() {
       setLut, luts: lutsApi.luts,
       baseSeqRef, idRef, setBusy, setUser, noticeBad,
       setCards, setPending, pendingRef, setMessages, setHistory,
+      // ★ 2026-10-05（设计 §4.5）：从旧步骤生成时挂确认条（`applyDecision` 用）。
+      setPendingReplace,
       cursorId, tipId, setCursorId,
     })
 
@@ -1104,6 +1126,9 @@ export default function App() {
     // 上一条照片那些**临时**状态：点选流程、"上次那张要替换掉吗"、原图预览。
     // 留着的话红圈会钉在下一张照片上，而「替换」问的是上一张存过的那条作品。
     setPending(null)
+    // ★ 2026-10-05（设计 §4.5）：那条"要切掉后面吗"同理 —— 照片都换了，
+    //   它说的那件事已经不存在（`cancelReplace` 是稳定 setter，不进依赖）。
+    setPendingReplace(null)
     dismissAsk()
     setOriginalPreview(null)
     originalFileRef.current = null
@@ -1252,6 +1277,35 @@ export default function App() {
     resetEditor()
   }, [resetEditor])
 
+  /**
+   * 内部失效（跳转 / 又说一句话 / 点卡片 / 换照片）：清掉、**不吭声** ——
+   * 用户已经走了。和「算了」那颗按钮分开写（那颗要说一句收尾）。
+   *
+   * ⚠️ 摆在 `send` 前面（而不是 `cancelPick` 旁边）：`send` / `onCard` 的
+   *   依赖数组在**函数体执行到这里时**就要读它，落在后面就是 TDZ（整页白屏）。
+   */
+  const cancelReplace = useCallback(() => setPendingReplace(null), [])
+
+  /** 按钮「算了」：清掉**并且**说一句收尾 —— 不能点了没反应。 */
+  const declineReplace = useCallback(() => {
+    setPendingReplace(null)
+    say('好，那就不动这一步。')
+  }, [say])
+
+  /**
+   * 按钮「继续改」：**到这里才说话、才花钱、才切**（设计 §4.5）。
+   * 参数/滤镜读**此刻的**：说话那条路 = 决策算出的 + 期间拖的；再来一版
+   * = `onJump` 之后 = 那一步的 —— 和"这一步做完之后的状态"口径一致。
+   */
+  const confirmReplace = useCallback(() => {
+    if (busy || !pendingReplace || !image) return
+    const p = pendingReplace
+    setPendingReplace(null)
+    const mid = say(p.reply)
+    void runGenerate(p.editPrompt, mid, params, lut, image.bitmap,
+      { stepId: p.stepId, keepFromMsg: p.keepFromMsg ?? mid })
+  }, [busy, pendingReplace, image, params, lut, say, runGenerate])
+
   const send = useCallback(async (text: string) => {
     const canvas = canvasElRef.current
     if (!canvas || !image || busy) return
@@ -1262,6 +1316,9 @@ export default function App() {
     // 不清的话，他改完别的再回头点一下「就改这里」，会把**已经不作数的那件事**
     // 花掉一次生成的钱（12,900 tokens），而且用的是他当时点的那张图。
     setPending(null)
+    // ★ 2026-10-05（设计 §4.5）：上一条"要切掉后面吗"也一起翻篇 ——
+    //   和上面那一行同一条规矩（用户已经走了，不吭声地清掉）。
+    cancelReplace()
     // ★ 2026-10-05：id 要留着 —— 它是"本条指令的第一条消息"（切口切对话时
     //   从它起保留，设计 §4.3）。原来的内联 `nextId()` 拿不到它。
     const uid = nextId()
@@ -1296,7 +1353,8 @@ export default function App() {
     // ★ T11 追加 `lutsApi.luts` / `lut`：两个都进了请求体，同一条规矩。
     //   ⚠️ 依赖写 `lutsApi.luts`（那份数组），别写 `lutsApi` —— 后者每次渲染
     //   都是新对象，等于这个回调每渲染重建一次（`refreshLuts` 那边有同款注释）。
-  }, [busy, params, applyDecision, say, image, lutsApi.luts, lut])
+    // ★ 2026-10-05：`cancelReplace` 同上（上面那一行清它）。
+  }, [busy, params, applyDecision, say, image, lutsApi.luts, lut, cancelReplace])
 
   const onCard = useCallback(async (card: SuggestCard) => {
     if (busy) return
@@ -1309,6 +1367,9 @@ export default function App() {
     // 再点那条「就改这里」，会把**已经被取代的那件事**又花一次（12,900 tokens），
     // 而且用的是旧标记 + 旧话。
     setPending(null)
+    // ★ 2026-10-05（设计 §4.5）：上一条"要切掉后面吗"同一条规矩 ——
+    //   "确认条和卡片同时在屏上"真会发生（卡片会迟到），不清的话点下去切的是别处。
+    cancelReplace()
     // ★ 2026-10-05：和 send 一样 —— `uid` 是"本条指令的第一条消息"（切口靠它
     //   划出"现在"和"过去"）。
     const uid = nextId()
@@ -1340,7 +1401,8 @@ export default function App() {
       //   今天推荐卡片只说调色和结构性改动）—— 新增字段就要在这里表态。
       lut: null,
     }, uid)
-  }, [busy, applyDecision, say])
+    // ★ 2026-10-05：`cancelReplace` 同上（onCard 里那行清它）。
+  }, [busy, applyDecision, say, cancelReplace])
 
   /** 用户在图上点了一下（画布已经把屏幕坐标换算成 0~1 了）。 */
   const onPickPoint = useCallback((x: number, y: number) => {
@@ -1400,6 +1462,10 @@ export default function App() {
     //   里那几行同一个道理，所以用同一个 cancelPick。
     //   （原来的那两条竞态理由照旧成立，见 git 历史。）
     cancelPick()
+    // ★ 2026-10-05（设计 §4.5）：上一条"要切掉后面吗"就此作废 —— 和
+    //   `cancelPick` 一字不差的同一条规矩（不清的话，确认条会停在屏上，
+    //   而它说的那件事已经翻篇 —— 点下去切的是别处）。
+    cancelReplace()
     // ★ 2026-10-05：「回到这一步」**不再删后面的步骤**（用户原话：「用户点击回到
     //   这一步后，应该保留更改的那一步」）。它只做一件事：移动"现在站在哪一步"。
     //   被跳过的步骤留在 history 里 —— 图、小图、两颗按钮都还在，随时能再点回去；
@@ -1419,7 +1485,7 @@ export default function App() {
     //       那已经不是原图了。
     //   ⚠️ 依赖数组不用动：`target` 来自 `history`，它本来就在里面。
     setLut(target.lut)
-  }, [history, cancelPick])
+  }, [history, cancelPick, cancelReplace])
 
   /**
    * 「再来一版」—— 同一句话，重掷一次。
@@ -1446,8 +1512,16 @@ export default function App() {
     // 没有 prompt 的步骤（原图那一类）不该出现这颗按钮；真被点到了也什么都不做 ——
     // 不留一个"点了没反应"的按钮。
     if (!target?.prompt) return
-    // 先回到那一步（base / 参数 / 缩略图 / 点选清理，全都走同一条路）
+    // 先回到那一步（base / 参数 / 滤镜 / 缩略图 / 点选清理，全都走同一条路）。
     onJump(id)
+    // ★ 2026-10-05（设计 §4.5）：后面还有步骤的话，先把"会切掉它们"问出口。
+    //   ⚠️ 顺序：必须在 `onJump` **之后** —— `onJump` 里会清掉旧的确认条
+    //   （cancelReplace），倒过来写就是刚设上就被清掉（"点了没反应"）。
+    const tip = history[history.length - 1]
+    if (tip && tip.id !== id) {
+      setPendingReplace({ stepId: id, editPrompt: target.prompt, reply: '好，又出了一版。' })
+      return
+    }
     const mid = say('好，又出了一版。')
     // ★ 2026-10-05（滤镜，复审 Important）：**传 `target.lut`**，不是"手上这个"。
     //   `onJump` 里那句 `setLut(target.lut)` 是 state 更新，**这一轮渲染里不生效**
@@ -1502,7 +1576,7 @@ export default function App() {
     //   "现在这一版"。跳回旧步骤之后照旧送的话，服务端会把旧步骤的参数写进
     //   最新那一步：刷新后画面是最新的、滑块是旧的，谁都不报错。
     //   ⚠️ 跳过这一趟不是"少存了"：站在旧步骤上根本没有"现在这一版参数"这回事，
-    //   跳转本身也不该产生一个改 steps 的 PUT（设计 §5）。
+    //   跳转也不该**改动**存下来的 steps（设计 §5）。
     const atTip = cursorId === last.id
     // 底图这一版存过没有？`lastPersistedBaseSeqRef` 只在**写成功**之后才跟进
     // （见 ⑤）——它的初值 -1 表示"一版都还没存过"。
@@ -1819,6 +1893,10 @@ export default function App() {
     if (view.kind !== 'landing') document.title = 'PinkRose'
   }, [view.kind])
 
+  // 「后面还有 N 步」—— 确认条和点选条都用它（设计 §4.5）
+  const curIdx = cursorId === null ? -1 : history.findIndex(s => s.id === cursorId)
+  const futureSteps = curIdx >= 0 ? history.length - 1 - curIdx : 0
+
   // 还没问出"我是谁"之前什么都别显示 —— 认出没登录的访客是**一次网络往返**，
   // 直接按 user === null 渲染的话，每个登录着的用户回访时都会先看到登录页闪一下。
   //
@@ -2098,6 +2176,13 @@ export default function App() {
                   canConfirmMark={!!marker && !!pendingText}
                   onConfirmMark={confirmMark}
                   onCancelMark={cancelPick}
+                  // ★ 2026-10-05（设计 §4.5/6.1）：站的位置 + 后面还有几步 +
+                  //   那条"要切掉后面吗"的确认条。
+                  currentId={cursorId}
+                  futureSteps={futureSteps}
+                  replacing={pendingReplace !== null}
+                  onConfirmReplace={confirmReplace}
+                  onCancelReplace={declineReplace}
                   // ★ 2026-10-05（滤镜，Task 9）：对话区这颗按钮和微调区那一栏
                   //   是**同一批东西、同一个来源**（`lutsApi` + `lut`）——
                   //   所以 props 名字和形状跟 `AdjustmentPanel` 那边一字不差。

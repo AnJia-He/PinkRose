@@ -64,6 +64,8 @@ export type GenerationDeps = {
   setCards: (c: SuggestCard[]) => void
   /** 模型说拿不准时，请用户在图上点一下。 */
   setPending: (p: { text: string; marker: null; keepFrom: number }) => void
+  /** ★ 2026-10-05（设计 §4.5）：从旧步骤生成时挂确认条（App 的 setState）。 */
+  setPendingReplace: (p: { stepId: number; editPrompt: string; reply: string; keepFromMsg: number }) => void
   /** 用户**这一趟说过的那句原话**（点选兜底要留到确认那一刻）。 */
   pendingRef: { current: string | null }
   setMessages: (fn: (m: ChatMessage[]) => ChatMessage[]) => void
@@ -83,8 +85,8 @@ export type GenerationDeps = {
 export function useGeneration(deps: GenerationDeps) {
   const {
     image, setImage, params, setParams, lut, setLut, luts, baseSeqRef, idRef, setBusy, setUser,
-    noticeBad, setCards, setPending, pendingRef, setMessages, setHistory, cursorId, tipId,
-    setCursorId,
+    noticeBad, setCards, setPending, setPendingReplace, pendingRef, setMessages, setHistory,
+    cursorId, tipId, setCursorId,
   } = deps
 
   /**
@@ -307,7 +309,6 @@ export function useGeneration(deps: GenerationDeps) {
       }
     }
 
-    const mid = say(d.reply || '好了。')
     setCards([])
 
     // 模型自己说"我不确定你说的是哪一个"时**不能动手**——
@@ -330,6 +331,19 @@ export function useGeneration(deps: GenerationDeps) {
       return
     }
 
+    const isGen = d.route === 'generate' || d.route === 'both'
+    // ★ 2026-10-05（设计 §4.5）：从**旧步骤**生成 = 会把后面切掉 —— 先问一句。
+    //   钱一分没花，那句 `reply` 也**还没说**（说了再点「算了」就是"说了不做"）。
+    if (isGen && image && cursorId !== null && tipId !== null && cursorId !== tipId) {
+      setPendingReplace({
+        stepId: cursorId, editPrompt: d.editPrompt,
+        reply: d.reply || '好了。', keepFromMsg,
+      })
+      return
+    }
+
+    const mid = say(d.reply || '好了。')
+
     // 送**当前的 base**（= image.bitmap），不是最初那张原图 —— spec §3.5。
     // ⚠️ `image` 必须进依赖数组：漏了它，这个回调会永远捕获第一次 render 的
     // image（null），生成再也不会被触发——而且是静默的：气泡照出、回复照有，
@@ -337,7 +351,7 @@ export function useGeneration(deps: GenerationDeps) {
     // ★ 2026-10-05（滤镜）：这条路（send / 卡片触发的路由决策）**就是"此刻"**——
     //   所以传的是闭包里那个 `lut`，和上面 `params` 同一条口径。
     //   ⚠️ 它读 `lut`，所以 `lut` 必须进依赖数组（同 `image` 那条的理由）。
-    if ((d.route === 'generate' || d.route === 'both') && image && cursorId !== null) {
+    if (isGen && image && cursorId !== null) {
       // ★ T11：传 `nextLut`（这一步做完之后那个），和 `nextParams` 对称 ——
       //   理由见上面滤镜那块。⚠️ 别"顺手"改回闭包的 `lut`。
       await runGenerate(d.editPrompt, mid, nextParams, nextLut, image.bitmap,
@@ -348,7 +362,10 @@ export function useGeneration(deps: GenerationDeps) {
     //   `setLut` 是 useState 的 setter（identity 稳定），进来只是守住这条规矩。
     // ★ 2026-10-05：`cursorId` 同上 —— 生成分支读它（切口的切点），漏了它，
     //   跳转之后这个回调还在用上一轮的位置，切口切错地方，而且不报错。
-  }, [params, say, runGenerate, image, lut, luts, setLut, cursorId])
+    // ★ 2026-10-05（设计 §4.5）：`tipId` 和 `setPendingReplace` 也进来 ——
+    //   前者判"出发的那一步还是不是最新"（要不要先问一句），后者是挂那条确认条；
+    //   漏了 `tipId`，站在新 tip 上生成会被当成"从旧步骤出发"，白白多问一次。
+  }, [params, say, runGenerate, image, lut, luts, setLut, cursorId, tipId, setPendingReplace])
 
   /**
    * 拉建议卡片。

@@ -44,6 +44,16 @@ type Props = {
   canConfirmMark: boolean
   onConfirmMark: () => void
   onCancelMark: () => void
+  /**
+   * ★ 2026-10-05：现在站在哪一步（Task 5 的「你在这里」用它；这里先收下）。
+   */
+  currentId: number | null
+  /** 后面还有几步（站在最新一步时是 0）。>0 时两条确认条都要提醒"会切掉它们"。 */
+  futureSteps: number
+  /** 从旧步骤再改的确认条挂着没有（见 App 的 `pendingReplace`）。 */
+  replacing: boolean
+  onConfirmReplace: () => void
+  onCancelReplace: () => void
   /** ★ 2026-10-05（滤镜，Task 9）：对话区这颗按钮用同一套格子。
    *  命名和 `AdjustmentPanel` 那边**一模一样** —— 两处是同一批东西，
    *  名字不同只会让人以为来源不同（它们其实是 App 里那同一个 `lutsApi` + `lut`）。 */
@@ -65,6 +75,7 @@ type Props = {
 export default function ChatPanel({
   messages, cards, busy, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
   jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
+  futureSteps, replacing, onConfirmReplace, onCancelReplace,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
 }: Props) {
   // ★ 2026-10-05：**输入框那颗加号**（用户截图 + 原话「我觉得在对话框那边设一个
@@ -163,6 +174,13 @@ export default function ChatPanel({
           （一次生成约 12,900 tokens，点错了不该亏钱）。 */}
       {marking && (
         <div className="cards">
+          {/* ★ 2026-10-05：从旧步骤点选时，这条条子**顺带**把"会切掉后面"说出来
+              —— 它本来就要点「就改这里」才花钱，不多要一次点击（设计 §4.5）。 */}
+          {futureSteps > 0 && (
+            <span className="cards-note">
+              {`后面还有 ${futureSteps} 步，从这改会把它们去掉。`}
+            </span>
+          )}
           {/* 还没点之前不出现「就改这里」：那个按钮此刻点了什么也不会发生，
               而"不留一个点了没用的按钮"是这个项目的老规矩。
               ⚠️ 两个都跟卡片一样挂 busy：正忙的时候点下去什么也不会发生
@@ -171,6 +189,18 @@ export default function ChatPanel({
             <button className="card" onClick={onConfirmMark} disabled={!!busy}>就改这里</button>
           )}
           <button className="card" onClick={onCancelMark} disabled={!!busy}>不用了</button>
+        </div>
+      )}
+
+      {/* ★ 2026-10-05（设计 §4.5）：从旧步骤再改之前先问一句 —— 那几步是
+          花过钱的，这个项目一直不静默丢东西。形状照抄点选那条（`.cards`）。 */}
+      {replacing && (
+        <div className="cards">
+          <span className="cards-note">
+            {`后面还有 ${futureSteps} 步，从这改会把它们去掉。`}
+          </span>
+          <button className="card" onClick={onConfirmReplace} disabled={!!busy}>继续改</button>
+          <button className="card" onClick={onCancelReplace} disabled={!!busy}>算了</button>
         </div>
       )}
 

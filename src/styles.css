@@ -1267,6 +1267,14 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .cards-now::before { width: 12px; height: 12px; }
 
+/* ★ 2026-10-05（「回到这一步」Task 4）：确认条里那句提醒（"后面还有 N 步…"）。
+   和上面那句**同一格、同一套字**，但它**不是加载态** —— 没有转圈
+   （`.cards-now::before` 那个圈是"正在看照片"专用的状态指示器）。
+   `align-self: center`：这一格是 flex 行，它和旁边那几颗按钮对齐时居中。 */
+.cards-note {
+  font-size: 12.5px; color: var(--muted); align-self: center;
+}
+
 /* ★ 2026-10-05（滤镜，Task 9）：「滤镜」这颗 —— 摆在输入框上面，点开就
    **就地**摊开和微调区同一套格子（同一个 `LutPicker`），不弹浮层。
    · 药丸形 + 全站按钮的长相：它是颗正经按钮，不是 `.lut-tile` 那种无框格子。
