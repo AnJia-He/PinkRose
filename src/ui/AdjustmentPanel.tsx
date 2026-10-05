@@ -1,9 +1,11 @@
-import { useRef, useState } from 'react'
-import { ChevronDown, Images } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ChevronDown, Images, LayoutGrid, Monitor } from 'lucide-react'
+import { fileUrl, listWorks } from '../api/works.ts'
 import {
   PARAM_GROUPS, PARAM_LABELS, PARAM_RANGE, isChanged,
   type Adjustments,
 } from '../../shared/adjustments.ts'
+import { workName, type WorkMeta } from '../../shared/works.ts'
 import { PRESETS } from '../core/presets'
 import { Slider } from './kit/Slider.tsx'
 import { ColorWheel } from './ColorWheel.tsx'
@@ -20,7 +22,30 @@ type Props = {
    * 分开之后，"调色面板长什么样"和"怎么算出这组参数"才能各测各的。
    */
   onMatchReference: (file: File) => void
+  /**
+   * 参考图的**第二个来源**：用户从自己的作品里挑了一张（★ 2026-10-05，
+   * 用户：「这个用户应该有两个来源，一个是以往作品效果，一个是本地照片」）。
+   *
+   * 面板只交**选中了哪张**（`WorkMeta`）：取图字节、解码、拟合都在 App 那边 ——
+   * 和 `onMatchReference` 同一条分层（面板不碰网络、不碰像素）。
+   * ⚠️ 网格里那些 `<img src={fileUrl(w)}>` 不算破例：图是**浏览器自己**去取的
+   * （`api/works.ts` 里写着这个分工），面板只是给出网址。
+   */
+  onMatchWork: (w: WorkMeta) => void
 }
+
+/**
+ * 「从我的作品里选」那张清单的四态（★ 2026-10-05）。
+ *
+ * **不拿空数组顶"还没拉到"** —— "你的作品集是空的"是一句关于他资产的话，
+ * 只该在真的拉到空清单时说（`AccountPage` 的 `Usage` 同一个道理）。
+ * 失败留在 `fail`：再点一下「从我的作品里选」就重来一次。
+ */
+type WorksState =
+  | { s: 'idle' }
+  | { s: 'loading' }
+  | { s: 'ready'; list: WorkMeta[] }
+  | { s: 'fail' }
 
 /**
  * 哪几根滑块拖着一条**渐变轨**（轨道上每个位置各自对应一个色相/色温）。
@@ -39,13 +64,64 @@ const GRADIENTS: Partial<Record<keyof Adjustments, string>> = {
   splitLoHue: 'linear-gradient(90deg,#ff2d2d,#ffef00,#00e000,#00e5e5,#0048ff,#e000ff,#ff2d2d)',
 }
 
-export default function AdjustmentPanel({ value, onChange, onReset, onMatchReference }: Props) {
+export default function AdjustmentPanel({ value, onChange, onReset, onMatchReference, onMatchWork }: Props) {
   const refInput = useRef<HTMLInputElement>(null)
 
   // 收起了哪几组。**只有 id 的集合**，真值仍然只有 `value` 一个来源 ——
   // 折叠是"看哪儿"的问题，不属于那张参数表，也不该进网址（刷新后全展开是对的：
   // 收起来过的那几组是上一眼的事，不是这份作品的一部分）。
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+
+  /**
+   * 「放置预期效果照片」展开出来的两个来源（★ 2026-10-05）。
+   *
+   * · `refOpen`   —— 大按钮点开/收起，两颗来源行（和可能展开的网格）都挂它下面；
+   * · `worksOpen` —— 「从我的作品里选」的网格开着没有；
+   * · `works`     —— 清单四态（见上面的 `WorksState`）。
+   *
+   * **就地展开、不弹浮层**：这一屏没有弹窗文化（用户原话「调色就是对图片微调的
+   * 界面区不是对话区」），浮层还多一层"怎么关"的焦虑 —— 就地展开没有，再点一下
+   * 大按钮就是收起。
+   */
+  const [refOpen, setRefOpen] = useState(false)
+  const [worksOpen, setWorksOpen] = useState(false)
+  const [works, setWorks] = useState<WorksState>({ s: 'idle' })
+
+  // 卸载之后晚到的清单响应不再写状态（AccountPage 同款理由：别写进一棵不存在的树）。
+  // ⚠️⚠️ **下一行 `alive.current = true` 是必须的，别删**（2026-10-05 真机抓到）：
+  //   StrictMode 在开发模式会把"挂载 → 卸载 → 再挂载"整个重放一遍 —— 第一次
+  //   cleanup 把 `alive.current` 置成 false 之后，effect 会**第二次运行**，不拨回
+  //   true 的话它就永远是 false：promise 明明回来了，每次都被这行拦下，
+  //   界面永远停在「正在找你的作品…」（测试里 App 不走 StrictMode，全绿 ——
+  //   这正是"测试绿而真机死"的那一类，只有真机探针能抓）。
+  //   （AccountPage 那份没这个坑，因为它用的是 effect 里的**闭包变量**，
+  //     每次 effect 重跑都是一个新变量；这份要在点击处理器里用，才用的 ref。）
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => { alive.current = false }
+  }, [])
+
+  const loadWorks = () => {
+    setWorks({ s: 'loading' })
+    listWorks().then(
+      (list) => { if (alive.current) setWorks({ s: 'ready', list }) },
+      () => { if (alive.current) setWorks({ s: 'fail' }) },
+    )
+  }
+
+  const toggleWorks = () => {
+    // 失败中再点 = **重试**（提示文案就是这么说的："再点一下试试"），
+    // 而不是把格子收起来 —— 收起来等于让用户点了两下才有反应。
+    if (worksOpen && works.s === 'fail') { loadWorks(); return }
+    const next = !worksOpen
+    setWorksOpen(next)
+    // 首次打开拉一次；拉到过就不重复拉（重新挂载面板才会再拉）。
+    if (next && works.s === 'idle') loadWorks()
+  }
+
+  /** 选好了（本地文件或作品都算）—— 展开区整个收起。 */
+  const closeRef = () => { setRefOpen(false); setWorksOpen(false) }
 
   return (
     <aside className="panel">
@@ -67,17 +143,67 @@ export default function AdjustmentPanel({ value, onChange, onReset, onMatchRefer
       </div>
 
       {/* 「照着这张调」**故意不摆进上面那一排**，两条理由：
-          · 那排是"按一下立刻出结果"的药丸，而这一颗点了会先开文件选择器
+          · 那排是"按一下立刻出结果"的药丸，而这一颗点了会先展开来源
             —— 混在一起，用户会以为按下去画面就该变；
           · 上面那条注释写着"一排六个不许换行成两排"，多一颗长的就破了。
           而它跟上排**是同一类东西**（产出一组参数），所以紧挨着它们。
           ⚠️ 用真的 `<button>` 而不是 `<label>` 包一个 input：全站那套按钮的长相
           （底色/边框/悬停/按下/禁用）都在 CSS 的 `button` 那条通用规则里，
-          用 label 就得把那一整套抄一遍 —— 抄完就多一份会漂的长相。 */}
-      <button className="presets-ref" onClick={() => refInput.current?.click()}>
+          用 label 就得把那一整套抄一遍 —— 抄完就多一份会漂的长相。
+          ★ 2026-10-05：点它先展开**两个来源**（从我的作品里选 / 从电脑里选）——
+          用户：「这个用户应该有两个来源，一个是以往作品效果，一个是本地照片」，
+          形态（就地展开）见上面 `refOpen` 那段注释。 */}
+      <button className="presets-ref" aria-expanded={refOpen}
+        onClick={() => setRefOpen(o => {
+          // 收起时把网格也一并收掉，别留一个"下次打开还开着"的隐藏状态。
+          if (o) setWorksOpen(false)
+          return !o
+        })}>
         <Images size={14} strokeWidth={1.5} aria-hidden="true" />
-        照着这张调
+        放置预期效果照片
       </button>
+
+      {refOpen && (
+        <div className="presets-sources">
+          {/* 来源一：自己的作品（★ 2026-10-05 新增的路）。
+              ⚠️ 缩略图 `alt` 用 `workName` —— 屏幕阅读器报出来的就是他给这张图
+              起的名字（没起名则是时间），和作品集里看到的叫法一致。 */}
+          <button className="presets-source" aria-expanded={worksOpen} onClick={toggleWorks}>
+            <LayoutGrid size={14} strokeWidth={1.5} aria-hidden="true" />
+            从我的作品里选
+          </button>
+
+          {worksOpen && (
+            <>
+              {works.s === 'loading' && <p className="presets-works-note">正在找你的作品…</p>}
+              {works.s === 'fail' && (
+                <p className="presets-works-note">没取到作品清单 —— 再点一下「从我的作品里选」试试。</p>
+              )}
+              {works.s === 'ready' && (works.list.length === 0 ? (
+                // 真的拉到了、真的是空的 —— 这时才说「还没有」。
+                <p className="presets-works-note">还没有存过作品 —— 先用「从电脑里选」放一张吧。</p>
+              ) : (
+                <div className="presets-works">
+                  {works.list.map(w => (
+                    <button key={w.id} className="presets-work"
+                      onClick={() => { onMatchWork(w); closeRef() }}>
+                      <img className="presets-work-thumb" src={fileUrl(w)}
+                        alt={workName(w, Date.now())} loading="lazy" />
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* 来源二：电脑里的照片 —— 原来唯一的那条路，行为原样。 */}
+          <button className="presets-source" onClick={() => refInput.current?.click()}>
+            <Monitor size={14} strokeWidth={1.5} aria-hidden="true" />
+            从电脑里选
+          </button>
+        </div>
+      )}
+
       <input
         ref={refInput}
         className="presets-ref-file"
@@ -85,7 +211,9 @@ export default function AdjustmentPanel({ value, onChange, onReset, onMatchRefer
         accept="image/*"
         onChange={e => {
           const f = e.target.files?.[0]
-          if (f) onMatchReference(f)
+          // 选完就收起展开区（两条来源一致：挑好了 = 这个动作做完了）。
+          // ⚠️ 用户点「取消」时 files 为空 —— 什么都不动，展开区留着让他重选。
+          if (f) { onMatchReference(f); closeRef() }
           // 清空 value：同一张参考图连选两次也要能再触发一次 change
           e.target.value = ''
         }}

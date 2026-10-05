@@ -50,7 +50,9 @@ export async function deleteWorks(ids: number[]): Promise<{ deleted: number[]; m
 }
 
 /**
- * 列表格子上那张**小图**的网址。**只给作品页的 `.gallery-thumb` 用。**
+ * 小图的网址。**只给"要小图"的地方用** —— 今天两个：作品页的 `.gallery-thumb`，
+ * 和调色面板「照着这张调」的参考图选择器（★ 2026-10-05；那里采样前反正要缩到
+ * 96px，要的正是小图，所以它取字节也走这条网址，见下面的 `fetchWorkImage`）。
  *
  * 有缩略图就用缩略图（那正是缩略图存在的理由：一次摆 60 张，全取原图是几十 MB）；
  * 没有才退回原图 —— 缩略图是前端生成时顺手带的，可能没生成成功。
@@ -67,6 +69,21 @@ export async function deleteWorks(ids: number[]): Promise<{ deleted: number[]; m
  */
 export function fileUrl(w: WorkMeta): string {
   return `/api/works/${w.id}/${w.hasThumb ? 'thumb' : 'file'}?v=${w.updatedAt}`
+}
+
+/**
+ * 作品的**图字节**（★ 2026-10-05）。调色面板「照着这张调」从作品里挑参考图时用。
+ *
+ * 走 `fileUrl`（小图）不奇怪：那张图接下来会被缩到 96px 采样，**要的正是小图** ——
+ * 拿原图只是白费流量。"要小图"这个判据和 `fileUrl` 注释里那条是同一条。
+ *
+ * ⚠️ 失败的抛出交给调用方（App 的 `matchWork`）翻成人话 —— 这一层不认识
+ * 用户界面上的说法，`api/` 里别的函数也是这个分工。
+ */
+export async function fetchWorkImage(w: WorkMeta): Promise<Blob> {
+  const r = await fetch(fileUrl(w))
+  if (!r.ok) throw new Error(`取作品图失败：${r.status}`)
+  return r.blob()
 }
 
 /**

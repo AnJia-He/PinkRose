@@ -904,6 +904,48 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 那个文件 input 永远不该被看见 —— 点的是上面那颗按钮。 */
 .presets-ref-file { display: none; }
 
+/* 「放置预期效果照片」展开出来的两个来源（★ 2026-10-05）。就地展开，不用浮层 ——
+   这一屏没有弹窗文化，再点一下大按钮就是收起。见 AdjustmentPanel 的 refOpen 注释。 */
+.presets-sources {
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  /* 大按钮自己有 margin-bottom: sp-4 —— 展开区是它的"下半身"，要贴紧它：
+     先把那 16px 收回来（只留 sp-2 的视觉间隙），区块整体再到下面预设排的 16px。 */
+  margin: calc(var(--sp-2) - var(--sp-4)) 0 var(--sp-4);
+}
+/* 来源行：和大按钮同宽同字号，但**左对齐 + 缩进一档** —— 是挂在它下面的选项。 */
+.presets-source {
+  display: flex; align-items: center; justify-content: flex-start; gap: var(--sp-2);
+  width: 100%; border-radius: var(--r-md); font-size: 13px; color: var(--muted);
+  padding-left: var(--sp-4);
+}
+.presets-source:hover { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
+
+/* 作品网格：三列方图、最多滚这么高（约两行半，露出半行 = "下面还有"）。 */
+.presets-works {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2);
+  max-height: 288px; overflow-y: auto;
+  padding: var(--sp-2); border: 1px solid var(--line); border-radius: var(--r-md);
+}
+/* 格子：按掉全局 `button` 那套方框（和作品页 .gallery-cell 同款理由）。 */
+.presets-work {
+  display: block; width: 100%; padding: 0; border: 0; border-radius: var(--r-sm);
+  background: none; cursor: pointer;
+}
+.presets-work:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.presets-work-thumb {
+  display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: cover;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--raised);
+  transition: border-color var(--dur-1) ease, transform var(--dur-2) var(--ease);
+}
+.presets-work:hover .presets-work-thumb { border-color: var(--accent); transform: translateY(-2px); }
+
+/* 加载 / 失败 / 空 三句话共用的一行（虚线框 = "这是一句说明，不是东西"）。 */
+.presets-works-note {
+  margin: 0; padding: var(--sp-3) var(--sp-2); text-align: center;
+  font-size: 12.5px; color: var(--muted);
+  border: 1px dashed var(--line); border-radius: var(--r-md);
+}
+
 .slider {
   /* ⚠️ 标签列 2026-10-04 从 56px 加宽到 72px：「专业面板」那七条标签更长
      （自然饱和度 / 亮部颜色 / 洋红 — 绿），56px 里会折成两行（量出来最长

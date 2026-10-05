@@ -2542,6 +2542,56 @@ describe('★ 「照着这张调」：拟合的世界 = 看到的世界（2026-1
     expect(after.clarity).toBe(20)
     expect(after.vignette).toBe(-30)
   })
+
+  /**
+   * ★ 2026-10-05：参考图的**第二个来源**（用户：「这个用户应该有两个来源，
+   * 一个是以往作品效果，一个是本地照片」）。
+   *
+   * 走的是**真链路**：点作品 → `fetchWorkImage`（fetch 假桩）→ File →
+   * 和本地文件**同一个合流点**（假解码 → 假采样 → 真拟合）。断言和上面那条
+   * 同款：六个拟合键逐值等于纯函数的结果 —— 两条来源必须落到同一片世界。
+   */
+  it('★ 从作品里选参考图：取的是小图（带版本号）→ 和本地文件合流进同一条拟合', async () => {
+    await renderApp()
+    await uploadPhoto()
+
+    // 作品列表一条（id=7）。它的"小图"单独盖一条**真 Response** ——
+    // 兜底那个 `{ blob }` 形状没有 `ok` 字段，`fetchWorkImage` 的 `!r.ok`
+    // 会把它判成失败（那正是要的行为：拿不到就说话，见 App 的 matchWork）。
+    withWorks([WORK(7, 1000)])
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works/7/thumb?v=1000') {
+        return new Response(new Blob(['img'], { type: 'image/jpeg' }))
+      }
+      return inner(url, init)
+    })
+
+    await goNav('调色')
+
+    // 参考图那一趟的假解码/采样：和上面本地文件那条同款（'ref' 记号分两源）
+    vi.mocked(decodeMod.decodeImageFile).mockResolvedValueOnce(fakeDecoded('ref'))
+    vi.mocked(sampleMod.samplePixels).mockImplementation(
+      src => ((src as unknown as { __tag?: string }).__tag === 'ref' ? REF : SRC))
+
+    const clickEl = async (el: Element) => {
+      await act(async () => {
+        ;(el as HTMLElement).click()
+        await new Promise(r => setTimeout(r, 0))
+      })
+    }
+    await clickEl(container.querySelector('.presets-ref')!)                 // 展开两个来源
+    await clickEl([...container.querySelectorAll('.presets-source')][0]!)   // 从我的作品里选
+    await clickEl(container.querySelector('.presets-work')!)                // 那一张的缩略图
+
+    const { params: matched } = matchToReference(SRC, REF)
+    const after = canvasProps.props.at(-1)?.params ?? {}
+    for (const k of ['temperature', 'saturation', 'exposure', 'contrast', 'highlights', 'shadows'] as const) {
+      expect(after[k], `${k} 该是拟合值`).toBe(matched[k])
+    }
+    // 取的是**小图**那条 URL（带版本号）—— 原图只是白费流量
+    expect(fetchMock.mock.calls.some(c => c[0] === '/api/works/7/thumb?v=1000')).toBe(true)
+  })
 })
 
 /**

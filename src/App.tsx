@@ -15,6 +15,7 @@ import LandingPage from './ui/LandingPage'
 import { Nav } from './ui/Nav'
 import { FRONT_PAGE, askedForFrontPage, pathOf, viewFromPath, type View } from './ui/view'
 import { me, type AccountUser } from './api/account'
+import { fetchWorkImage } from './api/works'
 import {
   createSession, getSession, listSessions, sessionOriginalUrl, sessionStepUrl,
   updateSession, type SessionPatch,
@@ -34,6 +35,7 @@ import { markImage, type NormPoint } from './image/mark'
 import { useDelivery } from './app/useDelivery'
 import { useGeneration } from './app/useGeneration'
 import type { SuggestCard } from '../shared/protocol.ts'
+import type { WorkMeta } from '../shared/works.ts'
 
 /**
  * 建议卡片最多等这么久。**它只决定那个"正在看…"的提示挂多久，不再拦人。**
@@ -997,6 +999,30 @@ export default function App() {
   }, [image, noticeBad])
 
   /**
+   * 「照着这张调」的**第二条来源**（★ 2026-10-05，用户：「这个用户应该有两个
+   * 来源，一个是以往作品效果，一个是本地照片」）：参考图来自自己的作品。
+   *
+   * 流程：取作品图的字节（`fetchWorkImage` —— 采样前反正要缩到 96px，要的就是
+   * 小图，不拿原图省流量）→ 包成 `File` → **和本地文件合流进 `matchReference`**。
+   * 两条来源在合流点收成一条：解码、拟合、归零那一整套一个字都不重复。
+   *
+   * ⚠️ 取图失败要**说**（和本地那张"打不开"同一族的错误）：这条路的图在服务器上，
+   *    网络可能不给 —— 静默失败就是"点了没反应"。解码失败那半句由
+   *    `matchReference` 自己说（它拿到的 File 长得和本地选的一模一样）。
+   */
+  const matchWork = useCallback(async (w: WorkMeta) => {
+    if (!image) return
+    let blob: Blob
+    try {
+      blob = await fetchWorkImage(w)
+    } catch {
+      noticeBad('这张作品没取到，换一张试试')
+      return
+    }
+    await matchReference(new File([blob], 'reference'))
+  }, [image, matchReference, noticeBad])
+
+  /**
    * 「新的一张」—— 回到"选一张照片"那一屏（§6.4，Task 6）。
    *
    * ⚠️ **它不删当前这条会话**：那条已经在服务端上存着了，左栏「对话」里还找得到。
@@ -1796,6 +1822,7 @@ export default function App() {
                   onChange={setParams}
                   onReset={() => setParams(ZERO)}
                   onMatchReference={file => void matchReference(file)}
+                  onMatchWork={w => void matchWork(w)}
                 />
               )}
             </main>
