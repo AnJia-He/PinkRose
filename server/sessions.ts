@@ -4,7 +4,12 @@ import type { PublicUser } from './account.ts'
 import { HttpError, asObject, str } from './http.ts'
 import { decodeDataUrl, mimeOf, MAX_THUMB_BYTES } from './imagedata.ts'
 import { assertRoomFor } from './quota.ts'
+// ★ 2026-10-05（滤镜）：写入时那道"不许悬空引用"的闸 —— `resolveLutRef` 查的是
+//   "这个 id 存不存在、是不是他的"，认不出来回 null。**只有这一份**，别在这里
+//   另写一个查 luts 表的 SELECT。
+import { resolveLutRef } from './luts.ts'
 import { ZERO, applyDeltas, type Adjustments } from '../shared/adjustments.ts'
+import { normalizeLutRef, type LutRef } from '../shared/lut.ts'
 import type { SessionDetail, SessionMessage, SessionMeta, SessionStep } from '../shared/sessions.ts'
 
 export type SessionsDeps = { db: Db; storage: Storage; now?: () => number }
@@ -46,7 +51,11 @@ export type SessionRow = {
 }
 
 /** 服务端自己记的一步 —— 比出门给前端的那个多一样：**这一步用的是哪张图** */
-type StoredStep = { id: number; label: string; params: Adjustments; prompt?: string; at: number; image: string }
+type StoredStep = {
+  id: number; label: string; params: Adjustments; prompt?: string; at: number; image: string
+  /** ★ 2026-10-05：这一步用的滤镜（`{ lutId, amount }`）。老步骤没有这个键 */
+  lut?: LutRef | null
+}
 
 /**
  * 取一条**属于这个人的**会话。
@@ -195,6 +204,10 @@ export async function backfillSessionBytes(db: Db, storage: Storage): Promise<nu
 function toSteps(stored: readonly StoredStep[]): SessionStep[] {
   return stored.map((s, i) => ({
     id: s.id, label: s.label, params: s.params, prompt: s.prompt, at: s.at,
+    // ★ 2026-10-05：**显式落成 null**（别只写 `s.lut`）—— 2026-10-05 之前存的步骤
+    //   没有这个键，读出来是 `undefined`，而**前端只看得到这一份**：不在这里归一，
+    //   等于把"判一下 undefined"摊给每一个调用点。老步骤 = 没用滤镜。
+    lut: s.lut ?? null,
     reusesPrev: i > 0 && stored[i - 1]!.image === s.image,
   }))
 }
@@ -264,6 +277,10 @@ function mergeSteps(
       prompt: str(o.prompt).slice(0, MAX_PROMPT_LEN) || undefined,
       at: Number(o.at) || at,
       image: '',                       // 下面两步统一补
+      // ★ 2026-10-05（滤镜）：这里只做**形状**归一化（`normalizeLutRef`，
+      //   和 `params` 过 `applyDeltas` 同一条规矩）；**存不存在、是不是他的**
+      //   由调用方紧随其后的 `resolveLutRef` 那道闸判 —— 它要查库，这里够不到 db。
+      lut: normalizeLutRef(o.lut),
     })
   }
   // ③：新步骤里**最后那一个**拿新文件
@@ -379,8 +396,15 @@ export async function handleUpdateSession(
   let title: string | null
   let messages: string
   try {
+    // ★ 2026-10-05（滤镜）：客户端**不能写进一个悬空的 lut id** —— 这一步是那道闸
+    //   在"整条 steps"这条路（`o.steps`）上的落点：每一步的 `lut` 都过一遍
+    //   `resolveLutRef`，不在他名下 / 已经不存在的 id 一律落成 null。
+    //   放在 `mergeSteps` **之后**统一做，而不是它内部：那个函数只管图片文件那三件
+    //   事、拿不到 db，而这里一次 map 就够（库里已有的那几步也顺带再验一遍 ——
+    //   被删的滤镜不该因为"历史写过"就活下来）。
     steps = Array.isArray(o.steps)
       ? mergeSteps(prevSteps, o.steps.slice(-MAX_STEPS), newFile, row.original, t)
+        .map((s) => ({ ...s, lut: resolveLutRef(deps.db, user.id, s.lut) }))
       : prevSteps
     // 名单：原来的 + 这次新写的。每一步引用的文件都必须在名单里
     //
@@ -412,6 +436,15 @@ export async function handleUpdateSession(
         ...last,
         params: applyDeltas(ZERO, asObject(o.params) as Partial<Adjustments>),
       }
+    }
+
+    // ★ 2026-10-05（滤镜）：「现在这一版的滤镜」和 params 同一条路：**只动最后一步**、
+    //   **换一个对象**（两条窄的理由见上面 params 那段）。
+    //   ⚠️ `resolveLutRef` 是那道"不许悬空"的闸：客户端拿一个已经不存在的 id 来存，
+    //   落库的是 null（不存在的、别人的，都算认不出来）。
+    if (o.lut !== undefined && steps.length > 0) {
+      const last = steps[steps.length - 1]!
+      steps[steps.length - 1] = { ...last, lut: resolveLutRef(deps.db, user.id, o.lut) }
     }
 
     title = o.title === null || o.title === undefined

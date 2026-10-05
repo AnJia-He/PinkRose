@@ -5,6 +5,7 @@ import { HttpError, asObject, str } from './http.ts'
 import { decodeDataUrl, mimeOf, MAX_THUMB_BYTES } from './imagedata.ts'
 import { assertRoomFor } from './quota.ts'
 import { ZERO, applyDeltas, type Adjustments } from '../shared/adjustments.ts'
+import { MAX_LUT_NAME } from '../shared/lut.ts'
 import type { Recipe, WorkDetail, WorkMeta } from '../shared/works.ts'
 
 export type WorksDeps = { db: Db; storage: Storage; now?: () => number }
@@ -22,20 +23,36 @@ export type WorkRow = {
   bytes: number; created_at: number; updated_at: number; alias: string | null; recipe: string
 }
 
+/** 配方里的滤镜：只认 `{ name: 1–30 字, amount: 0–100 }`，别的形状当没有。 */
+function readRecipeLut(raw: unknown): { name: string; amount: number } | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  const name = str(o.name).trim()
+  const amount = Number(o.amount)
+  // ⚠️ 名字超出 1–30 字**直接当没有**，不是截断：30 是库里那条 UNIQUE 名字约束
+  //    的上限，一个超过 30 字的名字**不可能**对应任何真滤镜 —— 截断出来的那 30 个字
+  //    既匹配不上任何滤镜，又是详情页上的一句假话（"当时用的是这玩意儿"）。
+  if (!name || name.length > MAX_LUT_NAME || !Number.isFinite(amount)) return null
+  return { name, amount: Math.max(0, Math.min(100, Math.round(amount))) }
+}
+
 /**
  * 读客户端送上来的配方。
  *
  * 客户端可以完全不传（那就当"什么都没改过"）—— 但**绝不能存成 null**：
  * 详情页的"这张图怎么来的"永远要有东西可显示（哪怕是一排 0）。
+ *
+ * ★ 2026-10-05：出口恒带 `lut`（值或显式 null）。它**只存名字不存 id** ——
+ * 这张图是存的时候烤好的，id 没有渲染作用；「套到别的图上」按名字去找还在不在。
  */
 function readRecipe(raw: unknown): Recipe {
-  if (raw === undefined || raw === null) return { params: ZERO, edits: [] }
+  if (raw === undefined || raw === null) return { params: ZERO, edits: [], lut: null }
   const o = asObject(raw)
   const edits = (Array.isArray(o.edits) ? o.edits : [])
     .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
     .map((x) => x.slice(0, MAX_EDIT_LEN))
     .slice(0, MAX_EDITS)
-  return { params: applyDeltas(ZERO, asObject(o.params) as Partial<Adjustments>), edits }
+  return { params: applyDeltas(ZERO, asObject(o.params) as Partial<Adjustments>), edits, lut: readRecipeLut(o.lut) }
 }
 
 export async function handleCreateWork(

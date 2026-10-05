@@ -196,6 +196,10 @@ export async function handleChangePassword(body: unknown, user: PublicUser, deps
  * ⚠️ 会话和模型配置随 `users` 行**级联删**（那两张表写了 ON DELETE CASCADE），
  *    但 **`works` 没写级联** —— 所以它必须手动先删，别以为删用户就都带走了。
  *
+ * ⚠️ **滤镜（luts）是第三种**（2026-10-05）：行写了级联、会自己走，
+ *    但盘上那些 `.cube` 文件不会 —— 所以下面第三批名字要手动收
+ *    （和会话的 `files` 名单同一条规矩：记录删了，文件不能留在盘上没人认领）。
+ *
  * ⚠️ 调用方（app.ts 那条路由）负责把 cookie 清掉 —— 这里只管数据。
  */
 export async function handleDeleteAccount(
@@ -207,10 +211,15 @@ export async function handleDeleteAccount(
   const sessions = deps.db.raw
     .prepare('SELECT files FROM sessions WHERE user_id = ?')
     .all(user.id) as { files: string }[]
+  // ★ 2026-10-05：滤镜文件跟着走（行随 `ON DELETE CASCADE`，文件得自己收）
+  const luts = deps.db.raw
+    .prepare('SELECT stored_name FROM luts WHERE user_id = ?')
+    .all(user.id) as { stored_name: string }[]
 
   const names = [
     ...works.flatMap((w) => [w.stored_name, w.thumb_name]),
     ...sessions.flatMap((s) => JSON.parse(s.files) as string[]),
+    ...luts.map((l) => l.stored_name),
   ].filter((n): n is string => typeof n === 'string' && n.length > 0)
 
   deps.db.raw.prepare('DELETE FROM works WHERE user_id = ?').run(user.id)

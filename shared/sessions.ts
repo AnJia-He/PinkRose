@@ -1,4 +1,5 @@
 import type { Adjustments } from './adjustments.ts'
+import type { LutRef } from './lut.ts'
 
 /**
  * 会话的**元数据** —— 和 `WorkMeta` 同一条规矩：列表接口一次给全部，
@@ -54,6 +55,12 @@ export type SessionStep = {
   id: number
   label: string
   params: Adjustments
+  /**
+   * ★ 2026-10-05：这一步用着哪个滤镜、强度多少。**可选** ——
+   * 2026-10-05 之前存的步骤没有这个键，一律当"没用滤镜"。
+   * ⚠️ 它和 `params` 是**并列的两件事**（滤镜不是第十六个数字，见设计 §3.2）。
+   */
+  lut?: LutRef | null
   prompt?: string
   at: number
   reusesPrev: boolean

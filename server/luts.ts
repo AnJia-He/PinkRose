@@ -132,10 +132,41 @@ export function lutUsage(id: number, user: PublicUser, deps: LutDeps): { session
   return { sessions: n }
 }
 
+/**
+ * 会话步骤在库里那一列的形状 —— 这一层只关心 `lut` 那一格。
+ * ⚠️ 别 import `sessions.ts` 的 `StoredStep`：那是它私有的（`image` 那半截是
+ * 服务端内部的事），这里要的恰好只是"能安全地读 lut、其余原样带过"。
+ */
+type StoredStepLike = { lut?: LutRef | null } & Record<string, unknown>
+
+/**
+ * 删一条滤镜：**真删**（用户拍板）—— 行、文件，以及所有指向它的引用。
+ *
+ * ⚠️ 顺序：先删行 → 清会话引用（不留悬空）→ 删文件。文件删失败不让请求失败
+ * （对用户来说这件事就是成功了），但要记一笔日志，不然盘满时没人知道。
+ */
 export async function deleteLut(id: number, user: PublicUser, deps: LutDeps): Promise<{ ok: true }> {
   const row = loadOwnedLut(id, user, deps)
   deps.db.raw.prepare('DELETE FROM luts WHERE id = ?').run(id)
-  // Task 4 会在这里补上「把这个人的会话步骤里指向它的 lut 清成 null」
+  // ★ 把这个人所有会话步骤里指向它的引用**清成 null**（用户拍板的删除语义：
+  //   删了就是真删，老会话再打开会变回没有滤镜的样子 —— 但不许留下悬空 id）。
+  //   逐条读改写：会话条数是"一个人"的量级，够用；而且 JSON 里的 id 不能用
+  //   SQL 的 LIKE 找（`"lutId":3` 会撞上 params 里的数字）。
+  const rows = deps.db.raw
+    .prepare('SELECT id, steps FROM sessions WHERE user_id = ?')
+    .all(user.id) as { id: number; steps: string }[]
+  for (const r of rows) {
+    let steps: StoredStepLike[]
+    try { steps = JSON.parse(r.steps) as StoredStepLike[] } catch { continue }  // 坏 JSON 不该拖垮删除
+    if (!Array.isArray(steps)) continue
+    let hit = false
+    const next = steps.map((s) => {
+      if (s?.lut?.lutId !== id) return s
+      hit = true
+      return { ...s, lut: null }
+    })
+    if (hit) deps.db.raw.prepare('UPDATE sessions SET steps = ? WHERE id = ?').run(JSON.stringify(next), r.id)
+  }
   await deps.storage.remove(row.stored_name).catch((e) => {
     console.error('删滤镜：文件没删掉（记录已清，成了孤儿）：', e)
   })

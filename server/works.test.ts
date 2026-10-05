@@ -228,19 +228,51 @@ describe('handleListWorks', () => {
 })
 
 describe('handleGetWork / handleRenameWork', () => {
-  it('★ 详情里的配方是**两栏**：调色一栏、AI 原话一栏，永远是两个字段', async () => {
+  it('★ 详情里的配方是**两栏**：调色一栏、AI 原话一栏，永远是分开的字段', async () => {
     // spec §10 点名了这条变异：把它们合成一个数组的话，用户会以为
     // "这一整套都能复用"—— 而「把后面那个人去掉」换一张照片就是另一回事（§3.5.1）。
+    // ★ 2026-10-05：滤镜（`lut`）是**第三个并列字段**，同样不是合进 `edits` 里的一格 ——
+    //   它套得走（和 params 一样），但"用哪句原话改的"套不走，两个问题的答案不一样。
     const { id } = await handleCreateWork({
       image: JPEG,
       recipe: { params: { exposure: 20, contrast: 5 }, edits: ['把后面那个人去掉', '天空换成傍晚的'] },
     }, USER, deps)
 
     const d = handleGetWork(id, USER, deps)
-    expect(Object.keys(d.recipe).sort()).toEqual(['edits', 'params'])          // ★ 恰好两个字段
+    expect(Object.keys(d.recipe).sort()).toEqual(['edits', 'lut', 'params'])   // ★ 三个并列字段
     expect(Array.isArray(d.recipe)).toBe(false)                                // ★ 不是合成的一个数组
     expect(d.recipe.params.exposure).toBe(20)
     expect(d.recipe.edits).toEqual(['把后面那个人去掉', '天空换成傍晚的'])
+  })
+
+  it('★ 配方里的滤镜存得进、取得出；形状不对当没有', async () => {
+    // ★ 2026-10-05：作品配方里的滤镜**只存名字不存 id** —— 作品那张图是存的时候
+    //   烤好的，id 没有渲染作用；详情页「套到别的图上」按名字去找还在不在。
+    const r = await handleCreateWork({
+      image: JPEG, recipe: { params: {}, edits: [], lut: { name: '黄昏', amount: 80 } },
+    }, USER, deps)
+    expect(handleGetWork(r.id, USER, deps).recipe.lut).toEqual({ name: '黄昏', amount: 80 })
+
+    // 形状不对的一律当没有 —— 一个 99 字的名字**不可能**对应任何真滤镜
+    //（库里那些名字最多 30 字），存下来只会在详情页上说一句匹配不上的假话
+    for (const bad of [
+      { name: 'x'.repeat(99), amount: 1e9 },
+      { name: '', amount: 50 },
+      { name: '   ', amount: 50 },
+      { name: '黄昏', amount: '不是数' },
+      '不是对象',
+      [1, 2, 3],
+    ]) {
+      const w = await handleCreateWork({ image: JPEG, recipe: { params: {}, edits: [], lut: bad } }, USER, deps)
+      expect(handleGetWork(w.id, USER, deps).recipe.lut).toBeNull()
+    }
+
+    // 老作品（存的时候根本没有 recipe / 没有这个键）读出来也是**显式 null** ——
+    // 前端不必再判一次 undefined
+    const plain = await handleCreateWork({ image: JPEG }, USER, deps)
+    expect(handleGetWork(plain.id, USER, deps).recipe.lut).toBeNull()
+    const noLut = await handleCreateWork({ image: JPEG, recipe: { params: {}, edits: [] } }, USER, deps)
+    expect(handleGetWork(noLut.id, USER, deps).recipe.lut).toBeNull()
   })
 
   it('改名生效，但 **updated_at 一点都不动**', async () => {

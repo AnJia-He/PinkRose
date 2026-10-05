@@ -8,6 +8,7 @@ import {
   handleDeleteAccount, handleSignup, handleLogin, handleChangePassword, findUserByCookie,
   type AccountDeps,
 } from './account.ts'
+import { createLut } from './luts.ts'
 import { SESSION_COOKIE } from './session.ts'
 
 /**
@@ -343,5 +344,27 @@ describe('注销账号', () => {
     expect(readdirSync(dir)).toEqual([theirs])
     // 别人的东西完好
     expect(count('SELECT COUNT(*) AS n FROM works WHERE user_id = ?', other.user.id)).toBe(1)
+  })
+
+  it('★ 滤镜文件跟着一起删（行随 CASCADE，文件得手动收）；别人的滤镜不动', async () => {
+    // ★ 2026-10-05：luts 表写了 ON DELETE CASCADE，所以**行**自己会走 ——
+    //   但盘上那个 .cube 文件不会：它是注销这条路上"作品 + 会话 + 滤镜"三批文件里的
+    //   第三批，漏了就一直躺在盘上没人认领（和曾经的孤儿缩略图同一个形状）。
+    const CUBE2 = ['LUT_3D_SIZE 2', '0 0 0', '1 0 0', '0 1 0', '1 1 0', '0 0 1', '1 0 1', '0 1 1', '1 1 1'].join('\n')
+    const me = await handleSignup(GOOD, deps)
+    const other = await handleSignup({ ...GOOD, username: '小红', email: 'b@b.com' }, deps)
+    const mine = await createLut({ name: '我的', cube: CUBE2 }, me.user, { db, storage })
+    const theirs = await createLut({ name: '他的', cube: CUBE2 }, other.user, { db, storage })
+    const nameOf = (id: number) =>
+      (db.raw.prepare('SELECT stored_name FROM luts WHERE id = ?').get(id) as { stored_name: string }).stored_name
+    const myFile = nameOf(mine.lut.id)
+    const theirFile = nameOf(theirs.lut.id)
+    expect(readdirSync(dir)).toContain(myFile)
+
+    expect(await handleDeleteAccount(me.user, { db, storage })).toEqual({ ok: true })
+
+    expect(db.raw.prepare('SELECT COUNT(*) AS n FROM luts WHERE user_id = ?').get(me.user.id)).toEqual({ n: 0 })
+    expect(readdirSync(dir)).not.toContain(myFile)   // 我的文件没了
+    expect(readdirSync(dir)).toContain(theirFile)    // ★ 别人的一个都不动
   })
 })

@@ -4,9 +4,10 @@ import { HttpError } from './http.ts'
 /**
  * 每人的存储配额（spec §6.6）。
  *
- * ⚠️ **口径：作品 + 会话的文件都算**。设计文档那张表上写的是"作品容量
+ * ⚠️ **口径：作品 + 会话 + 滤镜的文件都算**。设计文档那张表上写的是"作品容量
  * （约 2500 张）"，但真正会长的是**会话**（每上传一张照片都要存原图 + 每一步的底）——
- * 只卡作品等于把审计那条"可无限写"原样留着。
+ * 只卡作品等于把审计那条"可无限写"原样留着。滤镜（2026-10-05 起）同样睡在这块盘上，
+ * 30 个 × 8 MB 是它的上界。
  *
  * ⚠️ **为什么要有它**（spec 原话）：**不是防用户，是防止一个人把整台服务搞挂** ——
  * 数据库和图片在**同一块盘**上，图片把盘塞满之后，注册、登录、看作品集
@@ -14,7 +15,7 @@ import { HttpError } from './http.ts'
  */
 export const QUOTA_BYTES = 5 * 1024 ** 3
 
-/** 这一位**总共占了多少**（作品 + 会话名下的文件字节）。 */
+/** 这一位**总共占了多少**（作品 + 会话 + 滤镜名下的文件字节）。 */
 export function storedBytes(db: Db, userId: number): number {
   const w = db.raw
     .prepare('SELECT COALESCE(SUM(bytes), 0) AS n FROM works WHERE user_id = ?')
@@ -22,7 +23,11 @@ export function storedBytes(db: Db, userId: number): number {
   const s = db.raw
     .prepare('SELECT COALESCE(SUM(bytes), 0) AS n FROM sessions WHERE user_id = ?')
     .get(userId) as { n: number }
-  return w.n + s.n
+  // ★ 2026-10-05：滤镜也是用户的文件、也睡在同一块盘上（每人 30 个 × 8 MB 是上界）。
+  const l = db.raw
+    .prepare('SELECT COALESCE(SUM(bytes), 0) AS n FROM luts WHERE user_id = ?')
+    .get(userId) as { n: number }
+  return w.n + s.n + l.n
 }
 
 /**

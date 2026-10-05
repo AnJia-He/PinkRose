@@ -16,6 +16,7 @@ import { HttpError } from './http.ts'
 import { handleCreateWork, handleGetWork, handleWorkFile } from './works.ts'
 import { ZERO } from '../shared/adjustments.ts'
 import { QUOTA_BYTES } from './quota.ts'
+import { createLut } from './luts.ts'
 import { b64Of, jpegBytes, jpegUrl } from './testImages.ts'
 
 let dir: string; let db: Db; let storage: Storage
@@ -326,6 +327,96 @@ describe('更新 · 参数', () => {
 
     expect(rawSteps(id)).toBe(beforeSteps)     // 拒掉 = 库那一列一个字节没改
     expect(readdirSync(photos).sort()).toEqual(beforeFiles)
+  })
+})
+
+/**
+ * ★ 2026-10-05（滤镜）。会话每一步可以带一个 `LutRef`（用哪个滤镜、强度多少）——
+ * 和 `params` 是**并列的两件事**（见 `shared/lut.ts` 的 `LutRef` 那段）。
+ *
+ * 这一组守的是"不许悬空引用"那道闸的**第一道（写入时）**：客户端送来的 id 必须
+ * 真的存在、而且是他自己的，认不出来一律落成 null。第二道（删除滤镜时回头清引用）
+ * 在 `server/luts.test.ts`。
+ */
+describe('★ 滤镜引用（会话）', () => {
+  /** 一个 2×2×2 恒等 cube（和 luts.test.ts 里那个同一份文本） */
+  const CUBE2 = ['LUT_3D_SIZE 2', '0 0 0', '1 0 0', '0 1 0', '1 1 0', '0 0 1', '1 0 1', '0 1 1', '1 1 1'].join('\n')
+  const rawSteps = (id: number): string =>
+    (db.raw.prepare('SELECT steps FROM sessions WHERE id=?').get(id) as any).steps
+  const stepsOf = (id: number): any[] => JSON.parse(rawSteps(id)) as any[]
+
+  it('★ 步骤里的滤镜存得进、取得出；认不出来的被清成 null', async () => {
+    const { lut } = await createLut({ name: 'x', cube: CUBE2 }, user, deps())
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, {
+      steps: [{ id: 1, label: '原图', params: ZERO, at: 0, lut: { lutId: lut.id, amount: 70 } }],
+    }, user, deps())
+
+    expect(handleGetSession(id, user, deps()).steps[0]!.lut).toEqual({ lutId: lut.id, amount: 70 })
+
+    // 一个**不存在**的 id 再存一次 —— 必须被清成 null。
+    // 判据要读**库里那一列**：只看出口的话，一个"原样存、出口再挡一下"的实现照样绿，
+    // 而那个悬空 id 会一直躺在库里（等别人来读，或者等"删除清引用"去清它）。
+    await handleUpdateSession(id, {
+      steps: [
+        { id: 1, label: '原图', params: ZERO, at: 0 },
+        { id: 2, label: '调色', params: ZERO, at: 1, lut: { lutId: 999999, amount: 100 } },
+      ],
+    }, user, deps())
+
+    expect(stepsOf(id)[1].lut).toBeNull()
+    expect(rawSteps(id)).not.toContain('999999')   // 不是"原样进库、出口才挡"
+  })
+
+  it('★ 别人的滤镜 id 也落成 null —— 闸查的是"他的"', async () => {
+    const theirs = await createLut({ name: 'x', cube: CUBE2 }, other, deps())
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+
+    await handleUpdateSession(id, {
+      steps: [{ id: 1, label: '原图', params: ZERO, at: 0, lut: { lutId: theirs.lut.id, amount: 50 } }],
+    }, user, deps())
+
+    // 存在、但不是他的 —— 一样落成 null（`resolveLutRef` 查的是 id + user_id 一对）
+    expect(stepsOf(id)[0].lut).toBeNull()
+  })
+
+  it('★「现在这一版」的滤镜写在最后一步上，前面几步一个字节不动', async () => {
+    const { lut } = await createLut({ name: 'x', cube: CUBE2 }, user, deps())
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1), step(2)] }, user, deps())
+    const before = stepsOf(id)
+
+    await handleUpdateSession(id, { lut: { lutId: lut.id, amount: 66 } }, user, deps())
+
+    const after = stepsOf(id)
+    expect(after).toHaveLength(2)
+    expect(after[1].lut).toEqual({ lutId: lut.id, amount: 66 })  // 最后一步 = 现在屏幕上那一版
+    expect(after[0].lut ?? null).toBeNull()                       // 历史那一步没被顺手补上
+    // 前面几步**逐字节**相同 —— 和 params 那条同一个理由（客户端不能改写历史）
+    expect(JSON.stringify(after.slice(0, 1))).toBe(JSON.stringify(before.slice(0, 1)))
+  })
+
+  it('★ 客户端拿一个不存在的 id 来改「现在这一版」→ 库里落的是 null', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1)] }, user, deps())
+
+    // 过期的 id（滤镜在别处被删了）：闸要让它落成 null，不是原样进库
+    await handleUpdateSession(id, { lut: { lutId: 999999, amount: 100 } }, user, deps())
+
+    expect(stepsOf(id)[0].lut).toBeNull()
+    expect(rawSteps(id)).not.toContain('999999')
+  })
+
+  it('★ 老步骤（库里没这个键）读出来是**显式 null**，不是 undefined', async () => {
+    // 2026-10-05 之前存的步骤没有 `lut` 这个键。出口（toSteps）必须把它落成显式
+    // `null` —— 前端只看得到这一份，别再让每个调用点都自己判一次 undefined。
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    // 直接塞一条"老形状"的步骤（没有 lut 键）—— 不走 handleUpdateSession，
+    // 因为写入这条路现在会把键补上
+    db.raw.prepare('UPDATE sessions SET steps = ? WHERE id = ?')
+      .run(JSON.stringify([{ id: 1, label: '调色', params: ZERO, at: 0, image: 'a.jpg' }]), id)
+
+    expect(handleGetSession(id, user, deps()).steps[0]!.lut).toBeNull()
   })
 })
 
