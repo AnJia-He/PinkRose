@@ -22,6 +22,12 @@ type Props = {
    * 图到了原地换成真图 —— 「正在思考…」那 1.5 秒、上传/切会话那几句都不摆。
    */
   generating: boolean
+  /**
+   * ★ 2026-10-06（评审 Minor）：**底图的宽 / 高比**（`image.width /
+   * image.height`）—— 占位块按它定高，换真图时纵向也不跳（照片竖着横着
+   * 都有，写死一个比例只能压中一半）。可选：不传就退回 CSS 里那条 4:3。
+   */
+  aspectRatio?: number
   /** 正在等建议卡片。**它不拦人** —— 只是在这一格上挂一句"正在看…"，
    *  发送键照常能按（见 App.tsx 的 SUGGEST_WAIT_MS 那段）。 */
   suggesting: boolean
@@ -81,7 +87,7 @@ type Props = {
 }
 
 export default function ChatPanel({
-  messages, cards, busy, generating, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
+  messages, cards, busy, generating, aspectRatio, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
   jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
   currentId, futureSteps, replacing, onConfirmReplace, onCancelReplace,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
@@ -193,8 +199,13 @@ export default function ChatPanel({
                 原地换掉、不跳）。⚠️ 只在生成时摆 —— 「正在思考…」那会儿还
                 不知道要不要生成。
                 ⚠️ 不套 `.shot`：那一层是给"图 + 按钮"用的，而这里的间距已经由
-                `.msg` 自己的 gap 管了（和真缩略图那块是同一个数，见 CSS）。 */}
-            {generating && <div className="shot-skeleton" aria-hidden="true" />}
+                `.msg` 自己的 gap 管了（和真缩略图那块是同一个数，见 CSS）。
+                ★ `aspectRatio` 内联（评审 Minor）：占位块和真缩略图**同一个
+                宽高比**，竖图横图都不跳；没传时退回 CSS 里那条 4:3。 */}
+            {generating && (
+              <div className="shot-skeleton" aria-hidden="true"
+                style={aspectRatio ? { aspectRatio } : undefined} />
+            )}
           </div>
         )}
       </div>

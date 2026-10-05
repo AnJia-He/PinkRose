@@ -2267,6 +2267,10 @@ export default function App() {
                   //   个判据、同一个来源）。「正在思考…」那 1.5 秒不摆 ——
                   //   那会儿还不知道要不要生成。
                   generating={generating}
+                  // ★ 2026-10-06（评审 Minor）：占位块按**这张照片自己的宽高比**
+                  //   定高（这里 `image` 必非空 —— 整个 workspace 就在 `{image &&`
+                  //   里面），换真图时横竖都不跳。不传会退回 CSS 里那条 4:3。
+                  aspectRatio={image.width / image.height}
                   suggesting={suggesting}
                   draft={draft}
                   onSend={send}

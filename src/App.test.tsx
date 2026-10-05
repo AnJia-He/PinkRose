@@ -974,8 +974,12 @@ describe('对话式修图：钱花在对的地方', () => {
     const dots = container.querySelector('.bubble.pending .pending-dots')
     expect(dots, '那条「正在…」气泡上没有跳动的点').toBeTruthy()
     expect(dots!.querySelectorAll('i')).toHaveLength(3)
-    // ② 图位占位（等十几秒的那一块）
-    expect(container.querySelector('.shot-skeleton'), '生成中图的位置没有占位块').toBeTruthy()
+    // ② 图位占位（等十几秒的那一块）—— 尺寸跟着**这张照片的宽高比**
+    //    （假解码器给的是 1200×800 = 1.5；App→ChatPanel 这根线断了的话
+    //    内联样式是空的，占位块退回 CSS 那条 4:3、换图时纵向跳一格）
+    const skeleton = container.querySelector('.shot-skeleton') as HTMLElement
+    expect(skeleton, '生成中图的位置没有占位块').toBeTruthy()
+    expect(skeleton.style.aspectRatio).toBe('1.5')
     // ③ 照片那边的暗罩（判据是这一帧 prop，不是字符串）
     expect(canvasProps.props.at(-1)?.busy).toBe(true)
 
@@ -1037,6 +1041,40 @@ describe('对话式修图：钱花在对的地方', () => {
 
     expect(api.postEdit).not.toHaveBeenCalled()        // 没有 editPrompt 就一个钱都不花
     expect(lastReply()).toBe('这句不改，先这么看。')     // 但话必须说 —— 静默才是红线
+  })
+
+  /**
+   * ★ 2026-10-06（评审必修）：确认条那支和上面那条**要对称** —— 模型声明
+   * `route: 'generate'` 却给了空 `editPrompt`、而光标停在**旧步骤**上时，
+   * 条子同样不许挂。
+   * 红的样子（改动前）：条子照挂（"后面还有 N 步…"）→ 点「继续改」→
+   * `runGenerate('')` 撞上它开头的 `if (!editPrompt) return` —— **一行反馈都
+   * 没有**，还白烧一个消息号。判据两条缺一不可：①条子不许出现 ②必须有一句
+   * reply 收场（只断"没花钱"的话，静默那条路照样绿）。
+   */
+  it('★（评审必修）空 editPrompt + 站在旧步骤上：不弹确认条，也不许一声不吭', async () => {
+    // 先造两版（光标落在最新一步），再跳回第一步 —— 出发点是**旧步骤**
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉路人', reply: '好，这就去掉。' }))
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '换成黄昏', reply: '好，换成黄昏。' }))
+    await say('天空换成黄昏')
+    await act(async () => {
+      ;(container.querySelector('.bubble-jump') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '', reply: '这句不改，先这么看。' }))
+    await say('把后面那个人去掉')
+
+    expect(container.textContent).not.toContain('后面还有')   // ① 条子不许挂
+    expect(api.postEdit).toHaveBeenCalledTimes(2)            // 钱一分没花（仍只前两次）
+    expect(lastReply()).toBe('这句不改，先这么看。')           // ② 必须有一句收场
   })
 
   /**

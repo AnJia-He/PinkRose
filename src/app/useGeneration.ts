@@ -389,7 +389,11 @@ export function useGeneration(deps: GenerationDeps) {
     const cur = cursorIdRef.current
     // ★ 2026-10-05（设计 §4.5）：从**旧步骤**生成 = 会把后面切掉 —— 先问一句。
     //   钱一分没花，那句 `reply` 也**还没说**（说了再点「算了」就是"说了不做"）。
-    if (isGen && image && cur !== null && tipId !== null && cur !== tipId) {
+    //   ⚠️ `d.editPrompt` 和下面那支**一字不差地对称**（2026-10-06 评审必修）：
+    //   空 editPrompt 的退化决策要是挂出条子，点「继续改」→ `runGenerate('')`
+    //   撞上开头那句 `if (!editPrompt) return` —— 一行反馈都没有，还白烧一个号。
+    //   补上它，两条生成路一起落回下面那句 `say(d.reply || '好了。')`。
+    if (isGen && image && cur !== null && tipId !== null && cur !== tipId && d.editPrompt) {
       setPendingReplace({
         stepId: cur, editPrompt: d.editPrompt,
         reply: d.reply || '好了。', keepFromMsg,
