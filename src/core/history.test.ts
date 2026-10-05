@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pushSnapshot, jumpTo, bitmapsToClose, attachThumb, MAX_SNAPSHOTS, type Snapshot } from './history'
+import { pushSnapshot, cutAfter, bitmapsToClose, attachThumb, MAX_SNAPSHOTS, type Snapshot } from './history'
 import type { DecodedImage } from '../image/decode'
 import { ZERO } from '../../shared/adjustments.ts'
 
@@ -32,25 +32,25 @@ describe('pushSnapshot', () => {
   })
 })
 
-describe('jumpTo', () => {
+describe('cutAfter', () => {
   it('回到指定一步 —— 列表截断到那一步（含）', () => {
-    expect(jumpTo([mk(1, true), mk(2), mk(3), mk(4)], 2).map(s => s.id)).toEqual([1, 2])
+    expect(cutAfter([mk(1, true), mk(2), mk(3), mk(4)], 2).map(s => s.id)).toEqual([1, 2])
   })
 
   it('回到原图', () => {
-    expect(jumpTo([mk(1, true), mk(2), mk(3)], 1).map(s => s.id)).toEqual([1])
+    expect(cutAfter([mk(1, true), mk(2), mk(3)], 1).map(s => s.id)).toEqual([1])
   })
 
   it('找不到的 id 原样返回一份拷贝，不崩', () => {
     const list = [mk(1, true), mk(2)]
-    const out = jumpTo(list, 99)
+    const out = cutAfter(list, 99)
     expect(out).toEqual(list)
     expect(out).not.toBe(list)
   })
 
   it('不修改入参', () => {
     const list = [mk(1, true), mk(2), mk(3)]
-    jumpTo(list, 1)
+    cutAfter(list, 1)
     expect(list).toHaveLength(3)
   })
 })
@@ -87,7 +87,7 @@ describe('attachThumb', () => {
 describe('bitmapsToClose', () => {
   it('跳回去之后，被截掉的位图要释放 —— 它们占的是 GPU 内存', () => {
     const old = [mk(1, true), mk(2), mk(3)]
-    expect(bitmapsToClose(old, jumpTo(old, 1)).map(tagOf)).toEqual(['b2', 'b3'])
+    expect(bitmapsToClose(old, cutAfter(old, 1)).map(tagOf)).toEqual(['b2', 'b3'])
   })
 
   it('还在新列表里的位图一个都不能关 —— 关了画布直接空白', () => {

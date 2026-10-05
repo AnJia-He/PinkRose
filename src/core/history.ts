@@ -81,8 +81,18 @@ export function pushSnapshot(list: readonly Snapshot[], s: Snapshot): Snapshot[]
   return out
 }
 
-/** 回到某一步：列表截断到那一步（含）。找不到 id 时返回一份拷贝。 */
-export function jumpTo(list: readonly Snapshot[], id: number): Snapshot[] {
+/**
+ * 从某一步继续改：把它**之后**的步骤全部切掉（那一步保留）。
+ *
+ * ★ 2026-10-05 改名（原名 `jumpTo`）："跳转"不再删任何东西了（见 `App` 的
+ *   `onJump`）—— 只有"从这个位置**再生成一版**"才切（`runGenerate` 的
+ *   `origin`）。名字跟着语义走：留着 `jumpTo` 这个名字，下一个读的人会以为
+ *   跳转还会截断，而它不会了。
+ *
+ * 找不到 id 时返回一份拷贝 —— 不做任何事，但也不让调用方拿到同一个引用，
+ * 免得 React 以为状态变了（原 `jumpTo` 的行为，一字未改）。
+ */
+export function cutAfter(list: readonly Snapshot[], id: number): Snapshot[] {
   const i = list.findIndex(s => s.id === id)
   return i < 0 ? [...list] : list.slice(0, i + 1)
 }

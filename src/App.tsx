@@ -32,7 +32,7 @@ import { applyDeltas, clampAdjustments, ZERO, type Adjustments } from '../shared
 import { canShareImage, downloadImage } from './export/save'
 import { prepareForRouting } from './image/prepare'
 import { ApiError, isUnauthorized, postRoute } from './api/client'
-import { bitmapsToClose, attachThumb, jumpTo, type Snapshot } from './core/history'
+import { bitmapsToClose, attachThumb, cutAfter, type Snapshot } from './core/history'
 import { GALLERY_THUMB_MAX_SIDE, THUMB_MAX_SIDE, bitmapToDataUrl, makeThumbnail } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
 import { useDelivery } from './app/useDelivery'
@@ -1359,7 +1359,7 @@ export default function App() {
     //   配旧那句话，然后扣一次生成的钱。
     cancelPick()
     setHistory(prev => {
-      const next = jumpTo(prev, id)
+      const next = cutAfter(prev, id)
       closeBitmaps(bitmapsToClose(prev, next, { protectOriginal: true }))
       return next
     })
