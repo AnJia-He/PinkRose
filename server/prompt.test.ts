@@ -163,6 +163,21 @@ describe('ROUTER_SYSTEM', () => {
   it('★ 回话里叫「Lut」（用户说"滤镜"也听得懂，但自己开口不用那个词）', () => {
     expect(ROUTER_SYSTEM).toContain('你回话时用「Lut」')
   })
+
+  /**
+   * ★ 2026-10-06：**打招呼 / 闲聊是合法输出** —— 不是失败，别硬凑一次生成。
+   *
+   * 用户实测：说「你好」，模型老实答了 params + 全 0 + 一句正常 reply（照片都看了、
+   * 也回话了，答得完全正确），而决策层把它当成"没读懂"→ 拿"你好"当改图指令跑了
+   * 一次付费生成。决策层那半的修法在 `validate.ts`（`cleanNoop` 早返回）；
+   * 提示词这半是治本 —— 说得越清楚，模型越不会为了"显得做了事"硬凑 edit_prompt。
+   */
+  it('★ 打招呼 / 闲聊 → params + 全 0 + 空 edit_prompt，且明写"这是合法输出，不是失败"', () => {
+    expect(ROUTER_SYSTEM).toContain('打招呼 / 闲聊 / 和修图无关的话')
+    expect(ROUTER_SYSTEM).toContain('这是合法输出，不是失败')
+    // 例子要带上**那句回复本身**：这是实测里模型答对了的那一句，照抄它最稳。
+    expect(ROUTER_SYSTEM).toContain('你好，照片有什么想调的吗？')
+  })
 })
 
 describe('buildRouterUser', () => {

@@ -385,3 +385,95 @@ describe('滤镜决策', () => {
     })
   })
 })
+
+/**
+ * ★ 2026-10-06：**干净的 no-op**（读懂了、模型明说这次不用改）不再降级。
+ *
+ * 用户实测：对着一张照片说「你好」，模型**答得完全正确** —— 下面那坨 HELLO
+ * 就是它原样吐的 JSON —— 而兜底闸把这种形状也当成"模型吐的东西一件也用不上"→
+ * 前端拿"你好"当改图指令跑了一次**付费生成**，回话是驴唇不对马嘴的
+ * 「我直接按你说的试了一下。」。分界线：**"读懂了说不用改" ≠ "没读懂 / 丢了东西"**。
+ *
+ * 修前的行为（这一组里没写"RED"标记的那几条）：gate 一开火就是抛掉模型的
+ * 回答、拿用户原话去生成 —— 所以它们全部是"对照"，钉的是**边界没有外扩**。
+ */
+describe('干净的 no-op（打招呼那种）· 2026-10-06', () => {
+  // 实测原样：chat 通道（Agnes）对「你好」答的就是这个形状
+  // （`.superpowers/sdd/2026-10-05-rewind/repro-hello.mjs` 打印过）。
+  const HELLO = {
+    route: 'params',
+    param_deltas: {
+      exposure: 0, contrast: 0, highlights: 0, shadows: 0,
+      saturation: 0, temperature: 0, clarity: 0, vignette: 0,
+    },
+    reply: '你好，照片有什么想调的吗？',
+    edit_prompt: '',
+    needs_disambiguation: false,
+    lut: null,
+  }
+
+  it('★ 不降级：照它说的走 —— params / 增量空 / 模型那句 reply / degraded=false', () => {
+    // 变异：删掉 validate.ts 里那条 `cleanNoop` 早返回 → 这条红
+    // （route 变 generate、editPrompt 变"你好"、reply 变兜底那句、degraded=true）。
+    const d = parseDecision(HELLO, '你好')
+    expect(d.route).toBe('params')
+    expect(d.paramDeltas).toEqual({})
+    expect(d.editPrompt).toBe('')
+    expect(d.reply).toBe('你好，照片有什么想调的吗？')
+    expect(d.degraded).toBe(false)
+  })
+
+  it('`param_deltas` 没写 / 明说 null 都算"没有要改的" —— 不许误伤', () => {
+    const absent = parseDecision({ route: 'params', reply: '你好呀' }, '你好')
+    expect(absent.route).toBe('params')
+    expect(absent.degraded).toBe(false)
+    expect(absent.reply).toBe('你好呀')
+    const explicitNull = parseDecision({ route: 'params', param_deltas: null, reply: '你好呀' }, '你好')
+    expect(explicitNull.route).toBe('params')
+    expect(explicitNull.degraded).toBe(false)
+  })
+
+  it('对照：键名是它自己编的（brightness:99999）→ 仍然降级 —— 那是丢了内容，不是 no-op', () => {
+    // ⚠️ 和 route.test.ts「不听话的假模型」那条共用同一个形状，两边都钉着它。
+    // 变异：把 `!droppedParams` 从 cleanNoop 里去掉 → 这条红（route 停在 params、
+    // editPrompt 不见了）。
+    const d = parseDecision(
+      { route: 'params', paramDeltas: { brightness: 99999 }, reply: '好' }, '亮一点')
+    expect(d.route).toBe('generate')
+    expect(d.editPrompt).toBe('亮一点')
+    expect(d.degraded).toBe(true)
+  })
+
+  it('对照：认得的键、值接不住（exposure:"30"）→ 仍然降级（写了要改，normalizeDeltas 丢了它）', () => {
+    const d = parseDecision(
+      { route: 'params', param_deltas: { exposure: '30' }, reply: '好的，给你调亮' }, '亮一点')
+    expect(d.route).toBe('generate')
+    expect(d.editPrompt).toBe('亮一点')
+  })
+
+  it('对照：整块参数形状烂（数组）→ 仍然降级（"说了、没接住" ≠ 没说）', () => {
+    const d = parseDecision(
+      { route: 'params', param_deltas: [30], reply: '好的' }, '亮一点')
+    expect(d.route).toBe('generate')
+    expect(d.editPrompt).toBe('亮一点')
+  })
+
+  it('对照：route 不在枚举里（"ask"）→ 仍然降级（实测出现过）', () => {
+    // ⚠️ route **推断出来**的 'params' 不算"它说不用改" —— cleanNoop 里那个
+    // `routeIsValid` 就为这一格：只看 `route === 'params'` 的话，枚举外的垃圾
+    // （inferRoute 兜到 params）会被当 no-op 放行。
+    const d = parseDecision({ route: 'ask', reply: '嗯' }, '亮一点')
+    expect(d.route).toBe('generate')
+    expect(d.editPrompt).toBe('亮一点')
+    expect(d.degraded).toBe(true)
+  })
+
+  it('对照：连 reply 都没给的空壳 → 仍然降级（"说得清清楚楚"必须真说了话）', () => {
+    // 空壳渲染给用户的那句是我们自己的兜底文案（「…先按你说的试了一下。」），
+    // 而这一路什么都没试 —— 是句假话；维持旧降级（那条路是真的试了）。
+    // 变异：把 `hasModelReply` 从 cleanNoop 里去掉 → 这条红。
+    const d = parseDecision({ route: 'params', param_deltas: {} }, '亮一点')
+    expect(d.route).toBe('generate')
+    expect(d.editPrompt).toBe('亮一点')
+  })
+})

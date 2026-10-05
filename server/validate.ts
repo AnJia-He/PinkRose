@@ -62,6 +62,34 @@ export function normalizeDeltas(v: unknown): ParamDeltas {
 }
 
 /**
+ * "**参数那一半有没有被丢掉的内容**"（§7.2 兜底闸的判据，2026-10-06）。
+ *
+ * 拿**原始**的 `param_deltas` 判 —— 过了 `normalizeDeltas` 之后已经看不出丢过什么。
+ * 三种形状算"丢"：
+ *   · 整块不是对象（数组 / 裸字符串 / 数字…）：模型说了、我们没接住
+ *     （同 `normalizeLutChoice` 那条"形状烂 ≠ 没提"）。
+ *   · **认得的键**、值接不住（`"30"` / `NaN` / `true`…）：它写了要改，
+ *     `normalizeDeltas` 丢了它。
+ *   · **不认识的键 + 非零数值**：键名是它自己编的（实测 `brightness: 99999`）。
+ *     非数字的形状没有量纲、判不出"想改多少"，宁可不认。
+ *
+ * `null` / 没提 / 全 0 都不算丢 —— 它们是"这次不用改"的三种合法表达。
+ */
+function hasDroppedParams(raw: unknown): boolean {
+  if (raw === undefined || raw === null) return false
+  if (typeof raw !== 'object' || Array.isArray(raw)) return true
+  const src = raw as Record<string, unknown>
+  for (const [k, v] of Object.entries(src)) {
+    if ((PARAM_KEYS as readonly string[]).includes(k)) {
+      if (typeof v !== 'number' || !Number.isFinite(v)) return true
+    } else if (typeof v === 'number' && Number.isFinite(v) && v !== 0) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
  * 模型的滤镜决定 → 可信的 `LutDecision`。
  *
  * 三条规矩：名字必须在**用户自己的清单**里（大小写和首尾空格不算数）；
@@ -124,6 +152,10 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
   // edit_prompt 被静默丢掉，degraded 还停在 false。
   const hasParams = Object.values(paramDeltas).some(v => v !== 0)
 
+  // ★ 2026-10-06：**参数那一半有没有被丢掉的内容**（"干净的 no-op"判据要用，见下面）。
+  //   必须拿**原始**对象判 —— `normalizeDeltas` 过完之后已经看不出丢过什么了。
+  const droppedParams = hasDroppedParams(obj.param_deltas ?? obj.paramDeltas)
+
   const editPrompt = typeof obj.edit_prompt === 'string' ? obj.edit_prompt.trim()
     : typeof obj.editPrompt === 'string' ? obj.editPrompt.trim()
     : ''
@@ -144,6 +176,10 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
 
   // 先算它，因为兜底文案要按它分岔（见 FALLBACK_REPLY_ASK 那段）
   const needsDisambiguation = obj.needs_disambiguation === true || obj.needsDisambiguation === true
+  // ★ 2026-10-06：模型**自己给了 reply** 没有（空串 / 非字符串都算没给）。
+  //   "读懂了、说得清清楚楚"必须它**真说了话**——下面那句 reply 里的兜底文案
+  //   是**我们的话**，不能拿来当"它说不用改"的证据。
+  const hasModelReply = typeof obj.reply === 'string' && obj.reply.trim().length > 0
   const reply = typeof obj.reply === 'string' && obj.reply.trim()
     ? obj.reply.trim()
     : (needsDisambiguation ? FALLBACK_REPLY_ASK : FALLBACK_REPLY)
@@ -169,6 +205,48 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
   //   **一处改，别改 reconcile 里面**。
   const effectiveRoute = reconcile(route, hasParams || hasLut, hasEdit)
 
+  // ★★ 2026-10-06（§7.2 更正）：**干净的 no-op** —— 读懂了，而且模型**明说这次不用改**。
+  //
+  // 这条分界线是当天用一次真花的钱换来的：用户对着一张照片说「你好」，模型
+  // **答得完全正确**（route=params、增量全 0、edit_prompt 空、一句正常的 reply），
+  // 而下面那道兜底闸把这种形状也当成"模型吐的东西一件也用不上"→ 前端拿"你好"
+  // 当改图指令跑了一次**付费生成**，回话还是驴唇不对马嘴的「我直接按你说的试了一下。」。
+  //
+  // 分界线是这两句：**"读懂了、说不用改" ≠ "没读懂 / 丢了内容"**。
+  //   · 读懂了说不用改（这一格）→ **照它说的走**：什么都不改，把它那句话说出来。
+  //     `degraded` **必须是 false** —— 这是它老实答的，没有"我们替它兜"这回事。
+  //   · 没读懂 / 丢了内容（下面那道闸）→ 维持旧的 §4.7 降级（拿用户原话走生成）。
+  //
+  // 逐条的判据（`validate.test.ts`「干净的 no-op」那组都有反例钉着）：
+  //   · `routeIsValid && route === 'params'`：⚠️ `routeIsValid` 必须一起判 ——
+  //     route **推断出来**的 'params'（原始 route 不在枚举里）不是"它说不用改"，
+  //     是垃圾输出（实测的 `<route>params</route><params>{"brightness":20}</params>` 那种）。
+  //     声明 generate/both 却**什么都没给**也是自相矛盾（自己说要生成、又没说生成什么），
+  //     那是"没读懂"，仍走旧降级。
+  //   · 三半都没内容（`!hasParams && !hasEdit && !hasLut`）。
+  //   · `!droppedParams`：参数那一半没丢东西（见 `hasDroppedParams`）——
+  //     编了键名 / 值接不住就得拿用户原话去试，不能假装那是一次 no-op。
+  //   · `!dropped`：滤镜那一半没丢东西（2026-10-05 终审那条，口径不变）。
+  //   · `hasModelReply`：它**真说了话**。连 reply 都没给的空壳不算"说得清清楚楚"——
+  //     那种形状渲染给用户的那句是我们自己的兜底文案（「…先按你说的试了一下。」），
+  //     而这一路什么都没试，是句假话；仍走旧降级（那条路是真的试了）。
+  //   · `!needsDisambiguation`：模型说"我不确定"时前端是先问再做，不许换成生成。
+  const cleanNoop = routeIsValid && route === 'params' &&
+    !hasParams && !hasEdit && !hasLut &&
+    !dropped && !droppedParams && !needsDisambiguation && hasModelReply
+  if (cleanNoop) {
+    return {
+      route: 'params',
+      // 增量全是 0 或没写 —— 一个滑块都不动，这里给空对象（和降级那条路的写法一致）。
+      paramDeltas: {},
+      reply,
+      editPrompt: '',
+      needsDisambiguation: false,
+      degraded: false,
+      lut: null,
+    }
+  }
+
   // ★ §7.2（2026-09-30）：「模型吐出来的东西**一件也用不上**」时，别停在这儿 —— 走 §4.7 的降级。
   //
   // 走到这一格的形状是"解出了一个对象，但里面没有一件能用的东西"：route 不在枚举里、
@@ -181,6 +259,10 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
   // 不这么做会怎样（上面两条实测）：决策停在 route='params' + 空 deltas → 前端
   // 一个滑块都不动、一次生成都不发，用户等来的是模型自己那句「好」或兜底那句
   // 「先按你说的试了一下」—— **什么都没做，还说了句假话**。降级至少真的试了一次。
+  //
+  // ⚠️ 2026-10-06 更正："一件也用不上"里**不再包括干净的 no-op** ——
+  // 那种形状读得懂、也是模型的本意，已经由上面那条 `cleanNoop` 提前原样返回。
+  // 这一格现在只剩"真没读懂 / 真丢了东西"那一类（「你好」那次的教训，见上面）。
   //
   // ⚠️ `userText` 为空时**保持原样**（既有测试钉着的旧行为，别顺手改掉）：
   // §4.7 的降级就是"拿用户的原话去试"，没有原话就没有可试的东西 ——
