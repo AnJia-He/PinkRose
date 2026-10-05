@@ -51,6 +51,12 @@ export function createLutPreview(): LutPreview {
   const outCtx = out.getContext('2d')!
   let pipe: TonePipeline | null = null
   let lastBitmap: ImageBitmap | null = null
+  // ⚠️ **源身份**与上面那张派生位图分开记。判"还是同一张吗"只能盯调用方给的
+  //    `image.bitmap`——`lastBitmap` 是我们自己 `createImageBitmap` 派生的小图，
+  //    每次都生成新对象，拿它比永远不相等（那样这个短路就是死代码：每喂一次
+  //    同一张都白重缩一遍 256px + 重建位图 + 管线重传纹理）。守卫见
+  //    lutPreview.test.ts「同一张照片连调两次只做一次活」。
+  let lastSrc: ImageBitmap | null = null
 
   const ensurePipe = (): TonePipeline => {
     if (!pipe) pipe = new TonePipeline(small)
@@ -59,7 +65,7 @@ export function createLutPreview(): LutPreview {
 
   return {
     async setImage(image) {
-      if (lastBitmap === image.bitmap) return
+      if (lastSrc === image.bitmap) return
       const scale = PREVIEW_SRC_MAX / Math.max(image.width, image.height)
       const w = Math.max(1, Math.round(image.width * scale))
       const h = Math.max(1, Math.round(image.height * scale))
@@ -71,6 +77,7 @@ export function createLutPreview(): LutPreview {
       const bitmap = await createImageBitmap(src)
       lastBitmap?.close()
       lastBitmap = bitmap
+      lastSrc = image.bitmap
       const p = ensurePipe()
       p.setImage({ bitmap, width: w, height: h })
       p.resizeToImage()
@@ -94,6 +101,9 @@ export function createLutPreview(): LutPreview {
       pipe = null
       lastBitmap?.close()
       lastBitmap = null
+      // ⚠️ 必须一起清：不清的话 dispose 之后再喂**同一张**会撞上早退，
+      //    管线空着没拿到图，`render` 却照画老画面 —— 而屏幕上看着一切正常。
+      lastSrc = null
     },
   }
 }
