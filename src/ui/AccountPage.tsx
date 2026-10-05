@@ -240,6 +240,13 @@ export function AccountPage({
             <h2 className="account-tile-title">作品空间用量</h2>
             <div className="account-card">
               <div className="account-row account-row-static">
+                {/* ★ 2026-10-05：用量圆环（用户：「磁盘用量可视化一下用圆盘表示」）。
+                    环画的是**占比**、中心百分比是同一件事的数字；右边的两个数才是
+                    绝对值。⚠️ 整个环 `aria-hidden` —— 语义真值在右边的数字里，
+                    它是"画给人看"的那一份。 */}
+                <UsageRing
+                  pct={usage.state === 'loading' ? null : usage.bytes / usage.limit}
+                  warn={usageWarn} />
                 <div className="account-stats">
                   {usage.state === 'loading' ? (
                     // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
@@ -306,6 +313,39 @@ export function AccountPage({
 export function modelValue(configs: PublicConfig[]): string {
   const aliases = [...new Set(configs.filter((c) => c.active).map((c) => c.alias))]
   return aliases.length > 0 ? aliases.join('、') : '默认'
+}
+
+/**
+ * 用量圆环（★ 2026-10-05，用户原话：「磁盘用量可视化一下用圆盘表示」）。
+ *
+ * 环画的是**占比**（已用 / 上限），中心的百分比是同一件事的数字。`pct === null`
+ * = 还在取：画一个空轨道、**不画中心数字**（「0%」对着一个存过东西的人是一句
+ * 假话，和「0 张作品」同罪 —— 见上面 `Usage` 那段）。
+ *
+ * 实现是经典 donut：`r = 15.9155` 时圆周长恰好 100（2πr），`dasharray` 就能
+ * 直接吃百分数。⚠️ 圆角端帽（round）在极小比例下会显示成**一个小点** ——
+ * 那不是 bug，是真实的 0.3%。
+ */
+export function UsageRing({ pct, warn }: { pct: number | null; warn: boolean }) {
+  const C = 2 * Math.PI * 15.9155
+  const ratio = pct === null ? null : Math.max(0, Math.min(1, pct))
+  const shown = ratio === null ? null : ratio * C
+  // 百分比文字：不到 10% 留一位小数（0.3% 不能显示成 0% —— 那是另一句假话），
+  // 10% 往上取整（多出来的小数位没有信息）。
+  const n = ratio === null ? 0 : ratio * 100
+  const label = ratio === null ? '' : `${n < 10 ? n.toFixed(1) : Math.round(n)}%`
+  return (
+    <div className={warn ? 'usage-ring-wrap usage-ring-warn' : 'usage-ring-wrap'} aria-hidden="true">
+      <svg className="usage-ring" viewBox="0 0 36 36">
+        <circle className="usage-ring-track" cx="18" cy="18" r="15.9155" fill="none" strokeWidth="3.4" />
+        {shown !== null && (
+          <circle className="usage-ring-fill" cx="18" cy="18" r="15.9155" fill="none" strokeWidth="3.4"
+                  strokeLinecap="round" strokeDasharray={`${shown} ${C - shown}`} />
+        )}
+      </svg>
+      {label !== '' && <span className="usage-ring-pct">{label}</span>}
+    </div>
+  )
 }
 
 /**
