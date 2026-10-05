@@ -72,13 +72,21 @@ export type GenerationDeps = {
   /** 推一步快照（生成那一步要挂上去，「回到这一步」靠它）。 */
   setHistory: (fn: (h: Snapshot[]) => Snapshot[]) => void
   /**
-   * ★ 2026-10-05：现在站在哪一步（`cursorId`）+ 最新一步的 id（`tipId`）。
-   * 前者是切口的切点、后者判"要不要先问一句"（Task 4）。都**必须进依赖数组**：
-   * 它们变了（跳转）而回调还在用旧值时，切口会切错位置 —— 不报错的那种错。
+   * ★ 2026-10-05：最新一步的 id（`tipId`）—— 判"要不要先问一句"（Task 4）。
+   * **必须进依赖数组**：它变了（又推了一步）而回调还在用旧值时，站在新 tip 上
+   * 生成会被当成"从旧步骤出发"，白白多问一次。
    */
-  cursorId: number | null
   tipId: number | null
-  /** 推完新步把"站的位置"挪过去（新那步就是新的最新）。 */
+  /**
+   * ★ 2026-10-05（终审 I1）："现在站在哪一步"的**同步影子**（见 `App.tsx` 的
+   * `cursorIdRef`）。**别改回读 state** —— `send` 到 `applyDecision` 之间隔着
+   * 1.3~1.6 秒的 await，那期间跳转（没有 busy 闸门）会让闭包里的值变陈旧：
+   * 确认条的 N 与切口从此各说各话。
+   */
+  cursorIdRef: { current: number | null }
+  /** 推完新步把"站的位置"挪过去（新那步就是新的最新）。
+   *  ★ 2026-10-05（终审 I1）：App 传进来的是 `moveCursor`（state 和影子 ref
+   *  一起写）—— 名字没变，这个文件不用为此表态。 */
   setCursorId: (id: number) => void
 }
 
@@ -86,7 +94,7 @@ export function useGeneration(deps: GenerationDeps) {
   const {
     image, setImage, params, setParams, lut, setLut, luts, baseSeqRef, idRef, setBusy, setUser,
     noticeBad, setCards, setPending, setPendingReplace, pendingRef, setMessages, setHistory,
-    cursorId, tipId, setCursorId,
+    tipId, setCursorId, cursorIdRef,
   } = deps
 
   /**
@@ -336,11 +344,17 @@ export function useGeneration(deps: GenerationDeps) {
     }
 
     const isGen = d.route === 'generate' || d.route === 'both'
+    // ★ 2026-10-05（终审 I1）：**读一次、用两处**（确认条闸门 + `origin.stepId`）
+    //   —— 它们必须是同一个位置。⚠️ 读的是**同步影子**（`cursorIdRef`），不是
+    //   闭包里的 state：`send` 发出到这一刻隔着两段 await（1.3~1.6 秒），那段
+    //   窗口里用户一跳（跳转没有 busy 闸门，是有意的），闭包里的旧位置就会让
+    //   两边各说各话 —— 条子拿**新**位置算 N、切口拿**旧**位置切。
+    const cur = cursorIdRef.current
     // ★ 2026-10-05（设计 §4.5）：从**旧步骤**生成 = 会把后面切掉 —— 先问一句。
     //   钱一分没花，那句 `reply` 也**还没说**（说了再点「算了」就是"说了不做"）。
-    if (isGen && image && cursorId !== null && tipId !== null && cursorId !== tipId) {
+    if (isGen && image && cur !== null && tipId !== null && cur !== tipId) {
       setPendingReplace({
-        stepId: cursorId, editPrompt: d.editPrompt,
+        stepId: cur, editPrompt: d.editPrompt,
         reply: d.reply || '好了。', keepFromMsg,
       })
       return
@@ -355,21 +369,24 @@ export function useGeneration(deps: GenerationDeps) {
     // ★ 2026-10-05（滤镜）：这条路（send / 卡片触发的路由决策）**就是"此刻"**——
     //   所以传的是闭包里那个 `lut`，和上面 `params` 同一条口径。
     //   ⚠️ 它读 `lut`，所以 `lut` 必须进依赖数组（同 `image` 那条的理由）。
-    if (isGen && image && cursorId !== null) {
+    if (isGen && image && cur !== null) {
       // ★ T11：传 `nextLut`（这一步做完之后那个），和 `nextParams` 对称 ——
       //   理由见上面滤镜那块。⚠️ 别"顺手"改回闭包的 `lut`。
+      //   ⚠️ 切点用上面那个 `cur`（读一次、用两处 —— 见它那段注释）。
       await runGenerate(d.editPrompt, mid, nextParams, nextLut, image.bitmap,
-        { stepId: cursorId, keepFromMsg })
+        { stepId: cur, keepFromMsg })
     }
     // ★ T11 又读了 `luts` / `setLut`（上面那块滤镜落地），两个都得进依赖数组 ——
     //   漏掉 `luts` 的话，清单刷新之后这个回调还在用旧的（名字换成错 id）；
     //   `setLut` 是 useState 的 setter（identity 稳定），进来只是守住这条规矩。
-    // ★ 2026-10-05：`cursorId` 同上 —— 生成分支读它（切口的切点），漏了它，
-    //   跳转之后这个回调还在用上一轮的位置，切口切错地方，而且不报错。
+    // ★ 2026-10-05（终审 I1）：`cursorId` 从依赖里**拿掉了** —— 生成分支现在读
+    //   `cursorIdRef.current`（同步影子，理由见 `App.tsx` 的 `cursorIdRef`）。
+    //   ⚠️ 别把 state 那一项加回来"保险"：它换不回正确性，只会让 read 的地方
+    //   变成闭包（I1 原样复发）；ref 身份稳定，按这个文件既有口径不进依赖。
     // ★ 2026-10-05（设计 §4.5）：`tipId` 和 `setPendingReplace` 也进来 ——
     //   前者判"出发的那一步还是不是最新"（要不要先问一句），后者是挂那条确认条；
     //   漏了 `tipId`，站在新 tip 上生成会被当成"从旧步骤出发"，白白多问一次。
-  }, [params, say, runGenerate, image, lut, luts, setLut, cursorId, tipId, setPendingReplace])
+  }, [params, say, runGenerate, image, lut, luts, setLut, tipId, setPendingReplace])
 
   /**
    * 拉建议卡片。

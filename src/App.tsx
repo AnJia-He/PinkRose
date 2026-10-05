@@ -297,6 +297,27 @@ export default function App() {
    *   不重渲染（`sessionId` 当初踩过同一个坑）。
    */
   const [cursorId, setCursorId] = useState<number | null>(null)
+  /**
+   * ★ 2026-10-05（终审 I1）：`cursorId` 的**同步影子** —— 给"隔了 await 才读到它"的地方用。
+   *
+   * `send` 从发出到 `applyDecision` 中间隔着两段 await（1.3~1.6 秒），而
+   * 「回到这一步」有意**没有 busy 闸门**：这段窗口里用户一跳，`applyDecision`
+   * 闭包里的 `cursorId` 就已经是旧的了 —— 确认条的 N 用**新**位置算、切口用
+   * **旧**位置执行，那条提示会说假话（跳回最新一步后甚至出现"后面还有 0 步"），
+   * 点下去切的地方也不是它说的那处。
+   * 写状态的地方**同时**写这个 ref，读的地方（`applyDecision`）读 ref.current。
+   * ⚠️ 它**不是** state 的替代（上面那条"必须是 useState"照旧成立，渲染读的还是
+   *   state）—— 它只服务"隔了 await 才读"的那一处，和 `sessionIdRef` 是同一个路数。
+   * ⚠️ `runGenerate` 的 `origin` 仍然走**显式入参**，不受这里影响 ——
+   *   「再来一版」是"先跳转、再同一个 tick 里调用"，读 ref 也一样会拿到旧值吗？
+   *   不会（ref 是同步写的）—— 但那条路继续用显式入参，是它自己那条理由。
+   */
+  const cursorIdRef = useRef<number | null>(null)
+  /** 移动"站的位置"：state 和影子 ref **必须一起写**（理由见 `cursorIdRef`）。 */
+  const moveCursor = useCallback((id: number | null) => {
+    cursorIdRef.current = id
+    setCursorId(id)
+  }, [])
 
   /** 从旧步骤继续改之前那条确认（`PendingReplace`，见它的定义）。null = 没在问。 */
   const [pendingReplace, setPendingReplace] = useState<PendingReplace | null>(null)
@@ -824,7 +845,8 @@ export default function App() {
       setLut(lastStep.lut ?? null)
       // ★ 2026-10-05：恢复出来人站在**最新一步**（和 `setImage(lastStep.base)`
       //   是同一件事的两面）。"站的位置"不落盘（设计 §9）：刷新后回到最新。
-      setCursorId(lastStep.id)
+      //   ⚠️ 走 `moveCursor`（state + 影子 ref 一起写）—— 别写回 `setCursorId`。
+      moveCursor(lastStep.id)
       setMessages(detail.messages)
       // ★ 走 `setCurrentSession` 那道门（影子和 state 一起改，见它的注释）——
       // 这行在 'open' 那趟里改的正是"现在人站在哪条会话上"，而落盘的应答
@@ -901,7 +923,7 @@ export default function App() {
     } finally {
       if (why === 'open') setBusy(null)
     }
-  }, [flushPersist, noticeBad, setCurrentSession])
+  }, [flushPersist, noticeBad, setCurrentSession, moveCursor])
 
   /**
    * 打开页面之后，把"上次那条会话"接回来（spec §6.2）。
@@ -963,7 +985,12 @@ export default function App() {
       setCards, setPending, pendingRef, setMessages, setHistory,
       // ★ 2026-10-05（设计 §4.5）：从旧步骤生成时挂确认条（`applyDecision` 用）。
       setPendingReplace,
-      cursorId, tipId, setCursorId,
+      // ★ 2026-10-05（终审 I1）：`cursorId` 换成了它的**同步影子**（`cursorIdRef`）。
+      //   `setCursorId` 这个名字留着、指向 `moveCursor` —— `useGeneration` 那边的
+      //   类型一个字都不用改，而"写位置"从此只有一条路（state 和 ref 一起写）。
+      //   为什么读的是 ref 而不是 state，见 `cursorIdRef` 的注释。
+      tipId, setCursorId: moveCursor,
+      cursorIdRef,
     })
 
 
@@ -1032,7 +1059,8 @@ export default function App() {
         { id: welcomeId, label: '原图', base: img, params: ZERO, lut: null, isOriginal: true, thumb: '' },
       ])
       // ★ 2026-10-05：位置从"原图那一步"开始 —— 原图挂在欢迎语那条消息上。
-      setCursorId(welcomeId)
+      //   ⚠️ 走 `moveCursor`（state + 影子 ref 一起写，见 `cursorIdRef`）。
+      moveCursor(welcomeId)
 
       // 卡片是**可选件，绝不能让用户等它**：这里只把它挂到后台去跑，
       // 发送键立刻就是可用的（见 SUGGEST_WAIT_MS 那段）。
@@ -1096,7 +1124,7 @@ export default function App() {
       //   `pickSeqRef > pickSettledSeqRef`（见 `pickSettledSeqRef` 那段）。
       pickSettledSeqRef.current++
     }
-  }, [history, say, loadCards, setCurrentSession])
+  }, [history, say, loadCards, setCurrentSession, moveCursor])
 
   /**
    * 把"手上这一张"整个放下：照片、对话、参数、快照、会话 id，一件不留。
@@ -1114,7 +1142,9 @@ export default function App() {
     closeBitmaps(bitmapsToClose(history, []))
     setImage(null)
     setHistory([])
-    setCursorId(null)
+    // ⚠️ 走 `moveCursor`：归零也要连影子 ref 一起清（不清的话，下一条会话里
+    //   读 ref 的那一处会拿到上一张照片的位置 —— 正是 `cursorIdRef` 要防的事）。
+    moveCursor(null)
     setMessages([])
     setCards([])
     setParams(ZERO)
@@ -1137,7 +1167,7 @@ export default function App() {
     dismissAsk()
     setOriginalPreview(null)
     originalFileRef.current = null
-  }, [history, setCurrentSession, dismissAsk])
+  }, [history, setCurrentSession, dismissAsk, moveCursor])
 
   /**
    * 「照着这张调」—— 用户挑了一张参考图（spec §4.6 的"我想要这种色调"）。
@@ -1477,7 +1507,9 @@ export default function App() {
     //   它们的位图也不再提前释放（那是"还能再回去"的本钱）。
     //   真正会切掉后面的只有一条路：**从这个位置再生成**（`runGenerate` 的
     //   `origin`，设计 §4）—— 而且那一步会先问一句。
-    setCursorId(id)
+    //   ⚠️ 走 `moveCursor`：这一下**必须**连影子 ref 一起写 —— 路由那 1.3~1.6 秒
+    //   里用户点的就是它，而 `applyDecision` 此刻可能还挂在旧闭包里（终审 I1）。
+    moveCursor(id)
     setImage(target.base)
     // 参数也回到那一步。只还原 base 会让画面和滑块对不上，
     // 用户看到的和面板里显示的是两回事。
@@ -1490,7 +1522,7 @@ export default function App() {
     //       那已经不是原图了。
     //   ⚠️ 依赖数组不用动：`target` 来自 `history`，它本来就在里面。
     setLut(target.lut)
-  }, [history, cancelPick, cancelReplace])
+  }, [history, cancelPick, cancelReplace, moveCursor])
 
   /**
    * 「再来一版」—— 同一句话，重掷一次。

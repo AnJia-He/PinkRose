@@ -650,6 +650,11 @@ async function main(): Promise<void> {
     console.log('   先跳回「原图」那一步：' + (wBackOrig
       ? `${wBackOrig.ms}ms 后画布 ${wBackOrig.px.join(',')}；「傍晚」那一步的按钮还在（${backJump} 颗）`
       : `⚠️ 10 秒画面没动（跳转没生效？）「傍晚」按钮 ${backJump} 颗`))
+    // ★ 2026-10-05（终审小项）：上面那句原来只 `console.log` —— 数出来是 0 颗也
+    //   照样打印"按钮还在（0 颗）"，探针"全绿"。补一条**真断言**（它同时是 11b
+    //   能点下去的前提）：跳回旧步骤后，「傍晚」那一步的按钮必须在（跳转不删后面）。
+    check('11b-0', '跳回旧步骤后，「傍晚」那一步的按钮还在（跳转不删后面）',
+      backJump === 1, `「傍晚」那一步的「回到这一步」按钮 ${backJump} 颗（要 1 颗）`)
     // 现在「傍晚」那一步是"未来的步骤"，它的「回到这一步」按钮又出现了 —— 点它。
     await page.locator('.msg.assistant', { hasText: '好，把背景换成傍晚。' })
       .locator('.bubble-jump').click()

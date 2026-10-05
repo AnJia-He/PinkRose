@@ -6249,6 +6249,13 @@ describe('「回到这一步」不再删后面的步骤', () => {
     expect(stepItems()).toHaveLength(3)
     expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(3)
 
+    // ★ 2026-10-05（终审小项）：**直接**守卫"位图没被提前释放" —— 上面数的是
+    //   按钮和小图（DOM 层的证据），这两行问的是那两个位图**自己**：`close`
+    //   一次都没被调过（`fakeBitmap` 的 `close` 是 `vi.fn()`）。
+    //   变异：`onJump` 里把"被切掉的位图 `close()`"加回去 → 这两行当场红。
+    expect(decodedBitmaps[0]!.close).not.toHaveBeenCalled()
+    expect(decodedBitmaps[1]!.close).not.toHaveBeenCalled()
+
     // 而且还能再跳回去（点最后一个 = 第 2 版）
     await act(async () => { stepItems()[2]!.click(); await new Promise(r => setTimeout(r, 0)) })
     const back = canvasProps.images.at(-1) as unknown as { bitmap: ImageBitmap }
@@ -6427,5 +6434,72 @@ describe('「回到这一步」不再删后面的步骤', () => {
     expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
     // 而且刚才那颗标记（第 2 版）变回了按钮 —— 后面的步骤还能往回跳
     expect(container.querySelectorAll('.bubble-jump')).toHaveLength(2)
+  })
+
+  it('★（I1）站在旧步发话、路由还在路上就跳回最新一步 → 不弹条、照常生成', async () => {
+    // 参考：`cursorIdRef`（App.tsx）。
+    // `send` 从发出到 `applyDecision` 隔着 `prepareForRouting` + `postRoute` 两段
+    // await（实测 1.3~1.6 秒），而「回到这一步」有意**没有 busy 闸门** —— 这条
+    // 用例演的就是那段窗口里用户点一下跳转。
+    // 变异：`applyDecision` 读 state（闭包里的旧位置）→ 闸门以为"还站在旧步骤"，
+    // 弹出一条拿**新**位置算出来的假提示（"后面还有 0 步，从这改会把它们去掉。"），
+    // 而且这一版生成根本发不出去 —— 下面两句一起红。
+    await twoVersions()
+    await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    vi.mocked(api.postEdit).mockClear()
+
+    const gate = makeGate<RouteDecision>()
+    vi.mocked(api.postRoute).mockReturnValueOnce(gate.promise)
+    await say('换个方向')                        // 卡在 postRoute 上：路由还在飞
+
+    // 路由回来之前跳回**最新一步**（按钮和标记合着数，`.at(-1)` 是最后一颗按钮）
+    await act(async () => { stepItems().at(-1)!.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    // 现在放行：决策这一刻才进来
+    await act(async () => {
+      gate.open(decision({ route: 'generate', editPrompt: '改一下' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // 站在**最新一步**上：不用问，直接生成（条子一个字都不许有）
+    expect(container.textContent).not.toContain('后面还有')
+    expect(api.postEdit).toHaveBeenCalledTimes(1)
+  })
+
+  it('★（I1）站着旧步发话、路由没回来就跳到另一步 → 条子的 N 和**跳过去**那一步一致', async () => {
+    // 参考：`cursorIdRef`（App.tsx）。
+    // 钉的是同一个窗口的另一半：跳转之后条子上的 N 用**新**位置算，切口也得用
+    // **新**位置 —— 各说各话的话，点「继续改」切的地方不是它说的那处。
+    // 变异：`applyDecision` 读 state（旧位置）→ 切口落在原图上：'先改一次' 被
+    // 切走、送上去的底是 `MODEL:upload` —— 下面两句红。
+    await twoVersions()
+    await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    vi.mocked(api.postEdit).mockClear()
+
+    const gate = makeGate<RouteDecision>()
+    vi.mocked(api.postRoute).mockReturnValueOnce(gate.promise)
+    await say('换个方向')
+
+    // 跳到**第 1 版**那一步（不是最新）—— 从它再改，后面还剩 1 步
+    await act(async () => { stepItems()[1]!.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    await act(async () => {
+      gate.open(decision({ route: 'generate', editPrompt: '改一下' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // 条子上的 N 按**跳过去**那一步算：后面还有 1 步（渲染读的是 state 里的新位置）
+    expect(container.textContent).toContain('后面还有 1 步')
+    expect(api.postEdit).not.toHaveBeenCalled()          // 还没点「继续改」，钱没花
+
+    await clickByText('继续改')
+
+    // ★ 真正钉 I1 的是下面两行：切口落在**跳过去**那一步，不是发话时那一步。
+    //   （上面那句 N 是渲染时按 state 算的，新旧实现都会说"1 步" —— 它钉的是
+    //   "条子说得对"；切点对不对，看这里。）
+    expect(api.postEdit).toHaveBeenCalledTimes(1)
+    const req = vi.mocked(api.postEdit).mock.calls.at(-1)![0] as { imageDataUrl: string }
+    expect(req.imageDataUrl).toContain('MODEL:decoded-1')
+    expect(bubbleTexts()).toContain('先改一次')
   })
 })
