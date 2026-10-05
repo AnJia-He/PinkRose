@@ -385,7 +385,10 @@ async function main(): Promise<void> {
     console.log('── 1. 设置页 /app/luts（清单四态 / 导入）')
     await page.locator('.nav-me').click()
     await page.waitForSelector('.account', { timeout: 10_000 })
-    await page.locator('button.account-row', { hasText: '滤镜' }).click()
+    // ⚠️ 2026-10-05 晚全站改名：那一行现在叫「Lut」（用户拍板「全都叫 Lut」）。
+    //   探针里按文字的找法要跟着改，否则在**这一屏**就崩（旧「滤镜」字样没了，
+    //   类名 `.luts-*` 这些反倒是没动的那部分）。
+    await page.locator('button.account-row', { hasText: 'Lut' }).click()
     await page.waitForSelector('.luts', { timeout: 10_000 })
     await page.waitForSelector('.luts-empty', { timeout: 10_000 })
     await shot(page, '1-luts-empty')
@@ -443,7 +446,9 @@ async function main(): Promise<void> {
     console.log('\n── 2. 微调区（/app/adjust）：数值与渲染')
     await nav(page, '调色').click()
     await page.waitForSelector('.panel', { timeout: 10_000 })
-    await page.locator('.panel-group-head', { hasText: '滤镜' }).click()
+    // ⚠️ 那一栏的标题现在也叫「Lut」（2026-10-05 晚改名；面板里别处没有
+    //   带 "lut" 的组名，「光效 / 色彩 / …」都不撞）。
+    await page.locator('.panel-group-head', { hasText: 'Lut' }).click()
     await page.waitForSelector('.lut-picker .lut-tile', { timeout: 10_000 })
 
     const P_none = await pixel(page)
@@ -560,7 +565,11 @@ async function main(): Promise<void> {
     const w8 = await waitPixel(page, (p) => dist(p, before8) > TOL)
     const P_chat = w8?.px ?? (await pixel(page))
     // 打开对话区那颗按钮，看格子上亮的是哪一个。
-    await page.locator('.chat-lut-btn').click()
+    // ⚠️ 2026-10-05（晚）对话区的 Lut 搬进了输入框那颗 ＋ 底下（两级：加号 →
+    //   工具行 → 「Lut」那一项），常驻的 `.chat-lut-btn` 已经没了。找法照
+    //   `App.test.tsx` 的 openChatTool：先点 `.chat-plus`，再按文字点 `.chat-tool`。
+    await page.locator('.chat-plus').click()
+    await page.locator('.chat-tool', { hasText: 'Lut' }).click()
     await page.waitForSelector('.chat-lut .lut-picker .lut-tile', { timeout: 10_000 })
     const lit8 = await litTile(page)
     await shot(page, '7-chat-lut')
@@ -614,9 +623,40 @@ async function main(): Promise<void> {
     await waitPixel(page, (p) => dist(p, P_gen_with) > TOL)
     const P_gen_off = await pixel(page)
     // ……再点那一步的「回到这一步」——滤镜必须跟着回来。
-    await page.locator('.bubble.assistant', { hasText: '好，把背景换成傍晚。' })
+    //
+    // ★ 2026-10-05（rewind）：**不能直接点「傍晚」那条的按钮** —— 生成刚回来，
+    //   人正站在那一步上，它渲染的是 span.bubble-current「你在这里」而不是
+    //   button.bubble-jump，旧写法命中 0 个（Playwright 超时，响的）。
+    //   按新语义走**两步**：先点「原图」那一步（旧步骤，按钮还在），再点「傍晚」
+    //   那一步 —— 跳转现在只移动位置、不删后面的步骤，所以第二颗按钮会原地回来。
+    //   顺带把新的非破坏行为在真机上演一遍：要是跳转又把后面切了，「傍晚」那条
+    //   连同按钮会一起消失，下面那一下直接点不着（不静默）。
+    //
+    // ⚠️ 找法用 `.msg.assistant` 不是 `.bubble.assistant`：2026-10-05 晚助手气泡
+    //   拆成了两块（`.msg` > `.bubble` 话 + `.shot` 图/两颗按钮），按钮在 `.shot`
+    //   里、是 `.bubble` 的**兄弟** —— 写 `.bubble.assistant` 的后代会命中 0 个。
+    await page.locator('.msg.assistant', { hasText: '准备好啦，说说想怎么改？' })
       .locator('.bubble-jump').click()
-    await waitPixel(page, (p) => dist(p, P_gen_off) > TOL)
+    // 画面跟着换过去了 —— 跳转真生效的证据之一。
+    // ⚠️ 换到的**不是**上传那张纯色，是 77,242,217（半格表 100 作用在纯色上）：
+    //   恢复会话时服务端把落盘的 lut 记在**最后一步**上（§5），而这个会话在
+    //   调色区量断言 5 时最后的 lut 正是「半格表」—— 所以「原图」这一步恢复
+    //   回来就带着它；跳到它 = 回到那一刻的状态（设计 §5 的口径，不是 bug）。
+    const wBackOrig = await waitPixel(page, (p) => dist(p, P_gen_off) > TOL)
+    // ★ 顺带验一眼新的非破坏行为：「傍晚」那一步的「回到这一步」原地回来了
+    //   （跳转只挪"站的位置"，一个字节都没删）—— 它就是下面要点的那一颗。
+    const backJump = await page.locator('.msg.assistant', { hasText: '好，把背景换成傍晚。' })
+      .locator('.bubble-jump').count()
+    console.log('   先跳回「原图」那一步：' + (wBackOrig
+      ? `${wBackOrig.ms}ms 后画布 ${wBackOrig.px.join(',')}；「傍晚」那一步的按钮还在（${backJump} 颗）`
+      : `⚠️ 10 秒画面没动（跳转没生效？）「傍晚」按钮 ${backJump} 颗`))
+    // 现在「傍晚」那一步是"未来的步骤"，它的「回到这一步」按钮又出现了 —— 点它。
+    await page.locator('.msg.assistant', { hasText: '好，把背景换成傍晚。' })
+      .locator('.bubble-jump').click()
+    // 等画面自己回到"假底图 + 黄昏"。⚠️ 不能沿用 `dist(p, P_gen_off) > TOL`：
+    // 刚跳回原图时画面**已经**和 P_gen_off 不同，那个条件当场成立，会读到
+    // 还没重画的旧像素。
+    await waitPixel(page, (p) => dist(p, P_gen_with) <= TOL)
     const P_gen_back = await pixel(page)
     const lit11 = await litTile(page)
     check('11b', '点那一步的「回到这一步」→ 滤镜跟着回来（格子和画面都对上）',
