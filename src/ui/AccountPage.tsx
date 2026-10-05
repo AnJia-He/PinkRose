@@ -318,29 +318,29 @@ export function modelValue(configs: PublicConfig[]): string {
 }
 
 /**
- * 用量饼图（★ 2026-10-05 深夜第二版。演变过程就记在这：用户先说
- * 「磁盘用量可视化一下用圆盘表示」→「**用那个立体的大一点的圆盘图表表示**」
- * （我做了**圆环**）→ 他看到之后补了最后一句：「**我想到了就是磁盘用量是一个
- * 叫做饼图的**」—— 要的是**实心扇形**那个形状，不是中空的环。于是环 → 饼图：
- * 切走的那块扇形 = 已用，剩下的圆面 = 余量）。
+ * 用量饼图 · **3D 立体版**（★ 2026-10-05 第三版。演化全记在这：
+ * 「磁盘用量可视化一下用圆盘表示」→ 圆环（`2027260`）→「立体的大一点的圆盘图表」
+ * → 放大 + 平面饼图（`5ab0b50` / `c2c3123`）→ 用户发来一张 Excel 的 3D 饼图说
+ * 「**第二个图是我想要设计的样子**」—— 平面版在 0.x% 时是一整块灰盘、像坏了，
+ * 他想要的是**斜俯视、有厚度、每块有颜色**的那种立体饼）。
  *
- * `pct === null` = 还在取：画一个空的圆盘、**不画百分比**（「0%」对着一个存过
- * 东西的人是一句假话 —— 见上面 `Usage` 那段）。
+ * 形状：顶面是压扁的椭圆（rx 48 / ry 28），侧壁是向下 16 的厚度 —— 像一块圆蛋糕。
+ *   ① 已用：顶面薄荷（渐变）+ 侧壁深青（`--pie-used-side`）+ 一圈发光；
+ *   ② 剩余：顶面**深青灰**（`--pie-rest`，和薄荷同族的暗档 —— 空盘不再是一坨灰）、
+ *      侧壁再暗一档（`--pie-rest-side`）—— 顶面亮、侧面暗是"光照"的常识做法。
+ * 几何全部来自 `pie3dPaths`（采样成折线，不用 SVG 弧命令 —— 没有 large/sweep
+ * 那对标志位可以写错，这是上一版真机抓过 bug 的地方）。
  *
- * **立体感的配方**（和 styles.css 那一段是一件事的两半）：
- *   ① 扇形用渐变填色：左上亮、右下深（光从左上来）；
- *   ② 扇形带**发光**（drop-shadow，颜色走 `--ring-glow`）—— "亮起来一块"；
- *   ③ 整盘罩一层很淡的径向高光（`.usage-pie-sheen`）—— 实心的"盘面"
- *      靠它才不像一张贴纸。
- * ⚠️ 百分比数字在盘**下面**（不是盘中央）：实心盘上压字的对比度随占比漂 ——
- *    占比小时落在深色盘底上、大时落在亮色扇形上，两头测不了。环形能放中心，
- *    实心饼图不能 —— 这是这次改版唯一损失掉的东西。
- * ⚠️ 百分比文字**绝不显示「0.0%」**：那是句假话（读作"一个字节都没有"），
- *    不到 0.05% 一律「<0.1%」（495 KB 的用量就落在这档）。
+ * `pct === null` = 还在取：画一块**没有切角的完整厚饼**、不写百分比
+ *（「0%」对着一个存过东西的人是一句假话 —— 见上面 `Usage` 那段）。
+ *
+ * ⚠️ 百分比数字在饼**下面**（顶面上压字对比度会随占比漂）。
+ * ⚠️ 绝不显示「0.0%」：那是句假话，不到 0.05% 一律「<0.1%」。
  */
 export function UsagePie({ pct, warn }: { pct: number | null; warn: boolean }) {
   const ratio = pct === null ? null : Math.max(0, Math.min(1, pct))
-  const d = ratio === null ? null : pieSlicePath(ratio)
+  // loading（ratio === null）画 pie3dPaths(0)：整块厚饼、没有扇形。
+  const g = pie3dPaths(ratio ?? 0)
   const n = ratio === null ? 0 : ratio * 100
   const label = ratio === null ? ''
     : n < 0.05 ? '<0.1%'
@@ -350,7 +350,7 @@ export function UsagePie({ pct, warn }: { pct: number | null; warn: boolean }) {
     <div className={warn ? 'usage-pie-wrap usage-pie-warn' : 'usage-pie-wrap'} aria-hidden="true">
       <svg className="usage-pie" viewBox="0 0 120 120">
         <defs>
-          {/* ⚠️ 两个 id 固定 —— 这一页同时只会有一个饼图（真出现第二个再加 useId） */}
+          {/* ⚠️ id 固定 —— 这一页同时只会有一个饼图（真出现第二个再加 useId） */}
           <linearGradient id="usagePieGrad" x1="0%" y1="0%" x2="100%" y2="100%">
             {warn ? (
               <stop offset="0%" className="ring-stop-danger" />
@@ -361,25 +361,13 @@ export function UsagePie({ pct, warn }: { pct: number | null; warn: boolean }) {
               </>
             )}
           </linearGradient>
-          <radialGradient id="usagePieSheen" cx="35%" cy="30%" r="80%">
-            {/* 白不是主题色 —— 是**物理光**（"光从左上打过来"的盘面反光），
-                浅色/深色下都该是白的，所以不走令牌（和色轮那些"内容色"同一类例外）。
-                2026-10-05 从 .16 起加强到 .22：真机截图里第一版几乎看不出，
-                盘显得是块平的深灰色圆片。 */}
-            <stop offset="0%" stopColor="rgba(255,255,255,.22)" />
-            <stop offset="50%" stopColor="rgba(255,255,255,.07)" />
-            <stop offset="100%" stopColor="rgba(255,255,255,0)" />
-          </radialGradient>
         </defs>
-        {/* 整圆 = 盘底（剩余的部分） */}
-        <circle className="usage-pie-track" cx="60" cy="60" r="52" />
-        {/* 扇形 = 已用（一点都没用时不画 —— 见 pieSlicePath） */}
-        {d && <path className="usage-pie-fill" d={d} fill="url(#usagePieGrad)" />}
-        {/* 盘面高光罩在最上层 —— 立体感的第 ③ 味。
-            ⚠️ `fill` 必须是这个渐变：SVG 的 `<circle>` 没有 fill **默认是黑色**，
-            忘了写就等于给整个盘盖了一块黑布（真机里病征是"盘黑乎乎的、扇形
-            全被盖住"，0.3% 时看不出来 —— 是 60% 的对照截图戳穿的）。 */}
-        <circle className="usage-pie-sheen" cx="60" cy="60" r="52" fill="url(#usagePieSheen)" />
+        {/* 画序即层序（画家算法）：两张侧壁 → 两张顶面。
+            侧壁先画（在顶面"下面"），剩余顶面盖住圆心的楔形，已用顶面最后压上。 */}
+        {g.restSide && <path className="usage-pie-rest-side" d={g.restSide} />}
+        {g.usedSide && <path className="usage-pie-used-side" d={g.usedSide} />}
+        {g.restTop && <path className="usage-pie-rest-top" d={g.restTop} />}
+        {g.usedTop && <path className="usage-pie-used-top" d={g.usedTop} fill="url(#usagePieGrad)" />}
       </svg>
       {label !== '' && <span className="usage-pie-pct">{label}</span>}
     </div>
@@ -387,22 +375,80 @@ export function UsagePie({ pct, warn }: { pct: number | null; warn: boolean }) {
 }
 
 /**
- * 饼图扇形的 `d`（纯函数；导出给测试钉坐标，和 `formatSize` 同一个用途）。
- *
- * 从**正上方**（12 点）开始顺时针切 `ratio` 圈：圆心 (60,60)、半径 52（viewBox 120）。
- *   · `ratio <= 0` → `null`：一点都没用，**不画**扇形（空盘就是干净的盘底）；
- *   · `ratio >= 1` → 两段半弧拼成整圆（一段弧从起点画回自己是画不出圆形的）；
- *   · 其余 → `M 圆心 L 12点 A 弧 到终点 Z` 的扇形；超过一半要走大弧标志位。
- * 坐标 `toFixed(2)` 之后才拼串 —— 浮点的 6.4e-15 之类不该漏进 `d` 里。
+ * 3D 饼的几何参数。斜俯视：顶面椭圆 ry/rx ≈ 0.58，厚度 16 —— 数值都是拿真机
+ * 截图调过的观感档（比例太扁像飞盘、太厚像罐子）。
+ * 版面：宽 96（60±48）、高 24~96（52−28 → 52+28+16），120 的正方形里上下留白均匀。
  */
-export function pieSlicePath(ratio: number): string | null {
-  if (ratio <= 0) return null
-  if (ratio >= 1) return 'M60 8 A52 52 0 1 1 60 112 A52 52 0 1 1 60 8 Z'
-  const a = ratio * 2 * Math.PI - Math.PI / 2
-  const x = (60 + 52 * Math.cos(a)).toFixed(2)
-  const y = (60 + 52 * Math.sin(a)).toFixed(2)
-  const large = ratio > 0.5 ? 1 : 0
-  return `M60 60 L60 8 A52 52 0 ${large} 1 ${x} ${y} Z`
+const PIE3D = { cx: 60, cy: 52, rx: 48, ry: 28, h: 16 } as const
+
+/** 顶面椭圆上参数角 t 的点；t 增大 = 屏幕顺时针（y 向下，和一版的圆一致）。 */
+function piePoint(t: number, yShift = 0): string {
+  const x = (PIE3D.cx + PIE3D.rx * Math.cos(t)).toFixed(2)
+  const y = (PIE3D.cy + PIE3D.ry * Math.sin(t) + yShift).toFixed(2)
+  return `${x} ${y}`
+}
+
+/** [t1, t1+span] 的采样角（含首尾、约 2° 一步、最少两点）。 */
+function arcAngles(t1: number, span: number): number[] {
+  const n = Math.max(2, Math.ceil((span / (2 * Math.PI)) * 180))
+  return Array.from({ length: n + 1 }, (_, i) => t1 + (span * i) / n)
+}
+
+/** 顶面扇形：圆心 → 沿弧一串折线点 → 闭合。 */
+function topPath(t1: number, span: number): string {
+  const pts = arcAngles(t1, span).map((t) => `L${piePoint(t)}`)
+  return `M${PIE3D.cx} ${PIE3D.cy} ${pts.join(' ')} Z`
+}
+
+/**
+ * 侧壁：弧上落在**屏幕下半**（sin t > 0 —— 即椭圆下半沿）的段，向下挤出厚度 h。
+ * 上半沿的"壁"被顶面自己挡住，不用画。
+ * 段可能有一到两截（弧穿越 3 点/9 点时被切开），所以返回的是一串子路径。
+ * 单点的段（弧刚好擦过下半沿）挤不出面，跳过。
+ */
+function sidePath(t1: number, span: number): string | null {
+  const segs: number[][] = []
+  let cur: number[] = []
+  for (const t of arcAngles(t1, span)) {
+    if (Math.sin(t) > 1e-9) cur.push(t)
+    else if (cur.length) { segs.push(cur); cur = [] }
+  }
+  if (cur.length) segs.push(cur)
+  const parts: string[] = []
+  for (const seg of segs) {
+    if (seg.length < 2) continue
+    const down = seg.slice(1).map((t) => `L${piePoint(t)}`)
+    const back = [...seg].reverse().map((t) => `L${piePoint(t, PIE3D.h)}`)
+    parts.push(`M${piePoint(seg[0])} ${down.join(' ')} ${back.join(' ')} Z`)
+  }
+  return parts.length ? parts.join(' ') : null
+}
+
+export type Pie3dPaths = {
+  restTop: string | null
+  restSide: string | null
+  usedTop: string | null
+  usedSide: string | null
+}
+
+/**
+ * ratio（已用占比）→ 四张 path（导出给测试钉几何，和 `formatSize` 同一个用途）。
+ *
+ * 12 点起笔顺时针切 ratio 圈；剩余的部分从切点接着走完。
+ * `ratio <= 0` → 扇形不画（整块饼都是"剩余"色）；`ratio >= 1` → 反过来。
+ */
+export function pie3dPaths(ratio: number): Pie3dPaths {
+  const r = Math.max(0, Math.min(1, ratio))
+  const T1 = -Math.PI / 2            // 12 点
+  const spanUsed = r * 2 * Math.PI
+  const spanRest = 2 * Math.PI - spanUsed
+  const has = (span: number) => span > 1e-6
+  return {
+    usedTop: has(spanUsed) ? topPath(T1, spanUsed) : null,
+    usedSide: has(spanUsed) ? sidePath(T1, spanUsed) : null,
+    restTop: has(spanRest) ? topPath(T1 + spanUsed, spanRest) : null,
+    restSide: has(spanRest) ? sidePath(T1 + spanUsed, spanRest) : null,
+  }
 }
 
 /**

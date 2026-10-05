@@ -63,7 +63,13 @@
      ⚠️ 对话气泡**不跟这条走**（它是大面积的"面"不是小按钮）：见 `.bubble.user`
      那条，两种模式都保持"深蓝底 + 白字"。 */
   --accent-tint: light-dark(#eef3fc, #123330); /* 强调色的极淡底（选中的行、悬停的卡片）；深色档比面板亮一档（上面的字 11.1:1）；★ 2026-10-05 深色半从蓝调换薄荷调 */
-  --ring-glow: light-dark(rgba(27, 98, 214, .30), rgba(45, 212, 191, .50)); /* ★ 2026-10-05 用量圆环的发光（`filter: drop-shadow` 用）；跟着主色走，别写死 */
+  --ring-glow: light-dark(rgba(27, 98, 214, .30), rgba(45, 212, 191, .50)); /* ★ 2026-10-05 用量环/饼的发光（`filter: drop-shadow` 用）；跟着主色走，别写死 */
+  /* 3D 饼图的三个面（★ 2026-10-05 第三版）：剩余是**深青灰**（和薄荷同族的暗档，
+     空盘不再是一坨中性灰）；两组侧壁各比自己的顶面暗一档 —— "面亮壁暗"是
+     立体饼图的常识做法（光照）。深色档的 used-side 就是 --accent-700 那个值。 */
+  --pie-rest: light-dark(#d7dee3, #2b3c42);
+  --pie-rest-side: light-dark(#bcc6cd, #1d2a2f);
+  --pie-used-side: light-dark(#0f5f58, #0f766e);
   /* ⚠️ 这里原来还有 `--rose-100`（最浅那档）和 `--leaf`（叶子那点绿）两个
      声明了却一次没用过的色号，2026-09-30 按"用到再加"删掉了 —— 颜色令牌
      不像间距尺（`--sp-7` 空着无所谓，那是一整条尺度），孤立的色号摆着
@@ -1870,31 +1876,34 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    `baseline` 对齐：按底边对齐的话 15px 的数字和 13px 的字会看着差半行。 */
 .account-stats { display: flex; gap: var(--sp-5); }
 
-/* 用量饼图（★ 2026-10-05 深夜第二版）。演变一句话：用户先把"圆盘"升了一级
-   （「立体的大一点的圆盘图表」），见到**圆环**之后又补了最后一句
-   「**我想到了就是磁盘用量是一个叫做饼图的**」—— 要的是实心扇形，环 → 饼图。
-   立体感的配方（和 `AccountPage.UsagePie` 的注释是一件事的两半）：
-   ① 扇形用渐变填色：左上亮、右下深（光从左上来）；
-   ② 扇形带**发光**（drop-shadow，颜色走 `--ring-glow`，跟着主色走）；
-   ③ 整盘罩一层很淡的径向高光（`.usage-pie-sheen`）—— 实心"盘面"靠它才不像贴纸。
-   ⚠️ 百分比数字在盘**下面**：实心盘上压字对比度随占比漂（见组件注释）。 */
+/* 用量饼图 · 3D 立体版（★ 2026-10-05 第三版。用户发来一张 Excel 的 3D 饼图说
+   「第二个图是我想要设计的样子」—— 平面版在 0.x% 时是一整块灰盘、像坏了；
+   这一版是斜俯视的厚饼：顶面椭圆 + 侧壁厚度，几何全在 `pie3dPaths` 里）。
+   四个面各一个类（画序即层序，见组件）：
+   · rest-top / rest-side —— 剩余：深青灰面 + 更暗的侧壁（空盘不再是一坨灰）；
+   · used-top —— 已用顶面：薄荷渐变 + **一圈发光**（`--ring-glow`）——
+     0.x% 时就靠这根发光的细针证明"真的用了一点点"；
+   · used-side —— 已用侧壁：深青（深色档就是 --accent-700）。
+   ⚠️ 百分比数字在饼**下面**（顶面上压字对比度随占比漂，见组件注释）。 */
 .usage-pie-wrap {
   flex: none; width: 160px;
   display: flex; flex-direction: column; align-items: center; gap: var(--sp-2);
 }
 .usage-pie { display: block; width: 160px; height: 160px; }
-/* 盘底：面 + 一圈很淡的亮边（物理光，不走令牌 —— 和 sheen 同一个理由）。
-   第一版没有这圈边，真机里盘和卡片背景糊在一起，"盘"的轮廓没出来。 */
-.usage-pie-track { fill: var(--line-2); stroke: rgba(255, 255, 255, .07); stroke-width: 1; }
-.usage-pie-fill { filter: drop-shadow(0 0 7px var(--ring-glow)); }
+.usage-pie-rest-top { fill: var(--pie-rest); }
+.usage-pie-rest-side { fill: var(--pie-rest-side); }
+.usage-pie-used-top { filter: drop-shadow(0 0 6px var(--ring-glow)); }
+.usage-pie-used-side { fill: var(--pie-used-side); }
 /* 渐变的两档（SVG `stop` 的颜色走 CSS —— 浅/深成对由 token 自己管） */
 .ring-stop-hi { stop-color: var(--accent-500); }
 .ring-stop-lo { stop-color: var(--accent-400); }
 .ring-stop-danger { stop-color: var(--danger); }
-/* 用到八成往上：扇形和数字一起变红（和 `.stat-warn` 是同一句话的两种说法） */
-.usage-pie-warn .usage-pie-fill {
-  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--danger) 55%, transparent));
+/* 用到八成往上：饼和数字一起变红（和 `.stat-warn` 是同一句话的两种说法）。
+   侧壁走 color-mix 压暗一档红色 —— 和两个顶面"面亮壁暗"是同一条光照规则。 */
+.usage-pie-warn .usage-pie-used-top {
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--danger) 55%, transparent));
 }
+.usage-pie-warn .usage-pie-used-side { fill: color-mix(in srgb, var(--danger) 62%, #000); }
 .usage-pie-pct {
   font-size: 22px; font-weight: 600; letter-spacing: -.01em;
   color: var(--text); font-variant-numeric: tabular-nums;

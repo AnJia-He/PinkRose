@@ -144,7 +144,7 @@ vi.mock('./api/client', async (importOriginal) => {
 })
 
 import App from './App'
-import { formatSize, modelValue, pieSlicePath } from './ui/AccountPage'
+import { formatSize, modelValue, pie3dPaths } from './ui/AccountPage'
 import type { PublicConfig } from './api/models'
 import { matchToReference, type Rgb } from './core/colorMatch'
 import * as decodeMod from './image/decode'
@@ -3579,11 +3579,11 @@ describe('用户管理页', () => {
   })
 
   it('★ 用量饼图画的是**真比例** —— 0.2% 也配拥有它的一个小角（2026-10-05）', async () => {
-    // 用户原话三连：「磁盘用量可视化一下用圆盘表示」→「立体的大一点的圆盘图表」
-    // →「我想到了就是磁盘用量是一个叫做饼图的」（最后这句把圆环换成了实心饼图）。
-    // 钉两样：盘下的百分比文字、和扇形 path 的 `d`（从 12 点顺时针切 ratio 圈，
-    // 圆心 (60,60) 半径 52 —— 坐标全部由 pieSlicePath 这个纯函数算，形状的
-    // 四档钉子在下一条用例里）。
+    // 用户原话四连：「磁盘用量可视化一下用圆盘表示」→「立体的大一点的圆盘图表」
+    // →「我想到了就是磁盘用量是一个叫做饼图的」→（发了张 Excel 3D 饼图）
+    // 「第二个图是我想要设计的样子」。最后定型成 **3D 厚饼**：顶面椭圆 + 侧壁。
+    // 钉两样：饼下的百分比文字、和已用扇形顶面的 `d`（几何全部由 pie3dPaths
+    // 这个纯函数采样出来 —— 特征坐标的钉子在下一条用例里）。
     const MIB = 1024 * 1024
     const LIMIT = 5 * 1024 ** 3
     withUsage({ count: 2, bytes: 10 * MIB })     // 10 MB / 5 GiB ≈ 0.195%
@@ -3591,25 +3591,37 @@ describe('用户管理页', () => {
     await openAccount()
 
     expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('0.2%')
-    const d = container.querySelector('.usage-pie-fill')?.getAttribute('d') ?? ''
-    expect(d).toBe(pieSlicePath((10 * MIB) / LIMIT))
-    // 远没到八成：盘不带警告类（扇形和数字"一起变红"那条规矩的另一半）
+    const d = container.querySelector('.usage-pie-used-top')?.getAttribute('d') ?? ''
+    expect(d).toBe(pie3dPaths((10 * MIB) / LIMIT).usedTop)
+    // 剩余那半块（深青）也在 —— 0.2% 时它才是画面主体
+    expect(container.querySelector('.usage-pie-rest-top')).toBeTruthy()
+    // 远没到八成：饼不带警告类（饼和数字"一起变红"那条规矩的另一半）
     expect(container.querySelector('.usage-pie-warn')).toBeNull()
     // 变异：把比例写成写死的数（或 0）→ 前两条红
   })
 
-  it('pieSlicePath：形状的四档（0 / 四分之一 / 一半 / 满）（2026-10-05）', () => {
-    // 每档坐标手算钉死（比"等于自己"="测了个恒等式"强）：
-    expect(pieSlicePath(0)).toBeNull()               // 一点没用 → 不画扇形（空盘干净）
-    // 四分之一：从 12 点顺时针走 1/4 圈 = 正右（3 点）→ (60+52, 60)
-    expect(pieSlicePath(0.25)).toBe('M60 60 L60 8 A52 52 0 0 1 112.00 60.00 Z')
-    // 一半：正下方 (60,112)；**刚满一半不算大弧**（>0.5 才是）
-    expect(pieSlicePath(0.5)).toBe('M60 60 L60 8 A52 52 0 0 1 60.00 112.00 Z')
-    // 超过一半：大弧标志翻 1，终点到正左 (8,60)
-    expect(pieSlicePath(0.75)).toBe('M60 60 L60 8 A52 52 0 1 1 8.00 60.00 Z')
-    // 满：一段弧从起点画回自己画不出圆 → 两段半弧拼整圆
-    expect(pieSlicePath(1)).toBe('M60 8 A52 52 0 1 1 60 112 A52 52 0 1 1 60 8 Z')
-    // 变异：把大弧标志写死 0 / 忘了 ratio>=1 那条 → 上面某一条红
+  it('pie3dPaths：三档几何（0 / 五分之一 / 满）（2026-10-05）', () => {
+    // 采样出来的点串很长，钉**特征点**（坐标手算）+ 侧壁的有/无。
+    // 椭圆参数：圆心 (60,52)、rx 48、ry 28、厚度 16；12 点起笔顺时针。
+    const p0 = pie3dPaths(0)
+    expect(p0.usedTop).toBeNull()                 // 一点没用 → 没有扇形
+    expect(p0.usedSide).toBeNull()
+    expect(p0.restTop).toContain('L60.00 24.00')  // 整块厚饼从 12 点（52−28）起画
+    expect(p0.restSide).toBeTruthy()              // 一整圈下半沿都有厚度
+
+    const p20 = pie3dPaths(0.2)
+    // 五分之一：弧扫 72°，终点在 −18° → x = 60+48·cos18° = 105.65、y = 52−28·sin18° = 43.35
+    expect(p20.usedTop).toContain('L105.65 43.35')
+    // 这段弧全在椭圆**前半**（y ≤ 圆心）→ 侧壁被顶面自己挡住，不画
+    expect(p20.usedSide).toBeNull()
+
+    const p75 = pie3dPaths(0.75)
+    expect(p75.usedSide).toBeTruthy()             // 扫过下半沿（6 点方向）→ 有厚度
+
+    const p1 = pie3dPaths(1)
+    expect(p1.restTop).toBeNull()                 // 全满 → 没有剩余
+    expect(p1.restSide).toBeNull()
+    // 变异：把 ry 写成 0（拍成一条线）/ 把侧壁的"下半沿"条件写反 → 上面某条红
   })
 
   it('★ 极小用量**不许显示成「0.0%」**（那是句假话）—— 显示「<0.1%」', async () => {
