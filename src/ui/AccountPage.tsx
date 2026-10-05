@@ -350,7 +350,8 @@ export function modelValue(configs: PublicConfig[]): string {
  *     **别再加圆点/珠子这类末端装饰**：楔形本身就是饼图的语言。
  *
  * ⚠️ 百分比数字在饼**下面**（顶面上压字对比度会随占比漂）。
- * ⚠️ 绝不显示「0.0%」：那是句假话，不到 0.05% 一律「<0.1%」。
+ * ⚠️ 大字行写的是**剩余率**（见下面 `restPct` 的注释）；「>99.9%」是它的诚实上限
+ *    写法，和以前「<0.1%」一个道理 —— 不假装精确到没有的小数位。
  */
 export const MIN_SLICE_RATIO = 5 / 360
 
@@ -367,11 +368,21 @@ export function UsagePie({ pct, warn, used, rest }: {
   const drawRatio = ratio === null || ratio <= 0 ? 0 : Math.max(ratio, MIN_SLICE_RATIO)
   // loading（ratio === null）画 pie3dPaths(0)：整块厚饼、没有扇形。
   const g = pie3dPaths(drawRatio)
-  const n = ratio === null ? 0 : ratio * 100
-  const label = ratio === null ? ''
-    : n < 0.05 ? '<0.1%'
-    : n < 10 ? `${n.toFixed(1)}%`
-    : `${Math.round(n)}%`
+  /**
+   * 大字行显示的是**剩余率**（★ 2026-10-05 第九轮。用户先看到裸着的「<0.1%」说
+   * 「这个数字你得告诉用户是什么呀」，补了「已用」前缀；接着又说
+   * 「**这不还是用的量不是剩余量呀**」—— 他要这行看**剩余**的视角。
+   * 说穿了："还剩多少"才是他打开这页的问题，已用是答完之后的余数）。
+   *
+   * 格式化规则和老口径（已用）**互为镜像**：剩余 >99.95% 写「>99.9%」
+   *（对应老口径的「<0.1%」），90~99.9 一位小数，≤90 取整；真的全满时显示
+   * 「剩余 0%」—— 那是真话，不是「0.0%」那种假话。
+   */
+  const restPct = ratio === null ? null : Math.max(0, Math.min(100, 100 - ratio * 100))
+  const label = restPct === null ? ''
+    : restPct > 99.95 ? '>99.9%'
+    : restPct > 90 ? `${restPct.toFixed(1)}%`
+    : `${Math.round(restPct)}%`
   return (
     <div className={warn ? 'usage-pie-wrap usage-pie-warn' : 'usage-pie-wrap'}>
       <svg className="usage-pie" viewBox="0 0 120 120" aria-hidden="true">
@@ -404,13 +415,12 @@ export function UsagePie({ pct, warn, used, rest }: {
         <i className="usage-chart-dot usage-chart-dot-rest" aria-hidden="true" />
         剩余 <b>{rest ?? '…'}</b>
       </span>
-      {/* 百分比那行（★ 2026-10-05 第八轮：用户看到裸着的 `<0.1%` 说
-          「这个数字你得告诉用户是什么呀？对不对」—— 他说得对，原来这行没主语。
-          补上「已用」前缀，和图上那条「已用 X」标签同一个句式；数字仍然是大字，
-          「已用」是 muted 小字 —— 读屏读出来也是「已用 0.2%」，不再是一个孤零零的数。 */}
+      {/* 百分比那行（★ 2026-10-05 第八/九轮：先补「已用」主语（用户：「这个数字你
+          得告诉用户是什么呀」），再翻成**剩余**视角（用户：「这不还是用的量不是
+          剩余量呀」）。小字 muted + 数字大字，读屏读出来是「剩余 99.7%」。 */}
       {label !== '' && (
         <span className="usage-pie-pct-line">
-          <span className="usage-pie-pct-label">已用</span>
+          <span className="usage-pie-pct-label">剩余</span>
           <span className="usage-pie-pct">{label}</span>
         </span>
       )}
