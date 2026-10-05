@@ -128,7 +128,7 @@ describe('面板的分组（2026-10-04）', () => {
   it('★ defaultLutOpen：传 true 时进来就是展开的（默认仍然收着）', async () => {
     // ⚠️ 判据是 `.lut-picker` 在不在 —— 它**只在那一栏开着时**渲染。
     //    别改成 `.lut-grid`：那是"格子"那一层，一个滤镜都没有时这一栏也开着
-    //    （显示的是「还没有导入过滤镜。」），两个形状在这条测试里长得不一样。
+    //    （显示的是「还没有导入过 Lut。」），两个形状在这条测试里长得不一样。
     const open = await mount(<Harness lutOpen />)
     expect(open.querySelector('.lut-picker')).not.toBeNull()
 
@@ -280,7 +280,7 @@ describe('滤镜那一栏（2026-10-05）', () => {
   /** 「滤镜」那个组头（按文字找 —— 位置是排版的事）。 */
   const headOf = (c: HTMLElement) =>
     [...c.querySelectorAll<HTMLElement>('.panel-group-head')]
-      .find(b => (b.textContent ?? '').includes('滤镜'))!
+      .find(b => (b.textContent ?? '').includes('Lut'))!
 
   beforeEach(() => {
     lutsFromTest = []
@@ -353,19 +353,19 @@ describe('滤镜那一栏（2026-10-05）', () => {
   it('一个滤镜都没有 → 「去导入」把这件事交出去（去设置里那一页）', async () => {
     const c = await mount(<Harness />)
     await click(headOf(c))
-    expect(c.textContent).toContain('还没有导入过滤镜')
+    expect(c.textContent).toContain('还没有导入过 Lut')
     await click(c.querySelector('.lut-import-go')!)
     expect(wentImport).toBe(true)
   })
 
-  it('★ 清单还没到手 → 不摆「还没有导入过滤镜」，摆的是「再试一次」（那块口子接得上）', async () => {
+  it('★ 清单还没到手 → 不摆「还没有导入过 Lut」，摆的是「再试一次」（那块口子接得上）', async () => {
     // 终审修复：这句**关于用户资产**的话只许在"服务端真的回了空清单"时说 ——
     // 这一层钉的是"面板把 `lutsKnown` 一路传到了格子上"（App 那一侧在
     // `App.test.tsx` 的「清单取不到」那条里演）。
     lutsKnownFromTest = false
     const c = await mount(<Harness />)
     await click(headOf(c))
-    expect(c.textContent).not.toContain('还没有导入过滤镜')
+    expect(c.textContent).not.toContain('还没有导入过 Lut')
     expect(c.textContent).toContain('还没到手')
     await click(c.querySelector('.lut-import-go')!)
     expect(retriedLuts).toBe(1)

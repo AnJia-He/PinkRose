@@ -28,7 +28,7 @@ export function loadOwnedLut(id: number, user: PublicUser, deps: LutDeps): LutRo
   const row = deps.db.raw
     .prepare('SELECT * FROM luts WHERE id = ? AND user_id = ?')
     .get(id, user.id) as LutRow | undefined
-  if (!row) throw new HttpError('BAD_REQUEST', '没有这个滤镜', 404)
+  if (!row) throw new HttpError('BAD_REQUEST', '没有这个 Lut', 404)
   return row
 }
 
@@ -44,7 +44,7 @@ function assertNameFree(name: string, user: PublicUser, deps: LutDeps, exceptId 
   const hit = deps.db.raw
     .prepare('SELECT id FROM luts WHERE user_id = ? AND name = ? AND id != ?')
     .get(user.id, name, exceptId)
-  if (hit) throw new HttpError('BAD_REQUEST', `已经有一个叫「${name}」的滤镜了，换个名字。`)
+  if (hit) throw new HttpError('BAD_REQUEST', `已经有一个叫「${name}」的 Lut 了，换个名字。`)
 }
 
 export async function createLut(
@@ -76,7 +76,7 @@ export async function createLut(
   // 名字：客户端给的 → .cube 里的 TITLE → 兜底
   const raw = str(o.name).trim() || cube.title?.trim() || '未命名'
   const name = raw.slice(0, 30)
-  if (!lutNameOk(name)) throw new HttpError('BAD_REQUEST', '滤镜名字要 1–30 个字。')
+  if (!lutNameOk(name)) throw new HttpError('BAD_REQUEST', 'Lut 名字要 1–30 个字。')
 
   const count = (deps.db.raw
     .prepare('SELECT COUNT(*) AS n FROM luts WHERE user_id = ?')
@@ -99,7 +99,7 @@ export async function createLut(
     await deps.storage.remove(storedName).catch(() => {})
     // UNIQUE 兜底：两个请求同时导入同一个名字时，上面那次检查会双双放行
     if (String((e as Error).message).includes('UNIQUE')) {
-      throw new HttpError('BAD_REQUEST', `已经有一个叫「${name}」的滤镜了，换个名字。`)
+      throw new HttpError('BAD_REQUEST', `已经有一个叫「${name}」的 Lut 了，换个名字。`)
     }
     throw e
   }
@@ -117,7 +117,7 @@ export function renameLut(
 ): { lut: LutMeta } {
   const row = loadOwnedLut(id, user, deps)
   const name = str(asObject(body).name).trim().slice(0, 30)
-  if (!lutNameOk(name)) throw new HttpError('BAD_REQUEST', '滤镜名字要 1–30 个字。')
+  if (!lutNameOk(name)) throw new HttpError('BAD_REQUEST', 'Lut 名字要 1–30 个字。')
   if (name !== row.name) assertNameFree(name, user, deps, id)
   deps.db.raw.prepare('UPDATE luts SET name = ? WHERE id = ?').run(name, id)
   return { lut: toMeta({ ...row, name }) }

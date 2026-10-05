@@ -249,7 +249,7 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
                     存的是名字 + 强度；`amount` 是 0–100 的整数，直接跟一个 % 号。 */}
                 {lut && (
                   <li>
-                    <span className="recipe-param-name">滤镜</span>
+                    <span className="recipe-param-name">Lut</span>
                     <span className="recipe-param-value">{lut.name} {lut.amount}%</span>
                   </li>
                 )}

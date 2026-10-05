@@ -79,7 +79,7 @@ export const LUT_FILE_TOO_BIG = (maxBytes: number): string =>
  * @param max 上限条数 —— 传 `MAX_LUTS`。
  */
 export const LUT_LIMIT_REACHED = (max: number): string =>
-  `最多 ${max} 个滤镜，先删掉几个再导入。`
+  `最多 ${max} 个 Lut，先删掉几个再导入。`
 
 // ── 通用的那声「没成」────────────────────────────────────────────────
 

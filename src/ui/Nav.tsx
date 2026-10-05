@@ -71,7 +71,7 @@ export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
           ⚠️ 它和「调色」不一样，**没有照片也能进** —— 那一页是管理自己的滤镜库，
           和手上有没有照片无关。 */}
       <button className={`nav-item${here === 'luts' ? ' on' : ''}`}
-              onClick={() => onGo({ kind: 'luts' })}>滤镜</button>
+              onClick={() => onGo({ kind: 'luts' })}>Lut</button>
       <button className={`nav-item${here === 'sessions' ? ' on' : ''}`}
               onClick={() => onGo({ kind: 'sessions' })}>对话</button>
       <button className={`nav-item${here === 'gallery' ? ' on' : ''}`}

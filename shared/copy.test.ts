@@ -19,7 +19,7 @@ import { MAX_LUT_FILE_BYTES, MAX_LUTS } from './lut.ts'
 describe('两边都要说的那两句（滤镜）', () => {
   it('数字来自 MAX_LUT_FILE_BYTES / MAX_LUTS —— 不是抄的，改了上限这句话不会撒谎', () => {
     expect(LUT_FILE_TOO_BIG(MAX_LUT_FILE_BYTES)).toBe('这个文件超过 8 MB 了。')
-    expect(LUT_LIMIT_REACHED(MAX_LUTS)).toBe('最多 30 个滤镜，先删掉几个再导入。')
+    expect(LUT_LIMIT_REACHED(MAX_LUTS)).toBe('最多 30 个 Lut，先删掉几个再导入。')
   })
 
   it('界面和服务端都 import，没有哪一边自己抄一份', () => {
@@ -29,7 +29,7 @@ describe('两边都要说的那两句（滤镜）', () => {
     for (const rel of ['../src/ui/LutSettings.tsx', '../server/luts.ts']) {
       const src = readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8')
       expect(src, `${rel} 里抄了"超过 8 MB"那句`).not.toContain('超过 8 MB')
-      expect(src, `${rel} 里抄了"最多 N 个滤镜"那句`).not.toContain('先删掉几个再导入')
+      expect(src, `${rel} 里抄了"最多 N 个 Lut"那句`).not.toContain('先删掉几个再导入')
     }
   })
 })

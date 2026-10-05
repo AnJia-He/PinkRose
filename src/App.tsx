@@ -323,7 +323,7 @@ export default function App() {
   const dropGoneLut = useCallback((id: number) => {
     setLut((cur) => (cur?.lutId === id ? null : cur))
     setHistory((prev) => prev.map((s) => (s.lut?.lutId === id ? { ...s, lut: null } : s)))
-    noticeBad('那个滤镜刚被你删掉了，这张照片上的也去掉了。')
+    noticeBad('那个 Lut 刚被你删掉了，这张照片上的也去掉了。')
   }, [noticeBad])
 
   /**
@@ -2154,7 +2154,7 @@ export default function App() {
               : undefined
             if (recipeLut && !hit) {
               // 已经被删了 → **只套调色，并把这件事说出来**（不说就是悄悄少了半套）。
-              noticeBad('那张作品用的滤镜已经删了，这次只套了调色。')
+              noticeBad('那张作品用的 Lut 已经删了，这次只套了调色。')
             }
             setLut(hit && recipeLut ? { lutId: hit.id, amount: recipeLut.amount } : null)
             go({ kind: 'edit' })

@@ -46,7 +46,7 @@ export default function LutPicker({
     if (!lutsKnown) {
       return (
         <div className="lut-picker">
-          <p className="lut-empty">滤镜清单还没到手。</p>
+          <p className="lut-empty">Lut 清单还没到手。</p>
           <button className="lut-import-go" onClick={onRetryLuts}>再试一次</button>
         </div>
       )
@@ -54,7 +54,7 @@ export default function LutPicker({
     // ② 服务端**真的回了空清单**：这才是说这句话、给这条路的时候。
     return (
       <div className="lut-picker">
-        <p className="lut-empty">还没有导入过滤镜。</p>
+        <p className="lut-empty">还没有导入过 Lut。</p>
         <button className="lut-import-go" onClick={onGoImport}>去导入</button>
       </div>
     )

@@ -79,7 +79,7 @@ describe('createLut / listLuts', () => {
   it('别人的滤镜取不到', async () => {
     const { lut } = await createLut({ name: 'mine', cube: CUBE2 }, user, deps)
     const other: PublicUser = { id: 999, username: 'b', email: 'b@b.c' }
-    await expect(handleLutFile(lut.id, other, deps)).rejects.toThrow(/没有这个滤镜/)
+    await expect(handleLutFile(lut.id, other, deps)).rejects.toThrow(/没有这个 Lut/)
   })
 })
 

@@ -796,14 +796,14 @@ const adjustPanel = () => container.querySelector('.panel') as HTMLElement
 /** 打开微调区那一栏「滤镜」。**它默认是收着的**（spec §8.3），所以每一条都要先点一下。 */
 async function openLutPanel() {
   const head = [...adjustPanel().querySelectorAll('.panel-group-head')]
-    .find(b => (b.textContent ?? '').includes('滤镜')) as HTMLButtonElement
+    .find(b => (b.textContent ?? '').includes('Lut')) as HTMLButtonElement
   await act(async () => { head.click(); await new Promise(r => setTimeout(r, 0)) })
 }
 const lutTiles = () => [...adjustPanel().querySelectorAll('.lut-tile')] as HTMLButtonElement[]
 const tileNamed = (name: string) => lutTiles().find(t => (t.textContent ?? '').includes(name))!
 /** 面板里「滤镜」那一组（`section`）—— 强度滑块要**在这一组里面**找，别数全屏的滑块。 */
 const lutSection = () => [...adjustPanel().querySelectorAll('.panel-group')]
-  .find(g => g.querySelector('.panel-group-title')?.textContent === '滤镜') as HTMLElement
+  .find(g => g.querySelector('.panel-group-title')?.textContent === 'Lut') as HTMLElement
 
 // ── 测试 ─────────────────────────────────────────────────────────
 
@@ -2646,7 +2646,7 @@ describe('左栏导航：切界面不丢工作', () => {
     //   怎么去调用 lut 文件」——他找不到那个页面，也找不到"调用"的地方）。
     //   位置紧挨着「调色」：导入/管理滤镜是**为这张照片**做的事，和修图/调色同一组
     //   （后面那两支说的是别的照片）。
-    expect(格子()).toEqual(['修图', '调色', '滤镜', '对话', '作品', '产品介绍', '个人设置'])
+    expect(格子()).toEqual(['修图', '调色', 'Lut', '对话', '作品', '产品介绍', '个人设置'])
 
     await goNav('调色')
     expect(location.pathname).toBe('/app/adjust')
@@ -3304,7 +3304,7 @@ describe('作品详情页：这张图怎么来的', () => {
     //    新起一块就成了两处（"滤镜也是配方"这件事本身也一起丢了）。
     //    `?.` + `?? ''`：元素不在时要红成"少了一行"，不是测试自己崩在 null 上。
     const row = container.querySelector('.recipe-params li')
-    expect(row?.querySelector('.recipe-param-name')?.textContent).toBe('滤镜')
+    expect(row?.querySelector('.recipe-param-name')?.textContent).toBe('Lut')
     expect(row?.querySelector('.recipe-param-value')?.textContent).toBe('黄昏 80%')
     // ② ★ 有滤镜就不是"原样" —— 哪怕十五个参数一个都没动（这份配方就是全 ZERO）。
     //    判据漏了滤镜的话，屏幕上会一边列着「滤镜 黄昏」一边说"没有调过色"。
@@ -3350,7 +3350,7 @@ describe('作品详情页：这张图怎么来的', () => {
     // ① 调色那半真的套上了（"只套调色"不是一个说法）
     expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 20 })
     // ② 把少掉的那半说出来
-    expect(container.querySelector('.notice')?.textContent ?? '').toContain('那张作品用的滤镜已经删了')
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('那张作品用的 Lut 已经删了')
     // ③ 手上那层也被清掉 —— 这一格由这张作品的配方**唯一决定**（替换，不是合并）
     await goNav('调色')
     await openLutPanel()
@@ -4248,7 +4248,7 @@ describe('用户管理页', () => {
     [...(row?.querySelectorAll('button') ?? [])]
       .find(b => (b.textContent ?? '').trim() === text) as HTMLButtonElement
 
-  it('★ 个人设置里点「滤镜」能进那一页；导入一个 .cube 之后列表里出现它', async () => {
+  it('★ 个人设置里点「Lut」能进那一页；导入一个 .cube 之后列表里出现它', async () => {
     // 两半都是**真行为**：那一行点得进去（地址栏跟着走 —— F5 / 收藏 / 转发都要认），
     // 以及选完一个文件之后清单里**真多出一行**（不是"按钮亮了"就算完）。
     const SUNSET = LUTM(9, { name: 'sunset', size: 2, bytes: 1234 })
@@ -4263,7 +4263,7 @@ describe('用户管理页', () => {
 
     await renderApp()
     await openAccount()
-    const row = rowByLabel('滤镜')
+    const row = rowByLabel('Lut')
     await act(async () => { row.click(); await settle() })
 
     expect(location.pathname).toBe('/app/luts')
@@ -4274,7 +4274,7 @@ describe('用户管理页', () => {
     //   （文案该不该这么写是《文案规范》和人的事，不是这条测试的事）。
     expect(container.querySelector('.luts-title')?.textContent?.trim()).toBeTruthy()
     // 真的一个都没有 —— 这才是说「还没有导入过滤镜。」的时候
-    expect(container.textContent).toContain('还没有导入过滤镜')
+    expect(container.textContent).toContain('还没有导入过 Lut')
 
     await importFile(new File([CUBE2_TEXT], 'sunset.cube', { type: 'text/plain' }))
 
@@ -4296,14 +4296,14 @@ describe('用户管理页', () => {
    * → 落到**调色**屏，而且面板里那一栏**是开着的**（不用再自己找一次 —— 他刚
    * 说过找不到）。少了最后那半截，新按钮只是把人送回一屏他刚才没找到东西的地方。
    */
-  it('★ 左栏「滤镜」进得去那一页；那儿的「去套在照片上」落到调色、而且那一栏是开着的', async () => {
+  it('★ 左栏「Lut」进得去那一页；那儿的「去套在照片上」落到调色、而且那一栏是开着的', async () => {
     vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [LUTM(1, { name: '黄昏' })] })
     await renderApp()
     await uploadPhoto()
 
-    await goNav('滤镜')
+    await goNav('Lut')
     expect(location.pathname).toBe('/app/luts')
-    expect(container.querySelector('.nav-item.on')?.textContent).toBe('滤镜')
+    expect(container.querySelector('.nav-item.on')?.textContent).toBe('Lut')
 
     // 那一颗只在**真有滤镜**时出现（一个都没有时它把人送去一个空 picker，
     // 而该做的事明明是先导入 —— 见组件里那段）
@@ -4323,10 +4323,10 @@ describe('用户管理页', () => {
     await renderApp()
     await openAccount()
 
-    expect(rowByLabel('滤镜').querySelector('.account-row-value')?.textContent).toBe('2 个')
+    expect(rowByLabel('Lut').querySelector('.account-row-value')?.textContent).toBe('2 个')
   })
 
-  it('★ 清单拿不到时：第 4 格右边不出现，那一页也不说「还没有导入过滤镜」', async () => {
+  it('★ 清单拿不到时：第 4 格右边不出现，那一页也不说「还没有导入过 Lut」', async () => {
     // 「0 个」对着一个导了 20 个的人是句**假话** —— 那一格宁可整个不出现
     //（第 4 格和「模型」那一行同一个形状）。那一页同理：说"还没有导入过滤镜"
     // 等于把"拿不到"编造成"你没有"。
@@ -4339,7 +4339,7 @@ describe('用户管理页', () => {
     await renderApp()
     await openAccount()
 
-    const row = rowByLabel('滤镜')
+    const row = rowByLabel('Lut')
     expect(row.querySelector('.account-row-value')).toBeNull()
     // 少一格不挡路：这一行照样点得进去
     expect(row.disabled).toBe(false)
@@ -4347,10 +4347,10 @@ describe('用户管理页', () => {
     await act(async () => { row.click(); await settle() })
     // 说的必须是**服务端那句话**（原样），不是我们替它总结的
     expect(container.textContent).toContain('SENTINEL-滤镜清单拉不回来')
-    expect(container.textContent).not.toContain('还没有导入过滤镜')
+    expect(container.textContent).not.toContain('还没有导入过 Lut')
   })
 
-  it('★ 还没到手的时候是「正在打开…」，不是「还没有导入过滤镜」', async () => {
+  it('★ 还没到手的时候是「正在打开…」，不是「还没有导入过 Lut」', async () => {
     // 这一条钉的就是"不许拿空数组顶还没拉到"：那一句"你一个都没有"，
     // 只许在**真的拉到了空清单**之后说。
     const gate = makeGate<{ luts: LutMeta[] }>()
@@ -4358,16 +4358,16 @@ describe('用户管理页', () => {
     await renderApp()
     await openAccount()
     // 第 4 格右边也还没有数（`null` 期间不画）
-    expect(rowByLabel('滤镜').querySelector('.account-row-value')).toBeNull()
+    expect(rowByLabel('Lut').querySelector('.account-row-value')).toBeNull()
     // 只切页，不放行请求 —— 要的就是"还在路上"那一瞬间
-    await act(async () => { rowByLabel('滤镜').click() })
+    await act(async () => { rowByLabel('Lut').click() })
 
     expect(container.textContent).toContain('正在打开')
-    expect(container.textContent).not.toContain('还没有导入过滤镜')
+    expect(container.textContent).not.toContain('还没有导入过 Lut')
 
     // 放行 —— 这回是真的空，那句话才是事实
     await act(async () => { gate.open({ luts: [] }); await settle() })
-    expect(container.textContent).toContain('还没有导入过滤镜')
+    expect(container.textContent).toContain('还没有导入过 Lut')
   })
 
   it('★ 导入的三个失败点各有各的话 —— 而且都不会落到一次导入上', async () => {
@@ -4376,10 +4376,10 @@ describe('用户管理页', () => {
     //（太大那句是 spec §6.3 冻死的，和 `server/luts.ts` 一字不差）。
     vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [] })
     vi.mocked(lutsMod.createLut).mockRejectedValue(
-      new api.ApiError('BAD_REQUEST', '已经有一个叫「sunset」的滤镜了，换个名字。'))
+      new api.ApiError('BAD_REQUEST', '已经有一个叫「sunset」的 Lut 了，换个名字。'))
     await renderApp()
     await openAccount()
-    await act(async () => { rowByLabel('滤镜').click(); await settle() })
+    await act(async () => { rowByLabel('Lut').click(); await settle() })
 
     // ① 太大：**连读都不读**（8 MB 那个上限在前，解析在后）
     await importFile(new File([new Uint8Array(MAX_LUT_FILE_BYTES + 1)], 'big.cube'))
@@ -4394,7 +4394,7 @@ describe('用户管理页', () => {
     // ③ 本地过了、服务端不认（重名 / 满了 / 空间满了）—— **原样**显示它那句话
     await importFile(new File([CUBE2_TEXT], 'sunset.cube'))
     expect(vi.mocked(lutsMod.createLut)).toHaveBeenCalledTimes(1)
-    expect(container.textContent).toContain('已经有一个叫「sunset」的滤镜了，换个名字。')
+    expect(container.textContent).toContain('已经有一个叫「sunset」的 Lut 了，换个名字。')
   })
 
   it('★ 改名：就地展开一个输入框，提交打的是 renameLut(id, 新名字)', async () => {
@@ -4403,7 +4403,7 @@ describe('用户管理页', () => {
     vi.mocked(lutsMod.renameLut).mockResolvedValue({ lut: { ...HUT, name: '日落' } })
     await renderApp()
     await openAccount()
-    await act(async () => { rowByLabel('滤镜').click(); await settle() })
+    await act(async () => { rowByLabel('Lut').click(); await settle() })
 
     await act(async () => { btnIn(lutRow('黄昏'), '改名').click() })
     const input = container.querySelector('input[name=lutName]') as HTMLInputElement
@@ -4429,14 +4429,14 @@ describe('用户管理页', () => {
     vi.mocked(lutsMod.deleteLut).mockResolvedValue({ ok: true })
     await renderApp()
     await openAccount()
-    await act(async () => { rowByLabel('滤镜').click(); await settle() })
+    await act(async () => { rowByLabel('Lut').click(); await settle() })
 
     await act(async () => { btnIn(lutRow('黄昏'), '删除').click(); await settle() })
 
     expect(vi.mocked(lutsMod.lutUsage)).toHaveBeenCalledWith(7)
     const ask = container.querySelector('.luts-ask')
-    expect(ask?.textContent).toContain('还有 2 条老会话在用这个滤镜')
-    expect(ask?.textContent).toContain('变回没有滤镜的样子')
+    expect(ask?.textContent).toContain('还有 2 条老会话在用这个 Lut')
+    expect(ask?.textContent).toContain('变回没有 Lut 的样子')
     // **还没删**：点「删除」只是把代价摊开，删除请求一条都还没发
     expect(vi.mocked(lutsMod.deleteLut)).not.toHaveBeenCalled()
 
@@ -4455,7 +4455,7 @@ describe('用户管理页', () => {
     vi.mocked(lutsMod.lutUsage).mockResolvedValue({ sessions: 0 })
     await renderApp()
     await openAccount()
-    await act(async () => { rowByLabel('滤镜').click(); await settle() })
+    await act(async () => { rowByLabel('Lut').click(); await settle() })
 
     await act(async () => { btnIn(lutRow('黄昏'), '删除').click(); await settle() })
 
@@ -4464,7 +4464,7 @@ describe('用户管理页', () => {
     expect(ask?.textContent).not.toContain('老会话')
   })
 
-  it('★ 满 30 个：导入按钮禁用，还说一句「最多 30 个滤镜」', async () => {
+  it('★ 满 30 个：导入按钮禁用，还说一句「最多 30 个 Lut」', async () => {
     // 上限是 `MAX_LUTS`（服务端也拦，但拦下来是一趟白跑的请求）。
     // 只禁按钮不说话，用户只会以为按钮坏了 —— 两句要一起。
     vi.mocked(lutsMod.listLuts).mockResolvedValue({
@@ -4472,12 +4472,12 @@ describe('用户管理页', () => {
     })
     await renderApp()
     await openAccount()
-    expect(rowByLabel('滤镜').querySelector('.account-row-value')?.textContent).toBe('30 个')
-    await act(async () => { rowByLabel('滤镜').click(); await settle() })
+    expect(rowByLabel('Lut').querySelector('.account-row-value')?.textContent).toBe('30 个')
+    await act(async () => { rowByLabel('Lut').click(); await settle() })
 
     const btn = container.querySelector('.luts-import') as HTMLButtonElement
     expect(btn.disabled).toBe(true)
-    expect(container.textContent).toContain('最多 30 个滤镜')
+    expect(container.textContent).toContain('最多 30 个 Lut')
   })
 
   it('formatSize：三档各说一句话（§3.6 那张图只画了 MB 那一档）', () => {
@@ -5895,7 +5895,7 @@ describe('滤镜', () => {
     // ③ 清单里已经没有它了
     await goNav('调色')
     await openLutPanel()
-    expect(adjustPanel().textContent ?? '').toContain('还没有导入过滤镜')
+    expect(adjustPanel().textContent ?? '').toContain('还没有导入过 Lut')
   })
 
   /**
@@ -5913,7 +5913,7 @@ describe('滤镜', () => {
     await uploadPhoto()
     // ★ 2026-10-05：它现在住在**输入框那颗加号**里（用户：「在对话框那边设一个加号，
     //    然后点击加号里面有滤镜以及以后添加的功能」）—— 先点加号，再点「滤镜」。
-    const btn = await openChatTool('滤镜')
+    const btn = await openChatTool('Lut')
     expect(btn).toBeTruthy()
     expect(container.querySelector('.chat-lut .lut-picker')).toBeTruthy()
     expect(container.querySelectorAll('.chat-lut .lut-tile')).toHaveLength(2)   // 不用 + 黄昏
@@ -5939,7 +5939,7 @@ describe('滤镜', () => {
     expect(container.querySelector('.chat-lut')).toBeNull()
 
     await click(container.querySelector('.chat-plus') as HTMLButtonElement)
-    expect(container.querySelector('.chat-tool')?.textContent).toContain('滤镜')
+    expect(container.querySelector('.chat-tool')?.textContent).toContain('Lut')
     expect(container.querySelector('.chat-lut')).toBeNull()   // 工具行 ≠ 工具本身
 
     await click(container.querySelector('.chat-tool') as HTMLButtonElement)
@@ -6097,7 +6097,7 @@ describe('滤镜', () => {
    * 空清单时说。触发场景很平：App 挂载那次 `listLuts()` 失败（离线 / 后端刚重启 /
    * 页面里重新登录过）→ 面板永远空态、**而且没有重试的口子**。
    */
-  it('★ 清单取不到：面板不说「还没有导入过滤镜」，那颗「再试一次」真的接在重拉上', async () => {
+  it('★ 清单取不到：面板不说「还没有导入过 Lut」，那颗「再试一次」真的接在重拉上', async () => {
     vi.mocked(lutsMod.listLuts)
       .mockRejectedValue(new api.ApiError('UPSTREAM_FAILED', 'SENTINEL-清单拉不回来'))
     await renderApp()
@@ -6106,7 +6106,7 @@ describe('滤镜', () => {
     await openLutPanel()
 
     const text = () => adjustPanel().textContent ?? ''
-    expect(text()).not.toContain('还没有导入过滤镜')
+    expect(text()).not.toContain('还没有导入过 Lut')
     expect(text()).toContain('还没到手')
 
     // 服务端缓过来了 —— 点那颗「再试一次」，清单真的到手、格子出来

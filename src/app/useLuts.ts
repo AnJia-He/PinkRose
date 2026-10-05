@@ -110,7 +110,7 @@ export function useLuts({ lut, image, params: _params, onError }: {
       // ★ 2026-10-05 终审修复：取不到要**说得出口**。不说的话用户看到的是
       //   "格子亮着、画面不变、一句话都没有" —— 而再点同一格也不会重试
       //   （这条 effect 的依赖是 `lutId`，没变），得换一个滤镜才动。
-      if (c === null) onErrorRef.current?.('那个滤镜没取回来 —— 换一个试试，或者刷新一下。')
+      if (c === null) onErrorRef.current?.('那个 Lut 没取回来 —— 换一个试试，或者刷新一下。')
     })
   }, [lutId, loadCube])
 

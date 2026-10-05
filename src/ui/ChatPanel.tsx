@@ -211,7 +211,7 @@ export default function ChatPanel({
           <button className={lut ? 'chat-tool on' : 'chat-tool'} aria-expanded={lutOpen}
             onClick={() => setLutOpen((o) => !o)}>
             <SlidersHorizontal size={14} strokeWidth={1.5} aria-hidden="true" />
-            滤镜
+            Lut
           </button>
         </div>
       )}

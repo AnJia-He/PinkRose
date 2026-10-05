@@ -285,7 +285,7 @@ export default function AdjustmentPanel({
           {/* ⚠️ 缩略图不在这颗按钮的 onClick 里要了 —— 那件事现在是上面那条
               effect 的活（"开着 + 清单非空"就是全部条件）。两处都叫的话，打开
               那一下会连画两趟（第二趟把第一趟作废，纯白烧）。 */}
-          <span className="panel-group-title">滤镜</span>
+          <span className="panel-group-title">Lut</span>
           <ChevronDown size={14} className={lutOpen ? 'chev' : 'chev folded'} aria-hidden="true" />
         </button>
         {lutOpen && (

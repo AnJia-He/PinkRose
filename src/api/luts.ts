@@ -37,7 +37,7 @@ export async function lutFileText(id: number): Promise<string> {
       res.status === 401 ? 'UNAUTHORIZED' : 'INTERNAL',
       res.status === 401
         ? '登录状态过期了，刷新一下页面重新登录。'
-        : `那个滤镜没取回来（服务器回了 ${res.status}）。`)
+        : `那个 Lut 没取回来（服务器回了 ${res.status}）。`)
   }
   // 读正文是独立的一次往返（`fetch` 在响应头到达时就 resolve 了）——
   // 连接中途被掐断抛的是裸 `TypeError`，和上面"连不上"走同一条路。

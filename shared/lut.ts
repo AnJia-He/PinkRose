@@ -74,14 +74,14 @@ export function parseCube(text: string): Cube {
       continue
     }
     if (head === 'LUT_1D_SIZE') {
-      throw new LutParseError('这是 1D 滤镜，暂时只支持 3D 的（常见的滤镜都是 3D）。')
+      throw new LutParseError('这是 1D 的 Lut，暂时只支持 3D 的（常见的都是 3D）。')
     }
     if (head === 'LUT_3D_SIZE') {
       const n = Number(line.split(/\s+/)[1])
       if (!Number.isInteger(n) || n > MAX_LUT_SIZE || n < MIN_LUT_SIZE) {
         throw new LutParseError(n > MAX_LUT_SIZE
-          ? `这个滤镜是 ${n} 级的，太大了 —— 目前支持 ${MAX_LUT_SIZE} 级以内。`
-          : '这个文件不是 .cube 格式的滤镜。')
+          ? `这个 Lut 是 ${n} 级的，太大了 —— 目前支持 ${MAX_LUT_SIZE} 级以内。`
+          : '这个文件不是 .cube 格式的。')
       }
       size = n
       continue
@@ -116,7 +116,7 @@ export function parseCube(text: string): Cube {
     }
   }
 
-  if (size === 0) throw new LutParseError('这个文件不是 .cube 格式的滤镜。')
+  if (size === 0) throw new LutParseError('这个文件不是 .cube 格式的。')
   if (values.length !== size * size * size * 3) {
     throw new LutParseError(
       `这个文件读不出来（应该有 ${size * size * size} 行数据，实际读到 ${Math.floor(values.length / 3)} 行），` +

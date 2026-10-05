@@ -122,7 +122,7 @@ export function LutSettings({ onUse }: {
       if (alive.current) setLoad({ s: 'ready', list: luts })
     } catch (e) {
       // ⚠️ 失败时**绝不画成空清单**（见文件头那段）：说服务端那句话 + 下一步。
-      if (alive.current) setLoad({ s: 'fail', message: why(e, '打不开滤镜清单') })
+      if (alive.current) setLoad({ s: 'fail', message: why(e, '打不开 Lut 清单') })
     }
   }, [])
 
@@ -205,7 +205,7 @@ export function LutSettings({ onUse }: {
       const { sessions } = await lutUsage(l.id)
       if (alive.current) setAsk({ id: l.id, sessions })
     } catch (e) {
-      setErr(why(e, '没问出这个滤镜有没有在用，再试一次'))
+      setErr(why(e, '没问出这个 Lut 有没有在用，再试一次'))
     } finally {
       if (alive.current) setChecking(null)
     }
@@ -228,12 +228,12 @@ export function LutSettings({ onUse }: {
 
   return (
     <section className="luts">
-      <h1 className="luts-title">滤镜</h1>
+      <h1 className="luts-title">Lut</h1>
       {/* 顶上说明一句：这一页是干嘛的、导入之后在哪儿用得上。
           ⚠️ 不吹"多少款滤镜"这类做不到的话 —— 内容全是用户自己导进来的。
           ⚠️ 两个宿主叫「调色」和「对话」：界面上的名字只有这两个（曾经的
           「微调区」是 09-30 改名前的老叫法，同一个能力不许两个叫法）。 */}
-      <p className="luts-lede">导入 .cube 滤镜，套在照片上改颜色。调色和对话里都能用。</p>
+      <p className="luts-lede">导入 .cube，套在照片上改颜色。调色和对话里都能用。</p>
 
       <div className="luts-actions">
         {/* 藏起来的文件输入框由这颗按钮去点它（`.luts-file` 是 display:none，
@@ -285,7 +285,7 @@ export function LutSettings({ onUse }: {
       )}
       {load.s === 'ready' && load.list.length === 0 && (
         // 这句只在**真的拉到了空清单**之后才说（见文件头那段）
-        <p className="luts-empty">还没有导入过滤镜。</p>
+        <p className="luts-empty">还没有导入过 Lut。</p>
       )}
 
       {load.s === 'ready' && load.list.length > 0 && (
@@ -336,7 +336,7 @@ export function LutSettings({ onUse }: {
                 <div className="luts-expand luts-ask">
                   <p>
                     {ask.sessions > 0
-                      ? `还有 ${ask.sessions} 条老会话在用这个滤镜。删了之后，它们再打开会变回没有滤镜的样子。`
+                      ? `还有 ${ask.sessions} 条老会话在用这个 Lut。删了之后，它们再打开会变回没有 Lut 的样子。`
                       : '删了就找不回来了。'}
                   </p>
                   <div className="luts-expand-actions">

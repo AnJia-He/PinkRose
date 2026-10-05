@@ -1061,7 +1061,7 @@ async function measureSessions(page, targetName = null) {
  *  ⚠️ 这份清单是**写死的**，加/改导航项时这里必然红一次 —— 那是它该干的事
  *  （10-03 记过的"探针会静默腐烂"：写死的判据是故意留的，红了就跟着改，别改成
  *  "数一数有几项"那种不会红的写法）。 */
-const NAV_TABS = ['修图', '调色', '滤镜', '对话', '作品']
+const NAV_TABS = ['修图', '调色', 'Lut', '对话', '作品']
 
 function judgeSessions(label, m, view, mode) {
   console.log(`── ${label}`)

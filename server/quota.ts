@@ -47,7 +47,7 @@ export function assertRoomFor(
   const message = what === 'work'
     ? '空间满了（5 GB）。这张图已经给你了，但没能存进作品集 —— 先用「下载到电脑」拿到手，再去作品集删几张腾地方。'
     : what === 'lut'
-      ? '空间满了（5 GB）。先去作品集删几张，再导入新的滤镜。'
+      ? '空间满了（5 GB）。先去作品集删几张，再导入新的 Lut。'
       : '空间满了（5 GB）。先去作品集删几张，再上传新的。'
   throw new HttpError('BAD_REQUEST', message, 413)
 }

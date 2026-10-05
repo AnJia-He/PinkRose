@@ -309,7 +309,7 @@ export function AccountPage({
           <h2 className="account-tile-title">调色素材</h2>
           <div className="account-card">
             <button className="account-row" onClick={() => onGo({ kind: 'luts' })}>
-              <span className="account-row-label">滤镜</span>
+              <span className="account-row-label">Lut</span>
               {lutCount !== null && <span className="account-row-value">{lutCount} 个</span>}
               <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
             </button>
