@@ -1606,6 +1606,16 @@ export default function App() {
     // 这条消息身后有没有"一步"？步骤 id 就是那条助手消息的 id（老约定）。
     const wasStep = history.some(s => s.id === id)
     if (!wasStep) return
+    // ★（评审 Important，2026-10-06）删掉的正好是**最后一步**时，**推一版底图号**。
+    //   落盘那趟拿它判"底图换过没有"（`changed`）—— 不推的话那一趟不带
+    //   base/thumb：服务端手里的封面还是**被删那版**的像素，而 `steps` 里已经
+    //   没有它了。重开就是"编辑器显示 v1、左栏列表封面是 v2"，一句报错都没有。
+    //   （用户最常见的路径正是"站在最新那步上把它删掉"——那时画布已经被下面
+    //   那三行换成了新 tip 的样子，重传上去的 base/thumb 就是对的。）
+    //   删**中间**那些步不推：封面画的就是最后一步，那一步没动，封面本来还对。
+    //   ⚠️ 已知角落（评审接受的取舍）：人站在**别的**步骤上删尾步时，重传的封面
+    //   是他当时看的那一版（不是新 tip）—— 比"留着已删的那版"强，下一次生成自愈。
+    if (history[history.length - 1]?.id === id) baseSeqRef.current++
     setHistory(prev => {
       const next = prev.filter(s => s.id !== id)
       // 被删那一步的位图要还回去（原图不关 —— 它还要接着用）。副作用写在 updater

@@ -6919,6 +6919,80 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
     expect(stepItems()).toHaveLength(2)                    // 原图 + 第 2 版，正好两步
   })
 
+  it('★ 删**中间**那一步（不是当前步、后面还有步）：画面一动不动，位图只还了被删那张', async () => {
+    // App 接线的那一棒（`core/history.test.ts` 只在单元层钉着 `bitmapsToClose`
+    // 这个 helper）：站在最新一步上删掉**中间**那一步时，画面 / 位置都不许动 ——
+    // 动的只有被删那一步自己。
+    vi.mocked(api.postRoute)
+      .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '改一下', reply: '第一版好了。' }))
+      .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '再改一下', reply: '第二版好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    const originalBase = (canvasProps.images.at(-1) as unknown as { bitmap: ImageBitmap }).bitmap
+    await say('先改一次')
+    await say('再改一次')
+
+    const shown = canvasProps.images.at(-1)                // 画面上现在是第 2 版
+    expect(shown).toMatchObject({ bitmap: decodedBitmaps[1] })
+
+    await clickEl(delBtnOf('第一版好了。'))                 // 删的是中间那一步
+    await clickByText('确认删除')
+
+    // ① 那条话和那一步没了（小图 3 → 2），但**画面一动不动**（站的是第 2 版）
+    expect(bubbleTexts()).not.toContain('第一版好了。')
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(canvasProps.images.at(-1)).toBe(shown)
+    // ② 位图账：被删那一步的还了；第 2 版的和原图那张**一张都没碰**
+    expect(decodedBitmaps[0]!.close).toHaveBeenCalled()
+    expect(decodedBitmaps[1]!.close).not.toHaveBeenCalled()
+    expect(originalBase.close).not.toHaveBeenCalled()
+    // ③ 位置也没动：还站在第 2 版上
+    expect(container.querySelector('.bubble-current')?.closest('.msg')
+      ?.querySelector('.bubble-text')?.textContent).toBe('第二版好了。')
+  })
+
+  it('★（评审 Important）删掉**最新那一步**：下一趟落盘要把封面一起送上去 —— 而且是新 tip 那张', async () => {
+    // 服务端手里的封面必须跟着 steps 走：只删 steps 不换封面，重开就是
+    // "编辑器显示 v1、左栏列表封面是 v2"的静默不一致。根因是删除没有推
+    // `baseSeqRef`（落盘那趟判"底图换过没有"的 `changed` 用的就是它）。
+    // 两版的曝光**故意不一样**：封面换没换、换成哪一版，这个数才分得出来。
+    vi.mocked(api.postRoute)
+      .mockResolvedValueOnce(decision({
+        route: 'both', paramDeltas: { exposure: 40 }, editPrompt: '改一下', reply: '第一版好了。' }))
+      .mockResolvedValueOnce(decision({
+        route: 'both', paramDeltas: { exposure: -20 }, editPrompt: '再改一下', reply: '第二版好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')                                 // 第 1 版：曝光 +40
+    await say('再改一次')                                 // 第 2 版：又 -20（不是同一个数）
+    await waitPersist()                                   // 先把前两版追平 —— 下一趟才是"删除"那趟
+    const before = putCalls('/api/sessions/1').length
+    expect(bodyOf(putCalls('/api/sessions/1').at(-1)!).thumb).toBeTruthy()
+
+    await clickEl(delBtnOf('第二版好了。'))               // 站在第 2 版上删掉它
+    await clickByText('确认删除')
+    await waitPersist()
+
+    const puts = putCalls('/api/sessions/1')
+    expect(puts.length).toBeGreaterThan(before)
+    const body = bodyOf(puts.at(-1)!)
+    // ① 那一趟要**重新带上封面**（服务端才会把旧像素换掉）——
+    //    变异：删除处理器里不推 `baseSeqRef` → 这一句当场红（`changed` 为假，
+    //    patch 里没有 thumb）。
+    expect(body.thumb, '删掉最新这一步之后，落盘没把新封面送上去').toBeTruthy()
+    // ② 而且它来自**新 tip 的画面**：画布现在画的是第 1 版（曝光 40）、
+    //    缩略图就是从这块画布上抓的 —— 锚在"屏幕上真正看到的"上，不写死字符串
+    const canvas = container.querySelector('canvas') as HTMLCanvasElement
+    const rendered = JSON.parse(canvas.dataset.rendered!)
+    expect(rendered.exposure).toBe(40)
+    expect(body.thumb).toBe('thumb:' + JSON.stringify(rendered))
+    // ③ 位图账照旧：被删那版的还了，新 tip 的还活着
+    expect(decodedBitmaps[1]!.close).toHaveBeenCalled()
+    expect(decodedBitmaps[0]!.close).not.toHaveBeenCalled()
+  })
+
   it('「原图」那条没有 ✕ —— 它是这条会话的锚', async () => {
     await oneVersion()
     const msgs = [...container.querySelectorAll<HTMLElement>('.msg')]

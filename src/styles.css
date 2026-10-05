@@ -1341,8 +1341,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
 /* 带图那条的**就地确认**（不弹窗，全站规矩）：一句话 + 两颗按钮。
    形状照作品详情页那条 `.detail-confirm` —— 它是一个**正在问你的问题**，
-   所以给自己一块底；语气那一半（"删了就找不回来了。"）和 SessionsPage /
-   作品详情页**一字不差**。 */
+   所以给自己一块底；语气那一半（`删了就找不回来了。` / `确认删除`）**逐字**
+   来自 `LutSettings.tsx`（那个滤镜删除确认块，`src/ui/LutSettings.tsx:340`）——
+   ⚠️ 不是 SessionsPage：那边的话是「删掉这条？」「删掉」「取消」，一字不差
+   的只有"就地确认、不弹窗"这条**规矩**，不是那几个字（评审 Minor 更正）。 */
 .msg-confirm {
   display: inline-flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
   font-size: 12.5px;
