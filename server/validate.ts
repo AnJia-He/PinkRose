@@ -70,8 +70,9 @@ export function normalizeDeltas(v: unknown): ParamDeltas {
  *     （同 `normalizeLutChoice` 那条"形状烂 ≠ 没提"）。
  *   · **认得的键**、值接不住（`"30"` / `NaN` / `true`…）：它写了要改，
  *     `normalizeDeltas` 丢了它。
- *   · **不认识的键 + 非零数值**：键名是它自己编的（实测 `brightness: 99999`）。
- *     非数字的形状没有量纲、判不出"想改多少"，宁可不认。
+ *   · **不认识的键 + 看起来带着内容的值**：键名是它自己编的（实测 `brightness: 99999`）。
+ *     内容 = 非零数字 / 能 `Number()` 成非零有限数的字符串（`"30"`）/ 任何对象（含数组）；
+ *     `0` / `"0"` / `null` / 判不出量纲的字符串不算（宁可不认）。
  *
  * `null` / 没提 / 全 0 都不算丢 —— 它们是"这次不用改"的三种合法表达。
  */
@@ -82,8 +83,11 @@ function hasDroppedParams(raw: unknown): boolean {
   for (const [k, v] of Object.entries(src)) {
     if ((PARAM_KEYS as readonly string[]).includes(k)) {
       if (typeof v !== 'number' || !Number.isFinite(v)) return true
-    } else if (typeof v === 'number' && Number.isFinite(v) && v !== 0) {
-      return true
+    } else {
+      const n = typeof v === 'string' ? Number(v) : v
+      if (typeof n === 'number' && Number.isFinite(n) && n !== 0) return true
+      // 对象（含数组）：形状里有内容 —— "说了要改、我们没接住"。
+      if (typeof v === 'object' && v !== null) return true
     }
   }
   return false
@@ -231,9 +235,13 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
   //     那种形状渲染给用户的那句是我们自己的兜底文案（「…先按你说的试了一下。」），
   //     而这一路什么都没试，是句假话；仍走旧降级（那条路是真的试了）。
   //   · `!needsDisambiguation`：模型说"我不确定"时前端是先问再做，不许换成生成。
+  //   · `userText`：有用户原话（和下面那道闸门对称）—— 没有原话时"拿原话去试"
+  //     无从谈起，也就没有"照它说的走"这回事：保持旧行为，只把 degraded 打出来。
+  //     ⚠️ 2026-10-06 评审补：这一条原来漏了，和下面那道闸门自己的注释
+  //     （"`userText` 为空时保持原样"）打架。
   const cleanNoop = routeIsValid && route === 'params' &&
     !hasParams && !hasEdit && !hasLut &&
-    !dropped && !droppedParams && !needsDisambiguation && hasModelReply
+    !dropped && !droppedParams && !needsDisambiguation && hasModelReply && userText
   if (cleanNoop) {
     return {
       route: 'params',

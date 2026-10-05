@@ -423,6 +423,18 @@ describe('干净的 no-op（打招呼那种）· 2026-10-06', () => {
     expect(d.degraded).toBe(false)
   })
 
+  it('没给 userText 时**保持旧行为** —— degraded=true、增量还是全 0 键（不是 `{}`）', () => {
+    // cleanNoop 里的 `userText` 和下面那道闸门对称：没有用户原话时"拿原话去试"
+    // 无从谈起，也就没有"照它说的走"这回事 —— 保持旧行为（degraded 打出来，滑块一个不动）。
+    // ⚠️ 2026-10-06 评审补的闸：原来漏了它，和闸门自己的注释（"userText 为空时保持原样"）打架。
+    // 变异：把 cleanNoop 里的 `&& userText` 去掉 → 这条红（degraded 变 false、paramDeltas 变 `{}`）。
+    const d = parseDecision(HELLO)
+    expect(d.route).toBe('params')
+    expect(d.degraded).toBe(true)
+    expect(d.paramDeltas).toEqual(HELLO.param_deltas)   // 全 0 键原样带回来
+    expect(d.reply).toBe('你好，照片有什么想调的吗？')
+  })
+
   it('`param_deltas` 没写 / 明说 null 都算"没有要改的" —— 不许误伤', () => {
     const absent = parseDecision({ route: 'params', reply: '你好呀' }, '你好')
     expect(absent.route).toBe('params')
@@ -442,6 +454,18 @@ describe('干净的 no-op（打招呼那种）· 2026-10-06', () => {
     expect(d.route).toBe('generate')
     expect(d.editPrompt).toBe('亮一点')
     expect(d.degraded).toBe(true)
+  })
+
+  it('对照：编了键名的值"像内容"（`"30"` / 对象）→ 仍然降级（说了要改、我们没接住）', () => {
+    // 2026-10-06 评审 Minor：`"30"` 能当数看、对象里明摆着有东西 —— 都不是"没提"。
+    // 变异：把 hasDroppedParams 未知键那一支里"字符串 / 对象"两条判据去掉 → 这条红。
+    for (const v of ['30', { value: 30 }] as const) {
+      const d = parseDecision(
+        { route: 'params', paramDeltas: { brightness: v }, reply: '好' },
+        '亮一点')
+      expect(d.route, JSON.stringify(v)).toBe('generate')
+      expect(d.editPrompt, JSON.stringify(v)).toBe('亮一点')
+    }
   })
 
   it('对照：认得的键、值接不住（exposure:"30"）→ 仍然降级（写了要改，normalizeDeltas 丢了它）', () => {
@@ -475,5 +499,17 @@ describe('干净的 no-op（打招呼那种）· 2026-10-06', () => {
     const d = parseDecision({ route: 'params', param_deltas: {} }, '亮一点')
     expect(d.route).toBe('generate')
     expect(d.editPrompt).toBe('亮一点')
+  })
+
+  it('★（取舍记录）模型自己说了句"已经帮你调亮了"、却一个改动都没给 —— 以它说的为准，不花钱兜底', () => {
+    // ⚠️ 这条钉的是**明知而选的取舍**（2026-10-06 评审裁定），**不是 bug** ——
+    // 别"修"回付费生成：判据上分不出"它其实想改、只是没给改动"（那要读 reply 的语义），
+    // 只能以模型自述为准。代价照实说：这种形状旧代码是真的试了一次（花钱），
+    // 现在安静地什么都不做，靠就是模型自己那句话撑场面。
+    const d = parseDecision(
+      { route: 'params', param_deltas: {}, reply: '好的，已经帮你调亮了' }, '调亮一点')
+    expect(d.route).toBe('params')     // 不走 generate —— 这是取舍本身
+    expect(d.paramDeltas).toEqual({})
+    expect(d.degraded).toBe(false)
   })
 })
