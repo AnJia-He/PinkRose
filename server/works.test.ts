@@ -253,6 +253,17 @@ describe('handleGetWork / handleRenameWork', () => {
     }, USER, deps)
     expect(handleGetWork(r.id, USER, deps).recipe.lut).toEqual({ name: '黄昏', amount: 80 })
 
+    // ★ 替换（PUT）那条路也要过同一道闸 —— 两条路共用 `readRecipe`，所以这里也钉一遍：
+    //   只测 POST 的话，"两条写入路径都过闸"就只是注释里的一句话
+    await handleReplaceWork(r.id, {
+      image: JPEG, recipe: { params: {}, edits: [], lut: { name: '黄昏', amount: 80 } },
+    }, USER, deps)
+    expect(handleGetWork(r.id, USER, deps).recipe.lut).toEqual({ name: '黄昏', amount: 80 })  // 换成带滤镜的
+    await handleReplaceWork(r.id, {
+      image: JPEG, recipe: { params: {}, edits: [], lut: { name: 'x'.repeat(99), amount: 1e9 } },
+    }, USER, deps)
+    expect(handleGetWork(r.id, USER, deps).recipe.lut).toBeNull()                             // 形状不对 → 当没有
+
     // 形状不对的一律当没有 —— 一个 99 字的名字**不可能**对应任何真滤镜
     //（库里那些名字最多 30 字），存下来只会在详情页上说一句匹配不上的假话
     for (const bad of [
