@@ -5433,4 +5433,26 @@ describe('滤镜', () => {
     await openLutPanel()
     expect(adjustPanel().textContent ?? '').toContain('还没有导入过滤镜')
   })
+
+  /**
+   * ★ Task 9（用户拍板"两个都要"）：对话区也能调滤镜。
+   *
+   * 说话那条路是 Task 11 的事。这一条守的是**那颗按钮**：它点开必须是
+   * **和微调区同一套格子**（同一个 `LutPicker`）—— 两处各写一套的话，
+   * 改了这边忘了那边，用户会在两个地方看到不一样的滤镜列表。
+   */
+  it('对话区那颗「滤镜」点开是同一套格子', async () => {
+    // ⚠️ 必须显式设一次：这个文件没有 `clearMocks`，mock 状态跨用例活着，
+    //    上一条（"服务端上这个滤镜被删了"）最后留了 `{ luts: [] }` 当默认值。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    await renderApp()
+    await uploadPhoto()
+    // 停在修图页（对话区）—— 那颗按钮的可读名字就是「滤镜」
+    const btn = [...container.querySelectorAll('.chat-lut button')]
+      .find(b => (b.textContent ?? '').trim() === '滤镜') as HTMLButtonElement
+    expect(btn).toBeTruthy()
+    await act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(container.querySelector('.chat-lut .lut-picker')).toBeTruthy()
+    expect(container.querySelectorAll('.chat-lut .lut-tile')).toHaveLength(2)   // 不用 + 黄昏
+  })
 })

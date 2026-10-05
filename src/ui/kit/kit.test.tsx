@@ -132,6 +132,11 @@ describe('图标（2026-10-01 统一走 lucide）', () => {
         rerunnable={[1]} jumpableIds={[1]} marking={false} canConfirmMark={false}
         onSend={() => {}} onStop={() => {}} onCard={() => {}} onJump={() => {}}
         onRerun={() => {}} onConfirmMark={() => {}} onCancelMark={() => {}}
+        // ★ 2026-10-05（滤镜，Task 9）：ChatPanel 多了"对话区那颗按钮"那批 props。
+        //   这一条只验箭头图标，给一份最简的空清单就够 —— 但要给全，
+        //   少一个 `tsc` 就红（vitest 自己不做类型检查）。
+        luts={[]} lut={null} lutThumbs={{ none: null, byId: {} }}
+        onPickLut={() => {}} onLutAmount={() => {}} onNeedLutThumbs={() => {}} onGoImport={() => {}}
       />,
     )
     const jump = c.querySelector('.bubble-jump') as HTMLButtonElement

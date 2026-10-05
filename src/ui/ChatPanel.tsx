@@ -1,5 +1,8 @@
+import { useState } from 'react'
 import type { SuggestCard } from '../../shared/protocol.ts'
-import { RotateCw, Undo2 } from 'lucide-react'
+import type { LutMeta, LutRef } from '../../shared/lut.ts'
+import { RotateCw, SlidersHorizontal, Undo2 } from 'lucide-react'
+import LutPicker from './LutPicker.tsx'
 
 export type ChatMessage = {
   id: number
@@ -41,12 +44,28 @@ type Props = {
   canConfirmMark: boolean
   onConfirmMark: () => void
   onCancelMark: () => void
+  /** ★ 2026-10-05（滤镜，Task 9）：对话区这颗按钮用同一套格子。
+   *  命名和 `AdjustmentPanel` 那边**一模一样** —— 两处是同一批东西，
+   *  名字不同只会让人以为来源不同（它们其实是 App 里那同一个 `lutsApi` + `lut`）。 */
+  luts: readonly LutMeta[]
+  lut: LutRef | null
+  lutThumbs: { none: string | null; byId: Record<number, string> }
+  onPickLut: (lutId: number | null) => void
+  onLutAmount: (amount: number) => void
+  /** 打开那一刻才去要缩略图（很贵，别在收着时白画，见微调区同款注释）。 */
+  onNeedLutThumbs: () => void
+  /** 一个滤镜都没有时那颗「去导入」。 */
+  onGoImport: () => void
 }
 
 export default function ChatPanel({
   messages, cards, busy, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
   jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
+  luts, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport,
 }: Props) {
+  // 这颗按钮自己管开合（和微调区那一栏一样，`LutPicker` 只管格子本体）。
+  // 默认收着：它摆在输入框上面，句句话都摊开着一整排格子太吵。
+  const [lutOpen, setLutOpen] = useState(false)
   return (
     <aside className="chat">
       <div className="chat-log">
@@ -131,6 +150,26 @@ export default function ChatPanel({
           <span className="cards-now">正在看这张照片能改什么…</span>
         </div>
       )}
+
+      {/* ★ 2026-10-05：对话区也能调滤镜（用户当场拍板"两个都要"）。
+          说话那条路走 §7（模型认得名字），这一颗是**不用说话**那条路 ——
+          点开是**和微调区同一套格子**（同一个组件，两处长得一样）。
+          就地展开、不弹浮层：这一屏没有弹窗文化（和调色面板同一条规矩）。 */}
+      <div className="chat-lut">
+        <button className={lut ? 'chat-lut-btn on' : 'chat-lut-btn'} aria-expanded={lutOpen}
+          onClick={() => {
+            const next = !lutOpen
+            setLutOpen(next)
+            if (next) onNeedLutThumbs()
+          }}>
+          <SlidersHorizontal size={14} strokeWidth={1.5} aria-hidden="true" />
+          滤镜
+        </button>
+        {lutOpen && (
+          <LutPicker luts={luts} value={lut} thumbs={lutThumbs.byId} noneThumb={lutThumbs.none}
+            onPick={onPickLut} onAmount={onLutAmount} onGoImport={onGoImport} />
+        )}
+      </div>
 
       <form
         className="chat-input"

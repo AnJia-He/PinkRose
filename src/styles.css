@@ -1194,6 +1194,26 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .cards-now::before { width: 12px; height: 12px; }
 
+/* ★ 2026-10-05（滤镜，Task 9）：「滤镜」这颗 —— 摆在输入框上面，点开就
+   **就地**摊开和微调区同一套格子（同一个 `LutPicker`），不弹浮层。
+   · 药丸形 + 全站按钮的长相：它是颗正经按钮，不是 `.lut-tile` 那种无框格子。
+   · `align-self: flex-start`：靠左、不拉满 —— 它是个入口，不是这一屏的正事
+     （和 `.lut-import-go` 同一条）。
+   · 「在用滤镜」时挂 `.on`：主色只花在"我现在开着这个"这一个信息上，
+     长相照全站的选中档（描边 + 极淡底 + 亮一档的字色）。
+   ⚠️ `.on` 那条**排在 `:hover` 后面**：两边特异性一样（0-2-0），靠文件顺序
+   让选中的那格永远赢 —— 选中是比悬停更强的状态（和 `.lut-tile` 同一条）。 */
+.chat-lut { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4) 0; }
+.chat-lut-btn {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: var(--r-pill); padding: 5px 12px; font-size: 13px; color: var(--muted);
+}
+.chat-lut-btn:hover { color: var(--text); }
+.chat-lut-btn.on {
+  border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint);
+}
+
 .chat-input { display: flex; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); }
 .chat-input input {
   flex: 1; min-width: 0;

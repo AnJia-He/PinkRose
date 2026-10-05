@@ -1939,6 +1939,18 @@ export default function App() {
                   canConfirmMark={!!marker && !!pendingText}
                   onConfirmMark={confirmMark}
                   onCancelMark={cancelPick}
+                  // ★ 2026-10-05（滤镜，Task 9）：对话区这颗按钮和微调区那一栏
+                  //   是**同一批东西、同一个来源**（`lutsApi` + `lut`）——
+                  //   所以 props 名字和形状跟 `AdjustmentPanel` 那边一字不差。
+                  //   ⚠️ `onNeedLutThumbs` 同样传**当下的** image / params：
+                  //   缩略图要画的就是"用户此刻看到的这张照片 + 这套参数 + 那个滤镜"。
+                  luts={lutsApi.luts}
+                  lut={lut}
+                  lutThumbs={lutsApi.thumbs}
+                  onPickLut={(id) => setLut(id === null ? null : { lutId: id, amount: 100 })}
+                  onLutAmount={(amount) => setLut((cur) => (cur ? { ...cur, amount } : cur))}
+                  onNeedLutThumbs={() => lutsApi.ensureThumbs(image, params)}
+                  onGoImport={() => go({ kind: 'luts' })}
                 />
               )}
 
