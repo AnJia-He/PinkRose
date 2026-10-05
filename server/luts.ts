@@ -52,8 +52,13 @@ export async function createLut(
   const o = asObject(body)
   const text = str(o.cube)
   if (!text) throw new HttpError('BAD_REQUEST', '没有收到文件内容')
-  // 文本长度就是字节数的上界（UTF-8 下 ASCII 一字一字节；.cube 是纯 ASCII）
-  if (text.length > MAX_LUT_FILE_BYTES) throw new HttpError('BAD_REQUEST', '这个文件超过 8 MB 了。')
+  // ★ 落盘、上限和账本用的是**同一份 UTF-8 字节**（和 works/sessions 那边一个口径，
+  //   那边每一处都是 `.byteLength`）。原来这里用的是 `text.length`（UTF-16 码元数）——
+  //   `.cube` 正常是纯 ASCII、两者相等，但这不该是"闸和账本成立"的前提：
+  //   Task 4 起 `bytes` 要进 5 GB 配额账本，非 ASCII 的输入（比如中文 TITLE）
+  //   按码元数算会**偏小**，账本跟着偏。
+  const encoded = new TextEncoder().encode(text)
+  if (encoded.byteLength > MAX_LUT_FILE_BYTES) throw new HttpError('BAD_REQUEST', '这个文件超过 8 MB 了。')
 
   let cube: Cube
   try {
@@ -75,13 +80,13 @@ export async function createLut(
   assertNameFree(name, user, deps)
 
   // 配额和落盘都走既有的那一套（Task 4 会把 luts 计入 storedBytes）
-  assertRoomFor(deps.db, user.id, text.length, 'lut')
-  const storedName = await deps.storage.save(new TextEncoder().encode(text), '.cube')
+  assertRoomFor(deps.db, user.id, encoded.byteLength, 'lut')
+  const storedName = await deps.storage.save(encoded, '.cube')
   try {
     const r = deps.db.raw.prepare(
       `INSERT INTO luts (user_id, name, stored_name, size, bytes, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(user.id, name, storedName, cube.size, text.length, nowMs(deps))
+    ).run(user.id, name, storedName, cube.size, encoded.byteLength, nowMs(deps))
     const row = deps.db.raw.prepare('SELECT * FROM luts WHERE id = ?').get(Number(r.lastInsertRowid)) as LutRow
     return { lut: toMeta(row) }
   } catch (e) {

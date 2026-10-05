@@ -36,6 +36,19 @@ describe('createLut / listLuts', () => {
     expect(listLuts(user, deps).luts).toHaveLength(1)
   })
 
+  it('bytes 记的是 UTF-8 字节数 —— 中文 TITLE 让它和码元数不相等', async () => {
+    // ★ 审查 I2（2026-10-05）：原来闸、配额和这一列都用 `text.length`（UTF-16 码元数）。
+    //   纯 ASCII 的 .cube 上两者相等，所以只有非 ASCII 才分得出来 —— 而一个中文 TITLE
+    //   就够（一个汉字 1 码元 / 3 字节）。Task 4 起这一列要进 5 GB 配额账本，
+    //   口径必须和 works/sessions 一样是 `.byteLength`。
+    //   （实测：把这一列换回 `text.length`，这条立刻红 —— 72 ≠ 76。）
+    const t = CUBE2.replace('LUT_3D_SIZE 2', 'TITLE "黄昏"\nLUT_3D_SIZE 2')
+    const { lut } = await createLut({ cube: t }, user, deps)
+    expect(lut.name).toBe('黄昏')
+    expect(lut.bytes).toBe(new TextEncoder().encode(t).byteLength)
+    expect(lut.bytes).toBeGreaterThan(t.length)   // 少了这句，一个又按码元数的实现照样绿
+  })
+
   it('名字重了要拒绝（忽略大小写）', async () => {
     await createLut({ name: 'Sunset', cube: CUBE2 }, user, deps)
     await expect(createLut({ name: 'sunset', cube: CUBE2 }, user, deps)).rejects.toThrow(/换个名字/)

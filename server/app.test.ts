@@ -1077,6 +1077,100 @@ describe('/api/models', () => {
   })
 })
 
+describe('滤镜：路由真的接上了（2026-10-05）', () => {
+  /**
+   * 一个 2×2×2 恒等 cube。和 `server/luts.test.ts` 里那份同源 ——
+   * 这里要的是**逐字拿回来的原文**，所以常量必须和发出去的那份是同一个字符串。
+   */
+  const CUBE2 = ['LUT_3D_SIZE 2', '0 0 0', '1 0 0', '0 1 0', '1 1 0', '0 0 1', '1 0 1', '0 1 1', '1 1 1'].join('\n')
+
+  /** 导入一个，回它的 id（每个用例自己起 app、自己导）。 */
+  async function importOne(base: string, cookie: string, name = '黄昏'): Promise<number> {
+    const c = await call(base, 'POST', '/api/luts', { name, cube: CUBE2 }, cookie)
+    expect(c.status).toBe(200)
+    return (c.body as { lut: { id: number } }).lut.id
+  }
+
+  it('★ 没登录 POST /api/luts → 401，而不是 400 —— 鉴权排在读体之前', async () => {
+    // 和三个 AI 接口、作品/会话那几条同一条规矩（app.ts 里那段注释写着"顺序别对调"）。
+    // ⚠️ 故意送一个**畸形**请求体：认人排在读体前面，顺序反了它当场变成 400，
+    //    把"没登录"这个更重要的结局盖掉 —— 而这两件事的下一步动作完全不同
+    //    （去登录 / 换个 JSON 重发）。
+    //    （实测：把 `readJsonBody` 挪到 `requireUser` 前面，这条立刻红，回的是 400。）
+    const { base } = await appWithUser()   // 只用它起服务器，不带 cookie
+    const r = await fetch(`${base}/api/luts`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '这根本不是 JSON',
+    })
+    expect(r.status).toBe(401)
+    const body = await r.json() as { error: { code: string } }
+    expect(body.error.code).toBe('UNAUTHORIZED')
+  })
+
+  it('导入 → 列表里看得见 → 取回来逐字是原文（text/plain）', async () => {
+    // 这条钉的是**最后一环**：路由接对了 handler、`sendBytes` 的头和正文都对。
+    // 上面那条只走到 401 —— POST/GET 两个 handler、`sendBytes`（滤镜唯一的出口）
+    // 一行都没被碰到过。
+    const { base, cookie } = await appWithUser()
+    const id = await importOne(base, cookie)
+
+    const list = await call(base, 'GET', '/api/luts', undefined, cookie)
+    expect(list.status).toBe(200)
+    const luts = (list.body as { luts: { id: number; name: string; size: number }[] }).luts
+    expect(luts).toHaveLength(1)
+    expect(luts[0]!.name).toBe('黄昏')
+    expect(luts[0]!.size).toBe(2)
+
+    const r = await fetch(`${base}/api/luts/${id}/file`, { headers: { cookie } })
+    expect(r.status).toBe(200)
+    // 客户端拿这份正文去 parseCube —— 类型和换行都得原样（少了这一句，
+    // 一个"回 200 但正文是 JSON 包装 / 被 trim 过"的实现照样绿）
+    expect(r.headers.get('content-type')).toBe('text/plain; charset=utf-8')
+    expect(await r.text()).toBe(CUBE2)
+  })
+
+  it('★ 多一截的路径必须 404 —— 三条路由正则的锚定真的有人在守', async () => {
+    // 和作品/会话那两条锚定用例同一个形状（那些是终审补的）：不锚定的话，
+    // `/^\/api\/luts\/(\d+)/` 会**静默抢走** `/file`、`/usage` 和它们的下级路径，
+    // 而且回的东西看着完全正常（一个 200 + 详情 JSON）。
+    // ⚠️ 三条正则**逐条实测过**：各自单独去掉 `$` 之后，这条用例都红（`lutOneRoute`
+    //    去掉是 PATCH `/…/file` 那条先红，`lutUsageRoute` / `lutFileRoute` 去掉
+    //    是各自那条 404 断言先红）。
+    const { base, cookie } = await appWithUser()
+    const id = await importOne(base, cookie)
+    // 正面对照：这一条路径本身是通的。少了它，下面的 404 可能只是因为滤镜根本没导进去
+    expect((await fetch(`${base}/api/luts/${id}/file`, { headers: { cookie } })).status).toBe(200)
+
+    // PATCH `/…/file`：`lutOneRoute` 不锚定的话会匹配上、把滤镜改名并回 200
+    expect((await call(base, 'PATCH', `/api/luts/${id}/file`, { name: 'z' }, cookie)).status).toBe(404)
+    // GET `/…/extra`：同上，会回详情
+    expect((await call(base, 'GET', `/api/luts/${id}/extra`, undefined, cookie)).status).toBe(404)
+    // GET `/…/usage/x`：`lutUsageRoute` 不锚定的话会回用量
+    expect((await call(base, 'GET', `/api/luts/${id}/usage/x`, undefined, cookie)).status).toBe(404)
+    // GET `/…/file/x`：`lutFileRoute` 不锚定的话会把原文（一段**不是 JSON 的**文本）
+    // 直接发出去。这里用裸 fetch 只看状态码 —— 拿 `call()` 的话，变异后是
+    // "JSON 解析炸了"而不是一条看得懂的断言。
+    expect((await fetch(`${base}/api/luts/${id}/file/x`, { headers: { cookie } })).status).toBe(404)
+  })
+
+  it('★ usage 回的是 JSON 对象，不是 {} —— 这条 handler 不许悄悄变成 async', async () => {
+    // 这条钉的是"响应真的是那个对象"这个结局（实测过的变异：把 `lutUsage` 改成
+    // async、调用点漏掉 `await`，`sendJson` 收到 Promise、`JSON.stringify` 出来是 `{}` ——
+    // 回 200、看着一切正常，前端拿到一个空对象，删除确认框里那句
+    // "还有几条会话在用"当场变成假的）。
+    //
+    // ⚠️ 顺带纠正一句流传的说法：给**同步**的 handler 写 `await` 是**无害**的
+    //   （`await` 一个非 thenable 就是原值，实测：加了 `await` 照样绿）——
+    //   真正会静默变 `{}` 的是反过来那一半：函数变 async 而调用点没 await。
+    const { base, cookie } = await appWithUser()
+    const id = await importOne(base, cookie)
+    const r = await call(base, 'GET', `/api/luts/${id}/usage`, undefined, cookie)
+    expect(r.status).toBe(200)
+    expect(r.body).toEqual({ sessions: 0 })
+  })
+})
+
 /**
  * ★ §7.4 ——「用户带自己的钥匙」这件事到底生效没有，只有下面这四条说了算。
  *

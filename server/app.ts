@@ -637,7 +637,12 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     const lutUsageRoute = /^\/api\/luts\/(\d+)\/usage$/.exec(path)
     if (req.method === 'GET' && lutUsageRoute) {
       const user = requireUser(deps, req, res)
-      // 同步 handler：别写成 await（那会变成 Promise，sendJson 会序列化成 {}）
+      // 同步 handler：`sendJson` 收下的必须**已经是那个对象**。
+      // ⚠️ 这里原来那句理由是错的（"写成 await 会变成 Promise"）—— 给同步函数写
+      // `await` 是无害的（实测：加 `await` 照样绿）。真正会静默变 `{}` 的是反过来
+      // 那一半：`lutUsage` 哪天变成 async 而**这个调用点漏掉 await**，`sendJson`
+      // 收到 Promise、`JSON.stringify` 出来就是 `{}`，回 200、看着一切正常。
+      // `app.test.ts` 的「usage 回的是 JSON 对象，不是 {}」用变异实测钉着这一条。
       sendJson(res, 200, lutUsage(Number(lutUsageRoute[1]), user, {
         db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now,
       }))
