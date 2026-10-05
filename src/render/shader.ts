@@ -56,7 +56,17 @@ uniform float uCbYellowBlue;
 uniform float uSplitHiHue;
 uniform float uSplitLoHue;
 uniform float uSplitAmount;
-uniform sampler3D uLut;         // the user's color lookup table (3D texture)
+uniform highp sampler3D uLut;   // the user's color lookup table (3D texture)
+                                // NOTE: the precision qualifier is NOT optional --
+                                // added 2026-10-05 after the real-GPU probe caught
+                                // this program failing to compile ("'sampler3D' :
+                                // No precision specified"). GLSL ES 3.00 declares a
+                                // default precision for sampler2D / samplerCube
+                                // only; every other sampler type must state its
+                                // own. Without it the WHOLE program fails to link
+                                // (not just the LUT block) -- every photo renders
+                                // black and the user gets the generic render-failed
+                                // notice instead of their picture.
 uniform float uLutOn;           // 1.0 when a LUT is bound, 0.0 otherwise
 uniform float uLutAmount;       // strength, 0..1
 uniform vec3  uLutDomainMin;
