@@ -1254,16 +1254,38 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      长相照全站的选中档（描边 + 极淡底 + 亮一档的字色）。
    ⚠️ `.on` 那条**排在 `:hover` 后面**：两边特异性一样（0-2-0），靠文件顺序
    让选中的那格永远赢 —— 选中是比悬停更强的状态（和 `.lut-tile` 同一条）。 */
-.chat-lut { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4) 0; }
-.chat-lut-btn {
-  align-self: flex-start;
+/* ── 加号 + 它底下那行工具（★ 2026-10-05）───────────────────────────────
+   用户：「我觉得在对话框那边设一个加号，然后点击加号里面有滤镜以及以后添加的
+   功能」。两级：**加号**开关这一行工具；每一颗工具自己再开关它的面板。
+   工具行目前只有「滤镜」一项 —— 以后加新的，往这一行排就行。 */
+.chat-tools { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4) 0; }
+/* 一项工具 = 一颗药丸（就是原来那颗「滤镜」的长相，只是从"常驻在输入框上面"
+   搬进了加号里）。⚠️ 它是**真 `<button>`**：键盘走得到，`aria-expanded` 报得出
+   它自己那块面板开着没有。 */
+.chat-tool {
   display: inline-flex; align-items: center; gap: 6px;
   border-radius: var(--r-pill); padding: 5px 12px; font-size: 13px; color: var(--muted);
 }
-.chat-lut-btn:hover { color: var(--text); }
-.chat-lut-btn.on {
-  border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint);
+.chat-tool:hover { color: var(--text); }
+.chat-tool.on { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
+
+.chat-lut { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4) 0; }
+
+/* 输入框那一行最左边那颗**加号**。
+   ⚠️ 它是**图标键**：没有可见文字，名字只在 `aria-label`（"更多工具"）上 ——
+   和「个人设置」那颗同一条规矩（删了它，读到/找到的就是一个没有名字的按钮）。
+   ⚠️ 长相走**次要**那一档（透明底 + 描边），别抢「发送」 —— 这一行里主按钮
+   只有那一颗。`align-self: stretch` 让它跟输入框一样高（那一行的高度由输入框定）。 */
+.chat-plus {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; padding: 0; align-self: stretch;
+  background: transparent; border-color: var(--line-2); color: var(--muted);
 }
+.chat-plus:hover { color: var(--text); border-color: var(--line-3); background: var(--hover); }
+/* 里面正用着滤镜时点亮 —— 和微调区那一栏的 `.on` 同一个意思。
+   少了它，"这张图套着滤镜"在**修图这一屏**就没有任何地方显示了
+   （原来那颗常驻的「滤镜」还担着这个信息）。 */
+.chat-plus.on { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
 
 .chat-input { display: flex; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); }
 .chat-input input {

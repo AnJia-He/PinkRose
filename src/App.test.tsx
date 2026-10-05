@@ -756,6 +756,23 @@ async function goNav(name: string) {
   })
 }
 
+/**
+ * ★ 2026-10-05：打开对话栏里**加号**底下的一个工具（目前只有「滤镜」）。
+ *
+ * 它现在住在两层后面：输入框那颗 `＋` → 工具行 → 那一项。按**名字**找那一项
+ * （以后加了新工具，这条辅助照样能用）。
+ */
+async function openChatTool(name: string): Promise<HTMLElement> {
+  const plus = container.querySelector('.chat-plus') as HTMLButtonElement
+  expect(plus).toBeTruthy()
+  await act(async () => { plus.click(); await new Promise(r => setTimeout(r, 0)) })
+  const tool = [...container.querySelectorAll('.chat-tool')]
+    .find(b => (b.textContent ?? '').trim() === name) as HTMLButtonElement
+  expect(tool, `加号里没有「${name}」这一项`).toBeTruthy()
+  await act(async () => { tool.click(); await new Promise(r => setTimeout(r, 0)) })
+  return tool
+}
+
 /** 等过落盘那一层防抖（800ms）。Task 4 和 Task 5 两节都用它。
  *
  *  ★ **真的等**（真定时器），不用假定时器：这个文件从头到尾都用真定时器，
@@ -932,7 +949,11 @@ describe('对话式修图：钱花在对的地方', () => {
     await uploadPhoto()
     await say('把后面那个人去掉')
 
-    const before = container.querySelector('.chat-input button') as HTMLButtonElement
+    // ⚠️ 选的是"这一行里**不是加号**的那颗"（★ 2026-10-05）：输入框那行左边多了
+    //    那颗加号（打开工具行），裸的 `.chat-input button` 会先挑中它。
+    //    也**不能**写死 `[type="submit"]`：生成中那颗是「停止」（`type="button"`），
+    //    写死了这一条就永远挑不到东西。
+    const before = container.querySelector('.chat-input button:not(.chat-plus)') as HTMLButtonElement
     expect(before.textContent).toBe('停止')
     expect(seen?.aborted).toBe(false)
 
@@ -947,7 +968,7 @@ describe('对话式修图：钱花在对的地方', () => {
     expect(container.textContent ?? '').not.toContain('没改成功')
     expect(container.textContent ?? '').not.toContain('再试一次')
     // ① 停完那一格回到「发送」，用户马上能说下一句
-    const after = container.querySelector('.chat-input button') as HTMLButtonElement
+    const after = container.querySelector('.chat-input button:not(.chat-plus)') as HTMLButtonElement
     expect(after.textContent).toBe('发送')
     expect((container.querySelector('.bubble.pending'))).toBeNull()
   })
@@ -967,7 +988,7 @@ describe('对话式修图：钱花在对的地方', () => {
     await uploadPhoto()
     await say('把后面那个人去掉')
     await act(async () => {
-      (container.querySelector('.chat-input button') as HTMLButtonElement).click()
+      (container.querySelector('.chat-input button:not(.chat-plus)') as HTMLButtonElement).click()
       await new Promise(r => setTimeout(r, 0))
     })
 
@@ -1533,7 +1554,7 @@ describe('图上点选消歧', () => {
     // 顺手把新行为钉住：**卡片还在路上时，发送键必须是能按的**。
     // （下面 `say()` 能真的把话送到模型，靠的就是它 —— 但那是**间接**的：
     //  发送键要是变回 disabled，坏掉的是后面几条断言，报错看着像别的事。）
-    const sendBtn = container.querySelector('.chat-input button') as HTMLButtonElement
+    const sendBtn = container.querySelector('.chat-input button:not(.chat-plus)') as HTMLButtonElement
     expect(sendBtn.disabled).toBe(false)
 
     vi.mocked(api.postEdit).mockResolvedValue({
@@ -5863,13 +5884,43 @@ describe('滤镜', () => {
     vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
     await renderApp()
     await uploadPhoto()
-    // 停在修图页（对话区）—— 那颗按钮的可读名字就是「滤镜」
-    const btn = [...container.querySelectorAll('.chat-lut button')]
-      .find(b => (b.textContent ?? '').trim() === '滤镜') as HTMLButtonElement
+    // ★ 2026-10-05：它现在住在**输入框那颗加号**里（用户：「在对话框那边设一个加号，
+    //    然后点击加号里面有滤镜以及以后添加的功能」）—— 先点加号，再点「滤镜」。
+    const btn = await openChatTool('滤镜')
     expect(btn).toBeTruthy()
-    await act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)) })
     expect(container.querySelector('.chat-lut .lut-picker')).toBeTruthy()
     expect(container.querySelectorAll('.chat-lut .lut-tile')).toHaveLength(2)   // 不用 + 黄昏
+  })
+
+  /**
+   * ★ 2026-10-05：**输入框那颗加号**（用户截图 + 原话：「我觉得在对话框那边设一个
+   * 加号，然后点击加号里面有滤镜以及以后添加的功能」）。
+   *
+   * 三件事各自会静默坏掉，所以一条里都走一遍：
+   *   ① 加号在那一行里、一开始**什么都没展开**（别一进来就摊开一整排）；
+   *   ② 点加号 → 出现「滤镜」这一项，但**格子还没出来**（工具行 ≠ 工具本身）；
+   *   ③ 再点加号 → **连展开的工具一起收**（不然格子会留在那儿、没有关它的地方
+   *      —— 加号是这一摊唯一的开关）。
+   */
+  it('★ 加号：点开是工具行，再点是连工具一起收', async () => {
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    await renderApp()
+    await uploadPhoto()
+
+    expect(container.querySelector('.chat-plus')).toBeTruthy()
+    expect(container.querySelector('.chat-tool')).toBeNull()
+    expect(container.querySelector('.chat-lut')).toBeNull()
+
+    await click(container.querySelector('.chat-plus') as HTMLButtonElement)
+    expect(container.querySelector('.chat-tool')?.textContent).toContain('滤镜')
+    expect(container.querySelector('.chat-lut')).toBeNull()   // 工具行 ≠ 工具本身
+
+    await click(container.querySelector('.chat-tool') as HTMLButtonElement)
+    expect(container.querySelector('.chat-lut .lut-picker')).toBeTruthy()
+
+    await click(container.querySelector('.chat-plus') as HTMLButtonElement)
+    expect(container.querySelector('.chat-lut')).toBeNull()
+    expect(container.querySelector('.chat-tool')).toBeNull()
   })
 
   /**

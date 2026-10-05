@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
-import { RotateCw, SlidersHorizontal, Undo2 } from 'lucide-react'
+import { Plus, RotateCw, SlidersHorizontal, Undo2 } from 'lucide-react'
 import LutPicker from './LutPicker.tsx'
 
 export type ChatMessage = {
@@ -67,9 +67,29 @@ export default function ChatPanel({
   jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
 }: Props) {
-  // 这颗按钮自己管开合（和微调区那一栏一样，`LutPicker` 只管格子本体）。
-  // 默认收着：它摆在输入框上面，句句话都摊开着一整排格子太吵。
+  // ★ 2026-10-05：**输入框那颗加号**（用户截图 + 原话「我觉得在对话框那边设一个
+  //   加号，然后点击加号里面有滤镜以及以后添加的功能」）。
+  //
+  //   两级开关：`toolsOpen` 是加号自己（那一行工具），`lutOpen` 是「滤镜」这个
+  //   **工具本身**的格子。分成两级是用户点名要的形状 —— 加号的意思是"这儿还有
+  //   别的东西"，以后加新工具就往那一行排，不用再动输入框。
+  //   两个都默认收着：它摆在输入框上面，句句话都摊开着一整排格子太吵。
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [lutOpen, setLutOpen] = useState(false)
+
+  /**
+   * 这一栏**开着**的时候去要缩略图（很贵：每个滤镜各画一张当前照片）。
+   *
+   * ⚠️ 和微调面板里那条**同一条**（那边 2026-10-05 真机抓到过一次）：光在
+   *    "点开那一刻"叫一次是不够的 —— 清单**晚到一步**（用户在「滤镜」那页导完
+   *    直接过来）时，那一次一条都画不出来，而**再没有东西会叫第二次**：
+   *    用户看到的是一栏开着、格子全是灰方块，永远不变。
+   * ⚠️ 清单是空的时不叫：那种时候这一栏显示的是「还没有导入过滤镜。」
+   *    （或者「清单还没到手」），一张缩略图都用不上。
+   */
+  useEffect(() => {
+    if (lutOpen && luts.length > 0) onNeedLutThumbs()
+  }, [lutOpen, luts])
   return (
     <aside className="chat">
       <div className="chat-log">
@@ -155,26 +175,31 @@ export default function ChatPanel({
         </div>
       )}
 
-      {/* ★ 2026-10-05：对话区也能调滤镜（用户当场拍板"两个都要"）。
-          说话那条路走 §7（模型认得名字），这一颗是**不用说话**那条路 ——
-          点开是**和微调区同一套格子**（同一个组件，两处长得一样）。
-          就地展开、不弹浮层：这一屏没有弹窗文化（和调色面板同一条规矩）。 */}
-      <div className="chat-lut">
-        <button className={lut ? 'chat-lut-btn on' : 'chat-lut-btn'} aria-expanded={lutOpen}
-          onClick={() => {
-            const next = !lutOpen
-            setLutOpen(next)
-            if (next) onNeedLutThumbs()
-          }}>
-          <SlidersHorizontal size={14} strokeWidth={1.5} aria-hidden="true" />
-          滤镜
-        </button>
-        {lutOpen && (
+      {/* ★ 2026-10-05：加号底下的**工具行**（用户：「点击加号里面有滤镜以及以后
+          添加的功能」）。目前只有「滤镜」一项 —— 以后加工具就往这一行排，
+          输入框那一行不用再动。
+
+          就地展开、不弹浮层：这一屏没有弹窗文化（和调色面板同一条规矩）。
+          它和下面的格子是**两级**：这一行是"有哪些工具"，下面才是工具本身。 */}
+      {toolsOpen && (
+        <div className="chat-tools">
+          <button className={lut ? 'chat-tool on' : 'chat-tool'} aria-expanded={lutOpen}
+            onClick={() => setLutOpen((o) => !o)}>
+            <SlidersHorizontal size={14} strokeWidth={1.5} aria-hidden="true" />
+            滤镜
+          </button>
+        </div>
+      )}
+      {/* 点开是**和微调区同一套格子**（同一个组件，两处长得一样 —— 用户当场
+          拍板"两个都要"）。说话那条路走 §7（模型认得名字），这一颗是**不用说话**
+          那条路。 */}
+      {lutOpen && (
+        <div className="chat-lut">
           <LutPicker luts={luts} lutsKnown={lutsKnown} value={lut} thumbs={lutThumbs.byId}
             noneThumb={lutThumbs.none} onPick={onPickLut} onAmount={onLutAmount}
             onGoImport={onGoImport} onRetryLuts={onRetryLuts} />
-        )}
-      </div>
+        </div>
+      )}
 
       <form
         className="chat-input"
@@ -187,6 +212,23 @@ export default function ChatPanel({
           onSend(v)
         }}
       >
+        {/* ★ 2026-10-05：**加号**（用户：「在对话框那边设一个加号，然后点击加号
+            里面有滤镜以及以后添加的功能」）。
+
+            ⚠️ 它是**图标键**，所以那两行标记不是可选的：`aria-label` 是读屏和
+            "按标签找元素"的唯一依据（测试按 `.chat-plus` 找它），`aria-expanded`
+            报的是"里面那行开着没有"。
+            ⚠️ `type="button"`：在 form 里不写就会被当成提交键 —— 按一下加号
+            等于把消息发出去。
+            ⚠️ 再点一下要**连展开的工具一起收**：加号是这一摊**唯一**的开关，
+            只收自己的话，那排格子会留在原地而**没有关它的地方**。
+            ⚠️ 里面正用着滤镜时点一下 `.on`：少了它，"这张图套着滤镜"在修图
+            这一屏就**没有任何地方显示**了（原来那颗常驻的「滤镜」还担着这件事）。 */}
+        <button type="button" className={lut ? 'chat-plus on' : 'chat-plus'}
+          aria-label="更多工具" aria-expanded={toolsOpen}
+          onClick={() => setToolsOpen((o) => { if (o) setLutOpen(false); return !o })}>
+          <Plus size={16} strokeWidth={2} aria-hidden="true" />
+        </button>
         {/* ⚠️ 2026-10-01：这一格**故意没过 `<Field>`** —— 它没有标签也没有注解，
             而 `.chat-input input` 身上那条 `flex: 1` 是它撑满那一行的全部依据，
             包一层就得把 `flex` 挪到外层 div 上（这一条在手机上特别容易挤坏）。
