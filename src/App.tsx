@@ -1014,6 +1014,11 @@ export default function App() {
       // 点选那套状态跟对话是同一趟的东西：换张照片就该一起归零，
       // 否则上一张照片的红圈和"原来那句话"会跟到新照片上。
       setPending(null)
+      // ★ 2026-10-05（设计 §4.5，Task 4）：那条"要切掉后面吗"也是同一批 ——
+      //   切照片 = 屏幕上换了一张图，它说的那件事已经不存在。今天到不了
+      //   （换图 = 重开一次），一行保险，和 `resetEditor` / `loadSession` 里
+      //   那两处是同一条防线。（`setPendingReplace` 是稳定 setter，不进依赖。）
+      setPendingReplace(null)
       // 「上次那张要替换掉吗」记的是**这张照片**那一趟 —— 换了一张，
       // 那个"上次那张"就不存在了，再问就是拿别人的图问（§3.4）。
       setSavedId(null)
@@ -1127,7 +1132,7 @@ export default function App() {
     // 留着的话红圈会钉在下一张照片上，而「替换」问的是上一张存过的那条作品。
     setPending(null)
     // ★ 2026-10-05（设计 §4.5）：那条"要切掉后面吗"同理 —— 照片都换了，
-    //   它说的那件事已经不存在（`cancelReplace` 是稳定 setter，不进依赖）。
+    //   它说的那件事已经不存在（`setPendingReplace` 是稳定 setter，不进依赖）。
     setPendingReplace(null)
     dismissAsk()
     setOriginalPreview(null)

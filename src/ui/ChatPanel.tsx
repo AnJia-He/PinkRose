@@ -45,7 +45,8 @@ type Props = {
   onConfirmMark: () => void
   onCancelMark: () => void
   /**
-   * ★ 2026-10-05：现在站在哪一步（Task 5 的「你在这里」用它；这里先收下）。
+   * ★ 2026-10-05：现在站在哪一步 —— 那一步上的「回到这一步」换成「你在这里」
+   *   （设计 §6.1）。`null`（还没有会话）时谁都不标。
    */
   currentId: number | null
   /** 后面还有几步（站在最新一步时是 0）。>0 时两条确认条都要提醒"会切掉它们"。 */
@@ -75,7 +76,7 @@ type Props = {
 export default function ChatPanel({
   messages, cards, busy, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
   jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
-  futureSteps, replacing, onConfirmReplace, onCancelReplace,
+  currentId, futureSteps, replacing, onConfirmReplace, onCancelReplace,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
 }: Props) {
   // ★ 2026-10-05：**输入框那颗加号**（用户截图 + 原话「我觉得在对话框那边设一个
@@ -135,11 +136,18 @@ export default function ChatPanel({
                   )}
                   {acts && (
                     <div className="bubble-actions">
+                      {/* ★ 2026-10-05：站在的那一步**不是一颗按钮**，是一个位置标记
+                          （设计 §6.1）。在最新一步上，那颗「回到这一步」本来就是
+                          点了没反应的按钮 —— 换成它顺手把那个毛病修掉，而且任何
+                          时刻"我在哪"都有答案。span 不是 button：读屏和"按文字找
+                          按钮"的地方都能分清。 */}
                       {jumpableIds.includes(m.id) && (
-                        <button className="bubble-jump" onClick={() => onJump(m.id)}>
-                          <Undo2 size={13} aria-hidden="true" />
-                          回到这一步
-                        </button>
+                        m.id === currentId
+                          ? <span className="bubble-current" aria-current="step">你在这里</span>
+                          : <button className="bubble-jump" onClick={() => onJump(m.id)}>
+                              <Undo2 size={13} aria-hidden="true" />
+                              回到这一步
+                            </button>
                       )}
                       {/* 「再来一版」= 同一句话重掷一次。**和「回到这一步」并排但不同**：
                           一个是回去，一个是回去**并且立刻重来**（靠 ↶ / ↻ 区分）。

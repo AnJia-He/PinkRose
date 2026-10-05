@@ -876,9 +876,11 @@ describe('对话式修图：钱花在对的地方', () => {
     await say('先改一次')     // 生成回来的那张 = decoded-1
     await say('再改一次')     // 再生成一张      = decoded-2
 
-    // 三步历史各挂一个「回到这一步」：原图、第一次生成、第二次生成
+    // 三步历史各挂一个「回到这一步」—— 但**站的那一步**不算：
+    // ★ 2026-10-05 起它标的是「你在这里」位置标记，所以这里只有 2 颗按钮
+    // （最后一颗现在是「你在这里」）。
     const jumps = container.querySelectorAll('.bubble-jump')
-    expect(jumps.length).toBe(3)
+    expect(jumps.length).toBe(2)
 
     // 退回最开始那一步（原图）
     await act(async () => { (jumps[0] as HTMLButtonElement).click() })
@@ -1071,8 +1073,10 @@ describe('★ 再来一版：同一句话重掷一次', () => {
     await renderApp()
     await uploadPhoto()
 
-    // 还没改过：历史里只有原图那一步
-    expect(container.querySelectorAll('.bubble-jump').length).toBe(1)
+    // 还没改过：历史里只有原图那一步 —— 而且人正站在它上面，
+    // ★ 2026-10-05 起它显示为「你在这里」标记而不是跳按钮（所以按钮是 0 颗）
+    expect(container.querySelectorAll('.bubble-jump').length).toBe(0)
+    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
     expect(container.querySelectorAll('.bubble-rerun').length).toBe(0)
   })
 
@@ -1473,8 +1477,11 @@ describe('按住看原图', () => {
     expect(canvasProps.props.at(-1)?.originalPreview).toBeNull()
     // 但别的一样都不能少 —— 欢迎语、以及历史里那一步（用户要靠它回到原图）。
     // 少了这些，用户拿到的是一张没有对话入口的照片，整个应用不可用。
+    // ★ 2026-10-05：刚上传完，站的就是原图那一步 —— 它显示为「你在这里」
+    // 标记（步骤还在的证据是那个标记），所以这里没有跳按钮。
     expect(lastReply()).toContain('准备好啦')
-    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(1)
+    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(0)
+    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
     // 更不能弹"这张图打不开"—— 照片明明打开了，那是句假话。
     expect(alertSpy).not.toHaveBeenCalled()
   })
@@ -1557,7 +1564,10 @@ describe('图上点选消歧', () => {
     // ★ 这一步还得挂在**一条真的消息**上。缩略图和「回到这一步」两处都是按
     //   消息 id 对号的 —— 用 `nextId()` 这种"没有消息的 id"会让这两样**双双
     //   静默失效**：用户点完圈，画面上什么都没多，也没法回到这一步。
-    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(2)
+    // ★ 2026-10-05：点完「就改这里」站的就是**新的那一步** —— 它是「你在这里」
+    //   标记，跳按钮只剩 1 颗（原图那颗）。
+    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(1)
+    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
     expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
   })
 
@@ -1693,7 +1703,12 @@ describe('图上点选消歧', () => {
     await tapPhoto()
     expect(container.textContent).toContain('就改这里')
 
-    const jump = container.querySelector('.bubble-jump') as HTMLButtonElement
+    // ★ 2026-10-05（Task 5）：这个场景里历史只有原图一步，而人正站在它上面 ——
+    //   那颗「回到这一步」已经变成「你在这里」位置标记，**没有跳按钮可点了**。
+    //   跳回原图改走**缩略图**：缩略图点的是同一个 `onJump`
+    //   （`ChatPanel` 里 `onClick={() => jumpableIds.includes(m.id) && onJump(m.id)}`），
+    //   语义一字不差 —— 而且它和「回到这一步」是一对没有 busy 闸门的控件（见上）。
+    const jump = container.querySelector('.bubble-thumb') as HTMLElement
     expect(jump).toBeTruthy()
     await act(async () => { jump.click(); await new Promise(r => setTimeout(r, 0)) })
 
@@ -4788,10 +4803,13 @@ describe('恢复：打开就接着上次那条', () => {
     expect(bubbleTexts()).toContain('S7第 6 步')
 
     // ③ ★ 步骤**一步都不许截断**（§7：这一版明确不做"只取最后 K 步"）。
-    //    截断的后果不是"少几张缩略图"：`jumpTo` 找不到 id 就原样返回一份拷贝，
+    //    截断的后果不是"少几张缩略图"：`cutAfter` 找不到 id 就原样返回一份拷贝，
     //    老步骤上那颗「回到这一步」会变成**点了没反应**的死按钮，而且不报错。
-    //    `MAX_SNAPSHOTS` 是 6，这里给 7 步 —— 截断的话这里只剩 6 颗。
-    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(7)
+    //    `MAX_SNAPSHOTS` 是 6，这里给 7 步 —— 截断的话这里只剩 5 颗跳按钮。
+    //    ★ 2026-10-05：恢复后站在**最后一步**，那一步是「你在这里」标记而不是
+    //    按钮 —— 所以按钮 6 颗 + 标记 1 个 = 7 步全在。
+    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(6)
+    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
 
     // ④ `reusesPrev` 的那一步**不重新下载**（它和上一步是同一张图）：
     //    7 步里第 2 步（id 3）带这个标记，所以只该有 6 次取图。
@@ -4828,7 +4846,7 @@ describe('恢复：打开就接着上次那条', () => {
 
     // ⑨ ★ 「回到这一步」在**恢复之后**真的按得动（设计 §9 第 4 条）。
     //    这一条和 ③ 是同一件事的两半：③ 说按钮在，⑨ 说按钮按下去画面真的回去。
-    //    截断步骤的后果在这里现原形 —— `jumpTo` 找不到 id 时**原样返回一份拷贝**：
+    //    截断步骤的后果在这里现原形 —— `cutAfter` 找不到 id 时**原样返回一份拷贝**：
     //    按钮还在、点下去什么都不会发生、一句错也不报。
     const jumps = [...container.querySelectorAll('.bubble-jump')] as HTMLButtonElement[]
     await act(async () => { jumps[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
@@ -6300,7 +6318,16 @@ describe('「回到这一步」不再删后面的步骤', () => {
     await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
     vi.mocked(api.postEdit).mockClear()
 
+    // ★ 2026-10-05（Task 5 carry-over）：这句 reply 特意跟默认那句（'好。'）不同
+    //   —— 原来断的 `toContain('好')` 太松，屏幕上任何一句带"好"的话都能让它过
+    //   （同批另两条断的是 '那就不动这一步' 这种精确短语）。换成只可能来自
+    //   这一句的片段，下面才有资格说"是**这句 reply** 到这时才说"。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '改一下', reply: '好，这就换个方向改。' }))
     await say('换个方向')
+
+    // 还挂在确认条上：这句 reply **一个字都还没说**（说了再点「算了」就是"说了不做"）
+    expect(bubbleTexts()).not.toContain('好，这就换个方向改。')
     await clickByText('继续改')
 
     expect(api.postEdit).toHaveBeenCalledTimes(1)
@@ -6308,7 +6335,7 @@ describe('「回到这一步」不再删后面的步骤', () => {
     expect(req.imageDataUrl).toContain('MODEL:upload')                // 从原图改的
     expect(bubbleTexts()).not.toContain('先改一次')                    // 旧未来切了
     expect(bubbleTexts()).toContain('换个方向')                        // 刚说的还在
-    expect(lastReply()).toContain('好')                                // 那句 reply 到这时才说
+    expect(lastReply()).toContain('这就换个方向改')                     // 那句 reply 到这时才说
   })
 
   it('★ 确认条挂着时跳走 → 条子收了（不会切到别处）', async () => {
@@ -6383,5 +6410,22 @@ describe('「回到这一步」不再删后面的步骤', () => {
     await act(async () => { reruns().at(-1)!.click(); await new Promise(r => setTimeout(r, 0)) })
     expect(container.textContent).not.toContain('后面还有')
     expect(api.postEdit).toHaveBeenCalledTimes(1)
+  })
+
+  it('★ 站的那一步标「你在这里」；跳走之后标记跟着走', async () => {
+    await twoVersions()
+
+    // 站在最新一步：标记挂在**最末**那条回复上，跳按钮只剩两颗
+    const msgs = () => [...container.querySelectorAll('.msg.assistant')] as HTMLElement[]
+    expect(msgs().at(-1)!.querySelector('.bubble-current')?.textContent).toBe('你在这里')
+    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(2)
+    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
+
+    // 退回原图：标记跟到**第一条**回复上（DOM 顺序 = 消息顺序）
+    await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(msgs()[0]!.querySelector('.bubble-current')?.textContent).toBe('你在这里')
+    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
+    // 而且刚才那颗标记（第 2 版）变回了按钮 —— 后面的步骤还能往回跳
+    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(2)
   })
 })

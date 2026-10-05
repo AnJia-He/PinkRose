@@ -1242,6 +1242,18 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    而点下去什么都没发生（那正是这个项目最不喜欢的一种按钮）。
    特异性 0-2-0 和上面那条 hover 相同，靠**文件顺序**分胜负：这条必须在后面。 */
 .bubble-rerun:disabled { color: var(--muted-2); border-color: var(--line); background: transparent; }
+/* ★ 2026-10-05：「你在这里」＝ 位置标记，不是按钮。穿的是「回到这一步」
+   同一副药丸骨架，但它**点不动**（cursor: default）—— 它就是"你现在站的
+   那一步"这个事实本身。⚠️ 它是 span，没有全局 button 那套底色/边框，
+   所以边框得自己写（`.bubble-jump` 是借了全局 button 那一条才不用写的）。 */
+.bubble-current {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 12px; font-size: 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: transparent; color: var(--muted-2);
+  cursor: default;
+}
 
 /* 卡片那一格：点一下就能改的几条，还有"正在看…"那句提示。 */
 .cards { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: 0 var(--sp-4) var(--sp-3); }
