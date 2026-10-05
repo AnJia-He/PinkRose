@@ -102,6 +102,17 @@ type Props = {
    *   和删掉一张花过钱的图不是一回事。
    */
   onDeleteMessage: (id: number) => void
+  /**
+   * ★ 2026-10-06 下午（他的第二问：「是像这样可选择性的删除吗？」——一张勾选框
+   * 截图；控制器问过之后他选的是"两个都要"）：**一次删好几条**（选择模式里点
+   * 「确认删除」/「删除」走到这儿）。
+   *
+   * 和单条那条**是同一本账**：App 里 `onDeleteMessage` 就是它删一条的特例
+   * （`onDeleteMessages([id])`）—— 光标、底图号、位图回收只有一份实现。
+   * ⚠️ 删前那一问仍由 ChatPanel 做（它才看得见"勾的里面有几步带图"）——
+   *   走到这里就是用户已经点过「确认删除」（或者勾的全是纯文字）。
+   */
+  onDeleteMessages: (ids: number[]) => void
 }
 
 export default function ChatPanel({
@@ -109,7 +120,7 @@ export default function ChatPanel({
   jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
   currentId, futureSteps, replacing, onConfirmReplace, onCancelReplace,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
-  originalId, onDeleteMessage,
+  originalId, onDeleteMessage, onDeleteMessages,
 }: Props) {
   // ★ 2026-10-05：**输入框那颗加号**（用户截图 + 原话「我觉得在对话框那边设一个
   //   加号，然后点击加号里面有滤镜以及以后添加的功能」）。
@@ -143,6 +154,43 @@ export default function ChatPanel({
    * 这一条里排，不用在消息末尾越堆越多。
    */
   const [menuId, setMenuId] = useState<number | null>(null)
+
+  /**
+   * ★ 2026-10-06 下午：**选择模式**（多选批删）。开着的那一档里：
+   *   · 每条消息旁一个勾选框（「原图」那条没有 —— 它是锚）、别的按钮全收；
+   *   · 输入框让位给操作条「已选 N 条 ｜ 删除 ｜ 取消」。
+   * 进去的路只有一条：某条消息菜单里的【多选】（豆包 / 微信都是这个进法）。
+   * ⚠️ `busy` 时进不来（那颗「…」是灰的）—— 所以这一档里不必再防"生成中"，
+   *   发号的那条路（输入框、卡片）也整体不渲染了。
+   */
+  const [selecting, setSelecting] = useState(false)
+  /** 勾了哪几条（消息 id）。**出去就清空** —— 再进来是新一轮，不带着上次的勾。 */
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
+  /** 批量删除的**就地确认**开着没有（勾里有带图的步骤才会走到它）。 */
+  const [batchAsk, setBatchAsk] = useState(false)
+
+  /** 勾 / 取消勾一条（勾选框、气泡、小图三个入口都走它）。 */
+  function togglePick(id: number) {
+    setSelectedIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])
+  }
+  /** 退出选择模式（「取消」和"删完"都走它）：勾清空、确认条收掉。 */
+  function exitSelect() {
+    setSelecting(false)
+    setSelectedIds([])
+    setBatchAsk(false)
+  }
+  /** 勾的里面有几步是**带图的**（就是确认那句里"几张生成过的图"那个数）。 */
+  const stepCount = selectedIds.filter(id => jumpableIds.includes(id)).length
+  /** 点【删除】：勾里有带图的步骤 → 先问一句；全是纯文字 → 直接删（同单条规矩）。 */
+  function askBatchDelete() {
+    if (selectedIds.length === 0) return
+    if (stepCount > 0) { setBatchAsk(true); return }
+    doBatchDelete()
+  }
+  function doBatchDelete() {
+    onDeleteMessages(selectedIds)
+    exitSelect()
+  }
 
   /**
    * 这一栏**开着**的时候去要缩略图（很贵：每个滤镜各画一张当前照片）。
@@ -179,25 +227,46 @@ export default function ChatPanel({
           const delable = m.id !== originalId
           return (
             <div key={m.id} className={`msg ${m.role}`}>
-              {/* ① 上面那一块：话 */}
-              <div className={`bubble ${m.role}`}>
+              {/* ① 上面那一块：话。
+                  ⚠️ 选择模式里点它 = 勾选（微信式的大点击面；那一档里没有
+                  文字要读——真要读字就不会开着选择模式），别的入口照旧。 */}
+              <div className={`bubble ${m.role}${selecting && delable ? ' pickable' : ''}`}
+                onClick={selecting && delable ? () => togglePick(m.id) : undefined}>
                 <div className="bubble-text">{m.text}</div>
               </div>
-              {/* ② 那一步的画面（`thumbs` 还没生成完 = 空串时，这块整个不摆） */}
+              {/* ② 那一步的画面（`thumbs` 还没生成完 = 空串时，这块整个不摆）。
+                  ⚠️ 选择模式里点它也是勾选 —— 不然"点小图"会在选东西的时候
+                  把人**跳到别的步骤**上去。 */}
               {shot && (
                 <img
                   className="bubble-thumb"
                   src={thumbs[m.id]}
                   alt="这一步的效果"
-                  onClick={() => jumpableIds.includes(m.id) && onJump(m.id)}
+                  onClick={() => {
+                    if (selecting) { if (delable) togglePick(m.id); return }
+                    if (jumpableIds.includes(m.id)) onJump(m.id)
+                  }}
                 />
               )}
               {/* ③ 末尾那一排：回到这一步 / 再来一版 / 「…」。
                   ★ 2026-10-06：它不再套在 `.shot` 里了 —— 这一排现在是**每段都有**
                   的（用户要的豆包式：「放个这个图标在每段对话的最后」）：纯文字
                   那条只有「…」一颗；「原图」那条没有「…」（它是这条会话的锚），
-                  但站着的那格「你在这里」照旧。间距由 `.msg` 自己的 gap 管。 */}
-              {(acts || delable) && (
+                  但站着的那格「你在这里」照旧。间距由 `.msg` 自己的 gap 管。
+                  ★ 2026-10-06 下午：**选择模式里这一排整个让位给一颗勾选框** ——
+                  平时那些按钮一个不留（选东西的时候没有别的可点，「再来一版」
+                  更是花钱的，不能混在里面）。 */}
+              {selecting ? delable && (
+                <div className="bubble-actions">
+                  {/* ⚠️ 原生 checkbox 就够了：系统画的勾选框比自绘的有辨识度
+                      （用户给的截图里就是它），颜色跟着主色走（CSS 里那行
+                      `accent-color`），无障碍是免费的。 */}
+                  <input type="checkbox" className="msg-pick"
+                    checked={selectedIds.includes(m.id)} disabled={!!busy}
+                    onChange={() => togglePick(m.id)}
+                    aria-label="选中这条记录" />
+                </div>
+              ) : (acts || delable) && (
                 <div className="bubble-actions">
                   {/* ★ 2026-10-05：站在的那一步**不是一颗按钮**，是一个位置标记
                       （设计 §6.1）。在最新一步上，那颗「回到这一步」本来就是
@@ -252,11 +321,19 @@ export default function ChatPanel({
               )}
               {/* ★ 2026-10-06：「…」点开的**菜单**（就地展开，不弹浮层 —— 和全站
                   "没有弹窗文化"同一条规矩；再点一下「…」收起，和输入框那颗加号
-                  同一个开关逻辑）。目前一项【删除】；以后消息上的动作都往这条里排。
+                  同一个开关逻辑）。两项：【多选】进选择模式、【删除】删这一条
+                  （**危险的那一项排最后** —— 菜单的通用规矩，手机桌面都是这么排的）。
                   ⚠️ 点【删除】分两路：带图那条转成下面的就地确认（`confirmingId`），
                   纯文字那条直接请 App 删（见 `onDeleteMessage` 那段 props 注释）。 */}
               {menuId === m.id && (
                 <div className="msg-menu">
+                  <button className="msg-menu-pick" disabled={!!busy}
+                    onClick={() => {
+                      setMenuId(null)
+                      setSelectedIds([])
+                      setBatchAsk(false)
+                      setSelecting(true)
+                    }}>多选</button>
                   <button className="msg-menu-del" disabled={!!busy}
                     onClick={() => {
                       setMenuId(null)
@@ -317,8 +394,11 @@ export default function ChatPanel({
       </div>
 
       {/* spec §6.3 的歧义兜底：请用户在图上点一下，点完**确认了才花钱**
-          （一次生成约 12,900 tokens，点错了不该亏钱）。 */}
-      {marking && (
+          （一次生成约 12,900 tokens，点错了不该亏钱）。
+          ⚠️ 选择模式里所有辅助条一起收（点选 / 继续改 / 卡片 / 正在看…）——
+          选东西的时候它们要么是干扰、要么会**当场花钱**（卡片点一下就是一次生成）。
+          状态不丢：退出选择模式后照原样回来。 */}
+      {!selecting && marking && (
         <div className="cards">
           {/* ★ 2026-10-05：从旧步骤点选时，这条条子**顺带**把"会切掉后面"说出来
               —— 它本来就要点「就改这里」才花钱，不多要一次点击（设计 §4.5）。 */}
@@ -340,7 +420,7 @@ export default function ChatPanel({
 
       {/* ★ 2026-10-05（设计 §4.5）：从旧步骤再改之前先问一句 —— 那几步是
           花过钱的，这个项目一直不静默丢东西。形状照抄点选那条（`.cards`）。 */}
-      {replacing && (
+      {!selecting && replacing && (
         <div className="cards">
           <span className="cards-note">
             {`后面还有 ${futureSteps} 步，从这改会把它们去掉。`}
@@ -350,7 +430,7 @@ export default function ChatPanel({
         </div>
       )}
 
-      {cards.length > 0 && (
+      {!selecting && cards.length > 0 && (
         <div className="cards">
           {cards.map(c => (
             <button
@@ -370,7 +450,7 @@ export default function ChatPanel({
           这一格是空的，用户不知道是在等还是坏了。
           ⚠️ 卡片一到就"换成"卡片（不是并存）：两句话说的是同一件事，
           一起出现会像两个东西。 */}
-      {suggesting && cards.length === 0 && !marking && (
+      {!selecting && suggesting && cards.length === 0 && !marking && (
         <div className="cards">
           <span className="cards-now">正在看这张照片能改什么…</span>
         </div>
@@ -382,7 +462,7 @@ export default function ChatPanel({
 
           就地展开、不弹浮层：这一屏没有弹窗文化（和调色面板同一条规矩）。
           它和下面的格子是**两级**：这一行是"有哪些工具"，下面才是工具本身。 */}
-      {toolsOpen && (
+      {!selecting && toolsOpen && (
         <div className="chat-tools">
           <button className={lut ? 'chat-tool on' : 'chat-tool'} aria-expanded={lutOpen}
             onClick={() => setLutOpen((o) => !o)}>
@@ -394,7 +474,7 @@ export default function ChatPanel({
       {/* 点开是**和微调区同一套格子**（同一个组件，两处长得一样 —— 用户当场
           拍板"两个都要"）。说话那条路走 §7（模型认得名字），这一颗是**不用说话**
           那条路。 */}
-      {lutOpen && (
+      {!selecting && lutOpen && (
         <div className="chat-lut">
           <LutPicker luts={luts} lutsKnown={lutsKnown} value={lut} thumbs={lutThumbs.byId}
             noneThumb={lutThumbs.none} onPick={onPickLut} onAmount={onLutAmount}
@@ -402,6 +482,44 @@ export default function ChatPanel({
         </div>
       )}
 
+      {/* ★ 2026-10-06 下午：**选择模式底下那条操作条**（输入框在这一档让位 ——
+          发不了话：想聊先退出，这比"发出去了但心里没底"清楚，卡片那条花钱的
+          路也一起收了，见上面）。
+          两副面孔：平时「已选 N 条 ｜ 删除 ｜ 取消」；点【删除】而勾里有带图的
+          步骤时，就地变成那一问（`batchAsk`）—— 全站"不弹窗"的规矩，
+          和 `.msg-confirm` 是同一条。 */}
+      {selecting && (
+        <div className="chat-select">
+          {batchAsk ? (
+            <>
+              <span className="chat-select-note">
+                {`选中的 ${selectedIds.length} 条里有 ${stepCount} 张生成过的图，删了就找不回来了。`}
+              </span>
+              {/* 两颗里只有「确认删除」穿危险色 —— 文案都很短、长得又像，
+                  点错一次东西就没了，颜色是唯一还分得开的地方（`.danger`，
+                  和 SessionsPage 的「删掉」同一条规矩）。 */}
+              <button className="chat-select-del danger"
+                disabled={!!busy || selectedIds.length === 0}
+                onClick={doBatchDelete}>确认删除</button>
+              <button className="chat-select-cancel" disabled={!!busy}
+                onClick={() => setBatchAsk(false)}>算了</button>
+            </>
+          ) : (
+            <>
+              <span className="chat-select-count">{`已选 ${selectedIds.length} 条`}</span>
+              {/* 一条都没勾 = 点了什么也不会发生 → 直接禁用它（不留点了没反应的
+                  按钮）。⚠️ `busy` 那道闸门 App 里还有真的（和「再来一版」同一条）。 */}
+              <button className="chat-select-del"
+                disabled={!!busy || selectedIds.length === 0}
+                onClick={askBatchDelete}>删除</button>
+              <button className="chat-select-cancel" disabled={!!busy}
+                onClick={exitSelect}>取消</button>
+            </>
+          )}
+        </div>
+      )}
+
+      {!selecting && (
       <form
         className="chat-input"
         onSubmit={e => {
@@ -458,6 +576,7 @@ export default function ChatPanel({
           ? <button type="button" className="stop" onClick={onStop}>停止</button>
           : <button type="submit">发送</button>}
       </form>
+      )}
     </aside>
   )
 }

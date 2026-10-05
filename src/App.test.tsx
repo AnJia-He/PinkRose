@@ -6805,7 +6805,7 @@ describe('「回到这一步」不再删后面的步骤', () => {
  * 消息没了、小图少一张、画面换到哪一张、那一趟落盘送出去的是不是干净的，
  * 以及忙的时候点不动。
  */
-describe('单条记录能删 —— 带图那条连同那一步', () => {
+describe('删除记录 —— 单条走「…」菜单，多条走勾选批量', () => {
   /** 屏幕上所有气泡的文字（用户的和助手的都在里面）。 */
   const bubbleTexts = () =>
     [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
@@ -6817,29 +6817,66 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
   const stepItems = () =>
     [...container.querySelectorAll<HTMLElement>('.bubble-jump, .bubble-current')]
 
-  /**
-   * 某条消息末尾那颗「…」。
-   *
-   * ⚠️ 先按**气泡文字**认那条消息，再在它里面找 `.msg-more` —— 「…」是图标键、
-   *   没有可见文字，不能像别的按钮那样按文字找（和左栏「个人设置」那颗同一条
-   *   规矩：图标键只能按类名 / `aria-label` 找）。
-   */
-  function moreBtnOf(text: string): HTMLButtonElement {
+  /** 按**气泡文字**认那条消息（找不到时给一句人话，别让测试死在 null 上）。 */
+  function msgOf(text: string): HTMLElement {
     const msg = [...container.querySelectorAll<HTMLElement>('.msg')].find(
       m => (m.querySelector('.bubble-text')?.textContent ?? '') === text)
     expect(msg, `屏幕上没有「${text}」这条消息`).toBeTruthy()
-    const btn = msg!.querySelector('.msg-more') as HTMLButtonElement | null
+    return msg!
+  }
+
+  /**
+   * 某条消息末尾那颗「…」。
+   *
+   * ⚠️ 它和勾选框都是**图标 / 控件键**、没有可见文字，不能像别的按钮那样按
+   *   文字找（和左栏「个人设置」那颗同一条规矩：只能按类名 / `aria-label` 找）
+   *   —— 所以这一组帮手都是在消息里按类名挖。
+   */
+  function moreBtnOf(text: string): HTMLButtonElement {
+    const btn = msgOf(text).querySelector('.msg-more') as HTMLButtonElement | null
     expect(btn, `「${text}」这条上没有「…」`).toBeTruthy()
     return btn!
   }
 
   /** 某条消息的菜单里那颗【删除】（点开「…」之后才在）。 */
   function menuDelOf(text: string): HTMLButtonElement {
-    const msg = [...container.querySelectorAll<HTMLElement>('.msg')].find(
-      m => (m.querySelector('.bubble-text')?.textContent ?? '') === text)
-    expect(msg, `屏幕上没有「${text}」这条消息`).toBeTruthy()
-    const btn = msg!.querySelector('.msg-menu .msg-menu-del') as HTMLButtonElement | null
+    const btn = msgOf(text).querySelector('.msg-menu .msg-menu-del') as HTMLButtonElement | null
     expect(btn, `「${text}」这条的菜单里没有【删除】`).toBeTruthy()
+    return btn!
+  }
+
+  /** 某条消息的菜单里那颗【多选】。 */
+  function pickItemOf(text: string): HTMLButtonElement {
+    const btn = msgOf(text).querySelector('.msg-menu .msg-menu-pick') as HTMLButtonElement | null
+    expect(btn, `「${text}」这条的菜单里没有【多选】`).toBeTruthy()
+    return btn!
+  }
+
+  /** 某条消息的勾选框（选择模式里才有）。 */
+  function pickBoxOf(text: string): HTMLInputElement {
+    const box = msgOf(text).querySelector('.msg-pick') as HTMLInputElement | null
+    expect(box, `「${text}」这条上没有勾选框`).toBeTruthy()
+    return box!
+  }
+
+  /** 那条消息的气泡（选择模式里点它 = 勾选）。 */
+  function bubbleOf(text: string): HTMLElement {
+    const el = msgOf(text).querySelector('.bubble') as HTMLElement | null
+    expect(el, `「${text}」这条上没有气泡`).toBeTruthy()
+    return el!
+  }
+
+  /** 那条消息的小图（选择模式里点它 = 勾选，不再是"回到这一步"）。 */
+  function thumbImgOf(text: string): HTMLElement {
+    const el = msgOf(text).querySelector('.bubble-thumb') as HTMLElement | null
+    expect(el, `「${text}」这条上没有小图`).toBeTruthy()
+    return el!
+  }
+
+  /** 选择模式操作条上那颗【删除】。 */
+  function selectDelBtn(): HTMLButtonElement {
+    const btn = container.querySelector('.chat-select-del') as HTMLButtonElement | null
+    expect(btn, '选择条上没有【删除】').toBeTruthy()
     return btn!
   }
 
@@ -6847,6 +6884,12 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
   async function delVia(text: string) {
     await clickEl(moreBtnOf(text))
     await clickEl(menuDelOf(text))
+  }
+
+  /** 「…」→【多选】两下 —— 进选择模式就这一条路。 */
+  async function enterSelect(text: string) {
+    await clickEl(moreBtnOf(text))
+    await clickEl(pickItemOf(text))
   }
 
   async function clickEl(el: HTMLElement) {
@@ -7099,5 +7142,178 @@ describe('单条记录能删 —— 带图那条连同那一步', () => {
       gate.open(decision({ route: 'params' }))
       await new Promise(r => setTimeout(r, 0))
     })
+  })
+
+  /**
+   * ★ 2026-10-06 下午（他的第二问：「是像这样可选择性的删除吗？」——一张勾选框的
+   * 截图，控制器问过之后他选的：**两种都要**）。
+   *
+   * 多选 = 菜单里的【多选】进"选择模式"：每条消息旁出现勾选框（「原图」那条没有
+   * —— 它是锚）、输入框让位给操作条「已选 N 条 ｜ 删除 ｜ 取消」。删除那条路和
+   * 单条同规矩：勾的里面**有带图的步骤**就先问一句（说清几张），全是纯文字就直删。
+   *
+   * 这一组钉的还是**用户看得见的行为**：怎么进、怎么勾、勾了没有、删前问没问、
+   * 删完画面在哪、退出没有，以及落盘那趟送出去的干不干净。
+   */
+  it('菜单第二项【多选】→ 选择模式：每条一个勾选框（原图没有）、输入框让位给操作条、别的按钮全收', async () => {
+    await oneVersion()
+    await clickEl(moreBtnOf('先改一次'))
+    expect(pickItemOf('先改一次').textContent).toBe('多选')
+
+    await clickEl(pickItemOf('先改一次'))
+
+    // 勾选框：用户话 + 回复各一个；「原图」那条没有（它是锚，不给勾）
+    expect(container.querySelectorAll('.msg-pick')).toHaveLength(2)
+    const welcome = [...container.querySelectorAll<HTMLElement>('.msg')].find(
+      m => (m.querySelector('.bubble-text')?.textContent ?? '').includes('准备好啦'))
+    expect(welcome!.querySelector('.msg-pick')).toBeNull()
+    // 输入框让位给操作条
+    expect(container.querySelector('.chat-input')).toBeNull()
+    expect(container.querySelector('.chat-select')?.textContent).toContain('已选 0 条')
+    // 平时那一排（回到这一步 / 再来一版 / 「…」）全收 —— 选择模式里没有别的可点
+    expect(container.querySelectorAll('.msg-more')).toHaveLength(0)
+    expect(container.querySelectorAll('.bubble-jump, .bubble-current')).toHaveLength(0)
+    expect(container.querySelectorAll('.bubble-rerun')).toHaveLength(0)
+  })
+
+  it('勾一条算一条：点勾选框、点那条消息都能勾；再点一下取消 —— 小图在这一档只管勾，不再跳', async () => {
+    await oneVersion()
+    await enterSelect('先改一次')
+    const countText = () => container.querySelector('.chat-select')?.textContent ?? ''
+
+    await clickEl(pickBoxOf('先改一次'))
+    expect(pickBoxOf('先改一次').checked).toBe(true)
+    expect(countText()).toContain('已选 1 条')
+
+    await clickEl(pickBoxOf('先改一次'))          // 再点一下 = 取消
+    expect(pickBoxOf('先改一次').checked).toBe(false)
+    expect(countText()).toContain('已选 0 条')
+
+    await clickEl(bubbleOf('先改一次'))           // 点那条消息本身也能勾
+    expect(countText()).toContain('已选 1 条')
+
+    const shown = canvasProps.images.at(-1)
+    await clickEl(thumbImgOf('好，改好了。'))      // 小图：勾上，而不是跳过去
+    expect(countText()).toContain('已选 2 条')
+    expect(canvasProps.images.at(-1)).toBe(shown) // 画面一动不动
+  })
+
+  it('一条都没勾时【删除】是禁用的 —— 不留一个点了没用的按钮', async () => {
+    await oneVersion()
+    await enterSelect('先改一次')
+    expect(selectDelBtn().disabled).toBe(true)
+    await clickEl(pickBoxOf('先改一次'))
+    expect(selectDelBtn().disabled).toBe(false)
+  })
+
+  it('勾的全是纯文字：点【删除】直接删 —— 不问、不花钱、删完退出选择模式', async () => {
+    await oneVersion()
+    await enterSelect('先改一次')
+    const posts = vi.mocked(api.postEdit).mock.calls.length
+    await clickEl(pickBoxOf('先改一次'))
+    await clickEl(selectDelBtn())
+
+    expect(container.textContent).not.toContain('删了就找不回来了')
+    expect(bubbleTexts()).not.toContain('先改一次')
+    expect(container.querySelectorAll('.msg')).toHaveLength(2)
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)   // 一步没动
+    expect(api.postEdit).toHaveBeenCalledTimes(posts)
+    // 退出选择模式：输入框回来了、勾选框没了
+    expect(container.querySelector('.chat-select')).toBeNull()
+    expect(container.querySelector('.chat-input')).toBeTruthy()
+    expect(container.querySelectorAll('.msg-pick')).toHaveLength(0)
+  })
+
+  it('选中的里带图：先问一句（说清几张）——「算了」什么都没变、勾还都在', async () => {
+    await oneVersion()
+    await enterSelect('好，改好了。')
+    await clickEl(pickBoxOf('先改一次'))
+    await clickEl(pickBoxOf('好，改好了。'))
+    const msgs = container.querySelectorAll('.msg').length
+    const thumbs = container.querySelectorAll('.bubble-thumb').length
+
+    await clickEl(selectDelBtn())
+
+    expect(container.textContent).toContain('1 张生成过的图')
+    expect(container.textContent).toContain('删了就找不回来了')
+    expect(container.querySelectorAll('.msg')).toHaveLength(msgs)    // 还没删
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(thumbs)
+
+    await clickByText('算了')
+    // 退回操作条：勾还都在、还在选择模式里
+    expect(pickBoxOf('先改一次').checked).toBe(true)
+    expect(pickBoxOf('好，改好了。').checked).toBe(true)
+    expect(container.querySelector('.chat-select')?.textContent).toContain('已选 2 条')
+  })
+
+  it('★「确认删除」→ 选中的一起没；站在被删的那步上 → 画面挪到剩下的最后一步', async () => {
+    // 两版：history = [原图(1), 第1版(3), 第2版(5)]。站在第 1 版上，把**它和一句
+    // 用户话**一起勾掉 —— 剩下的最后一步是第 2 版（不是原图，"挪到前一个"那种
+    // 写法会对不上）。
+    vi.mocked(api.postRoute)
+      .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '改一下', reply: '第一版好了。' }))
+      .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '再改一下', reply: '第二版好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')
+    await say('再改一次')
+
+    await clickEl(stepItems()[1]!)                         // 跳到第 1 版那一步
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: decodedBitmaps[0] })
+
+    await enterSelect('第一版好了。')
+    await clickEl(pickBoxOf('第一版好了。'))
+    await clickEl(pickBoxOf('先改一次'))
+    await clickEl(selectDelBtn())
+    await clickByText('确认删除')
+
+    // ① 两句被勾的话都没了；② 小图少一张；③ 消息少两条（欢迎 + 再改一次 + 第2版）
+    expect(bubbleTexts()).not.toContain('第一版好了。')
+    expect(bubbleTexts()).not.toContain('先改一次')
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(container.querySelectorAll('.msg')).toHaveLength(3)
+
+    // ④ 站在被删的那一步上 → 画面挪到**剩下的最后一步**（第 2 版），
+    //    「你在这里」跟着走（它挪了，说明选择模式也退出来了 —— 那排按钮回来了）
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: decodedBitmaps[1] })
+    expect(container.querySelector('.bubble-current')?.closest('.msg')
+      ?.querySelector('.bubble-text')?.textContent).toBe('第二版好了。')
+
+    // ⑤ 位图账：被删那步的还了；剩下那步的还活着（画面正用着它）
+    expect(decodedBitmaps[0]!.close).toHaveBeenCalled()
+    expect(decodedBitmaps[1]!.close).not.toHaveBeenCalled()
+    // ⑥ 退出选择模式了
+    expect(container.querySelector('.chat-select')).toBeNull()
+  })
+
+  it('批量删完落盘那一趟：被删的步骤 id / 那些话都不在 PUT 里，没被删的一个不少', async () => {
+    vi.mocked(api.postRoute)
+      .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '改一下', reply: '第一版好了。' }))
+      .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '再改一下', reply: '第二版好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')
+    await say('再改一次')
+    await waitPersist()
+
+    await enterSelect('第一版好了。')
+    await clickEl(pickBoxOf('第一版好了。'))
+    await clickEl(pickBoxOf('先改一次'))
+    await clickEl(selectDelBtn())
+    await clickByText('确认删除')
+    await waitPersist()
+
+    const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
+    const stepIds = body.steps.map((s: { id: number }) => s.id)
+    const msgIds = body.messages.map((m: { id: number }) => m.id)
+    expect(stepIds).not.toContain(3)          // 被删那一步
+    expect(msgIds).not.toContain(3)           // 那句话
+    expect(msgIds).not.toContain(2)           // 另一句被删的话
+    expect(stepIds).toContain(1)              // 原图还在
+    expect(stepIds).toContain(5)              // 第 2 版还在
+    expect(JSON.stringify(body)).not.toContain('先改一次')
+    expect(JSON.stringify(body)).not.toContain('第一版好了')
   })
 })

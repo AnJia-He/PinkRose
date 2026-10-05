@@ -1307,19 +1307,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   cursor: default;
 }
 
-/* ── 单条记录的删除（★ 2026-10-06，用户原话：「在会话里的单条记录我怎么还是
-   没有删除的按钮」）─────────────────────────────────────────────────
-   每一条消息悬停时浮出一颗小 ✕。形状照 `.session-del` 那份**最轻**的长相
-   （透明底 + 透明边，悬停才给形状、给危险色）—— 它是一行里最不常按的一颗，
-   不该跟内容抢眼；差别只有一条：对话里它平时**完全不出现**（`opacity: 0`），
-   悬停在**那一条消息**上才浮出来。
-   ⚠️ 挂 absolute、锚在 `.msg` 上（所以上面那条要先有 `position: relative`）：
-     它**不占版面** —— 出现/消失都不会让气泡挪位（窄屏那档的量尺也不受影响）。
-   ⚠️ ✕ 落在**对话流的外侧**：助手那条在右、用户那条在左（`.msg` 是 88% 宽，
-     外侧至少空着 12%，够放这 26px 的悬出）。放内侧就会压在气泡的字上。
-   ⚠️ 现形靠 `opacity` 不是 `display`：`opacity: 0` 时它**仍然可点**，而鼠标
-     一旦停在它上面（它还是 `.msg` 的孩子，算 hover 到父级）它就现形 ——
-     不会留一块"看不见但能点"的死区。键盘走 `:focus-visible` 同一条。 */
+/* ── 消息末尾那颗「…」和它点开的菜单（★ 2026-10-06）──────────────────────
+   用户原话：「我看豆包是这种做法，放个这个图标在每段对话的最后，点击这个
+   符号后里面有删除选项」。它替掉了原来那颗悬在对话流外侧、平时完全不可见的
+   小 ✕ —— 换掉的直接原因是**他找不到它**（悬停才现形 + 偏安一隅）。 */
 /* ★ 2026-10-06：末尾那排里那颗「…」（写在 `ChatPanel.tsx`，排最后一个）。
    **它替掉了原来那颗 ✕** —— 那是悬在气泡外侧、平时 opacity 0、鼠标停在整条
    消息上才浮出来的一颗。用户看过之后点名要豆包那种：「放个这个图标在每段对话
@@ -1367,6 +1358,18 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    ⚠️ hover 这条要把颜色**再写一遍**：全局那条 `button:where(:hover)` 也在改底色。 */
 .msg-menu-del { color: var(--danger); }
 .msg-menu-del:hover:not(:disabled) { color: var(--danger); border-color: transparent; background: var(--danger-bg); }
+
+/* ★ 2026-10-06 下午：选择模式里那条消息旁的**勾选框**（多选批删）。
+   用**系统原生**那款 —— 用户给的那张截图里就是它（蓝勾、圆角方框），
+   比自绘的勾好认得多，无障碍还是免费的。颜色跟着主色走，不另造一套。 */
+.msg-pick {
+  width: 16px; height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+/* 选择模式里点整条消息（气泡）也是勾选 —— 给个手型说"这里能点"。
+   （小图那边不用给：它本来就是 `cursor: pointer`。） */
+.bubble.pickable { cursor: pointer; }
 
 /* 带图那条的**就地确认**（不弹窗，全站规矩）：一句话 + 两颗按钮。
    形状照作品详情页那条 `.detail-confirm` —— 它是一个**正在问你的问题**，
@@ -1477,6 +1480,25 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   box-shadow: var(--ring);
 }
 .chat-input input::placeholder { color: var(--muted-2); }
+
+/* ★ 2026-10-06 下午：**选择模式底下那条操作条**（输入框在这一档让位）。
+   尺寸照 `.chat-input` 抄（同一圈内边距、同一条顶上的发丝线）—— 切换时
+   底下这一格不许跳。 */
+.chat-select {
+  display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--line);
+}
+/* 左边那句计数 / 问话**吃掉中间的空**，把两颗按钮顶到右边（和输入框那一行
+   同一条排法）。 */
+.chat-select-count, .chat-select-note { flex: 1; }
+.chat-select-count { font-size: 13px; color: var(--muted); }
+/* 那一问比计数长，正常字色 —— 它是一句要认真读的话（照 `.session-ask`）。 */
+.chat-select-note { font-size: 12.5px; color: var(--text); }
+/* 【确认删除】穿危险色（和 `.msg-confirm-del` / `.session-del.danger` 同一条
+   规矩：两颗短文案长得很像，点错一次东西就没了，红色是唯一还分得开的地方）。 */
+.chat-select-del.danger { border-color: var(--danger); color: var(--danger); }
+.chat-select-del.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 
 /* 「停止」—— 生成中顶替「发送」的那一颗（★ 2026-09-30）。
    ⚠️ 它**不能长得像主按钮**：主按钮的那档粉在这个产品里是"按这里就对了"，

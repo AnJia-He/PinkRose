@@ -139,8 +139,10 @@ describe('图标（2026-10-01 统一走 lucide）', () => {
         onConfirmReplace={() => {}} onCancelReplace={() => {}}
         // ★ 2026-10-06：又多了两个（单条记录的删除，见 ChatPanel.tsx）——
         //   同样给全，少一个 `tsc` 就红。`originalId={null}` = 这一条不是原图，
-        //   ✕ 会照常渲染（这条用例只验箭头图标，不影响）。
-        originalId={null} onDeleteMessage={() => {}}
+        //   「…」会照常渲染（这条用例只验箭头图标，不影响）。
+        // ★ 2026-10-06 下午：又多一个 `onDeleteMessages`（多选批删那条路，
+        //   同上 —— 给全）。
+        originalId={null} onDeleteMessage={() => {}} onDeleteMessages={() => {}}
         // ★ 2026-10-05（滤镜，Task 9）：ChatPanel 多了"对话区那颗按钮"那批 props。
         //   这一条只验箭头图标，给一份最简的空清单就够 —— 但要给全，
         //   少一个 `tsc` 就红（vitest 自己不做类型检查）。

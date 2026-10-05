@@ -1583,30 +1583,36 @@ export default function App() {
   }, [history, cancelPick, cancelReplace, moveCursor])
 
   /**
-   * ★ 2026-10-06（用户原话：「在会话里的单条记录我怎么还是没有删除的按钮」）：
-   * 删一条记录。**带图那条连它身后那一步一起删**（图 / 参数 / 滤镜都挂在那一步
-   * 上 —— 只删消息的话，屏幕上一条话都没了、那个位置却还在，缩略图还会以
-   * "没有话的图"的样子杵在那儿）；纯文字那条只动 `messages`。
+   * ★ 2026-10-06（用户原话：「在会话里的单条记录我怎么还是没有删除的按钮」，
+   *   下午又看了他发来的勾选框截图，选了"两个都要"）：删记录。
+   *   **单条和批量是同一个函数** —— 菜单里那颗【删除】交一个 id，选择模式里
+   *   交一串。光标、底图号、位图回收只有这一份实现。
    *
-   * 那条「删了就找不回来了」的**就地确认由 ChatPanel 做**（它才看得见"这条后面
-   * 有没有一步"）—— 走到这里就是用户已经点了「确认删除」（或者删的是纯文字那条）。
+   * **带图那条连它身后那一步一起删**（图 / 参数 / 滤镜都挂在那一步上 ——
+   * 只删消息的话，屏幕上一条话都没了、那个位置却还在，缩略图还会以"没有话的图"
+   * 的样子杵在那儿）；纯文字那条只动 `messages`。
+   *
+   * 那一条「删了就找不回来了」的**就地确认由 ChatPanel 做**（它才看得见"这条
+   * 后面有没有一步"/"勾的里面有几步带图"）—— 走到这里就是用户已经点了
+   * 「确认删除」（或者删的是纯文字那些）。
    *
    * ⚠️ 它和「回到这一步」/ 新消息一样是"改主意了"：点选和「继续改」那两条确认条
    *   一起作废 —— 不清的话，「继续改」会切在一个**已经删掉的位置**上。
-   * ⚠️ `busy` 那道闸门是**真正**的拦住处（ChatPanel 里那颗 disabled 只是反馈，
+   * ⚠️ `busy` 那道闸门是**真正**的拦住处（ChatPanel 里那些 disabled 只是反馈，
    *   和「再来一版」同一条规矩）：忙的时候删，等于在一次生成还在飞的时候动账本。
    * ⚠️ 不碰服务端：落盘那个 effect 会把"少送来的 id"写成删除（服务端 `mergeSteps`
    *   对没送来的 id 就是删），所以这条路**服务端零改动**。
    */
-  const onDeleteMessage = useCallback((id: number) => {
+  const onDeleteMessages = useCallback((ids: number[]) => {
     if (busy) return
+    const kill = new Set(ids)
+    if (kill.size === 0) return
     cancelPick()
     cancelReplace()
-    setMessages(m => m.filter(x => x.id !== id))
-    // 这条消息身后有没有"一步"？步骤 id 就是那条助手消息的 id（老约定）。
-    const wasStep = history.some(s => s.id === id)
-    if (!wasStep) return
-    // ★（评审 Important，2026-10-06）删掉的正好是**最后一步**时，**推一版底图号**。
+    setMessages(m => m.filter(x => !kill.has(x.id)))
+    // 这里面有没有"一步"？没有（纯文字那几条）→ 到此为止。
+    if (!history.some(s => kill.has(s.id))) return
+    // ★（评审 Important，2026-10-06）被删的里面有**最后一步**时，**推一版底图号**。
     //   落盘那趟拿它判"底图换过没有"（`changed`）—— 不推的话那一趟不带
     //   base/thumb：服务端手里的封面还是**被删那版**的像素，而 `steps` 里已经
     //   没有它了。重开就是"编辑器显示 v1、左栏列表封面是 v2"，一句报错都没有。
@@ -1615,20 +1621,21 @@ export default function App() {
     //   删**中间**那些步不推：封面画的就是最后一步，那一步没动，封面本来还对。
     //   ⚠️ 已知角落（评审接受的取舍）：人站在**别的**步骤上删尾步时，重传的封面
     //   是他当时看的那一版（不是新 tip）—— 比"留着已删的那版"强，下一次生成自愈。
-    if (history[history.length - 1]?.id === id) baseSeqRef.current++
+    const tipBefore = history[history.length - 1]
+    if (tipBefore && kill.has(tipBefore.id)) baseSeqRef.current++
     setHistory(prev => {
-      const next = prev.filter(s => s.id !== id)
-      // 被删那一步的位图要还回去（原图不关 —— 它还要接着用）。副作用写在 updater
+      const next = prev.filter(s => !kill.has(s.id))
+      // 被删那几步的位图要还回去（原图不关 —— 它还要接着用）。副作用写在 updater
       // 里的写法照 `useGeneration` 那条：`close()` 幂等，StrictMode 重放也安全。
       closeBitmaps(bitmapsToClose(prev, next, { protectOriginal: true }))
       return next
     })
-    // 站在被删的那一步上 → 挪到**剩下的最后一步**，画面 / 参数 / 滤镜照 `onJump`
-    // 那三行一起还原（只挪光标不换画面的话，"你在这里"指着一步、屏幕上却是
-    // 一步已经不存在的图）。⚠️ 用闭包的 `history`（它在依赖数组里）：这里没有
-    // await，它和上面 updater 拿到的 `prev` 是同一份。
-    if (cursorId === id) {
-      const rest = history.filter(s => s.id !== id)
+    // 站在被删的**某一步**上 → 挪到**剩下的最后一步**，画面 / 参数 / 滤镜照
+    // `onJump` 那三行一起还原（只挪光标不换画面的话，"你在这里"指着一步、屏幕上
+    // 却是已经不存在的那张图）。⚠️ 用闭包的 `history`（它在依赖数组里）：这里
+    // 没有 await，它和上面 updater 拿到的 `prev` 是同一份。
+    if (cursorId !== null && kill.has(cursorId)) {
+      const rest = history.filter(s => !kill.has(s.id))
       const tip = rest[rest.length - 1]
       if (tip) {
         moveCursor(tip.id)
@@ -1638,6 +1645,9 @@ export default function App() {
       }
     }
   }, [busy, history, cursorId, cancelPick, cancelReplace, moveCursor])
+
+  /** 删一条 —— 上面那本账的**特例**（`onDeleteMessages([id])`），给菜单里那颗【删除】。 */
+  const onDeleteMessage = useCallback((id: number) => onDeleteMessages([id]), [onDeleteMessages])
 
   /**
    * 「再来一版」—— 同一句话，重掷一次。
@@ -2345,6 +2355,8 @@ export default function App() {
                   //   它是这条会话的锚（删了它，这一屏就没有落脚的地方了）。
                   originalId={history.find(s => s.isOriginal)?.id ?? null}
                   onDeleteMessage={onDeleteMessage}
+                  // ★ 2026-10-06 下午：选择模式里一次勾好几条那条路（同一本账）。
+                  onDeleteMessages={onDeleteMessages}
                   // marker 非空必然 picking 为真（两者出自同一个对象），所以这里
                   // 不必再 or 一次 —— 从 `pending` 推出来的东西不可能互相打架。
                   marking={picking}
