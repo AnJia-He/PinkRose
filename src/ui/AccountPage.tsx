@@ -339,11 +339,13 @@ export function modelValue(configs: PublicConfig[]): string {
  *
  * ★★ 2026-10-05（第七轮，用户：「图形中要展示出来，**比如我已经用掉的部分就
  *   转化为另一个颜色**」）：真比例有一个死角 —— 0.3% 画出来是**一根看不见的针**
- *   （连说三轮"图上没有已用"）。修法两条，都在 `MIN_SLICE_RATIO` 和末端圆点上：
- *     ① **最小可见角**：小于 5° 的占比，扇形按 5° 画（不然形状根本不存在）；
- *     ② **末端圆点**：弧的尽头一颗发光的珠子 —— 它才是"已用"的视觉锚点。
+ *   （连说三轮"图上没有已用"）。修法：**最小可见角** —— 小于 5° 的占比按 5° 画，
+ *   让"已用"至少是一块看得见的小楔形。
  *   ⚠️ 这是**可见性下限**，不是数据造假：图上所有数字（已用 X / 总共 Y / 百分比）
  *     一个字都没动，扇形只是一块"放大到看得见的最小色块"。
+ *   ⚠️ 第七轮曾给楔形末端加过"珠子"（更醒目的视觉锚点），被用户否掉：
+ *     「这上面有一个大圆圈也不好看呀」—— 极小占比时它像一颗图钉戳在盘上。
+ *     **别再加圆点/珠子这类末端装饰**：楔形本身就是饼图的语言。
  *
  * ⚠️ 百分比数字在饼**下面**（顶面上压字对比度会随占比漂）。
  * ⚠️ 绝不显示「0.0%」：那是句假话，不到 0.05% 一律「<0.1%」。
@@ -362,7 +364,6 @@ export function UsagePie({ pct, warn, used, total }: {
   const drawRatio = ratio === null || ratio <= 0 ? 0 : Math.max(ratio, MIN_SLICE_RATIO)
   // loading（ratio === null）画 pie3dPaths(0)：整块厚饼、没有扇形。
   const g = pie3dPaths(drawRatio)
-  const dot = drawRatio <= 0 ? null : pie3dDot(drawRatio)
   const n = ratio === null ? 0 : ratio * 100
   const label = ratio === null ? ''
     : n < 0.05 ? '<0.1%'
@@ -384,14 +385,12 @@ export function UsagePie({ pct, warn, used, total }: {
             )}
           </linearGradient>
         </defs>
-        {/* 画序即层序（画家算法）：两张侧壁 → 两张顶面 → 末端圆点。
+        {/* 画序即层序（画家算法）：两张侧壁 → 两张顶面。
             侧壁先画（在顶面"下面"），剩余顶面盖住圆心的楔形，已用顶面最后压上。 */}
         {g.restSide && <path className="usage-pie-rest-side" d={g.restSide} />}
         {g.usedSide && <path className="usage-pie-used-side" d={g.usedSide} />}
         {g.restTop && <path className="usage-pie-rest-top" d={g.restTop} />}
         {g.usedTop && <path className="usage-pie-used-top" d={g.usedTop} fill="url(#usagePieGrad)" />}
-        {/* 「已用」的视觉锚点：弧尽头一颗发光的珠子（见组件头注释 ②） */}
-        {dot && <circle className="usage-pie-dot" cx={dot[0]} cy={dot[1]} r="5" />}
       </svg>
       {/* 图上的两条标签（绝对定位：已用贴饼顶、总共贴饼底 —— 见组件头注释） */}
       <span className="usage-chart-tag usage-chart-used">
@@ -462,19 +461,6 @@ export type Pie3dPaths = {
   restSide: string | null
   usedTop: string | null
   usedSide: string | null
-}
-
-/**
- * 扇形弧的**末端点**（画那颗"已用"珠子用；★ 2026-10-05 第七轮）。
- * `ratio <= 0` → `null`（没有扇形就没有末端）。坐标格式和 paths 一致（两位小数）。
- */
-export function pie3dDot(ratio: number): [number, number] | null {
-  if (ratio <= 0) return null
-  const t = -Math.PI / 2 + Math.min(1, ratio) * 2 * Math.PI
-  return [
-    +(PIE3D.cx + PIE3D.rx * Math.cos(t)).toFixed(2),
-    +(PIE3D.cy + PIE3D.ry * Math.sin(t)).toFixed(2),
-  ]
 }
 
 /**

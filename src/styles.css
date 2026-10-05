@@ -1893,13 +1893,6 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .usage-pie-rest-top { fill: var(--pie-rest); }
 .usage-pie-rest-side { fill: var(--pie-rest-side); }
 .usage-pie-used-side { fill: var(--pie-used-side); }
-/* 「已用」的视觉锚点（★ 2026-10-05 第七轮）：弧尽头一颗珠子 ——
-   0.3% 的扇形靠最小可见角只有一小瓣，这颗珠子才是"变色块"的落点（见组件注释）。
-   ⚠️ 曾经带一圈 drop-shadow 发光，被 taste 审掉（"NO neon / outer glows by default"
-   —— AI 味的招牌动作；用户的样板图也没有发光）。珠子靠**本体颜色**在蓝盘上对比，
-   不需要光晕也能看见。 */
-.usage-pie-dot { fill: var(--accent-500); }
-.usage-pie-warn .usage-pie-dot { fill: var(--danger); }
 /* 渐变的两档（SVG `stop` 的颜色走 CSS —— 浅/深成对由 token 自己管） */
 .ring-stop-hi { stop-color: var(--accent-500); }
 .ring-stop-lo { stop-color: var(--accent-400); }

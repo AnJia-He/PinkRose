@@ -144,7 +144,7 @@ vi.mock('./api/client', async (importOriginal) => {
 })
 
 import App from './App'
-import { MIN_SLICE_RATIO, formatSize, modelValue, pie3dDot, pie3dPaths } from './ui/AccountPage'
+import { MIN_SLICE_RATIO, formatSize, modelValue, pie3dPaths } from './ui/AccountPage'
 import type { PublicConfig } from './api/models'
 import { matchToReference, type Rgb } from './core/colorMatch'
 import * as decodeMod from './image/decode'
@@ -3597,15 +3597,11 @@ describe('用户管理页', () => {
 
     expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('0.2%')
     // 扇形画的是"真比例套一道**可见性下限**"（2026-10-05 第七轮：0.195% 只有一根
-    // 看不见的针，用户连说三轮"图上没有已用"→ 小于 5° 的按 5° 画；数字全是真的）。
+    // 看不见的针，用户连说三轮"图上没有已用"→ 小于 5° 的按 5° 画；数字全是真的。
+    // ⚠️ 别再加末端圆点/珠子 —— 第七轮加过，用户否了：「大圆圈也不好看呀」）。
     const drawRatio = Math.max((10 * MIB) / LIMIT, MIN_SLICE_RATIO)
     const d = container.querySelector('.usage-pie-used-top')?.getAttribute('d') ?? ''
     expect(d).toBe(pie3dPaths(drawRatio).usedTop)
-    // ★ 末端珠子：小占比时它才是图上"已用"的可见落点（坐标跟着几何走）
-    const dot = container.querySelector('.usage-pie-dot')
-    expect(dot).toBeTruthy()
-    const [dx] = pie3dDot(drawRatio)!
-    expect(Number(dot!.getAttribute('cx'))).toBeCloseTo(dx, 2)
     // 剩余那半块（蓝）也在 —— 0.2% 时它才是画面主体
     expect(container.querySelector('.usage-pie-rest-top')).toBeTruthy()
     // 远没到八成：饼不带警告类（饼和数字"一起变红"那条规矩的另一半）
@@ -3634,9 +3630,6 @@ describe('用户管理页', () => {
     const p1 = pie3dPaths(1)
     expect(p1.restTop).toBeNull()                 // 全满 → 没有剩余
     expect(p1.restSide).toBeNull()
-    // 末端珠子（第七轮加的）：1/5 的弧末端 = 和 usedTop 同一批手算坐标
-    expect(pie3dDot(0.2)).toEqual([105.65, 43.35])
-    expect(pie3dDot(0)).toBeNull()                // 没有扇形就没有末端
     // 变异：把 ry 写成 0（拍成一条线）/ 把侧壁的"下半沿"条件写反 → 上面某条红
   })
 
