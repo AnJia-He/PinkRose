@@ -32,9 +32,13 @@ export type GenerationDeps = {
   params: Adjustments
   setParams: (p: Adjustments) => void
   /**
-   * 当前滤镜（★ 2026-10-05）。它跟着 `paramsAtStep` 一起写进这一步的快照 ——
-   * 和 params 同一条道理：**推快照那一刻手上用着哪个滤镜，那一步就记着哪个**。
-   * 生成本身不碰它，只负责记下来（落盘要按步送、用户删滤镜时要按步清）。
+   * 当前滤镜（★ 2026-10-05）。**它只服务"就是此刻"那两条路**（`send` / 卡片
+   * 触发的 `applyDecision` —— 那两条传的是"现在手上这个"）。
+   *
+   * ⚠️ **推快照时用的不是它**：`runGenerate` 的 `lutAtStep` 是**传参**进去的
+   * （和 `paramsAtStep` 并列）。「再来一版」正是靠这一点才记对 —— 它先跳转、
+   * 再在同一次调用里重掷，读闭包就会记成跳转前那个（2026-10-05 复审抓到的）。
+   * 别把这两条路又合并回"读一个闭包"。
    */
   lut: LutRef | null
   /** 底图换到第几版了（上传 +1、每次生成 +1）。它是"这一版还算不算数"的闸门。 */
@@ -95,6 +99,13 @@ export function useGeneration(deps: GenerationDeps) {
    * `source` 由调用方（applyDecision）显式传入，不在这里读某个 ref：
    * 送哪张图是**调用点的决定**，而 ref 会跨 render 变陈。
    *
+   * ★ 2026-10-05（滤镜）：`lutAtStep` 和 `paramsAtStep` 是**同一类东西** ——
+   * "这一步是从哪个状态走出来的"。它也**必须显式传**，理由和 `source` 一模一样，
+   * 而且比 `source` 更隐蔽：`onRerun` 是**先 `onJump(id)`、再在同一个处理器里**
+   * 调进来的，而 `onJump` 里那个 `setLut` 是 state 更新、这一轮渲染里不生效 ——
+   * 读闭包的话，从带滤镜的旧步骤重掷，新那一步记的就是**跳转前**手上那个滤镜
+   * （`params` 靠传参躲过了这条，滤镜当初没传，于是它踩了个正着）。
+   *
    * 入参类型是 `Sizable`（能 drawImage 的东西）而不是 `DecodedImage`：
    * 图上点选那条路送的是**画过圈的一张临时画布**（见 markImage），
    * 要 `DecodedImage` 的话就得为它再造一张位图、用完还得记着关掉 —— 画布
@@ -105,7 +116,7 @@ export function useGeneration(deps: GenerationDeps) {
    */
   const runGenerate = useCallback(async (
     editPrompt: string, messageId: number, paramsAtStep: Adjustments,
-    source: Sizable,
+    lutAtStep: LutRef | null, source: Sizable,
   ) => {
     if (!editPrompt) return
     // ★ 一次生成 = 一个 controller。「停止」按的就是它（见 stopGeneration）。
@@ -164,10 +175,9 @@ export function useGeneration(deps: GenerationDeps) {
           //   （"保留人脸"那半句是服务端 buildEditPrompt 补的，重跑同样会补。）
           prompt: editPrompt,
           base: nextBase, params: paramsAtStep, isOriginal: false, thumb: '',
-          // ★ 2026-10-05（滤镜）：这一步推入时手上用着哪个滤镜。生成本身
-          //   **不碰 params、也不碰滤镜**（铁律）—— 只是把它记在这一步上：
-          //   落盘要**按步**送上去，用户删掉那个滤镜时也要按步清。
-          lut,
+          // ★ 2026-10-05（滤镜）：这一步的滤镜**用传进来的那个**（`lutAtStep`），
+          //   不是闭包里"此刻手上"的那个 —— 理由见函数头（`onRerun` 先跳再重掷）。
+          lut: lutAtStep,
         })
         // 被挤出去的位图要释放；原图永远不关（"回到原图"还要用它）。
         // close() 是幂等的，StrictMode 双调用 updater 也安全。
@@ -197,12 +207,10 @@ export function useGeneration(deps: GenerationDeps) {
       if (editAbortRef.current === ac) editAbortRef.current = null
       setBusy(null)
     }
-    // ⚠️ `lut` **必须在依赖里**（★ 2026-10-05 加的）：它被读进了上面那个
-    //    `pushSnapshot` 的载荷里，而这个回调是在**点击那一刻**造出来的 ——
-    //    漏了它，用户选完滤镜再生成，推进去的那一步记的是**上一次的**滤镜
-    //    （甚至永远是最初那个 null），而画面上一切正常，只有"回到这一步"/刷新
-    //    之后那一层颜色对不上。和 `applyDecision` 里 `image` 那条是同一类坑。
-  }, [noticeBad, say, lut])
+    // ⚠️ 依赖里**没有 `lut`**（2026-10-05 复审定下的）：这一步的滤镜是**传参**
+    //    进来的（`lutAtStep`），读闭包那个正是这次修掉的 bug。同理也没有 `params`。
+    //    ⚠️ 别看这里干净就去删 `deps.lut` —— `applyDecision` 还读它（见那边）。
+  }, [noticeBad, say])
 
   /**
    * 「停止」—— 把这一次生成掐掉。
@@ -258,10 +266,13 @@ export function useGeneration(deps: GenerationDeps) {
     // ⚠️ `image` 必须进依赖数组：漏了它，这个回调会永远捕获第一次 render 的
     // image（null），生成再也不会被触发——而且是静默的：气泡照出、回复照有，
     // 照片纹丝不动，测试和 typecheck 却全绿。
+    // ★ 2026-10-05（滤镜）：这条路（send / 卡片触发的路由决策）**就是"此刻"**——
+    //   所以传的是闭包里那个 `lut`，和上面 `params` 同一条口径。
+    //   ⚠️ 它读 `lut`，所以 `lut` 必须进依赖数组（同 `image` 那条的理由）。
     if ((d.route === 'generate' || d.route === 'both') && image) {
-      await runGenerate(d.editPrompt, mid, nextParams, image.bitmap)
+      await runGenerate(d.editPrompt, mid, nextParams, lut, image.bitmap)
     }
-  }, [params, say, runGenerate, image])
+  }, [params, say, runGenerate, image, lut])
 
   /**
    * 拉建议卡片。

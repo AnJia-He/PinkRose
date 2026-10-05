@@ -32,6 +32,13 @@ type Recorded = {
 
 /** ⚠️ 走 `vi.hoisted`：`vi.mock` 的工厂被提到所有 import 之前跑（同 `App.test.tsx` 的 `canvasProps`）。 */
 const made = vi.hoisted(() => [] as Recorded[])
+/**
+ * 管线被调用的**顺序**（只记这两样）。用来钉"**同一次提交里先传纹理、再画**"——
+ * 光数次数钉不住它：谁把两条 effect 对调，cube 到位那一次会**先按旧纹理画一帧**，
+ * 而依赖里已经有 `lutCube`、之后不会再重画 —— 症状和 Critical-1 一模一样
+ * （停在"没滤镜"那一帧），而只数次数的四条用例**全绿**（2026-10-05 复审指出的缺口）。
+ */
+const order = vi.hoisted(() => [] as string[])
 
 vi.mock('../render/pipeline', () => ({
   TonePipeline: class {
@@ -42,8 +49,8 @@ vi.mock('../render/pipeline', () => ({
     }
     setImage(img: unknown) { this.rec.images.push(img) }
     resizeToImage() {}
-    setLut(c: Cube | null) { this.rec.lutCalls.push(c) }
-    render(params: unknown, amount = 0) { this.rec.renders.push([params, amount]) }
+    setLut(c: Cube | null) { this.rec.lutCalls.push(c); order.push('setLut') }
+    render(params: unknown, amount = 0) { this.rec.renders.push([params, amount]); order.push('render') }
     dispose() {}
   },
 }))
@@ -78,6 +85,7 @@ const pipe = () => made[0]!
 
 beforeEach(() => {
   made.length = 0
+  order.length = 0
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -124,6 +132,20 @@ describe('Canvas 与滤镜（依赖守卫）', () => {
     expect(pipe().lutCalls.length).toBe(lutCalls)
     // 强度真的送到了 `render`（不是传了个寂寞）
     expect(pipe().renders.at(-1)).toEqual([P, 55])
+  })
+
+  it('★ 同一次提交里：**先传纹理、再画**（顺序反了那一帧就是旧纹理）', async () => {
+    // ⚠️ 这条守的不是次数、是**顺序**：`setLut` 和渲染是两条 effect，挂载时按
+    //    **声明顺序**跑。谁把它们对调，cube 到位那一次就会先 `render`（按旧纹理
+    //    画一帧）、再 `setLut`，而渲染那条的依赖里已经有 `lutCube` —— **不会重画**，
+    //    屏幕永远停在那一帧。症状和 Critical-1 一模一样，而上面那几条只数次数、
+    //    照样全绿（2026-10-05 复审点出的缺口）。
+    await draw(null, 0)
+    expect(order).toEqual(['setLut', 'render'])      // 挂载那一次也先传后画
+
+    order.length = 0
+    await draw(CUBE, 0)                              // cube 到位：只有这两下该发生
+    expect(order).toEqual(['setLut', 'render'])
   })
 
   it('换照片：纹理、画布尺寸、画面都跟着走（既有行为一寸没动）', async () => {

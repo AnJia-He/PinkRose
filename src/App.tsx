@@ -1270,12 +1270,14 @@ export default function App() {
     setCards([])
     try {
       const marked = markImage(image.bitmap, marker)
-      await runGenerate(text, mid, params, marked)
+      // ★ 2026-10-05（滤镜）：传**当下**的 `lut`（这条路就是"此刻这张照片"，
+      //   没有跳转，和 `params` 一样）。⚠️ 因此 `lut` 必须进下面那个依赖数组。
+      await runGenerate(text, mid, params, lut, marked)
     } catch (e) {
       console.error(e)
       say('这一步没成功，再试一次？')
     }
-  }, [busy, marker, pendingText, image, params, runGenerate, say])
+  }, [busy, marker, pendingText, image, params, lut, runGenerate, say])
 
   const onJump = useCallback((id: number) => {
     const target = history.find(s => s.id === id)
@@ -1335,7 +1337,12 @@ export default function App() {
     // 先回到那一步（base / 参数 / 缩略图 / 点选清理，全都走同一条路）
     onJump(id)
     const mid = say('好，又出了一版。')
-    void runGenerate(target.prompt, mid, target.params, target.base.bitmap)
+    // ★ 2026-10-05（滤镜，复审 Important）：**传 `target.lut`**，不是"手上这个"。
+    //   `onJump` 里那句 `setLut(target.lut)` 是 state 更新，**这一轮渲染里不生效**
+    //   —— `runGenerate` 直接读闭包的话，新那一步会记成**跳转前**的滤镜，
+    //   而画面（跳转后）是另一回事：和刚修掉的"小图 vs 主画面"是同一种不一致，
+    //   只是走「再来一版」这条窄路。`params` 一直是显式传参才躲过了这一条。
+    void runGenerate(target.prompt, mid, target.params, target.lut, target.base.bitmap)
   }, [busy, history, onJump, say, runGenerate])
 
 

@@ -5364,6 +5364,37 @@ describe('滤镜', () => {
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
   })
 
+  it('★ 「再来一版」记的是**那一步**的滤镜，不是手上现在这个', async () => {
+    // 2026-10-05 复审 Important-3（新）：`onRerun` 先 `onJump(id)`、再在**同一个
+    // 处理器里**调 `runGenerate` —— 而 `setLut(target.lut)` 是个 state 更新，
+    // 这一轮渲染里不生效：`runGenerate` 闭包里的 `lut` 还是**跳转前**那个值。
+    // `params` 没这个毛病，因为它是**显式传参**（`target.params`）—— lut 也得这么走。
+    //
+    // 下面这一版场景：第 2 步（id 3）**带着**滤镜、最后一步没有（所以恢复之后
+    // "手上"是无滤镜）。从第 2 步重掷 → 新那一步该记的是**第 2 步的**滤镜。
+    // 变异：`runGenerate` 不收 `lut` 参数、照旧用闭包里那个 → 新步骤记成 null，红。
+    const s = makeSession(7, 3, '上次那句', 'S7')
+    s.steps[1]!.lut = { lutId: 1, amount: 60 }       // 第 2 步那层颜色
+    withSessions([s])
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+
+    await renderApp()
+    await goNav('修图')                               // 「再来一版」在对话区
+    const reruns = container.querySelectorAll('.bubble-rerun')
+    // 第 0 颗 = 第 2 步（id 3，第一颗带 prompt 的助手气泡）
+    await click(reruns[0] as HTMLButtonElement)
+    await waitPersist()
+
+    const body = lastPutBody()
+    // 新推的那一步**记的是它自己那一步的滤镜**（重掷就是从那个状态接着走）
+    expect((body.steps.at(-1) as { lut?: unknown }).lut).toEqual({ lutId: 1, amount: 60 })
+    // 顺带：它和"当前这一版参数该落成什么"是同一个值（同一步的两面）
+    expect(body.lut).toEqual({ lutId: 1, amount: 60 })
+  })
+
   it('★ 服务端上这个滤镜被删了 —— 状态、历史、话，三样一起收拾', async () => {
     // 用户手上这张照片正用着「黄昏」（它落在**接回来的最后一步**上），他跑到
     // `/app/luts` 把那个滤镜删了再回来接着改（设计 §6.4 客户端那半）。
