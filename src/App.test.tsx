@@ -6494,12 +6494,102 @@ describe('「回到这一步」不再删后面的步骤', () => {
 
     await clickByText('继续改')
 
-    // ★ 真正钉 I1 的是下面两行：切口落在**跳过去**那一步，不是发话时那一步。
-    //   （上面那句 N 是渲染时按 state 算的，新旧实现都会说"1 步" —— 它钉的是
-    //   "条子说得对"；切点对不对，看这里。）
+    // ★ 真正钉 I1 的只有最后一行（`bubbleTexts()` 那条）：切口要用**跳过去**那一步
+    //   算（`origin.stepId` 来自决策那一刻的 `cursorIdRef`）—— 变异成读 state 的
+    //   旧位置的话，切点会落回原图，'先改一次' 被切走，那行当场红。
+    //   ⚠️ 上面那条 `MODEL:decoded-1` **不是** I1 的守卫（措辞更正，2026-10-05）：
+    //   点「继续改」走的是 `confirmReplace`，它读的是**此刻 render 的 `image`**
+    //   —— 不管出发点是哪一步，那个值都是跳转后那一步的，新旧实现在它上面一模一样
+    //   （实测：只按 I1 变异，它不红）。留着它只是"送的是 v1 的底"这条边角检查。
     expect(api.postEdit).toHaveBeenCalledTimes(1)
     const req = vi.mocked(api.postEdit).mock.calls.at(-1)![0] as { imageDataUrl: string }
     expect(req.imageDataUrl).toContain('MODEL:decoded-1')
     expect(bubbleTexts()).toContain('先改一次')
+  })
+
+  it('★（终审残留）路由还在飞时切到另一条会话 → 这趟作废：通报一句、不弹条、不生成、不串会话', async () => {
+    // 参考：`App.tsx` `send` 里 `sidAt` / `seqAt` 那道闸。
+    // `send` 从发出到 `applyDecision` 隔着两段 await（实测 1.3~1.6 秒），而
+    // 切会话 / 换照片都**没有** busy 闸门 —— 这条钉的就是那段窗口里用户点开
+    // 另一条会话。两条会话**步数故意相同**（都是 3 步、步骤 id 都是 1/3/5）：
+    // 撞号时旧虫走的是**静默**那条 —— 站的位置恰好等于新会话的 tip，确认条
+    // 都不弹，直接生成，把这张照片的生成写进另一条会话（串会话，错了不报错）。
+    // 变异：去掉 `send` 里那道闸 → ①③ 当场红（屏幕上没有"切走"那句通报、
+    // postEdit 被调用）。
+    const a = { ...makeSession(9, 3, 'A 的话', 'TA'), originalName: '九号.jpg' }
+    const b = { ...makeSession(7, 3, 'B 的话', 'TB'), originalName: '七号.jpg' }
+    withSessions([a, b])
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()                                  // 接回最近动过的那条（A = id 9）
+
+    const gate = makeGate<RouteDecision>()
+    vi.mocked(api.postRoute).mockReturnValueOnce(gate.promise)
+    await say('换个方向')                               // 卡在 postRoute 上：路由还在飞
+
+    // 走真入口切到 B：左栏「对话」→ 点「七号」那一行
+    await goNav('对话')
+    const row = [...container.querySelectorAll('.session-row')].find(
+      r => (r.textContent ?? '').includes('七号'))
+    expect(row).toBeTruthy()
+    await act(async () => {
+      ;(row!.querySelector('.session-open') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await waitPersist()
+    await goNav('修图')
+
+    // 现在放行：决策这一刻才进来 —— 它属于 A，而人已经站在 B 上
+    await act(async () => {
+      gate.open(decision({ route: 'generate', editPrompt: '改一下' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // ① 通报一句（说清哪一趟、还能怎么办）
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('切走')
+    // ② 没有确认条 —— 尤其不许出现"后面还有 0 步"那种自相矛盾的胡话
+    expect(container.textContent).not.toContain('后面还有')
+    // ③ 钱没花：这一趟在闸门处就作废了
+    expect(api.postEdit).not.toHaveBeenCalled()
+    // ④ 新会话（B）的气泡里没有 A 那句话 —— 串会话一个字节都没发生
+    expect(bubbleTexts()).not.toContain('换个方向')
+  })
+
+  it('★（终审残留）上传后立刻说话、建会话这时才回来 → 照常生成（不许拿"切走"的假话打发）', async () => {
+    // 它是上面那道闸的**另一半**：`onPick` 里建会话是不 await 的（"锦上添花"，
+    // `busy` 在它回来之前就清了），所以用户完全可能在建会话回来之前先说了一句。
+    // 这趟出发时 `sidAt === null`，建会话回来把 `sessionIdRef` 从 null 拨成 id ——
+    // 那是**同一条会话在长出来**，不是"人走了"。闸门要是连这一格也比，用户会拿到
+    // 一句**假话**（他根本没走），而且刚说的那句话被扔掉（"这边没动它"）。
+    // 变异：闸门写回 `sessionIdRef.current !== sidAt`（不排 null）→ 这条当场红。
+    const sessionGate = makeGate<{ id: number }>()
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/sessions' && (init?.method ?? 'GET') === 'POST') {
+        return jsonResponse(await sessionGate.promise)
+      }
+      return inner(url, init)
+    })
+    const routeGate = makeGate<RouteDecision>()
+    vi.mocked(api.postRoute).mockReturnValueOnce(routeGate.promise)
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    await uploadPhoto()                       // 照片进来；建会话被挂住（sessionId 还是 null）
+    await say('亮一点')                        // 立刻说话：出发时 sidAt === null
+
+    // 建会话在这段路由窗口里回来：`sessionIdRef` 从 null 拨成 id
+    await act(async () => {
+      sessionGate.open({ id: 1 })
+      await new Promise(r => setTimeout(r, 0))
+    })
+    // 放行路由
+    await act(async () => {
+      routeGate.open(decision({ route: 'generate', editPrompt: '改一下' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(container.querySelector('.notice')?.textContent ?? '').not.toContain('切走')
+    expect(api.postEdit).toHaveBeenCalledTimes(1)      // 这句话照常生效
   })
 })

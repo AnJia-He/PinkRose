@@ -1360,6 +1360,15 @@ export default function App() {
     setMessages(m => [...m, { id: uid, role: 'user', text }])
     setCards([])
     setBusy('正在看照片…')
+    // ★ 2026-10-05（终审残留）：记下"这一趟出发时是哪条会话、哪一版底图"。
+    //   `postRoute` 要等 1.3~1.6 秒，而切会话 / 换照片都**没有** busy 闸门 ——
+    //   不记的话，决策回来会把这趟落到**别人会话**上：轻则弹一条"后面还有 0 步…"
+    //   的胡话，重则（两条会话步骤数相同、id 撞号）静默把这张照片的生成写进
+    //   另一条会话 —— 串会话，错了不报错。判据和 `runGenerate` 里那道
+    //   `seqAtStart` 守卫同一族：那边守"生成回来时人已经走了"，这边守
+    //   "还没开始生成，人就已经走了"。
+    const sidAt = sessionIdRef.current
+    const seqAt = baseSeqRef.current
     try {
       // 路由看的是**用户此刻看到的画面**（含已生效的参数），这样模型给的
       // 增量才是相对当前效果的。生成那一路送的是**当前 base**（同样不带
@@ -1373,6 +1382,21 @@ export default function App() {
         luts: lutsApi.luts.map((l) => ({ id: l.id, name: l.name })),
         lut,
       })
+      // ⚠️ 两样都要比：`baseSeqRef` 覆盖换照片（上传/生成都会推它），
+      //   `sessionIdRef` 是"会话"这一层的直说。
+      //   ⚠️ `sidAt === null` 时**不比会话这一样**：上传后立刻说话时建会话还在
+      //   半路（`onPick` 里那句是不 await 的，而 `busy` 早清了）—— 它会在这段
+      //   窗口里把 `sessionIdRef` 从 null 拨成 id，那是**同一张照片的同一条会话
+      //   在长出来**（`onPick` 有 `originalFileRef.current === file` 守着），
+      //   不是"人走了"。比了就是拿一句"你切走时…"的**假话**把用户刚说的话扔掉
+      //   （2026-10-05 探针实测到，见「上传后立刻说话、建会话这时才回来」那条用例）。真换会话 / 换照片
+      //   几条路**都推 `baseSeqRef`**（`loadSession` / `onPick` / `onSessionDeleted`
+      //   各一处），`startNew` 走的是 `sidAt` 非 null 那一半 —— 漏掉 null 这一小格，
+      //   一个真出口都漏不掉。
+      if ((sidAt !== null && sessionIdRef.current !== sidAt) || baseSeqRef.current !== seqAt) {
+        noticeBad('你切走时，刚才那句话还没算完 —— 这边没动它。要的话，回去再说一遍。')
+        return
+      }
       await applyDecision(decision, uid)
     } catch (e) {
       console.error(e)
@@ -1389,7 +1413,10 @@ export default function App() {
     //   ⚠️ 依赖写 `lutsApi.luts`（那份数组），别写 `lutsApi` —— 后者每次渲染
     //   都是新对象，等于这个回调每渲染重建一次（`refreshLuts` 那边有同款注释）。
     // ★ 2026-10-05：`cancelReplace` 同上（上面那一行清它）。
-  }, [busy, params, applyDecision, say, image, lutsApi.luts, lut, cancelReplace])
+    // ★ 2026-10-05（终审残留）：`noticeBad` 也进来 —— 挡住的那一趟要说一句
+    //   （"你切走时…"）。它身份稳定，但按这个文件的规矩：**读到的就写进依赖**。
+    //   两个 ref（`sessionIdRef` / `baseSeqRef`）是稳定身份，不进依赖。
+  }, [busy, params, applyDecision, say, image, lutsApi.luts, lut, cancelReplace, noticeBad])
 
   const onCard = useCallback(async (card: SuggestCard) => {
     if (busy) return
