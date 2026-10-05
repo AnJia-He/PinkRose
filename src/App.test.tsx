@@ -3596,11 +3596,10 @@ describe('用户管理页', () => {
     await renderApp()
     await openAccount()
 
-    expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('99.8%')
-    // ★ 第八/九轮：这行原来裸着（「这个数字你得告诉用户是什么呀」），而且口径是
-    // 已用；用户再一句「这不还是用的量不是剩余量呀」→ 翻成**剩余**视角：
-    // 10 MB / 5 GiB = 0.2% 已用 → 剩余 99.8%。变异：把这个标签删掉 → 这一条红
-    expect(container.querySelector('.usage-pie-pct-label')?.textContent).toBe('剩余')
+    // ★ 第八/九/十轮：这行原来裸着 → 补主语 → 翻成**剩余**视角 → 「剩余」和数字
+    // 并成同一个款式（用户：「字体和颜色应该跟数字保持一致吧」）。
+    // 10 MB / 5 GiB = 0.2% 已用 → 剩余 99.8%。变异：把「剩余」两个字删掉 → 这一条红
+    expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('剩余 99.8%')
     // 扇形画的是"真比例套一道**可见性下限**"（2026-10-05 第七轮：0.195% 只有一根
     // 看不见的针，用户连说三轮"图上没有已用"→ 小于 5° 的按 5° 画；数字全是真的。
     // ⚠️ 别再加末端圆点/珠子 —— 第七轮加过，用户否了：「大圆圈也不好看呀」）。
@@ -3647,8 +3646,8 @@ describe('用户管理页', () => {
     await renderApp()
     await openAccount()
 
-    expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('>99.9%')
-    // 变异：把 `>99.95` 那一档删掉（退回 toFixed(1)）→ 显示「100.0%」，这一条红
+    expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('剩余 >99.9%')
+    // 变异：把 `>99.95` 那一档删掉（退回 toFixed(1)）→ 显示「剩余 100.0%」，这一条红
   })
 
   it('★ 服务端没给用量时**那一格整个不出现** —— 不硬凑 0，也不硬凑体积', async () => {
@@ -3727,7 +3726,7 @@ describe('用户管理页', () => {
     // 那一格"变色"的载体：饼变红、百分比红、**图里"已用"那行的数字**红（CSS 按
     // `.usage-pie-warn` 选择器上色；DOM 上钉 warn 类 + 两个元素都在）。
     expect(container.querySelector('.usage-pie-warn')).toBeTruthy()
-    expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('16%')   // 剩余视角：84% 已用 → 16% 剩余
+    expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('剩余 16%')   // 剩余视角：84% 已用 → 16% 剩余
     expect(container.querySelector('.usage-chart-used')?.textContent).toContain('4.2 GB')
     // 「剩余」不是摆设：84% 时它必须给出真正的余量（5 GiB − 4.2 GiB = 0.8 GiB = 819 MB）
     expect(container.querySelector('.usage-chart-rest')?.textContent).toContain('剩余 819 MB')

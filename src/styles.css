@@ -1900,11 +1900,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 用到八成往上：饼和数字一起变红（和 `.stat-warn` 是同一句话的两种说法）。
    侧壁走 color-mix 压暗一档红色 —— 和两个顶面"面亮壁暗"是同一条光照规则。 */
 .usage-pie-warn .usage-pie-used-side { fill: color-mix(in srgb, var(--danger) 62%, #000); }
-/* 百分比那行（★ 2026-10-05 第八轮）：「已用」小字 + 百分比大字，基线对齐 ——
-   数字不能裸着（用户原话：「这个数字你得告诉用户是什么呀」）。
-   「已用」和图上标签的用词一致；warn 时只有数字变红，它保持 muted 让层次不糊。 */
-.usage-pie-pct-line { display: flex; align-items: baseline; gap: var(--sp-2); }
-.usage-pie-pct-label { font-size: 13px; color: var(--muted); }
+/* 剩余率那行（★ 2026-10-05 第十轮改：「剩余」和数字同字号同色 —— 用户原话
+   「字体和颜色应该跟数字保持一致吧看着好别扭」，小灰标签贴大数字的混搭他不认）。
+   warn 时整行（含「剩余」）一起变红。 */
 .usage-pie-pct {
   font-size: 22px; font-weight: 600; letter-spacing: -.01em;
   color: var(--text); font-variant-numeric: tabular-nums;

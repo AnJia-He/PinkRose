@@ -415,15 +415,12 @@ export function UsagePie({ pct, warn, used, rest }: {
         <i className="usage-chart-dot usage-chart-dot-rest" aria-hidden="true" />
         剩余 <b>{rest ?? '…'}</b>
       </span>
-      {/* 百分比那行（★ 2026-10-05 第八/九轮：先补「已用」主语（用户：「这个数字你
-          得告诉用户是什么呀」），再翻成**剩余**视角（用户：「这不还是用的量不是
-          剩余量呀」）。小字 muted + 数字大字，读屏读出来是「剩余 99.7%」。 */}
-      {label !== '' && (
-        <span className="usage-pie-pct-line">
-          <span className="usage-pie-pct-label">剩余</span>
-          <span className="usage-pie-pct">{label}</span>
-        </span>
-      )}
+      {/* 百分比那行（★ 2026-10-05 第八/九/十轮：先补主语「已用」（用户：「这个数字
+          你得告诉用户是什么呀」）→ 翻成剩余视角（「这不还是用的量不是剩余量呀」）
+          → 第十轮：「剩余」和数字**并成一行**（用户：「字体和颜色应该跟数字保持
+          一致吧看着好别扭」—— 小灰标签贴大数字的混搭他不认，整行 22px 一个款式；
+          warn 时也整行一起红）。读屏读出来是「剩余 99.7%」。 */}
+      {label !== '' && <span className="usage-pie-pct">剩余 {label}</span>}
     </div>
   )
 }
