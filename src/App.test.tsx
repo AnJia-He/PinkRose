@@ -3572,13 +3572,13 @@ describe('用户管理页', () => {
     await openAccount()
 
     expect(statsText()).toMatch(/^2\s*张作品/)
-    expect(container.querySelectorAll('.stat')).toHaveLength(1)   // 「占的空间」并进图例了
-    // ★ 2026-10-05（第五轮）：图例两个数 —— 用户嘴里点名要的「实际用量」和「总用量」
-    //（「没有总用量和实际用量呀」）。体积是服务端算的，上限是 withUsage 铺的 5 GiB。
-    const legend = container.querySelector('.usage-legend')?.textContent ?? ''
-    expect(legend).toContain('已用 10 MB')
-    expect(legend).toContain('总共 5.0 GB')
-    expect(container.querySelectorAll('.usage-legend-dot')).toHaveLength(2)
+    expect(container.querySelectorAll('.stat')).toHaveLength(1)
+    // ★ 2026-10-05：两个数**画在图形里**（用户：「没有总用量和实际用量呀」→
+    // 加了图例 → 又一句「也要在图形中展现出来」→ 搬进图形区域）。体积是服务端
+    // 算的，上限是 withUsage 铺的 5 GiB。
+    expect(container.querySelector('.usage-chart-used')?.textContent).toContain('已用 10 MB')
+    expect(container.querySelector('.usage-chart-total')?.textContent).toContain('总共 5.0 GB')
+    expect(container.querySelectorAll('.usage-chart-dot')).toHaveLength(2)
     // 10 MB / 5 GB = 0.2% —— 远没到 80%，那条提醒不该出现
     expect(container.querySelector('.account-quota-warn')).toBeNull()
   })
@@ -3714,11 +3714,11 @@ describe('用户管理页', () => {
     const warn = container.querySelector('.account-quota-warn')
     expect(warn?.textContent).toContain('还能存约')
     expect(warn?.textContent).toContain('八成')
-    // 那一格"变色"的四个载体（★ 2026-10-05 第五轮起）：
-    // 饼变红、百分比红、图例的「已用」点红 —— 原来那格「占的空间」红字并进图例了。
+    // 那一格"变色"的载体：饼变红、百分比红、**图里"已用"那行的数字**红（CSS 按
+    // `.usage-pie-warn` 选择器上色；DOM 上钉 warn 类 + 两个元素都在）。
     expect(container.querySelector('.usage-pie-warn')).toBeTruthy()
     expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('84%')
-    expect(container.querySelector('.usage-figure-warn')).toBeTruthy()
+    expect(container.querySelector('.usage-chart-used')?.textContent).toContain('4.2 GB')
 
     // 出路是**一条真走得通的路**：点进去就是作品集（提醒不给出路 = 把人拉进没有门的房间）
     await act(async () => {

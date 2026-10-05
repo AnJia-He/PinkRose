@@ -245,38 +245,20 @@ export function AccountPage({
                   **整块让给图表**：饼图居中在上、百分比 + 两个数字在下面
                   （`.usage-figure`）。盘 `aria-hidden`：语义真值在数字里，
                   它是"画给人看"的那份。 */}
-              <div className={usageWarn ? 'usage-figure usage-figure-warn' : 'usage-figure'}>
+              <div className="usage-figure">
+                {/* ★ 2026-10-05（第六轮）：两个数**画进图形里**了（用户：「也要在图形中
+                    展现出来」）—— `used`/`total` 由页面用 `formatSize` 算好传进去；
+                    拿不到时（loading）不传，图上占位「…」。外面那行图例因此撤了
+                    （同一组数字不说两遍），stats 只剩「N 张作品」。 */}
                 <UsagePie
                   pct={usage.state === 'loading' ? null : usage.bytes / usage.limit}
-                  warn={usageWarn} />
-                {/* ★ 2026-10-05（当天第五轮）：**图例**。用户看了 3D 版之后说
-                    「没彩色呀，而且**没有总用量和实际用量**呀」—— 两个色点对上饼的
-                    两块（薄荷 = 已用、蓝 = 容量盘），两个数就是他嘴里的那两个词：
-                    「已用 X」= 实际用量、「总共 Y」= 总用量。
-                    ⚠️ 原来那格「X 占的空间」并进这里了 —— 同一个数不说两遍。 */}
-                {usage.state === 'loading' ? (
-                  // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
-                  // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
-                  <div className="usage-legend">
-                    <span className="usage-legend-item">
-                      <i className="usage-legend-dot usage-legend-used" aria-hidden="true" />已用 <b>…</b>
-                    </span>
-                    <span className="usage-legend-item">
-                      <i className="usage-legend-dot usage-legend-rest" aria-hidden="true" />总共 <b>…</b>
-                    </span>
-                  </div>
-                ) : (
-                  <div className="usage-legend">
-                    <span className="usage-legend-item">
-                      <i className="usage-legend-dot usage-legend-used" aria-hidden="true" />已用 <b>{formatSize(usage.bytes)}</b>
-                    </span>
-                    <span className="usage-legend-item">
-                      <i className="usage-legend-dot usage-legend-rest" aria-hidden="true" />总共 <b>{formatSize(usage.limit)}</b>
-                    </span>
-                  </div>
-                )}
+                  warn={usageWarn}
+                  used={usage.state === 'loading' ? undefined : formatSize(usage.bytes)}
+                  total={usage.state === 'loading' ? undefined : formatSize(usage.limit)} />
                 <div className="account-stats">
                   {usage.state === 'loading' ? (
+                    // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
+                    // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
                     <div className="stat"><b>…</b><span>张作品</span></div>
                   ) : (
                     <div className="stat"><b>{usage.count}</b><span>张作品</span></div>
@@ -341,18 +323,30 @@ export function modelValue(configs: PublicConfig[]): string {
  *
  * 形状：顶面是压扁的椭圆（rx 48 / ry 28），侧壁是向下 16 的厚度 —— 像一块圆蛋糕。
  *   ① 已用：顶面薄荷（渐变）+ 侧壁深青（`--pie-used-side`）+ 一圈发光；
- *   ② 剩余：顶面**深青灰**（`--pie-rest`，和薄荷同族的暗档 —— 空盘不再是一坨灰）、
- *      侧壁再暗一档（`--pie-rest-side`）—— 顶面亮、侧面暗是"光照"的常识做法。
+ *   ② 剩余：顶面**明亮的蓝**（`--pie-rest` —— 2026-10-05 第五轮从深青灰换来的，
+ *      用户对深青灰的判断是「没彩色」）、侧壁再暗一档（`--pie-rest-side`）——
+ *      顶面亮、侧面暗是"光照"的常识做法。
  * 几何全部来自 `pie3dPaths`（采样成折线，不用 SVG 弧命令 —— 没有 large/sweep
  * 那对标志位可以写错，这是上一版真机抓过 bug 的地方）。
  *
- * `pct === null` = 还在取：画一块**没有切角的完整厚饼**、不写百分比
+ * ★ 2026-10-05（第六轮）：「已用 / 总共」两个数**画在图形里**（用户看完图例版说
+ *   「**也要在图形中展现出来**」）—— 上下各一条小标签，色点对上饼的两块。
+ *   为什么是 HTML 标签不是 SVG `<text>`：svg 整体是 `aria-hidden` 的"画面"，
+ *   文字进 DOM 才读得到（这两个标签就是这页用量信息的可读副本）。
+ *
+ * `pct === null` = 还在取：画一块**没有切角的完整厚饼**、数字全占位「…」
  *（「0%」对着一个存过东西的人是一句假话 —— 见上面 `Usage` 那段）。
  *
  * ⚠️ 百分比数字在饼**下面**（顶面上压字对比度会随占比漂）。
  * ⚠️ 绝不显示「0.0%」：那是句假话，不到 0.05% 一律「<0.1%」。
  */
-export function UsagePie({ pct, warn }: { pct: number | null; warn: boolean }) {
+export function UsagePie({ pct, warn, used, total }: {
+  pct: number | null; warn: boolean
+  /** 「已用 X」的说法（页面用 `formatSize` 算好传进来）；不传 = 还没拿到，占位「…」。 */
+  used?: string
+  /** 「总共 Y」同理。 */
+  total?: string
+}) {
   const ratio = pct === null ? null : Math.max(0, Math.min(1, pct))
   // loading（ratio === null）画 pie3dPaths(0)：整块厚饼、没有扇形。
   const g = pie3dPaths(ratio ?? 0)
@@ -362,8 +356,8 @@ export function UsagePie({ pct, warn }: { pct: number | null; warn: boolean }) {
     : n < 10 ? `${n.toFixed(1)}%`
     : `${Math.round(n)}%`
   return (
-    <div className={warn ? 'usage-pie-wrap usage-pie-warn' : 'usage-pie-wrap'} aria-hidden="true">
-      <svg className="usage-pie" viewBox="0 0 120 120">
+    <div className={warn ? 'usage-pie-wrap usage-pie-warn' : 'usage-pie-wrap'}>
+      <svg className="usage-pie" viewBox="0 0 120 120" aria-hidden="true">
         <defs>
           {/* ⚠️ id 固定 —— 这一页同时只会有一个饼图（真出现第二个再加 useId） */}
           <linearGradient id="usagePieGrad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -384,6 +378,15 @@ export function UsagePie({ pct, warn }: { pct: number | null; warn: boolean }) {
         {g.restTop && <path className="usage-pie-rest-top" d={g.restTop} />}
         {g.usedTop && <path className="usage-pie-used-top" d={g.usedTop} fill="url(#usagePieGrad)" />}
       </svg>
+      {/* 图上的两条标签（绝对定位：已用贴饼顶、总共贴饼底 —— 见组件头注释） */}
+      <span className="usage-chart-tag usage-chart-used">
+        <i className="usage-chart-dot usage-chart-dot-used" aria-hidden="true" />
+        已用 <b>{used ?? '…'}</b>
+      </span>
+      <span className="usage-chart-tag usage-chart-total">
+        <i className="usage-chart-dot usage-chart-dot-total" aria-hidden="true" />
+        总共 <b>{total ?? '…'}</b>
+      </span>
       {label !== '' && <span className="usage-pie-pct">{label}</span>}
     </div>
   )

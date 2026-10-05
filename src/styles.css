@@ -1887,6 +1887,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    · used-side —— 已用侧壁：深青（深色档就是 --accent-700）。
    ⚠️ 百分比数字在饼**下面**（顶面上压字对比度随占比漂，见组件注释）。 */
 .usage-pie-wrap {
+  position: relative;   /* 图上的两条标签挂在它身上（绝对定位，见下） */
   flex: none; width: 160px;
   display: flex; flex-direction: column; align-items: center; gap: var(--sp-2);
 }
@@ -1911,23 +1912,24 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .usage-pie-warn .usage-pie-pct { color: var(--danger); }
 
-/* 用量图例（★ 2026-10-05 第五轮，用户：「没有总用量和实际用量呀」）——
-   两个色点对上饼的两块：薄荷 = 已用、蓝 = 容量盘；两个数走 formatSize 的说法。
-   字形和 `.stat` 同款（数字亮、说明 muted），它就是 stats 家族的第三、四格。 */
-.usage-legend { display: flex; gap: var(--sp-5); }
-.usage-legend-item {
-  display: flex; align-items: center; gap: var(--sp-2);
-  font-size: 13px; color: var(--muted);
+/* 画在**图形里**的两条标签（★ 2026-10-05 第六轮，用户看完图例版说
+   「**也要在图形中展现出来**」）—— 已用贴饼顶、总共贴饼底，色点对上饼的两块。
+   12px：和 `.stat` 的说明字同档，比饼下那行大百分比低一档。
+   ⚠️ 是 HTML 标签不是 SVG `<text>`：svg 是 aria-hidden 的"画面"，文字进 DOM
+   才读得到（这两条就是这页用量信息的可读副本）。 */
+.usage-chart-tag {
+  position: absolute; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  font-size: 12px; color: var(--muted);
 }
-.usage-legend-item b {
-  font-size: 15px; font-weight: 600; color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-.usage-legend-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-.usage-legend-used { background: var(--accent-500); }
-.usage-legend-rest { background: var(--pie-rest); }
-/* 用到八成往上：图例里的"已用"点也跟着变红（和饼、数字同一句话的第四种说法）。 */
-.usage-figure-warn .usage-legend-used { background: var(--danger); }
+.usage-chart-tag b { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.usage-chart-used { top: 6px; }
+.usage-chart-total { top: 138px; }
+.usage-chart-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.usage-chart-dot-used { background: var(--accent-500); }
+.usage-chart-dot-total { background: var(--pie-rest); }
+/* 用到八成往上：图里"已用"那行的数字跟着变红 —— 饼 / 百分比 / 这个数，同一句话。 */
+.usage-pie-warn .usage-chart-used b { color: var(--danger); }
 
 /* 用量框：整块让给图表（用户：「这一整块都可以先放作品用量」）——
    圆盘居中在上、两个数字在下面中心。 */
