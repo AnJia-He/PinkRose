@@ -1583,6 +1583,53 @@ export default function App() {
   }, [history, cancelPick, cancelReplace, moveCursor])
 
   /**
+   * ★ 2026-10-06（用户原话：「在会话里的单条记录我怎么还是没有删除的按钮」）：
+   * 删一条记录。**带图那条连它身后那一步一起删**（图 / 参数 / 滤镜都挂在那一步
+   * 上 —— 只删消息的话，屏幕上一条话都没了、那个位置却还在，缩略图还会以
+   * "没有话的图"的样子杵在那儿）；纯文字那条只动 `messages`。
+   *
+   * 那条「删了就找不回来了」的**就地确认由 ChatPanel 做**（它才看得见"这条后面
+   * 有没有一步"）—— 走到这里就是用户已经点了「确认删除」（或者删的是纯文字那条）。
+   *
+   * ⚠️ 它和「回到这一步」/ 新消息一样是"改主意了"：点选和「继续改」那两条确认条
+   *   一起作废 —— 不清的话，「继续改」会切在一个**已经删掉的位置**上。
+   * ⚠️ `busy` 那道闸门是**真正**的拦住处（ChatPanel 里那颗 disabled 只是反馈，
+   *   和「再来一版」同一条规矩）：忙的时候删，等于在一次生成还在飞的时候动账本。
+   * ⚠️ 不碰服务端：落盘那个 effect 会把"少送来的 id"写成删除（服务端 `mergeSteps`
+   *   对没送来的 id 就是删），所以这条路**服务端零改动**。
+   */
+  const onDeleteMessage = useCallback((id: number) => {
+    if (busy) return
+    cancelPick()
+    cancelReplace()
+    setMessages(m => m.filter(x => x.id !== id))
+    // 这条消息身后有没有"一步"？步骤 id 就是那条助手消息的 id（老约定）。
+    const wasStep = history.some(s => s.id === id)
+    if (!wasStep) return
+    setHistory(prev => {
+      const next = prev.filter(s => s.id !== id)
+      // 被删那一步的位图要还回去（原图不关 —— 它还要接着用）。副作用写在 updater
+      // 里的写法照 `useGeneration` 那条：`close()` 幂等，StrictMode 重放也安全。
+      closeBitmaps(bitmapsToClose(prev, next, { protectOriginal: true }))
+      return next
+    })
+    // 站在被删的那一步上 → 挪到**剩下的最后一步**，画面 / 参数 / 滤镜照 `onJump`
+    // 那三行一起还原（只挪光标不换画面的话，"你在这里"指着一步、屏幕上却是
+    // 一步已经不存在的图）。⚠️ 用闭包的 `history`（它在依赖数组里）：这里没有
+    // await，它和上面 updater 拿到的 `prev` 是同一份。
+    if (cursorId === id) {
+      const rest = history.filter(s => s.id !== id)
+      const tip = rest[rest.length - 1]
+      if (tip) {
+        moveCursor(tip.id)
+        setImage(tip.base)
+        setParams(tip.params)
+        setLut(tip.lut)
+      }
+    }
+  }, [busy, history, cursorId, cancelPick, cancelReplace, moveCursor])
+
+  /**
    * 「再来一版」—— 同一句话，重掷一次。
    *
    * ★ 2026-09-30 加。这是 AI 产品里"每条回复下面那一排操作"里我们真正缺的那个
@@ -2283,6 +2330,11 @@ export default function App() {
                   rerunnable={history.filter(s => s.prompt).map(s => s.id)}
                   jumpableIds={history.map(s => s.id)}
                   thumbs={Object.fromEntries(history.map(s => [s.id, s.thumb]))}
+                  // ★ 2026-10-06：单条记录的删除。`originalId` = 「原图」那一步
+                  //   的消息 id（欢迎语和它是同一条）—— 那一条上**不摆** ✕：
+                  //   它是这条会话的锚（删了它，这一屏就没有落脚的地方了）。
+                  originalId={history.find(s => s.isOriginal)?.id ?? null}
+                  onDeleteMessage={onDeleteMessage}
                   // marker 非空必然 picking 为真（两者出自同一个对象），所以这里
                   // 不必再 or 一次 —— 从 `pending` 推出来的东西不可能互相打架。
                   marking={picking}

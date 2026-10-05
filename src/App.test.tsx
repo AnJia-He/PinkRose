@@ -6782,3 +6782,194 @@ describe('「回到这一步」不再删后面的步骤', () => {
     expect(api.postEdit).toHaveBeenCalledTimes(1)      // 这句话照常生效
   })
 })
+
+/**
+ * ★ 2026-10-06（用户原话：「在会话里的单条记录我怎么还是没有删除的按钮」）。
+ *
+ * 语义是控制器问过一轮之后他选的 —— **都能删**：
+ *   · 纯文字那条（身后没有"一步"）点 ✕ **直接删**，不用确认；
+ *   · 带图那条（身后挂着一整步：图 / 参数 / 滤镜都在它上面）点 ✕ **先就地
+ *     问一句**（「删了就找不回来了。」），确认之后**连那一步一起删**；
+ *   · 「原图」那条（欢迎语和它是同一条消息）不给删除键 —— 它是这条会话的锚。
+ *
+ * 这一组钉的都是**用户看得见的行为**：消息没了、小图少一张、画面换到哪一张、
+ * 那一趟落盘送出去的是不是干净的，以及忙的时候点不动。
+ */
+describe('单条记录能删 —— 带图那条连同那一步', () => {
+  /** 屏幕上所有气泡的文字（用户的和助手的都在里面）。 */
+  const bubbleTexts = () =>
+    [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
+  /** 打到某条会话上的更新请求（照「恢复」那个 describe 里那条）。 */
+  const putCalls = (url: string) =>
+    fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === 'PUT')
+  /** 一步一个（`<button.bubble-jump>` 或 `<span.bubble-current>` 都算），照
+   *  「回到这一步」那一组的数法 —— 顺序 = 消息顺序。 */
+  const stepItems = () =>
+    [...container.querySelectorAll<HTMLElement>('.bubble-jump, .bubble-current')]
+
+  /**
+   * 某条消息上那颗 ✕。
+   *
+   * ⚠️ 先按**气泡文字**认那条消息，再在它里面找 `.msg-del` —— ✕ 是图标键、
+   *   没有可见文字，不能像别的按钮那样按文字找（和左栏「个人设置」那颗同一条
+   *   规矩：图标键只能按类名 / `aria-label` 找）。
+   */
+  function delBtnOf(text: string): HTMLButtonElement {
+    const msg = [...container.querySelectorAll<HTMLElement>('.msg')].find(
+      m => (m.querySelector('.bubble-text')?.textContent ?? '') === text)
+    expect(msg, `屏幕上没有「${text}」这条消息`).toBeTruthy()
+    const btn = msg!.querySelector('.msg-del') as HTMLButtonElement | null
+    expect(btn, `「${text}」这条上没有删除按钮`).toBeTruthy()
+    return btn!
+  }
+
+  async function clickEl(el: HTMLElement) {
+    await act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
+  }
+
+  /** 上传 + 生成一版：messages = [欢迎(1), 用户话(2), 回复(3)]，history = [1, 3]。 */
+  async function oneVersion() {
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '改一下', reply: '好，改好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')
+  }
+
+  it('纯文字那条：点 ✕ 直接删 —— 不问、小图不跟着走、钱一分不花', async () => {
+    await oneVersion()
+    expect(bubbleTexts()).toEqual(['准备好啦，说说想怎么改？', '先改一次', '好，改好了。'])
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)   // 原图 + 这一步
+    const posts = vi.mocked(api.postEdit).mock.calls.length
+
+    await clickEl(delBtnOf('先改一次'))
+
+    // ① 那条话**立刻**没了（身后没有一步，不用确认）
+    expect(bubbleTexts()).not.toContain('先改一次')
+    expect(container.querySelectorAll('.msg')).toHaveLength(2)
+    // ② 没有确认条
+    expect(container.textContent).not.toContain('删了就找不回来了')
+    // ③ 它身后没有一步：小图一张不少、也没花什么钱
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(api.postEdit).toHaveBeenCalledTimes(posts)
+  })
+
+  it('带图那条：✕ 先就地问一句；「算了」→ 什么都没变', async () => {
+    await oneVersion()
+    const msgs = container.querySelectorAll('.msg').length
+    const thumbs = container.querySelectorAll('.bubble-thumb').length
+    const posts = vi.mocked(api.postEdit).mock.calls.length
+
+    await clickEl(delBtnOf('好，改好了。'))
+
+    // 条子出来了 —— 但还没删任何东西
+    expect(container.textContent).toContain('删了就找不回来了。')
+    expect(bubbleTexts()).toContain('好，改好了。')
+    expect(container.querySelectorAll('.msg')).toHaveLength(msgs)
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(thumbs)
+    expect(api.postEdit).toHaveBeenCalledTimes(posts)      // 钱也没花
+
+    await clickByText('算了')
+
+    // 条子收了，一切照旧（连那颗 ✕ 都回来了）
+    expect(container.textContent).not.toContain('删了就找不回来了')
+    expect(bubbleTexts()).toContain('好，改好了。')
+    expect(container.querySelectorAll('.msg')).toHaveLength(msgs)
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(thumbs)
+    expect(delBtnOf('好，改好了。').disabled).toBe(false)
+  })
+
+  it('★「确认删除」→ 那条话和那一步一起没；站在哪一步删它，画面就挪到**剩下的最后一步**', async () => {
+    // 两版：history = [原图(1), 第1版(3), 第2版(5)]。跳到**第 1 版**上把它删掉
+    // —— 剩下的最后一步是**第 2 版**（不是原图，"挪到前一个"那种写法会对不上）。
+    vi.mocked(api.postRoute)
+      .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '改一下', reply: '第一版好了。' }))
+      .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '再改一下', reply: '第二版好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')
+    await say('再改一次')
+
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(3)
+    expect(decodedBitmaps).toHaveLength(2)                 // 两版各自的底图
+    await clickEl(stepItems()[1]!)                         // 跳到第 1 版那一步
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: decodedBitmaps[0] })
+
+    await clickEl(delBtnOf('第一版好了。'))
+    await clickByText('确认删除')
+
+    // ① 那条话没了；② 小图少一张；③ 消息少一条（剩下欢迎 + 两句用户话 + 第2版）
+    expect(bubbleTexts()).not.toContain('第一版好了。')
+    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(container.querySelectorAll('.msg')).toHaveLength(4)
+
+    // ④ 被删那一步的位图**还了回去**；剩下那一步的位图还活着（画面正用着它）
+    expect(decodedBitmaps[0]!.close).toHaveBeenCalled()
+    expect(decodedBitmaps[1]!.close).not.toHaveBeenCalled()
+
+    // ⑤ 站在被删的那一步上 → 画面挪到**剩下的最后一步**（第 2 版），
+    //    「你在这里」跟着走 —— 位置标记不许留在一个已经不存在的步骤上
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: decodedBitmaps[1] })
+    const marks = container.querySelectorAll('.bubble-current')
+    expect(marks).toHaveLength(1)
+    expect(marks[0]!.closest('.msg')?.querySelector('.bubble-text')?.textContent)
+      .toBe('第二版好了。')
+    expect(stepItems()).toHaveLength(2)                    // 原图 + 第 2 版，正好两步
+  })
+
+  it('「原图」那条没有 ✕ —— 它是这条会话的锚', async () => {
+    await oneVersion()
+    const msgs = [...container.querySelectorAll<HTMLElement>('.msg')]
+    const welcome = msgs.find(
+      m => (m.querySelector('.bubble-text')?.textContent ?? '').includes('准备好啦'))
+    expect(welcome).toBeTruthy()
+    expect(welcome!.querySelector('.msg-del')).toBeNull()
+    // ⚠️ 这不是"选择器没找着"：别的消息上那颗照常在（用户话 + 回复，两条）
+    expect(msgs.filter(m => m.querySelector('.msg-del'))).toHaveLength(2)
+  })
+
+  it('删完之后落盘那一趟：被删的步骤 id 和那句话都不在 PUT 里', async () => {
+    // 删是**靠"少送"完成的**（服务端 `mergeSteps` 对没送来的 id 就是删），
+    // 所以这一趟 PUT 的 body 就是删除本身 —— 它脏了，删除就没生效
+    // （或者更糟：把别的记录也带走了）。
+    await oneVersion()
+    await clickEl(delBtnOf('好，改好了。'))
+    await clickByText('确认删除')
+    await waitPersist()
+
+    const puts = putCalls('/api/sessions/1')
+    expect(puts.length).toBeGreaterThan(0)
+    const body = bodyOf(puts.at(-1)!)
+    expect(body.steps.map((s: { id: number }) => s.id)).not.toContain(3)     // 被删那一步
+    expect(body.messages.map((m: { id: number }) => m.id)).not.toContain(3) // 被删那句话
+    expect(JSON.stringify(body)).not.toContain('改好了')
+    // 而且原图那一步**还在** —— 删一条记录不是把会话清空
+    expect(body.steps.map((s: { id: number }) => s.id)).toContain(1)
+  })
+
+  it('忙的时候 ✕ 是禁用的 —— 点了也删不动', async () => {
+    // 用**路由**那一段挂住（「正在思考…」，还没开始生成）：钉的是 `busy` 这个
+    // 总闸门，不是"生成中"那一格。
+    const gate = makeGate<RouteDecision>()
+    vi.mocked(api.postRoute).mockReturnValueOnce(gate.promise)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')
+    expect(canvasProps.props.at(-1)?.busy).toBe(false)     // 这趟还没走到生成
+
+    const btn = delBtnOf('先改一次')
+    expect(btn.disabled).toBe(true)
+
+    await clickEl(btn)                                     // 点了也删不动
+    expect(bubbleTexts()).toContain('先改一次')
+
+    // 放行，让这一趟收工（不留下挂着的 promise）
+    await act(async () => {
+      gate.open(decision({ route: 'params' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  })
+})

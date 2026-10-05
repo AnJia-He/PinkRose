@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
-import { Plus, RotateCw, SlidersHorizontal, Undo2 } from 'lucide-react'
+import { Plus, RotateCw, SlidersHorizontal, Undo2, X } from 'lucide-react'
 import LutPicker from './LutPicker.tsx'
 
 export type ChatMessage = {
@@ -84,6 +84,24 @@ type Props = {
   onGoImport: () => void
   /** 清单没到手时那颗「再试一次」（重拉一次清单）。 */
   onRetryLuts: () => void
+  /**
+   * ★ 2026-10-06（用户原话：「在会话里的单条记录我怎么还是没有删除的按钮」）：
+   * **「原图」那一步的消息 id** —— 它的消息上**不摆**删除键（它是这条会话的锚）。
+   * 欢迎语和原图那一步是同一条消息（同一个 id），所以欢迎那条也没有 ✕ ——
+   * 这是对的：删了它，这一屏就没有落脚的地方了。
+   * `null` = 还没有原图（没有会话 / 没有照片）。
+   */
+  originalId: number | null
+  /**
+   * 点某条消息的 ✕ → 请 App 把这条记录删掉。
+   *
+   * ⚠️ **带图那条不直接调它**：那一条身后挂着一整步（图 / 参数 / 滤镜），
+   *   点 ✕ 先在**就地问一句**（下面的 `confirmingId`，照 SessionsPage /
+   *   作品详情页那套"不弹窗"的规矩），点「确认删除」才走到这个回调。
+   *   纯文字那条（身后没有一步）不用确认，一点就删 —— 删错一句话的代价
+   *   和删掉一张花过钱的图不是一回事。
+   */
+  onDeleteMessage: (id: number) => void
 }
 
 export default function ChatPanel({
@@ -91,6 +109,7 @@ export default function ChatPanel({
   jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
   currentId, futureSteps, replacing, onConfirmReplace, onCancelReplace,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
+  originalId, onDeleteMessage,
 }: Props) {
   // ★ 2026-10-05：**输入框那颗加号**（用户截图 + 原话「我觉得在对话框那边设一个
   //   加号，然后点击加号里面有滤镜以及以后添加的功能」）。
@@ -101,6 +120,16 @@ export default function ChatPanel({
   //   两个都默认收着：它摆在输入框上面，句句话都摊开着一整排格子太吵。
   const [toolsOpen, setToolsOpen] = useState(false)
   const [lutOpen, setLutOpen] = useState(false)
+
+  /**
+   * ★ 2026-10-06：正在问"要删这条记录吗"的是哪一条（null = 没在问）。
+   *
+   * 只有**带图那条**（身后有一步）会走到这儿 —— 它删掉的是花过钱的一整步
+   * （图 / 参数 / 滤镜都挂在上面），所以先就地问一句；纯文字那条点 ✕ 直接删。
+   * **就地确认，不弹系统框**（和 SessionsPage / 作品详情页同一条产品规矩：
+   * 这个界面上没有弹窗文化）。一次只问一条：这个数就是全部状态。
+   */
+  const [confirmingId, setConfirmingId] = useState<number | null>(null)
 
   /**
    * 这一栏**开着**的时候去要缩略图（很贵：每个滤镜各画一张当前照片）。
@@ -130,8 +159,31 @@ export default function ChatPanel({
           const shot = m.role === 'assistant' && !!thumbs[m.id]
           const acts = m.role === 'assistant' &&
             (jumpableIds.includes(m.id) || rerunnable.includes(m.id))
+          // ★ 2026-10-06：这一条身后有没有"一步"？（步骤 id 就是那条助手消息的
+          //   id，老约定。）有 → 点 ✕ 要先问一句；没有 → 纯文字，一点就删。
+          const isStep = jumpableIds.includes(m.id)
+          // 「原图」那条（= 欢迎语，同一条消息）不摆 ✕ —— 它是这条会话的锚。
+          const delable = m.id !== originalId
           return (
             <div key={m.id} className={`msg ${m.role}`}>
+              {/* ★ 2026-10-06：删这一条记录。平时收着（opacity 0），鼠标停在这一条
+                  上才浮出来 —— 它是一行里最不常按的那颗，不该跟内容抢眼。
+                  ⚠️ 键盘也够得着：`:focus-visible` 时同样现形（见 styles.css）。
+                  ⚠️ `busy` 时禁用（和「就改这里」同款）：忙的时候删等于在一次生成
+                  还在飞的时候动账本（App 的 `onDeleteMessage` 里还有一道真闸门）。
+                  ⚠️ 确认条开着时这颗收掉（`confirmingId !== m.id`）—— 那条已经在
+                  问同一个问题了，两颗并存会像"删除按钮点了没反应"。 */}
+              {delable && confirmingId !== m.id && (
+                <button className="msg-del" aria-label="删除这条记录" disabled={!!busy}
+                  onClick={() => {
+                    if (isStep) setConfirmingId(m.id)
+                    else onDeleteMessage(m.id)
+                  }}>
+                  {/* 图标不进 textContent（svg 天生如此）—— 按文字找按钮的地方
+                      和读屏软件看到的都只有 `aria-label` 那个名字。 */}
+                  <X size={13} aria-hidden="true" />
+                </button>
+              )}
               {/* ① 上面那一块：话 */}
               <div className={`bubble ${m.role}`}>
                 <div className="bubble-text">{m.text}</div>
@@ -179,6 +231,26 @@ export default function ChatPanel({
                       )}
                     </div>
                   )}
+                </div>
+              )}
+              {/* ★ 2026-10-06：带图那条的**就地确认**（只有这一支会走到这儿 ——
+                  纯文字那条点 ✕ 直接删，见上面那颗按钮）。
+                  形状照作品详情页那条 `.detail-confirm` / SessionsPage 的
+                  `.session-row.confirming`：一句话 + 两颗按钮，**不弹窗**。
+                  文案和那两处**一字不差**（「删了就找不回来了。」）；两颗里
+                  只有「确认删除」穿危险色 —— 它们都很短、长得又像，点错一次
+                  东西就没了，颜色是唯一还分得开的地方。
+                  ⚠️ 两颗都跟卡片一样挂 `busy`（和「就改这里」同款）。 */}
+              {confirmingId === m.id && (
+                <div className="msg-confirm">
+                  <span>删了就找不回来了。</span>
+                  <button className="msg-confirm-del" disabled={!!busy}
+                    onClick={() => { setConfirmingId(null); onDeleteMessage(m.id) }}>
+                    确认删除
+                  </button>
+                  <button disabled={!!busy} onClick={() => setConfirmingId(null)}>
+                    算了
+                  </button>
                 </div>
               )}
             </div>

@@ -1307,6 +1307,55 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   cursor: default;
 }
 
+/* ── 单条记录的删除（★ 2026-10-06，用户原话：「在会话里的单条记录我怎么还是
+   没有删除的按钮」）─────────────────────────────────────────────────
+   每一条消息悬停时浮出一颗小 ✕。形状照 `.session-del` 那份**最轻**的长相
+   （透明底 + 透明边，悬停才给形状、给危险色）—— 它是一行里最不常按的一颗，
+   不该跟内容抢眼；差别只有一条：对话里它平时**完全不出现**（`opacity: 0`），
+   悬停在**那一条消息**上才浮出来。
+   ⚠️ 挂 absolute、锚在 `.msg` 上（所以上面那条要先有 `position: relative`）：
+     它**不占版面** —— 出现/消失都不会让气泡挪位（窄屏那档的量尺也不受影响）。
+   ⚠️ ✕ 落在**对话流的外侧**：助手那条在右、用户那条在左（`.msg` 是 88% 宽，
+     外侧至少空着 12%，够放这 26px 的悬出）。放内侧就会压在气泡的字上。
+   ⚠️ 现形靠 `opacity` 不是 `display`：`opacity: 0` 时它**仍然可点**，而鼠标
+     一旦停在它上面（它还是 `.msg` 的孩子，算 hover 到父级）它就现形 ——
+     不会留一块"看不见但能点"的死区。键盘走 `:focus-visible` 同一条。 */
+.msg { position: relative; }
+.msg-del {
+  position: absolute; top: 0;
+  width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--r-sm);
+  background: transparent; border-color: transparent; color: var(--muted-2);
+  opacity: 0;
+  transition: opacity var(--dur-1) ease, color var(--dur-1) ease, border-color var(--dur-1) ease;
+}
+.msg.assistant .msg-del { right: -26px; }
+.msg.user .msg-del { left: -26px; }
+.msg:hover .msg-del, .msg-del:focus-visible { opacity: 1; }
+.msg-del:hover:not(:disabled) { color: var(--danger); border-color: var(--line-2); }
+/* 忙碌时那颗是禁用的。**必须专门写一条**：上面那条 `opacity: 1`（0-2-0）比
+   全局的 `button:where(:disabled)`（0-0-1）重，不写的话"禁用"就只剩点不动
+   —— 悬停照样满亮，看着完全能点（这个项目最不喜欢的一种按钮）。 */
+.msg:hover .msg-del:disabled { opacity: .45; }
+
+/* 带图那条的**就地确认**（不弹窗，全站规矩）：一句话 + 两颗按钮。
+   形状照作品详情页那条 `.detail-confirm` —— 它是一个**正在问你的问题**，
+   所以给自己一块底；语气那一半（"删了就找不回来了。"）和 SessionsPage /
+   作品详情页**一字不差**。 */
+.msg-confirm {
+  display: inline-flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
+  font-size: 12.5px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--danger); border-radius: var(--r-sm);
+  background: var(--danger-bg);
+}
+/* 两颗里**只有「确认删除」是危险的**。⚠️ **按类名找，不按 DOM 位置**：
+   `:first-of-type` 那一族在这个仓库死过一次（见 `.session-del.danger` 那段），
+   把「算了」挪到前面就会让红/灰静静地对调。 */
+.msg-confirm-del { border-color: var(--danger); color: var(--danger); }
+.msg-confirm-del:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
 /* 卡片那一格：点一下就能改的几条，还有"正在看…"那句提示。 */
 .cards { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: 0 var(--sp-4) var(--sp-3); }
 /* 建议卡片是**这个产品最高频的动作**（上传后第一件事多半就是点它），
@@ -1487,6 +1536,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
     border-left: none;
     border-top: 1px solid var(--line);
   }
+  /* ★ 2026-10-06：窄屏（触屏）上没有"悬停"这回事 —— 上面那颗 ✕ 平时收着的
+     规矩在这一档**不成立**，否则它永远浮不出来、手机上根本删不了记录。
+     同理，26px 的悬出在这一档也收紧一点：390px 宽时 `.chat-log` 的左右留白
+     各 16px，外侧空出来的那 12% 只剩 ~40px。 */
+  .msg-del { opacity: 1; }
+  .msg.assistant .msg-del { right: -24px; }
+  .msg.user .msg-del { left: -24px; }
 
   /* ★ 2026-10-05：微调面板在窄屏上**变回"照片在上、微调在下"** ——
      这一档的 `.workspace` 本来就翻成竖排（见上），面板自然落到照片底下；
