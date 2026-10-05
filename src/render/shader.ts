@@ -56,6 +56,11 @@ uniform float uCbYellowBlue;
 uniform float uSplitHiHue;
 uniform float uSplitLoHue;
 uniform float uSplitAmount;
+uniform sampler3D uLut;         // the user's color lookup table (3D texture)
+uniform float uLutOn;           // 1.0 when a LUT is bound, 0.0 otherwise
+uniform float uLutAmount;       // strength, 0..1
+uniform vec3  uLutDomainMin;
+uniform vec3  uLutDomainMax;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
@@ -180,6 +185,31 @@ void main() {
   vec2 d = uv - 0.5;
   float vig = 1.0 - uVignette * dot(d, d) * 3.5;
   c *= max(vig, 0.0);
+
+  // 7. LUT (color lookup) -- ALWAYS THE LAST STEP. This is a contract, not a
+  //    preference (see the design doc 2026-10-05 §4.1): every saved work was
+  //    rendered through this order, so moving the LUT earlier would change the
+  //    colors of every existing photo. Do not reorder.
+  //
+  //    uLutOn is 0 when nothing is bound, which makes lutAmt 0 and the whole
+  //    block an exact identity -- strength 0 must be pixel-for-pixel identical
+  //    to having no LUT at all.
+  //
+  //    The half-texel correction is NOT optional: a .cube entry i stands for
+  //    the input i/(n-1), while GL puts texel i's center at (i+0.5)/n. Handing
+  //    the normalized value straight to texture() shifts every lookup by up to
+  //    half a texel (an n=2 table turns input 0.25 into pure black). The CPU
+  //    twin (src/core/lut.ts) samples in endpoint-inclusive index space, and it
+  //    is what the acceptance probe compares against -- the two must agree.
+  float lutAmt = uLutOn * uLutAmount;
+  if (lutAmt > 0.0) {
+    vec3 q = clamp(c, 0.0, 1.0);
+    vec3 t = clamp((q - uLutDomainMin) / max(uLutDomainMax - uLutDomainMin, vec3(1e-6)),
+                   vec3(0.0), vec3(1.0));
+    float n = float(textureSize(uLut, 0).x);
+    vec3 u = (t * (n - 1.0) + 0.5) / n;
+    c = mix(q, texture(uLut, u).rgb, lutAmt);
+  }
 
   fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }

@@ -1,4 +1,5 @@
 import { toUnit, type Adjustments } from '../../shared/adjustments.ts'
+import type { Cube } from '../../shared/lut.ts'
 import type { DecodedImage } from '../image/decode'
 import { VERTEX_SRC, FRAGMENT_SRC } from './shader'
 import { fitToLimit, readLimit } from './limits'
@@ -21,6 +22,12 @@ export class TonePipeline {
   private buffer: WebGLBuffer
   private uniforms = new Map<UniformName, WebGLUniformLocation | null>()
   private uTexel: WebGLUniformLocation | null = null
+  private lutTex: WebGLTexture
+  private lutOn = 0
+  private uLutOn: WebGLUniformLocation | null = null
+  private uLutAmount: WebGLUniformLocation | null = null
+  private uLutDomainMin: WebGLUniformLocation | null = null
+  private uLutDomainMax: WebGLUniformLocation | null = null
   private imageW = 0
   private imageH = 0
   private onFatal?: (err: Error) => void
@@ -74,6 +81,26 @@ export class TonePipeline {
     gl.useProgram(this.program)
     gl.uniform1i(gl.getUniformLocation(this.program, 'uImage'), 0)
 
+    // 3D 纹理：没装滤镜时也**必须绑一个**（采样落在"没有纹理"上是未定义行为），
+    // 所以先建一个 1×1×1 的白点当占位。
+    const lut = gl.createTexture()
+    gl.activeTexture(gl.TEXTURE1)
+    gl.bindTexture(gl.TEXTURE_3D, lut)
+    for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) {
+      gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE)
+    }
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, 1, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+      new Uint8Array([255, 255, 255, 255]))
+    gl.activeTexture(gl.TEXTURE0)
+    this.lutTex = lut!
+    this.uLutOn = gl.getUniformLocation(this.program, 'uLutOn')
+    this.uLutAmount = gl.getUniformLocation(this.program, 'uLutAmount')
+    this.uLutDomainMin = gl.getUniformLocation(this.program, 'uLutDomainMin')
+    this.uLutDomainMax = gl.getUniformLocation(this.program, 'uLutDomainMax')
+    gl.uniform1i(gl.getUniformLocation(this.program, 'uLut'), 1)
+
     // 上下文丢失默认是**静默**的：没有任何事件处理，画布直接变白。
     // preventDefault() 表明这次丢失已被处理（也是浏览器后续尝试恢复的前提），
     // 然后把错误交给调用方走同一条用户可见的提示路径。
@@ -122,6 +149,27 @@ export class TonePipeline {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img.bitmap)
   }
 
+  /**
+   * 换一个滤镜（null = 摘掉）。**amount 不在这里**：它由 `render` 的第二个参数给。
+   * 两个来源分开是有意的 —— "换了 cube 忘了换 amount"这种错一眼看得出来。
+   */
+  setLut(cube: Cube | null): void {
+    const gl = this.gl
+    gl.activeTexture(gl.TEXTURE1)
+    gl.bindTexture(gl.TEXTURE_3D, this.lutTex)
+    if (cube) {
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, cube.size, cube.size, cube.size,
+        0, gl.RGBA, gl.UNSIGNED_BYTE, cube.rgba)
+      gl.uniform3f(this.uLutDomainMin, ...cube.domainMin)
+      gl.uniform3f(this.uLutDomainMax, ...cube.domainMax)
+    } else {
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, 1, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+        new Uint8Array([255, 255, 255, 255]))
+    }
+    gl.activeTexture(gl.TEXTURE0)
+    this.lutOn = cube ? 1 : 0
+  }
+
   resizeToImage(): void {
     this.canvas.width = this.imageW
     this.canvas.height = this.imageH
@@ -131,8 +179,12 @@ export class TonePipeline {
    * 入参是 `[-100, 100]` 的原始参数，不是 `[-1, 1]` 的 Unit：
    * 两者结构相同，传错了（比如 exposure: 100）类型也过，但画面会算成 2^100。
    * `toUnit` 是全项目唯一的映射入口，就在这里调用。
+   *
+   * `lutAmount` 是 0–100 的原始强度（和 `Adjustments` 同一个量纲习惯）。
+   * ⚠️ 这里**不判 cube 在不在** —— 那件事只有 `setLut` 知道（它算 `lutOn`），
+   * 两个来源各管各的，调用方拼错了也吵不起来。
    */
-  render(a: Adjustments): void {
+  render(a: Adjustments, lutAmount = 0): void {
     const u = toUnit(a)
     const gl = this.gl
     gl.viewport(0, 0, this.canvas.width, this.canvas.height)
@@ -162,6 +214,8 @@ export class TonePipeline {
     for (const n of UNIFORM_NAMES) {
       gl.uniform1f(this.uniforms.get(n) ?? null, map[n])
     }
+    gl.uniform1f(this.uLutOn, this.lutOn)
+    gl.uniform1f(this.uLutAmount, Math.max(0, Math.min(100, lutAmount)) / 100)
 
     gl.drawArrays(gl.TRIANGLES, 0, 3)
   }
@@ -188,6 +242,7 @@ export class TonePipeline {
     const gl = this.gl
     gl.deleteProgram(this.program)
     gl.deleteTexture(this.texture)
+    gl.deleteTexture(this.lutTex)
     gl.deleteVertexArray(this.vao)
     gl.deleteBuffer(this.buffer)
   }
