@@ -69,6 +69,9 @@
 
 - 测试：`npm test` ／ 类型检查：`npm run typecheck` —— 提交前**两个都要绿**
   （vitest 不做类型检查，「测试全绿」不等于「类型没病」）。
+- ⚠️ **动了 `src/render/` 里任何 GLSL，必须跑 `npm run check:lut`**（真 Chrome + 真 GPU）：
+  字符串哨兵 / typecheck / build / `check:layout` **四样都看不见"整个着色器程序编译不过"**——
+  那种坏法是**每张照片全黑**，只有这一条探针抓得到（2026-10-05 真机上抓到过一次）。
 - 前端 dev 在 `5173`（`npm run dev` 同时起）；**后端改动不热重载**，改完要重启。
 - 设计文档在 `docs/superpowers/specs/`，实现计划在 `docs/superpowers/plans/`；
   写文案前先读 [文案规范.md](docs/文案规范.md)。
