@@ -1,5 +1,6 @@
 import { PARAM_KEYS, PARAM_MIN, PARAM_MAX } from '../shared/adjustments.ts'
-import type { ParamDeltas, Route, RouteDecision } from '../shared/protocol.ts'
+import { sameLutName } from '../shared/lut.ts'
+import type { LutDecision, ParamDeltas, Route, RouteDecision } from '../shared/protocol.ts'
 
 const ROUTES: readonly Route[] = ['params', 'generate', 'both']
 
@@ -61,10 +62,33 @@ export function normalizeDeltas(v: unknown): ParamDeltas {
 }
 
 /**
+ * 模型的滤镜决定 → 可信的 `LutDecision`。
+ *
+ * 三条规矩：名字必须在**用户自己的清单**里（大小写和首尾空格不算数）；
+ * `name` 空串 = 摘掉；`amount` 取整钳 0–100（缺省 100）。
+ * 认不出来回 null（= 不动），并且**要留 degraded 信号** —— 模型给了个我们没有
+ * 的东西，那是"这次没全采纳"，不是正常情况。
+ */
+function normalizeLutChoice(raw: unknown, names: readonly string[]): { lut: LutDecision | null; dropped: boolean } {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { lut: null, dropped: false }
+  const o = raw as Record<string, unknown>
+  const name = typeof o.name === 'string' ? o.name.trim() : null
+  if (name === null) return { lut: null, dropped: false }
+  if (name === '') return { lut: { name: '', amount: 0 }, dropped: false }
+  const hit = names.find((n) => sameLutName(n, name))
+  if (!hit) return { lut: null, dropped: true }
+  const amount = Number(o.amount)
+  return { lut: { name: hit, amount: Number.isFinite(amount) ? Math.max(0, Math.min(100, Math.round(amount))) : 100 }, dropped: false }
+}
+
+/**
  * 从模型的原始输出解出决策。**永远不抛错**——所有异常路径都收敛成
  * 一个可用的 RouteDecision。调用方不需要 try/catch。
+ *
+ * ★ 2026-10-05（滤镜）：第三个参数是**用户自己的滤镜名单**。它有默认值 `[]`：
+ *   没传清单时任何名字都不认（宁可不认，也不认一个我们库里没有的名字）。
  */
-export function parseDecision(raw: unknown, userText = ''): RouteDecision {
+export function parseDecision(raw: unknown, userText = '', lutNames: readonly string[] = []): RouteDecision {
   const obj = coerceToObject(raw)
   // 解析不了时**用用户的原话**当 prompt，绝不能用模型吐出来的那坨东西。
   // 实测过后果：模型返回被截断的 JSON，降级分支拿它当编辑指令送进图像模型，
@@ -86,6 +110,11 @@ export function parseDecision(raw: unknown, userText = ''): RouteDecision {
     : ''
   const hasEdit = editPrompt.length > 0
 
+  // ★ 2026-10-05（滤镜）：`lut` 和 `param_deltas` 是**并列的两半本地动作**。
+  //   键名 snake_case 之外也认 camelCase（`lutChoice`）—— 同上面那两处的路数。
+  const { lut, dropped } = normalizeLutChoice(obj.lut ?? obj.lutChoice, lutNames)
+  const hasLut = lut !== null
+
   const rawRoute = obj.route
   const routeIsValid = typeof rawRoute === 'string' && (ROUTES as readonly string[]).includes(rawRoute)
   const route = routeIsValid ? (rawRoute as Route) : inferRoute(hasParams, hasEdit)
@@ -101,14 +130,21 @@ export function parseDecision(raw: unknown, userText = ''): RouteDecision {
   //   - 或者根本没有可用的 edit_prompt 却要生成（那是在硬凑）
   //   - 声明 params 却又写了 edit_prompt：那半我们**不采纳**（见 reconcile），
   //     丢掉过模型写的东西就得留信号，否则这类啰嗦会一直看不见
+  //   - ★ 2026-10-05：写了个**不在清单里**的滤镜名（`dropped`）—— 同样丢了东西。
+  //     而"声明 params 但只有滤镜"是**合法的纯本地动作**，不能落进那一格
+  //     （它既不是空操作、也不花一分钱），所以 `!hasParams` 那条要放宽一格。
   const degraded = !routeIsValid ||
     ((route === 'generate' || route === 'both') && !hasEdit) ||
-    (route === 'params' && !hasParams) ||
-    (route === 'params' && hasEdit)
+    (route === 'params' && !hasParams && !hasLut) ||
+    (route === 'params' && hasEdit) ||
+    dropped
 
   // 声明的路由和实际内容对不上时，以**内容**为准：
   // 说 params 却给了 edit_prompt 却没有 deltas，那就是一次生成。
-  const effectiveRoute = reconcile(route, hasParams, hasEdit)
+  // ★ 2026-10-05（滤镜）：第二个参数是"本地那半有没有内容"—— 只调滤镜
+  //   也算有（滤镜和参数是同一类东西），所以传 `hasParams || hasLut`。
+  //   **一处改，别改 reconcile 里面**。
+  const effectiveRoute = reconcile(route, hasParams || hasLut, hasEdit)
 
   // ★ §7.2（2026-09-30）：「模型吐出来的东西**一件也用不上**」时，别停在这儿 —— 走 §4.7 的降级。
   //
@@ -130,7 +166,10 @@ export function parseDecision(raw: unknown, userText = ''): RouteDecision {
   //
   // ⚠️ 模型自己说"我不确定你指的是哪一个"时也不动：前端那一支是**先问再做**，
   // 换成一次生成等于一边问一边花钱（理由写在 App.tsx 的 applyDecision 里）。
-  if (!hasParams && !hasEdit && !needsDisambiguation && userText) return fallbackDecision(userText)
+  //
+  // ★ 2026-10-05（滤镜）：**只解出滤镜**是合法结果（纯本地动作），不算"一件也用不上" ——
+  //   所以这里也要 `!hasLut`，否则「用那个黄昏滤镜」会被降级成一次付费生成。
+  if (!hasParams && !hasEdit && !hasLut && !needsDisambiguation && userText) return fallbackDecision(userText)
 
   return {
     route: effectiveRoute,
@@ -143,6 +182,7 @@ export function parseDecision(raw: unknown, userText = ''): RouteDecision {
     editPrompt: effectiveRoute === 'generate' || effectiveRoute === 'both' ? editPrompt : '',
     needsDisambiguation,
     degraded: degraded || effectiveRoute !== route,
+    lut,
   }
 }
 
@@ -234,6 +274,8 @@ export function fallbackDecision(text: string): RouteDecision {
     editPrompt,
     needsDisambiguation: false,
     degraded: true,
+    // 降级这条路是"原文当 prompt 去生成"，本来就没空算滤镜 —— 不碰它。
+    lut: null,
   }
 }
 

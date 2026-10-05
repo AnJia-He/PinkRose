@@ -300,4 +300,75 @@ describe('handleRoute', () => {
     await handleRoute({ ...body, params: { exposure: 999 } }, deps(client))
     expect(calls[2].messages[1].content[1].text).toContain('亮度 +100')
   })
+
+  /**
+   * ★ Task 11（2026-10-05）：说话那条路认滤镜 —— 清单进提示词、模型给的名字对号。
+   *
+   * 三条各守一个静默失效点：清单没裁（模型拿到几百条/空名字）、清单没上路
+   * （模型根本不知道用户导过什么）、名单没传给 parseDecision（模型答对了也白答）。
+   */
+  it('★ 清单进用户消息：名字按规矩裁（trim / 30 字 / 丢空名与坏 id / 最多 30 条）', async () => {
+    const { client, calls } = clientReplying('{"route":"params","param_deltas":{"exposure":5}}')
+    await handleRoute({
+      ...body,
+      luts: [
+        { id: 1, name: '  黄昏  ' },                 // 首尾空格：服务端裁掉
+        { id: 2, name: '' },                         // 空名字：丢掉
+        { id: 3, name: 'x'.repeat(40) },             // 超 30 字：截断
+        { id: 0, name: '坏 id' },                    // id 不是正整数：丢掉
+        { id: 4.5, name: '小数 id' },                // 同上
+        { id: 5, name: '黑白' },
+        ...Array.from({ length: 34 }, (_, i) => ({ id: 100 + i, name: `滤镜${i}` })),
+      ],
+    }, deps(client))
+
+    const sent: string = calls[0].messages[1].content[1].text
+    expect(sent).toContain('用户导入的滤镜有：黄昏、')
+    expect(sent).toContain('x'.repeat(30))
+    expect(sent).not.toContain('x'.repeat(31))     // 截到 30 字，不是原样透传
+    expect(sent).not.toContain('坏 id')
+    expect(sent).not.toContain('小数 id')
+    // 最多 30 条：裁完剩 37 条（黄昏 / x… / 黑白 / 滤镜0…33），第 31 条起不许出现
+    // （滤镜26 是第 30 条、滤镜27 是第 31 条 —— 边界钉在名字上，不数逗号）
+    expect(sent).toContain('滤镜26')
+    expect(sent).not.toContain('滤镜27')
+  })
+
+  it('★ 当前用的那个滤镜进用户消息；形状不对的一律当"没有滤镜"', async () => {
+    // 只给名字不够：模型还得知道用户**已经**套着哪个（和 describeParams 同一条
+    // 理由 —— 不告诉它，它会按"还没套"来写回复）。`body.lut` 要过 `normalizeLutRef`：
+    // 坏形状（id 不是正整数）清成"没有"，不许原样写进提示词。
+    const { client, calls } = clientReplying('{"route":"params","param_deltas":{"exposure":5}}')
+    const luts = [{ id: 1, name: '黄昏' }]
+    await handleRoute({ ...body, luts, lut: { lutId: 1, amount: 80 } }, deps(client))
+    expect(calls[0].messages[1].content[1].text).toContain('用户当前已用滤镜：黄昏（强度 80）。')
+
+    await handleRoute({ ...body, luts, lut: { lutId: 0, amount: 80 } }, deps(client))
+    expect(calls[1].messages[1].content[1].text).not.toContain('用户当前已用滤镜')
+
+    await handleRoute({ ...body, luts, lut: 'nope' }, deps(client))
+    expect(calls[2].messages[1].content[1].text).not.toContain('用户当前已用滤镜')
+  })
+
+  it('★ 模型回的名字在清单里 → 决策带上它（端到端）；清单外的名字 → null + degraded', async () => {
+    const { client } = clientReplying(JSON.stringify({
+      route: 'params', lut: { name: ' 黄昏 ' }, reply: '好。',
+    }))
+    const r = await handleRoute({ ...body, luts: [{ id: 1, name: '黄昏' }] }, deps(client))
+    expect(r.decision.lut).toEqual({ name: '黄昏', amount: 100 })
+
+    // 模型给了个我们没有的东西：归 null（= 不动），degraded 把信号留下。
+    // ⚠️ warn 要静音：这条会走 §4.7 的降级，handleRoute 会打一行原始输出。
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { client: c2 } = clientReplying(JSON.stringify({
+        route: 'params', lut: { name: '青橙' }, reply: '好。',
+      }))
+      const r2 = await handleRoute({ ...body, luts: [{ id: 1, name: '黄昏' }] }, deps(c2))
+      expect(r2.decision.lut).toBeNull()
+      expect(r2.decision.degraded).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })

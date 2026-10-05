@@ -1,4 +1,5 @@
 import type { Adjustments } from './adjustments.ts'
+import type { LutRef } from './lut.ts'
 
 export type { Adjustments }
 
@@ -7,6 +8,14 @@ export type Route = 'params' | 'generate' | 'both'
 
 /** 八个参数的增量，单位与 Adjustments 相同（[-100,100]）。缺的键视为 0。 */
 export type ParamDeltas = Partial<Adjustments>
+
+/**
+ * 模型对滤镜的决定（★ 2026-10-05）。
+ *   · `null`      = 这次不碰滤镜（**默认**）
+ *   · `name: ''`  = 把当前的摘掉
+ *   · 有名字      = 套上（`amount` 缺省 100）
+ */
+export type LutDecision = { name: string; amount: number }
 
 /**
  * 一句话被理解之后的结果。
@@ -22,6 +31,8 @@ export type RouteDecision = {
   editPrompt: string
   needsDisambiguation: boolean
   degraded: boolean
+  /** ★ 2026-10-05：滤镜那半。必填 —— 新增字段就该逼每个构造点表态。 */
+  lut: LutDecision | null
 }
 
 export type SuggestCard = {
@@ -37,6 +48,13 @@ export type RouteRequest = {
   text: string
   /** 用户当前参数。给 LLM 当上下文，让它在写生成 prompt 时补偿（spec §3.5）。 */
   params: Adjustments
+  /**
+   * ★ 2026-10-05：用户导入的滤镜清单（最多 30 条）—— **模型靠名字认它们**
+   * （"用那个黄昏滤镜"）。只给名字，不给内容。
+   */
+  luts?: { id: number; name: string }[]
+  /** ★ 用户当前用着的滤镜（没写进清单也没关系，服务端只拿它写进提示词） */
+  lut?: LutRef | null
 }
 
 export type RouteResponse = { decision: RouteDecision }

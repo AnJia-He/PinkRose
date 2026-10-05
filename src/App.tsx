@@ -850,6 +850,9 @@ export default function App() {
   const { say, runGenerate, stopGeneration, applyDecision, loadCards, nextId } =
     useGeneration({
       image, setImage, params, setParams, lut,
+      // ★ 2026-10-05（T11）：说话那条路落滤镜的两样 —— `setLut` 落地、
+      //   `lutsApi.luts` 把模型给的名字对成 id（写在 `applyDecision` 里）。
+      setLut, luts: lutsApi.luts,
       baseSeqRef, idRef, setBusy, setUser, noticeBad,
       setCards, setPending, pendingRef, setMessages, setHistory,
     })
@@ -1177,7 +1180,14 @@ export default function App() {
       // 增量才是相对当前效果的。生成那一路送的是**当前 base**（同样不带
       // 参数——铁律保证，见 spec §3.5），所以两边都不会把颜色烤进像素。
       const preview = await prepareForRouting(canvas)
-      const decision = await postRoute({ imageDataUrl: preview.dataUrl, text, params })
+      // ★ 2026-10-05（滤镜 T11）：说话那条路要认得滤镜，靠的就是这两样 ——
+      //   `luts` 是清单（**模型只能从里面照抄名字**，只给名字不给内容），
+      //   `lut` 是此刻手上那个（只当上下文写进提示词）。
+      const decision = await postRoute({
+        imageDataUrl: preview.dataUrl, text, params,
+        luts: lutsApi.luts.map((l) => ({ id: l.id, name: l.name })),
+        lut,
+      })
       await applyDecision(decision)
     } catch (e) {
       console.error(e)
@@ -1190,7 +1200,10 @@ export default function App() {
     }
     // `image` 进了守卫，就必须进依赖数组——否则这个回调会永远看到第一次
     // render 的 image（null），上传后一句话都送不出去。
-  }, [busy, params, applyDecision, say, image])
+    // ★ T11 追加 `lutsApi.luts` / `lut`：两个都进了请求体，同一条规矩。
+    //   ⚠️ 依赖写 `lutsApi.luts`（那份数组），别写 `lutsApi` —— 后者每次渲染
+    //   都是新对象，等于这个回调每渲染重建一次（`refreshLuts` 那边有同款注释）。
+  }, [busy, params, applyDecision, say, image, lutsApi.luts, lut])
 
   const onCard = useCallback(async (card: SuggestCard) => {
     if (busy) return
@@ -1227,6 +1240,9 @@ export default function App() {
       editPrompt: card.editPrompt,
       needsDisambiguation: false,
       degraded: false,
+      // ★ 2026-10-05（滤镜 T11）：卡片不碰滤镜（`SuggestCard` 里没有这个字段，
+      //   今天推荐卡片只说调色和结构性改动）—— 新增字段就要在这里表态。
+      lut: null,
     })
   }, [busy, applyDecision, say])
 

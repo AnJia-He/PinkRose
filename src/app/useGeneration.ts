@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react'
 import { applyDeltas, type Adjustments } from '../../shared/adjustments.ts'
-import type { LutRef } from '../../shared/lut.ts'
+import { sameLutName, type LutMeta, type LutRef } from '../../shared/lut.ts'
 import type { RouteDecision, SuggestCard } from '../../shared/protocol.ts'
 import { ApiError, isAbort, isUnauthorized, postEdit, postSuggest } from '../api/client'
 import { bitmapsToClose, pushSnapshot, type Snapshot } from '../core/history'
@@ -41,6 +41,16 @@ export type GenerationDeps = {
    * 别把这两条路又合并回"读一个闭包"。
    */
   lut: LutRef | null
+  /**
+   * 换滤镜（★ 2026-10-05 T11）：对话那条路把 `decision.lut` 落进 App 的 `lut` 状态。
+   * **不推快照** —— 和 `setParams` 同一个级别（裁定 ⑤）。
+   */
+  setLut: (l: LutRef | null) => void
+  /**
+   * 滤镜清单（★ 2026-10-05 T11）：用来把模型给的名字**换成 id**。
+   * 对号用 `sameLutName`（trim + 忽略大小写）—— 和「照调」、设置页同一把尺子。
+   */
+  luts: LutMeta[]
   /** 底图换到第几版了（上传 +1、每次生成 +1）。它是"这一版还算不算数"的闸门。 */
   baseSeqRef: { current: number }
   /** 消息号发号器（和 App 那边共用同一个计数器 —— 快照要对得上号）。 */
@@ -63,7 +73,7 @@ export type GenerationDeps = {
 
 export function useGeneration(deps: GenerationDeps) {
   const {
-    image, setImage, params, setParams, lut, baseSeqRef, idRef, setBusy, setUser,
+    image, setImage, params, setParams, lut, setLut, luts, baseSeqRef, idRef, setBusy, setUser,
     noticeBad, setCards, setPending, pendingRef, setMessages, setHistory,
   } = deps
 
@@ -239,6 +249,19 @@ export function useGeneration(deps: GenerationDeps) {
       : params
     if (nextParams !== params) setParams(nextParams)
 
+    // ★ 2026-10-05 滤镜：和 params 同一级别（本地、不推快照）。
+    //   `name === ''` 是"摘掉"（模型对"不要滤镜了"的答案）；有名字就在**本地清单**
+    //   里对号 —— 对不上说明模型编了一个（服务端那层本该拦下，这是第二道），
+    //   留一行警告、**不动**当前状态：宁可什么都不做，也别套一个用户没导入的东西。
+    if (d.lut) {
+      if (d.lut.name === '') setLut(null)
+      else {
+        const hit = luts.find((l) => sameLutName(l.name, d.lut!.name))
+        if (hit) setLut({ lutId: hit.id, amount: d.lut.amount })
+        else console.warn('模型给了一个不在清单里的滤镜名：', d.lut.name)
+      }
+    }
+
     const mid = say(d.reply || '好了。')
     setCards([])
 
@@ -272,7 +295,10 @@ export function useGeneration(deps: GenerationDeps) {
     if ((d.route === 'generate' || d.route === 'both') && image) {
       await runGenerate(d.editPrompt, mid, nextParams, lut, image.bitmap)
     }
-  }, [params, say, runGenerate, image, lut])
+    // ★ T11 又读了 `luts` / `setLut`（上面那块滤镜落地），两个都得进依赖数组 ——
+    //   漏掉 `luts` 的话，清单刷新之后这个回调还在用旧的（名字换成错 id）；
+    //   `setLut` 是 useState 的 setter（identity 稳定），进来只是守住这条规矩。
+  }, [params, say, runGenerate, image, lut, luts, setLut])
 
   /**
    * 拉建议卡片。

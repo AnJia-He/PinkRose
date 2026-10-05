@@ -1,4 +1,5 @@
 import { ZERO, clampAdjustments, type Adjustments } from '../shared/adjustments.ts'
+import { MAX_LUTS, MAX_LUT_NAME, normalizeLutRef, type LutRef } from '../shared/lut.ts'
 import type { RouteRequest, RouteResponse } from '../shared/protocol.ts'
 import { HttpError, CHECK_YOUR_KEY_TIP } from './http.ts'
 import { ROUTER_SYSTEM, buildRouterUser } from './prompt.ts'
@@ -44,11 +45,13 @@ export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteR
         role: 'user',
         content: [
           { type: 'image_url', image_url: { url: req.imageDataUrl } },
-          { type: 'text', text: buildRouterUser(req.text, req.params) },
+          { type: 'text', text: buildRouterUser(req.text, req.params, req.luts, req.lut) },
         ],
       },
     ]), 'route')
-    const decision = parseDecision(content, req.text)
+    // ★ 2026-10-05（滤镜）：名字清单也交给 `parseDecision` —— 模型写了清单**外**
+    //   的名字时，它要能判出来（归 null + degraded），别把库里没有的东西放进决策。
+    const decision = parseDecision(content, req.text, req.luts.map((l) => l.name))
     // `degraded` 的意思见 validate.ts 里那段注释：**这次的结果不是模型老实给的**。
     // 它必须打出来。2026-09-29 查"同一件事做两遍"那个 bug 时，`/api/route` 的响应里
     // 明明每条都带 degraded:true，但服务端一个字都不留、前端也不消费 ——
@@ -79,7 +82,17 @@ export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteR
   }
 }
 
-function parseRequest(raw: unknown): RouteRequest {
+/**
+ * `parseRequest` 的出口。比 `RouteRequest` 里那两个可选字段更紧：**到了这里
+ * 就一定有值**（缺的/坏的都归一化成空清单和 null）—— 下游不必到处判 undefined。
+ * （协议里的 `luts?`/`lut?` 是留给**发送方**的自由，两道不再是一个东西。）
+ */
+type ParsedRouteRequest = RouteRequest & {
+  luts: { id: number; name: string }[]
+  lut: LutRef | null
+}
+
+function parseRequest(raw: unknown): ParsedRouteRequest {
   if (typeof raw !== 'object' || raw === null) {
     throw new HttpError('BAD_REQUEST', '请求体必须是 JSON 对象', 400)
   }
@@ -97,10 +110,38 @@ function parseRequest(raw: unknown): RouteRequest {
 
   const params = normalizeParams(o.params)
 
-  return { imageDataUrl, text, params }
+  return {
+    imageDataUrl, text, params,
+    // ★ 2026-10-05（滤镜）：清单只给名字（模型靠它认名字），当前那个只当上下文。
+    luts: normalizeLutList(o.luts),
+    lut: normalizeLutRef(o.lut),
+  }
 }
 
 function normalizeParams(v: unknown): Adjustments {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return ZERO
   return clampAdjustments({ ...ZERO, ...(v as Partial<Adjustments>) })
+}
+
+/**
+ * 客户端送来的滤镜清单 → 给模型看的那一份（★ 2026-10-05）。
+ *
+ * 和别处的入口参数一样，**不信前端**：最多 `MAX_LUTS` 条、名字 trim 后截到
+ * `MAX_LUT_NAME` 字、空名字和坏 id（不是正整数）直接丢。这些都是"静默失效点"——
+ * 空名字会让提示词里多一个空档、超长名单白烧 token，而两件都不会报错。
+ */
+function normalizeLutList(v: unknown): { id: number; name: string }[] {
+  if (!Array.isArray(v)) return []
+  const out: { id: number; name: string }[] = []
+  for (const item of v) {
+    if (out.length >= MAX_LUTS) break
+    if (typeof item !== 'object' || item === null) continue
+    const o = item as Record<string, unknown>
+    const id = Number(o.id)
+    if (!Number.isInteger(id) || id <= 0) continue
+    const name = typeof o.name === 'string' ? o.name.trim().slice(0, MAX_LUT_NAME) : ''
+    if (!name) continue
+    out.push({ id, name })
+  }
+  return out
 }

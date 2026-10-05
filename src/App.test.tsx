@@ -392,6 +392,9 @@ function decision(over: Partial<RouteDecision> = {}): RouteDecision {
     editPrompt: '',
     needsDisambiguation: false,
     degraded: false,
+    // ★ 2026-10-05（滤镜 T11）：`RouteDecision.lut` 是**必填** —— 新增字段就该
+    //   逼着所有构造点表态，这份默认值就是"这次不碰滤镜"的表态。
+    lut: null,
     ...over,
   }
 }
@@ -5694,5 +5697,57 @@ describe('滤镜', () => {
     await act(async () => { btn.click(); await new Promise(r => setTimeout(r, 0)) })
     expect(container.querySelector('.chat-lut .lut-picker')).toBeTruthy()
     expect(container.querySelectorAll('.chat-lut .lut-tile')).toHaveLength(2)   // 不用 + 黄昏
+  })
+
+  /**
+   * ★ Task 11（说话那条路）：说一句话也能套上/摘掉滤镜。
+   *
+   * 两半都是**接线**，各自会静默失灵：① `send` 不带清单 → 模型根本不知道
+   * 用户导过什么，它只能编名字（编出来的对不上号）；② `applyDecision` 不落地
+   * `decision.lut` → 决策回来了、格子纹丝不动。
+   */
+  it('说「用黄昏滤镜」→ 格子亮起来', async () => {
+    // ⚠️ 必须显式设一次：这个文件没有 `clearMocks`（`mockResolvedValue` 的实现
+    //    跨用例活着），依赖清单的用例都自己盖一份。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'params', lut: { name: '黄昏', amount: 100 } }))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('用黄昏那个滤镜')
+
+    // ① 请求里带着清单（模型就是靠它认名字的）
+    const req = vi.mocked(api.postRoute).mock.calls[0][0] as {
+      luts?: { id: number; name: string }[]; lut?: unknown }
+    expect(req.luts).toEqual([{ id: 1, name: '黄昏' }])
+    // ⚠️ 两个字段都要在：`luts` 是给模型认名字的，`lut` 是"此刻手上那个"的上下文
+    expect(req.lut).toBeNull()
+    // ② 格子上确实亮了（滤镜那两条 mock 见 Task 8 Step 1）
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+  })
+  it('说「不要滤镜了」→ 摘掉', async () => {
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'params', lut: { name: '', amount: 0 } }))
+
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await openLutPanel()
+    await click(tileNamed('黄昏'))
+    // 前提：它真在用（不然下面守的是个没发生的事）
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+
+    await goNav('修图')                    // 对话区在修图那一屏
+    await say('不要滤镜了')
+
+    // 先选中，再说一句 → 格子回到「不用」
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
   })
 })

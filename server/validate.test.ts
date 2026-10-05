@@ -269,3 +269,67 @@ describe('fallbackDecision', () => {
     expect(fallbackDecision('啊'.repeat(500)).editPrompt.length).toBeLessThanOrEqual(200)
   })
 })
+
+/**
+ * ★ Task 11（2026-10-05）：说话那条路认滤镜。
+ *
+ * 第三参数（滤镜名单）**默认 `[]`** —— 没给清单时任何名字都不认，
+ * 既有的调用点与用例一个字不改也能过（各条既有判据只是跟着放宽一格）。
+ */
+describe('滤镜决策', () => {
+  const names = ['黄昏', '黑白']
+  it('只调滤镜也算"有内容"：走 params，不落降级', () => {
+    const d = parseDecision({ route: 'params', lut: { name: '黄昏', amount: 80 } }, '用黄昏滤镜', names)
+    expect(d.lut).toEqual({ name: '黄昏', amount: 80 })
+    expect(d.route).toBe('params')
+    expect(d.degraded).toBe(false)
+  })
+  it('不认识的名字归 null，并留 degraded 信号', () => {
+    const d = parseDecision({ route: 'params', lut: { name: '青橙' } }, '用青橙', names)
+    expect(d.lut).toBeNull()
+    expect(d.degraded).toBe(true)
+  })
+  it('名字不在清单里、但另外半件事是真的 → 信号只能靠 `dropped` 留下来', () => {
+    // 补这一条的理由：上面那条（纯滤镜 + 原话）走的是 §4.7 降级，`degraded`
+    // 本来就是 true —— 把 `degraded` 里的 `|| dropped` 删掉它照样绿（一个
+    // 从没红过的守卫不算守卫）。这里 route=both、edit_prompt 是真的、谁都不拦，
+    // 唯一能留下"滤镜那半被丢了"的就是 `dropped`。
+    const d = parseDecision(
+      { route: 'both', lut: { name: '青橙' }, edit_prompt: 'remove the person' },
+      '把那个人去掉，顺便用青橙', names)
+    expect(d.route).toBe('both')
+    expect(d.lut).toBeNull()
+    expect(d.degraded).toBe(true)
+  })
+  it('只调滤镜 + 模型啰嗦地写了个 edit_prompt → 仍然走本地那条（不许升成生成）', () => {
+    // `reconcile` 的第二参数是"本地那半有没有内容"—— 只调滤镜也算有，
+    // 否则这个形状会被"内容为准"升成 generate：用户只是说了句滤镜，钱白花。
+    // 变异：把 reconcile 那行的 `hasParams || hasLut` 写回 `hasParams` → 这一条红。
+    const d = parseDecision({
+      route: 'params', lut: { name: '黄昏' }, edit_prompt: 'Apply a warm sunset look.',
+    }, '用黄昏滤镜', names)
+    expect(d.route).toBe('params')
+    expect(d.editPrompt).toBe('')
+    expect(d.lut).toEqual({ name: '黄昏', amount: 100 })
+    expect(d.degraded).toBe(true)   // 丢掉过它写的那半句，信号要留
+  })
+  it('name 为空串 = 摘掉', () => {
+    const d = parseDecision({ route: 'params', lut: { name: '' } }, '不要滤镜了', names)
+    expect(d.lut).toEqual({ name: '', amount: 0 })
+  })
+  it('没提滤镜 = null（不动）', () => {
+    expect(parseDecision({ route: 'params', param_deltas: { exposure: 10 } }, '亮一点', names).lut).toBeNull()
+  })
+  it('大小写和空格都能对上', () => {
+    expect(parseDecision({ route: 'params', lut: { name: ' Sunset ' } }, 'x', ['Sunset']).lut)
+      .toEqual({ name: 'Sunset', amount: 100 })
+  })
+  it('客户端没给清单时，任何名字都不认', () => {
+    expect(parseDecision({ route: 'params', lut: { name: '黄昏' } }, 'x', []).lut).toBeNull()
+  })
+  it('滤镜 + 生成 = both（两件事都做）', () => {
+    const d = parseDecision({ route: 'both', lut: { name: '黄昏' }, edit_prompt: 'remove the person' }, 'x', names)
+    expect(d.route).toBe('both')
+    expect(d.lut).toEqual({ name: '黄昏', amount: 100 })
+  })
+})
