@@ -11,6 +11,7 @@ import { SessionsPage } from './ui/SessionsPage'
 import { WorkDetailPage } from './ui/WorkDetailPage'
 import { AccountPage } from './ui/AccountPage'
 import { ModelSettings } from './ui/ModelSettings'
+import { LutSettings } from './ui/LutSettings'
 import LandingPage from './ui/LandingPage'
 import { Nav } from './ui/Nav'
 import { FRONT_PAGE, askedForFrontPage, pathOf, viewFromPath, type View } from './ui/view'
@@ -2052,6 +2053,14 @@ export default function App() {
           这一页要用的清单（几套配置、哪套在用）全从 `/api/models` 来，
           不进 App 这层状态：那是"设置"，不是修图现场，别让两处各存一份。 */}
       {view.kind === 'models' && <ModelSettings />}
+      {/* 滤镜（★ 2026-10-05，设计 §5.1）：设置里的第 4 格点进来就是它。
+          和「模型」同一条：这一页的清单**自己拉自己管**，不进 App 这层状态 ——
+          那是"设置"，不是修图现场，别让两处各存一份。
+          ⚠️ **不给它 `onBack`**：它和「模型设置」同一层，那一页也没有返回
+          （左栏一直在，出去走左栏就是了）—— 两页的走法不该长成两个样子。
+          ⚠️ 出去时**重拉一次清单**是上面那个 effect（看 `view.kind` 的边沿）干的，
+          不在这句 JSX 里；`LutSettings` 这边只管自己那一份。 */}
+      {view.kind === 'luts' && <LutSettings />}
     </div>
   )
 }

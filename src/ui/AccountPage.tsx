@@ -6,6 +6,7 @@ import {
 } from '../api/account.ts'
 import { ApiError } from '../api/client'
 import { listModels, type PublicConfig } from '../api/models.ts'
+import { listLuts } from '../api/luts.ts'
 import { Btn } from './kit/Btn.tsx'
 import { Field, TextInput } from './kit/Field.tsx'
 import type { View } from './view.ts'
@@ -60,6 +61,12 @@ export function AccountPage({
    * `null` = 还没拿到 / 拿不到 —— 两种情况**都整格不出现**，见下面对应的注释。
    */
   const [models, setModels] = useState<PublicConfig[] | null>(null)
+  /**
+   * 滤镜有几个（第 4 格右边那个「N 个」，★ 2026-10-05）。
+   * `null` = 还没拿到 / 拿不到 —— 和上面那条**同一条规矩**：整格不出现。
+   * 写「0 个」对着一个导了 20 个滤镜的人就是一句假话（《文案规范》§3）。
+   */
+  const [lutCount, setLutCount] = useState<number | null>(null)
 
   // 改密码那一段（§6.5）和注销那一段（§5）各自的开合与状态
   const [pwOpen, setPwOpen] = useState(false)
@@ -98,6 +105,18 @@ export function AccountPage({
     let alive = true
     listModels().then(
       (r) => { if (alive) setModels(r.configs) },
+      () => { /* 拿不到就什么都不说 —— 见上 */ },
+    )
+    return () => { alive = false }
+  }, [])
+
+  useEffect(() => {
+    // 「滤镜」那一格右边写「N 个」得知道有几个（★ 2026-10-05）。
+    // 和上面两条一样是"看一眼就走"的，所以一样要 `alive`；拿不到也**什么都不说**
+    // （`lutCount` 留在 null）—— 这一行本身照常点得进去，少一格不挡路。
+    let alive = true
+    listLuts().then(
+      (r) => { if (alive) setLutCount(r.luts.length) },
       () => { /* 拿不到就什么都不说 —— 见上 */ },
     )
     return () => { alive = false }
@@ -282,6 +301,20 @@ export function AccountPage({
             )}
           </section>
         )}
+
+        {/* ④ 「调色素材」框（★ 2026-10-05，设计 §5.1）：滤镜那一页的入口。
+            右边写**几个** —— `lutCount` 拿不到时那一格整格不出现，
+            和「模型」那一行同一条规矩（不许说一句没根据的话）。 */}
+        <section className="account-tile">
+          <h2 className="account-tile-title">调色素材</h2>
+          <div className="account-card">
+            <button className="account-row" onClick={() => onGo({ kind: 'luts' })}>
+              <span className="account-row-label">滤镜</span>
+              {lutCount !== null && <span className="account-row-value">{lutCount} 个</span>}
+              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
+            </button>
+          </div>
+        </section>
       </div>
 
       <button

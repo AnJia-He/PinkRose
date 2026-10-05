@@ -15,7 +15,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RouteDecision, SuggestResponse } from '../shared/protocol.ts'
 import { ZERO, type Adjustments } from '../shared/adjustments.ts'
-import type { LutMeta } from '../shared/lut.ts'
+import { MAX_LUT_FILE_BYTES, type LutMeta } from '../shared/lut.ts'
 import type {
   SessionDetail, SessionMessage, SessionMeta, SessionStep,
 } from '../shared/sessions.ts'
@@ -4018,6 +4018,246 @@ describe('用户管理页', () => {
       MODEL(2, { kind: 'image', active: true, alias: '出差那套' }),
     ])).toBe('出差那套')
     // 变异：只看第一套 / 不去重 / 一套都没有时也写个别名 → 这一条红
+  })
+
+  /**
+   * ★ 滤镜（Task 10，设计 §5.1）：左栏「个人设置」里的第 4 格 + 它点进去那一页。
+   *
+   * 这一页是那个功能的**入口** —— 用户第一次拿到滤镜就是从这儿。它守四件事，
+   * 每一件错了都不报错：
+   *   · 清单的**四态**：还没到手 ≠ 空。拿空数组去顶"还没拉到"的后果是——
+   *     一个导了 20 个滤镜的人进这一页先看到一句"你一个都没有"（和「0 张作品」
+   *     同一个毛病，《文案规范》§3）；
+   *   · 导入那条路的**三个失败点**（太大 / 解不开 / 服务端不认）各有各的话 ——
+   *     都说"导入失败"的话，用户不知道该换文件、重新下载、还是改个名字；
+   *   · 删除前先说清代价（`lutUsage` 回的那个 N 是那句话**唯一**的依据）；
+   *   · 满 30 个时那颗导入按钮得真的按不动。
+   */
+  const LUTM = (id: number, over: Partial<LutMeta> = {}): LutMeta =>
+    ({ id, name: `滤镜${id}`, size: 33, bytes: 240 * 1024, createdAt: 0, ...over })
+
+  /** 多放几拍宏任务：导入那条链上有好几段 `await`（读文件 / 建 / 重拉清单）。 */
+  const settle = async () => {
+    for (let i = 0; i < 3; i++) await new Promise(r => setTimeout(r, 0))
+  }
+
+  /** 往那个藏起来的 `input[type=file]` 里塞一个文件（照 `uploadPhoto` 那个写法）。 */
+  async function importFile(file: File) {
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement | null
+    expect(input, '这一页那个藏起来的文件输入框不在').toBeTruthy()
+    Object.defineProperty(input!, 'files', { value: [file], configurable: true })
+    await act(async () => {
+      input!.dispatchEvent(new Event('change', { bubbles: true }))
+      await settle()
+    })
+  }
+
+  /** 列表里叫这个名字的那一行。 */
+  const lutRow = (name: string) => [...container.querySelectorAll('.luts-row')]
+    .find(r => (r.textContent ?? '').includes(name))
+
+  /** 一行里的某颗按钮（按字找 —— 位置是排版的事，字才是用户的认知）。 */
+  const btnIn = (row: Element | undefined, text: string) =>
+    [...(row?.querySelectorAll('button') ?? [])]
+      .find(b => (b.textContent ?? '').trim() === text) as HTMLButtonElement
+
+  it('★ 个人设置里点「滤镜」能进那一页；导入一个 .cube 之后列表里出现它', async () => {
+    // 两半都是**真行为**：那一行点得进去（地址栏跟着走 —— F5 / 收藏 / 转发都要认），
+    // 以及选完一个文件之后清单里**真多出一行**（不是"按钮亮了"就算完）。
+    const SUNSET = LUTM(9, { name: 'sunset', size: 2, bytes: 1234 })
+    // 清单里**什么时候**有它：导入之后 —— 拿 `createLut` 被调过没有当判据，
+    // 而不是数"第几次拉"（探身进实现里数次数，加一处调用就悄悄错位）。
+    // ⚠️ 基线要**当场量**：这个文件没有 `clearMocks`，`createLut` 的调用记录
+    //    是跨用例活着的（同文件里 T9 那条注释提过同一个坑）。
+    const importedBefore = vi.mocked(lutsMod.createLut).mock.calls.length
+    vi.mocked(lutsMod.listLuts).mockImplementation(async () =>
+      ({ luts: vi.mocked(lutsMod.createLut).mock.calls.length > importedBefore ? [SUNSET] : [] }))
+    vi.mocked(lutsMod.createLut).mockResolvedValue({ lut: SUNSET })
+
+    await renderApp()
+    await openAccount()
+    const row = rowByLabel('滤镜')
+    await act(async () => { row.click(); await settle() })
+
+    expect(location.pathname).toBe('/app/luts')
+    // 前提：这一页**真的开着**（少了它，下面那条会因为"整页没渲染"假绿）
+    expect(container.querySelector('.luts-title')?.textContent).toBe('滤镜')
+    // 真的一个都没有 —— 这才是说「还没有导入过滤镜。」的时候
+    expect(container.textContent).toContain('还没有导入过滤镜')
+
+    await importFile(new File([CUBE2_TEXT], 'sunset.cube', { type: 'text/plain' }))
+
+    // `createLut` 收到的是**名字 + 原文**：这个名字来自"文件名去扩展名"
+    //（这个 cube 里没有 TITLE —— 有的话 TITLE 优先，服务端也认这一套次序）
+    expect(vi.mocked(lutsMod.createLut)).toHaveBeenCalledWith('sunset', CUBE2_TEXT)
+    // 清单里真多出一行，三样都在：名字 · N 级 · 体积（体积走 `formatSize`）
+    const line = lutRow('sunset')
+    expect(line).toBeTruthy()
+    expect(line?.textContent).toContain('2 级')
+    expect(line?.textContent).toContain('1 KB')
+  })
+
+  it('★ 第 4 格右边写的是**真数**（N 个）', async () => {
+    // 和「模型」那一行同一条规矩 —— 拿得到就写真数，拿不到整格不出现（下一条）。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [LUTM(1), LUTM(2)] })
+    await renderApp()
+    await openAccount()
+
+    expect(rowByLabel('滤镜').querySelector('.account-row-value')?.textContent).toBe('2 个')
+  })
+
+  it('★ 清单拿不到时：第 4 格右边不出现，那一页也不说「还没有导入过滤镜」', async () => {
+    // 「0 个」对着一个导了 20 个的人是句**假话** —— 那一格宁可整个不出现
+    //（第 4 格和「模型」那一行同一个形状）。那一页同理：说"还没有导入过滤镜"
+    // 等于把"拿不到"编造成"你没有"。
+    // ⚠️ 第一发（App 挂载那一次）**照常给一份名单**：`useLuts` 拿到失败会在控制台
+    //    留一行「滤镜清单没取回来」—— 那是别的用例的噪声，会盖住真话（给的那份是空
+    //    名单，这一条量的是"用户管理页和那一页拿不到"，与 App 那份无关）。
+    vi.mocked(lutsMod.listLuts)
+      .mockResolvedValueOnce({ luts: [] })
+      .mockRejectedValue(new api.ApiError('UPSTREAM_FAILED', 'SENTINEL-滤镜清单拉不回来'))
+    await renderApp()
+    await openAccount()
+
+    const row = rowByLabel('滤镜')
+    expect(row.querySelector('.account-row-value')).toBeNull()
+    // 少一格不挡路：这一行照样点得进去
+    expect(row.disabled).toBe(false)
+
+    await act(async () => { row.click(); await settle() })
+    // 说的必须是**服务端那句话**（原样），不是我们替它总结的
+    expect(container.textContent).toContain('SENTINEL-滤镜清单拉不回来')
+    expect(container.textContent).not.toContain('还没有导入过滤镜')
+  })
+
+  it('★ 还没到手的时候是「正在打开…」，不是「还没有导入过滤镜」', async () => {
+    // 这一条钉的就是"不许拿空数组顶还没拉到"：那一句"你一个都没有"，
+    // 只许在**真的拉到了空清单**之后说。
+    const gate = makeGate<{ luts: LutMeta[] }>()
+    vi.mocked(lutsMod.listLuts).mockReturnValue(gate.promise)
+    await renderApp()
+    await openAccount()
+    // 第 4 格右边也还没有数（`null` 期间不画）
+    expect(rowByLabel('滤镜').querySelector('.account-row-value')).toBeNull()
+    // 只切页，不放行请求 —— 要的就是"还在路上"那一瞬间
+    await act(async () => { rowByLabel('滤镜').click() })
+
+    expect(container.textContent).toContain('正在打开')
+    expect(container.textContent).not.toContain('还没有导入过滤镜')
+
+    // 放行 —— 这回是真的空，那句话才是事实
+    await act(async () => { gate.open({ luts: [] }); await settle() })
+    expect(container.textContent).toContain('还没有导入过滤镜')
+  })
+
+  it('★ 导入的三个失败点各有各的话 —— 而且都不会落到一次导入上', async () => {
+    // 三条路**不能都说"导入失败"**：用户拿到那句话要知道该改什么 ——
+    // 换个文件（太大 / 坏了），还是改个名字（重名）。三句都是**原样**显示
+    //（太大那句是 spec §6.3 冻死的，和 `server/luts.ts` 一字不差）。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [] })
+    vi.mocked(lutsMod.createLut).mockRejectedValue(
+      new api.ApiError('BAD_REQUEST', '已经有一个叫「sunset」的滤镜了，换个名字。'))
+    await renderApp()
+    await openAccount()
+    await act(async () => { rowByLabel('滤镜').click(); await settle() })
+
+    // ① 太大：**连读都不读**（8 MB 那个上限在前，解析在后）
+    await importFile(new File([new Uint8Array(MAX_LUT_FILE_BYTES + 1)], 'big.cube'))
+    expect(container.textContent).toContain('这个文件超过 8 MB 了。')
+    expect(vi.mocked(lutsMod.createLut)).not.toHaveBeenCalled()
+
+    // ② 解不开：`parseCube` 那句话本来就是给用户看的中文（这里是一份普通文本）
+    await importFile(new File(['这不是滤镜'], 'x.cube'))
+    expect(container.textContent).toContain('不是 .cube 格式')
+    expect(vi.mocked(lutsMod.createLut)).not.toHaveBeenCalled()
+
+    // ③ 本地过了、服务端不认（重名 / 满了 / 空间满了）—— **原样**显示它那句话
+    await importFile(new File([CUBE2_TEXT], 'sunset.cube'))
+    expect(vi.mocked(lutsMod.createLut)).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toContain('已经有一个叫「sunset」的滤镜了，换个名字。')
+  })
+
+  it('★ 改名：就地展开一个输入框，提交打的是 renameLut(id, 新名字)', async () => {
+    const HUT = LUTM(7, { name: '黄昏' })
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    vi.mocked(lutsMod.renameLut).mockResolvedValue({ lut: { ...HUT, name: '日落' } })
+    await renderApp()
+    await openAccount()
+    await act(async () => { rowByLabel('滤镜').click(); await settle() })
+
+    await act(async () => { btnIn(lutRow('黄昏'), '改名').click() })
+    const input = container.querySelector('input[name=lutName]') as HTMLInputElement
+    expect(input).toBeTruthy()
+    // 预填现在的名字：改起来只动要动的那几个字（和详情页那颗「改名」同一条）
+    expect(input.value).toBe('黄昏')
+
+    await act(async () => { type(input, '日落') })
+    await act(async () => {
+      (container.querySelector('.luts-rename button[type=submit]') as HTMLButtonElement).click()
+      await settle()
+    })
+
+    expect(vi.mocked(lutsMod.renameLut)).toHaveBeenCalledWith(7, '日落')
+  })
+
+  it('★ 删除：先问"还有几条会话在用"，那句话里的 N 对得上；确认了才真删', async () => {
+    // 删除前那次 `lutUsage` 是确认块里那个 N 的**唯一**依据（spec §6.4）——
+    // 猜一个数、或者干脆不说，都是在让用户闭着眼睛删。
+    const HUT = LUTM(7, { name: '黄昏' })
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    vi.mocked(lutsMod.lutUsage).mockResolvedValue({ sessions: 2 })
+    vi.mocked(lutsMod.deleteLut).mockResolvedValue({ ok: true })
+    await renderApp()
+    await openAccount()
+    await act(async () => { rowByLabel('滤镜').click(); await settle() })
+
+    await act(async () => { btnIn(lutRow('黄昏'), '删除').click(); await settle() })
+
+    expect(vi.mocked(lutsMod.lutUsage)).toHaveBeenCalledWith(7)
+    const ask = container.querySelector('.luts-ask')
+    expect(ask?.textContent).toContain('还有 2 条老会话在用这个滤镜')
+    expect(ask?.textContent).toContain('变回没有滤镜的样子')
+    // **还没删**：点「删除」只是把代价摊开，删除请求一条都还没发
+    expect(vi.mocked(lutsMod.deleteLut)).not.toHaveBeenCalled()
+
+    await act(async () => {
+      (ask?.querySelector('.luts-delete') as HTMLButtonElement).click()
+      await settle()
+    })
+    expect(vi.mocked(lutsMod.deleteLut)).toHaveBeenCalledWith(7)
+  })
+
+  it('★ 没人用这个滤镜时，确认块说的是「删了就找不回来了。」', async () => {
+    // 两句话的分界就是 `sessions > 0` —— 对着一个没人用的滤镜说"还有老会话在用"
+    // 同样是假话（只是方向相反）。
+    const HUT = LUTM(7, { name: '黄昏' })
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    vi.mocked(lutsMod.lutUsage).mockResolvedValue({ sessions: 0 })
+    await renderApp()
+    await openAccount()
+    await act(async () => { rowByLabel('滤镜').click(); await settle() })
+
+    await act(async () => { btnIn(lutRow('黄昏'), '删除').click(); await settle() })
+
+    const ask = container.querySelector('.luts-ask')
+    expect(ask?.textContent).toContain('删了就找不回来了。')
+    expect(ask?.textContent).not.toContain('老会话')
+  })
+
+  it('★ 满 30 个：导入按钮禁用，还说一句「最多 30 个滤镜」', async () => {
+    // 上限是 `MAX_LUTS`（服务端也拦，但拦下来是一趟白跑的请求）。
+    // 只禁按钮不说话，用户只会以为按钮坏了 —— 两句要一起。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({
+      luts: Array.from({ length: 30 }, (_, i) => LUTM(i + 1)),
+    })
+    await renderApp()
+    await openAccount()
+    expect(rowByLabel('滤镜').querySelector('.account-row-value')?.textContent).toBe('30 个')
+    await act(async () => { rowByLabel('滤镜').click(); await settle() })
+
+    const btn = container.querySelector('.luts-import') as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    expect(container.textContent).toContain('最多 30 个滤镜')
   })
 
   it('formatSize：三档各说一句话（§3.6 那张图只画了 MB 那一档）', () => {

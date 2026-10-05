@@ -34,6 +34,7 @@
 | 作品详情 | [WorkDetailPage.tsx](src/ui/WorkDetailPage.tsx) |
 | 个人设置 | [AccountPage.tsx](src/ui/AccountPage.tsx) |
 | 模型设置 | [ModelSettings.tsx](src/ui/ModelSettings.tsx) |
+| 滤镜（导入 LUT） | [LutSettings.tsx](src/ui/LutSettings.tsx) |
 | 左侧导航栏 | [Nav.tsx](src/ui/Nav.tsx) |
 
 ---
