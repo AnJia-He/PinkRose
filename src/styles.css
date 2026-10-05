@@ -1870,37 +1870,36 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    `baseline` 对齐：按底边对齐的话 15px 的数字和 13px 的字会看着差半行。 */
 .account-stats { display: flex; gap: var(--sp-5); }
 
-/* 用量圆环（★ 2026-10-05；用户当晚上升过一轮要求：「立体的大一点的圆盘图表」）。
-   立体感的配方（和 `AccountPage.UsageRing` 的注释是一件事的两半）：
-   ① 粗环（14/120）+ 渐变描边：左上亮、右下深（光从左上来）；
-   ② 进度弧的**发光**（drop-shadow，颜色走 `--ring-glow`，跟着主色走）——
-      "亮起来一圈"；
-   ③ 内缘一道半透白的细高光弧（`.usage-ring-gloss`）—— "光打在上缘"。
-   ⚠️ 前景弧和轨道都从正上方起笔（转 -90°）。 */
-.usage-ring-wrap { position: relative; flex: none; width: 160px; height: 160px; }
-.usage-ring { display: block; width: 100%; height: 100%; }
-.usage-ring-track { stroke: var(--line-2); }
-.usage-ring-fill,
-.usage-ring-gloss {
-  transform: rotate(-90deg); transform-origin: 50% 50%;
-  transition: stroke-dasharray var(--dur-2) var(--ease);
+/* 用量饼图（★ 2026-10-05 深夜第二版）。演变一句话：用户先把"圆盘"升了一级
+   （「立体的大一点的圆盘图表」），见到**圆环**之后又补了最后一句
+   「**我想到了就是磁盘用量是一个叫做饼图的**」—— 要的是实心扇形，环 → 饼图。
+   立体感的配方（和 `AccountPage.UsagePie` 的注释是一件事的两半）：
+   ① 扇形用渐变填色：左上亮、右下深（光从左上来）；
+   ② 扇形带**发光**（drop-shadow，颜色走 `--ring-glow`，跟着主色走）；
+   ③ 整盘罩一层很淡的径向高光（`.usage-pie-sheen`）—— 实心"盘面"靠它才不像贴纸。
+   ⚠️ 百分比数字在盘**下面**：实心盘上压字对比度随占比漂（见组件注释）。 */
+.usage-pie-wrap {
+  flex: none; width: 160px;
+  display: flex; flex-direction: column; align-items: center; gap: var(--sp-2);
 }
-.usage-ring-fill { filter: drop-shadow(0 0 7px var(--ring-glow)); }
-.usage-ring-gloss { stroke: rgba(255, 255, 255, .35); }
+.usage-pie { display: block; width: 160px; height: 160px; }
+/* 盘底：面 + 一圈很淡的亮边（物理光，不走令牌 —— 和 sheen 同一个理由）。
+   第一版没有这圈边，真机里盘和卡片背景糊在一起，"盘"的轮廓没出来。 */
+.usage-pie-track { fill: var(--line-2); stroke: rgba(255, 255, 255, .07); stroke-width: 1; }
+.usage-pie-fill { filter: drop-shadow(0 0 7px var(--ring-glow)); }
 /* 渐变的两档（SVG `stop` 的颜色走 CSS —— 浅/深成对由 token 自己管） */
 .ring-stop-hi { stop-color: var(--accent-500); }
 .ring-stop-lo { stop-color: var(--accent-400); }
 .ring-stop-danger { stop-color: var(--danger); }
-/* 用到八成往上：环和数字一起变红（和 `.stat-warn` 是同一句话的两种说法） */
-.usage-ring-warn .usage-ring-fill {
+/* 用到八成往上：扇形和数字一起变红（和 `.stat-warn` 是同一句话的两种说法） */
+.usage-pie-warn .usage-pie-fill {
   filter: drop-shadow(0 0 7px color-mix(in srgb, var(--danger) 55%, transparent));
 }
-.usage-ring-pct {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+.usage-pie-pct {
   font-size: 22px; font-weight: 600; letter-spacing: -.01em;
   color: var(--text); font-variant-numeric: tabular-nums;
 }
-.usage-ring-warn .usage-ring-pct { color: var(--danger); }
+.usage-pie-warn .usage-pie-pct { color: var(--danger); }
 
 /* 用量框：整块让给图表（用户：「这一整块都可以先放作品用量」）——
    圆盘居中在上、两个数字在下面中心。 */

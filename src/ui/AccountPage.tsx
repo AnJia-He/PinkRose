@@ -239,12 +239,14 @@ export function AccountPage({
           <section className="account-tile">
             <h2 className="account-tile-title">作品空间用量</h2>
             <div className="account-card">
-              {/* ★ 2026-10-05：用量圆环（用户：「这一整块都可以先放作品用量，
-                  用那个立体的大一点的圆盘图表表示」）—— **整块让给图表**：
-                  大圆盘居中在上、两个数字在下面中心（`.usage-figure`）。
-                  环 `aria-hidden`：语义真值在数字里，它是"画给人看"的那份。 */}
+              {/* ★ 2026-10-05：用量饼图（用户：「这一整块都可以先放作品用量，
+                  用那个立体的大一点的圆盘图表表示」→ 看完圆环后又补
+                  「我想到了就是磁盘用量是一个叫做饼图的」→ 换成实心饼图）——
+                  **整块让给图表**：饼图居中在上、百分比 + 两个数字在下面
+                  （`.usage-figure`）。盘 `aria-hidden`：语义真值在数字里，
+                  它是"画给人看"的那份。 */}
               <div className="usage-figure">
-                <UsageRing
+                <UsagePie
                   pct={usage.state === 'loading' ? null : usage.bytes / usage.limit}
                   warn={usageWarn} />
                 <div className="account-stats">
@@ -316,42 +318,40 @@ export function modelValue(configs: PublicConfig[]): string {
 }
 
 /**
- * 用量圆环（★ 2026-10-05。用户原话先是「磁盘用量可视化一下用圆盘表示」，
- * 当晚又升了一级：「**这一整块都可以先放作品用量，用那个立体的大一点的
- * 圆盘图表表示**」——所以它是 160px、带立体质感的那个大环）。
+ * 用量饼图（★ 2026-10-05 深夜第二版。演变过程就记在这：用户先说
+ * 「磁盘用量可视化一下用圆盘表示」→「**用那个立体的大一点的圆盘图表表示**」
+ * （我做了**圆环**）→ 他看到之后补了最后一句：「**我想到了就是磁盘用量是一个
+ * 叫做饼图的**」—— 要的是**实心扇形**那个形状，不是中空的环。于是环 → 饼图：
+ * 切走的那块扇形 = 已用，剩下的圆面 = 余量）。
  *
- * 环画的是**占比**（已用 / 上限），中心的百分比是同一件事的数字。`pct === null`
- * = 还在取：画一个空轨道、**不画中心数字**（「0%」对着一个存过东西的人是一句
- * 假话，和「0 张作品」同罪 —— 见上面 `Usage` 那段）。
+ * `pct === null` = 还在取：画一个空的圆盘、**不画百分比**（「0%」对着一个存过
+ * 东西的人是一句假话 —— 见上面 `Usage` 那段）。
  *
- * **立体感的配方**（都在这一小段里，别拆散）：
- *   ① 粗环（14/120）+ 渐变描边：左上亮、右下深（光从左上来）；
- *   ② 进度弧的**发光**（`filter: drop-shadow`，颜色走 `--ring-glow`）——
- *      "亮起来一圈"，浮在面上的感觉就是它；
- *   ③ 内缘一道半透白的细高光弧 —— "光打在上缘"。
+ * **立体感的配方**（和 styles.css 那一段是一件事的两半）：
+ *   ① 扇形用渐变填色：左上亮、右下深（光从左上来）；
+ *   ② 扇形带**发光**（drop-shadow，颜色走 `--ring-glow`）—— "亮起来一块"；
+ *   ③ 整盘罩一层很淡的径向高光（`.usage-pie-sheen`）—— 实心的"盘面"
+ *      靠它才不像一张贴纸。
+ * ⚠️ 百分比数字在盘**下面**（不是盘中央）：实心盘上压字的对比度随占比漂 ——
+ *    占比小时落在深色盘底上、大时落在亮色扇形上，两头测不了。环形能放中心，
+ *    实心饼图不能 —— 这是这次改版唯一损失掉的东西。
  * ⚠️ 百分比文字**绝不显示「0.0%」**：那是句假话（读作"一个字节都没有"），
  *    不到 0.05% 一律「<0.1%」（495 KB 的用量就落在这档）。
  */
-export function UsageRing({ pct, warn }: { pct: number | null; warn: boolean }) {
-  const R = 52
-  const C = 2 * Math.PI * R
+export function UsagePie({ pct, warn }: { pct: number | null; warn: boolean }) {
   const ratio = pct === null ? null : Math.max(0, Math.min(1, pct))
-  const shown = ratio === null ? null : ratio * C
-  // 高光弧在内缘（半径小一档），dasharray 要按**它自己的周长**算，不然接近满时
-  // 会比主弧多绕出去一截。
-  const Cg = 2 * Math.PI * 47
-  const shownG = ratio === null ? null : ratio * Cg
+  const d = ratio === null ? null : pieSlicePath(ratio)
   const n = ratio === null ? 0 : ratio * 100
   const label = ratio === null ? ''
     : n < 0.05 ? '<0.1%'
     : n < 10 ? `${n.toFixed(1)}%`
     : `${Math.round(n)}%`
   return (
-    <div className={warn ? 'usage-ring-wrap usage-ring-warn' : 'usage-ring-wrap'} aria-hidden="true">
-      <svg className="usage-ring" viewBox="0 0 120 120">
+    <div className={warn ? 'usage-pie-wrap usage-pie-warn' : 'usage-pie-wrap'} aria-hidden="true">
+      <svg className="usage-pie" viewBox="0 0 120 120">
         <defs>
-          {/* ⚠️ id 固定 —— 这一页同时只会有一个用量环（真出现第二个再加 useId） */}
-          <linearGradient id="usageRingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          {/* ⚠️ 两个 id 固定 —— 这一页同时只会有一个饼图（真出现第二个再加 useId） */}
+          <linearGradient id="usagePieGrad" x1="0%" y1="0%" x2="100%" y2="100%">
             {warn ? (
               <stop offset="0%" className="ring-stop-danger" />
             ) : (
@@ -361,22 +361,48 @@ export function UsageRing({ pct, warn }: { pct: number | null; warn: boolean }) 
               </>
             )}
           </linearGradient>
+          <radialGradient id="usagePieSheen" cx="35%" cy="30%" r="80%">
+            {/* 白不是主题色 —— 是**物理光**（"光从左上打过来"的盘面反光），
+                浅色/深色下都该是白的，所以不走令牌（和色轮那些"内容色"同一类例外）。
+                2026-10-05 从 .16 起加强到 .22：真机截图里第一版几乎看不出，
+                盘显得是块平的深灰色圆片。 */}
+            <stop offset="0%" stopColor="rgba(255,255,255,.22)" />
+            <stop offset="50%" stopColor="rgba(255,255,255,.07)" />
+            <stop offset="100%" stopColor="rgba(255,255,255,0)" />
+          </radialGradient>
         </defs>
-        <circle className="usage-ring-track" cx="60" cy="60" r={R} fill="none" strokeWidth="14" />
-        {shown !== null && shownG !== null && (
-          <>
-            <circle className="usage-ring-fill" cx="60" cy="60" r={R} fill="none"
-                    stroke="url(#usageRingGrad)" strokeWidth="14" strokeLinecap="round"
-                    strokeDasharray={`${shown} ${C - shown}`} />
-            <circle className="usage-ring-gloss" cx="60" cy="60" r="47" fill="none"
-                    strokeWidth="3.5" strokeLinecap="round"
-                    strokeDasharray={`${shownG} ${Cg - shownG}`} />
-          </>
-        )}
+        {/* 整圆 = 盘底（剩余的部分） */}
+        <circle className="usage-pie-track" cx="60" cy="60" r="52" />
+        {/* 扇形 = 已用（一点都没用时不画 —— 见 pieSlicePath） */}
+        {d && <path className="usage-pie-fill" d={d} fill="url(#usagePieGrad)" />}
+        {/* 盘面高光罩在最上层 —— 立体感的第 ③ 味。
+            ⚠️ `fill` 必须是这个渐变：SVG 的 `<circle>` 没有 fill **默认是黑色**，
+            忘了写就等于给整个盘盖了一块黑布（真机里病征是"盘黑乎乎的、扇形
+            全被盖住"，0.3% 时看不出来 —— 是 60% 的对照截图戳穿的）。 */}
+        <circle className="usage-pie-sheen" cx="60" cy="60" r="52" fill="url(#usagePieSheen)" />
       </svg>
-      {label !== '' && <span className="usage-ring-pct">{label}</span>}
+      {label !== '' && <span className="usage-pie-pct">{label}</span>}
     </div>
   )
+}
+
+/**
+ * 饼图扇形的 `d`（纯函数；导出给测试钉坐标，和 `formatSize` 同一个用途）。
+ *
+ * 从**正上方**（12 点）开始顺时针切 `ratio` 圈：圆心 (60,60)、半径 52（viewBox 120）。
+ *   · `ratio <= 0` → `null`：一点都没用，**不画**扇形（空盘就是干净的盘底）；
+ *   · `ratio >= 1` → 两段半弧拼成整圆（一段弧从起点画回自己是画不出圆形的）；
+ *   · 其余 → `M 圆心 L 12点 A 弧 到终点 Z` 的扇形；超过一半要走大弧标志位。
+ * 坐标 `toFixed(2)` 之后才拼串 —— 浮点的 6.4e-15 之类不该漏进 `d` 里。
+ */
+export function pieSlicePath(ratio: number): string | null {
+  if (ratio <= 0) return null
+  if (ratio >= 1) return 'M60 8 A52 52 0 1 1 60 112 A52 52 0 1 1 60 8 Z'
+  const a = ratio * 2 * Math.PI - Math.PI / 2
+  const x = (60 + 52 * Math.cos(a)).toFixed(2)
+  const y = (60 + 52 * Math.sin(a)).toFixed(2)
+  const large = ratio > 0.5 ? 1 : 0
+  return `M60 60 L60 8 A52 52 0 ${large} 1 ${x} ${y} Z`
 }
 
 /**

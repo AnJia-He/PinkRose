@@ -144,7 +144,7 @@ vi.mock('./api/client', async (importOriginal) => {
 })
 
 import App from './App'
-import { formatSize, modelValue } from './ui/AccountPage'
+import { formatSize, modelValue, pieSlicePath } from './ui/AccountPage'
 import type { PublicConfig } from './api/models'
 import { matchToReference, type Rgb } from './core/colorMatch'
 import * as decodeMod from './image/decode'
@@ -3578,22 +3578,38 @@ describe('用户管理页', () => {
     expect(container.querySelector('.account-quota-warn')).toBeNull()
   })
 
-  it('★ 用量圆环画的也是**真比例** —— 0.2% 也配拥有它的一个小点（2026-10-05 用户要的）', async () => {
-    // 用户原话「磁盘用量可视化一下用圆盘表示」（当晚又放大成立体大圆盘）。
-    // 钉两样：中心的百分比文字、和环的 `stroke-dasharray`
-    //（= 占比 × 周长，半径 52 的周长 = 2π·52 ≈ 326.7）。
+  it('★ 用量饼图画的是**真比例** —— 0.2% 也配拥有它的一个小角（2026-10-05）', async () => {
+    // 用户原话三连：「磁盘用量可视化一下用圆盘表示」→「立体的大一点的圆盘图表」
+    // →「我想到了就是磁盘用量是一个叫做饼图的」（最后这句把圆环换成了实心饼图）。
+    // 钉两样：盘下的百分比文字、和扇形 path 的 `d`（从 12 点顺时针切 ratio 圈，
+    // 圆心 (60,60) 半径 52 —— 坐标全部由 pieSlicePath 这个纯函数算，形状的
+    // 四档钉子在下一条用例里）。
     const MIB = 1024 * 1024
     const LIMIT = 5 * 1024 ** 3
     withUsage({ count: 2, bytes: 10 * MIB })     // 10 MB / 5 GiB ≈ 0.195%
     await renderApp()
     await openAccount()
 
-    expect(container.querySelector('.usage-ring-pct')?.textContent).toBe('0.2%')
-    const dash = container.querySelector('.usage-ring-fill')?.getAttribute('stroke-dasharray') ?? ''
-    expect(parseFloat(dash)).toBeCloseTo((10 * MIB) / LIMIT * 2 * Math.PI * 52, 1)   // ≈ 0.64
-    // 远没到八成：环不带警告类（圆和数字"一起变红"那条规矩的另一半）
-    expect(container.querySelector('.usage-ring-warn')).toBeNull()
+    expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('0.2%')
+    const d = container.querySelector('.usage-pie-fill')?.getAttribute('d') ?? ''
+    expect(d).toBe(pieSlicePath((10 * MIB) / LIMIT))
+    // 远没到八成：盘不带警告类（扇形和数字"一起变红"那条规矩的另一半）
+    expect(container.querySelector('.usage-pie-warn')).toBeNull()
     // 变异：把比例写成写死的数（或 0）→ 前两条红
+  })
+
+  it('pieSlicePath：形状的四档（0 / 四分之一 / 一半 / 满）（2026-10-05）', () => {
+    // 每档坐标手算钉死（比"等于自己"="测了个恒等式"强）：
+    expect(pieSlicePath(0)).toBeNull()               // 一点没用 → 不画扇形（空盘干净）
+    // 四分之一：从 12 点顺时针走 1/4 圈 = 正右（3 点）→ (60+52, 60)
+    expect(pieSlicePath(0.25)).toBe('M60 60 L60 8 A52 52 0 0 1 112.00 60.00 Z')
+    // 一半：正下方 (60,112)；**刚满一半不算大弧**（>0.5 才是）
+    expect(pieSlicePath(0.5)).toBe('M60 60 L60 8 A52 52 0 0 1 60.00 112.00 Z')
+    // 超过一半：大弧标志翻 1，终点到正左 (8,60)
+    expect(pieSlicePath(0.75)).toBe('M60 60 L60 8 A52 52 0 1 1 8.00 60.00 Z')
+    // 满：一段弧从起点画回自己画不出圆 → 两段半弧拼整圆
+    expect(pieSlicePath(1)).toBe('M60 8 A52 52 0 1 1 60 112 A52 52 0 1 1 60 8 Z')
+    // 变异：把大弧标志写死 0 / 忘了 ratio>=1 那条 → 上面某一条红
   })
 
   it('★ 极小用量**不许显示成「0.0%」**（那是句假话）—— 显示「<0.1%」', async () => {
@@ -3604,7 +3620,7 @@ describe('用户管理页', () => {
     await renderApp()
     await openAccount()
 
-    expect(container.querySelector('.usage-ring-pct')?.textContent).toBe('<0.1%')
+    expect(container.querySelector('.usage-pie-pct')?.textContent).toBe('<0.1%')
     // 变异：把 `<0.05` 那一档删掉（退回 toFixed(1)）→ 这一条红
   })
 
