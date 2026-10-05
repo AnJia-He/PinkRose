@@ -5750,4 +5750,31 @@ describe('滤镜', () => {
     expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
   })
+
+  it('★ 一次说两件事（套滤镜 + 去掉路人）：那一步的快照记的是**新滤镜**', async () => {
+    // 一次决策里既套滤镜又生成（route=both）时，"这一步"的状态是**做完之后**
+    // 那个 —— 和 `nextParams` 完全对称。传闭包那个旧值的话，这一步的缩略图
+    // （从**带新滤镜**的画布上抓的）和「回到这一步」还原出来的主画面对不上，
+    // 正是 T8 修过两次的那一类静默不一致（plan「已被证伪」第 6/7 条）。
+    // 变异：`applyDecision` 给 `runGenerate` 传闭包的 `lut`（不传 nextLut）→ 红。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    vi.mocked(api.postRoute).mockResolvedValue(decision({
+      route: 'both', paramDeltas: { exposure: 20 }, editPrompt: 'remove the person',
+      lut: { name: '黄昏', amount: 100 },
+    }))
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+
+    await renderApp()
+    await uploadPhoto()
+    await say('去掉那个人，再用黄昏滤镜')
+    await waitPersist()
+
+    const body = lastPutBody()
+    // 新推的那一步记的是**决策之后**的滤镜
+    expect((body.steps.at(-1) as { lut?: unknown }).lut).toEqual({ lutId: 1, amount: 100 })
+    // 当前这一版该落成的也是它（同一步的两面）
+    expect(body.lut).toEqual({ lutId: 1, amount: 100 })
+  })
 })

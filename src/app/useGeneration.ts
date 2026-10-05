@@ -253,11 +253,18 @@ export function useGeneration(deps: GenerationDeps) {
     //   `name === ''` 是"摘掉"（模型对"不要滤镜了"的答案）；有名字就在**本地清单**
     //   里对号 —— 对不上说明模型编了一个（服务端那层本该拦下，这是第二道），
     //   留一行警告、**不动**当前状态：宁可什么都不做，也别套一个用户没导入的东西。
+    //
+    // ⚠️ 顺手记住"这一步做完之后手上该是哪个"（`nextLut`，和 `nextParams` 对称）：
+    //   "套滤镜 + 生成"可以是**同一次决策**（route=both），而生成那一步的快照
+    //   要记的是**做完之后**的状态。传旧的（闭包那个）的话，那一步的缩略图
+    //   （从带新滤镜的画布上抓的）和「回到这一步」还原出来的主画面就对不上 ——
+    //   T8 修过两次的那一类（plan「已被证伪」第 6/7 条）。
+    let nextLut = lut
     if (d.lut) {
-      if (d.lut.name === '') setLut(null)
+      if (d.lut.name === '') { setLut(null); nextLut = null }
       else {
         const hit = luts.find((l) => sameLutName(l.name, d.lut!.name))
-        if (hit) setLut({ lutId: hit.id, amount: d.lut.amount })
+        if (hit) { nextLut = { lutId: hit.id, amount: d.lut.amount }; setLut(nextLut) }
         else console.warn('模型给了一个不在清单里的滤镜名：', d.lut.name)
       }
     }
@@ -293,7 +300,9 @@ export function useGeneration(deps: GenerationDeps) {
     //   所以传的是闭包里那个 `lut`，和上面 `params` 同一条口径。
     //   ⚠️ 它读 `lut`，所以 `lut` 必须进依赖数组（同 `image` 那条的理由）。
     if ((d.route === 'generate' || d.route === 'both') && image) {
-      await runGenerate(d.editPrompt, mid, nextParams, lut, image.bitmap)
+      // ★ T11：传 `nextLut`（这一步做完之后那个），和 `nextParams` 对称 ——
+      //   理由见上面滤镜那块。⚠️ 别"顺手"改回闭包的 `lut`。
+      await runGenerate(d.editPrompt, mid, nextParams, nextLut, image.bitmap)
     }
     // ★ T11 又读了 `luts` / `setLut`（上面那块滤镜落地），两个都得进依赖数组 ——
     //   漏掉 `luts` 的话，清单刷新之后这个回调还在用旧的（名字换成错 id）；
