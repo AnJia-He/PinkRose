@@ -68,12 +68,31 @@ export function normalizeDeltas(v: unknown): ParamDeltas {
  * `name` 空串 = 摘掉；`amount` 取整钳 0–100（缺省 100）。
  * 认不出来回 null（= 不动），并且**要留 degraded 信号** —— 模型给了个我们没有
  * 的东西，那是"这次没全采纳"，不是正常情况。
+ *
+ * ★ 2026-10-05 终审修复：**"键不在"和"键在、但形状烂"是两件事**（`present`）。
+ *   形状烂的 `lut`（裸字符串 `"黄昏"` / 没有 `name` 的 `{amount:80}` / `{}`）以前
+ *   和"这次没提滤镜"一样回 `dropped: false`，两个后果**都不报错**：
+ *     A 有参数的句子：滤镜没套上、`degraded` 还停在 false —— 零痕迹，回复可能还说"套上了"；
+ *     B 没有别的内容的句子：掉进 §4.7 的**付费降级** —— 而"只调滤镜不花钱"
+ *       正是这条路存在的意义。
+ *
+ * ⚠️ `null` 是**合法**写法（提示词里写着"这次不碰滤镜 → `"lut": null`"）：
+ *   它和字段缺席一样都表示"模型说了这次不碰滤镜"，**不算烂**。
+ *
+ * @param present `lut` / `lutChoice` 这个键**在不在**（`undefined` 判据见调用点）。
  */
-function normalizeLutChoice(raw: unknown, names: readonly string[]): { lut: LutDecision | null; dropped: boolean } {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { lut: null, dropped: false }
+function normalizeLutChoice(
+  raw: unknown, names: readonly string[], present: boolean,
+): { lut: LutDecision | null; dropped: boolean } {
+  // 键根本不在 / 明说 null：都是模型"这次不碰滤镜"，正常。
+  if (!present || raw === null) return { lut: null, dropped: false }
+  // 键在、却不是个对象（裸字符串、数字、数组…）：形状不对 —— 这是"模型说了
+  // 滤镜、我们没接住"，和"没说"完全不同（见函数头那段）。
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { lut: null, dropped: true }
   const o = raw as Record<string, unknown>
   const name = typeof o.name === 'string' ? o.name.trim() : null
-  if (name === null) return { lut: null, dropped: false }
+  // 对象里连 `name` 都没有（`{}` / `{amount:80}`）：同上，形状不对。
+  if (name === null) return { lut: null, dropped: true }
   if (name === '') return { lut: { name: '', amount: 0 }, dropped: false }
   const hit = names.find((n) => sameLutName(n, name))
   if (!hit) return { lut: null, dropped: true }
@@ -112,7 +131,11 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
 
   // ★ 2026-10-05（滤镜）：`lut` 和 `param_deltas` 是**并列的两半本地动作**。
   //   键名 snake_case 之外也认 camelCase（`lutChoice`）—— 同上面那两处的路数。
-  const { lut, dropped } = normalizeLutChoice(obj.lut ?? obj.lutChoice, lutNames)
+  //   ⚠️ 终审修复：**"键在不在"单独判**再交给 `normalizeLutChoice` ——
+  //   形状烂的 `lut` 是"模型说了、我们没接住"，和"模型没说"要给两样东西。
+  const lutKeyPresent = obj.lut !== undefined || obj.lutChoice !== undefined
+  const { lut, dropped } = normalizeLutChoice(
+    obj.lut !== undefined ? obj.lut : obj.lutChoice, lutNames, lutKeyPresent)
   const hasLut = lut !== null
 
   const rawRoute = obj.route
@@ -169,7 +192,15 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
   //
   // ★ 2026-10-05（滤镜）：**只解出滤镜**是合法结果（纯本地动作），不算"一件也用不上" ——
   //   所以这里也要 `!hasLut`，否则「用那个黄昏滤镜」会被降级成一次付费生成。
-  if (!hasParams && !hasEdit && !hasLut && !needsDisambiguation && userText) return fallbackDecision(userText)
+  //
+  // ★ 2026-10-05 终审修复：`!dropped` 同理，管的是**形状烂 / 名字不在清单里**那一类。
+  //   模型明明**说了**滤镜那一半（只是我们没接住），那就不是"我们根本没读懂它的输出"
+  //   —— 拿用户原话去跑一次生成，等于花钱把「用黄昏滤镜」当图像指令送上去，
+  //   正是这条路存在的意义要防的那件事。信号不会丢：`degraded` 已经因为 `dropped`
+  //   置成 true（上面那串），这一趟照样能被看见。
+  if (!hasParams && !hasEdit && !hasLut && !dropped && !needsDisambiguation && userText) {
+    return fallbackDecision(userText)
+  }
 
   return {
     route: effectiveRoute,

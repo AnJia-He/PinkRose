@@ -332,4 +332,56 @@ describe('滤镜决策', () => {
     expect(d.route).toBe('both')
     expect(d.lut).toEqual({ name: '黄昏', amount: 100 })
   })
+
+  /**
+   * ★ 2026-10-05 终审修复：**"键根本不在"和"键在、但形状烂"是两件事**。
+   *
+   * 形状烂的 `lut`（裸字符串 / 没有 name / 空对象）以前和"这次没提滤镜"一样
+   * 被 `dropped: false` 静默丢掉，两个后果都不报错：
+   *   A 有参数：滤镜没套上、`degraded` 还停在 false —— 零痕迹，而回复可能还说"套上了"；
+   *   B 没参数：掉进 §4.7 的**付费降级** —— 而"只调滤镜不花钱"正是这条路的意义。
+   *
+   * ⚠️ `null` 是**合法**写法（提示词里写着"这次不碰滤镜 → `lut: null`"）：它和
+   *    字段缺席一样，都是"模型说了这次不碰滤镜"，**不算烂**，不许误伤。
+   */
+  describe('形状烂的 lut 不是"没提滤镜"', () => {
+    const BAD: unknown[] = ['黄昏', { amount: 80 }, {}]
+
+    it('A：有参数时也留信号（dropped → degraded），不再是零痕迹', () => {
+      for (const bad of BAD) {
+        const d = parseDecision(
+          { route: 'params', param_deltas: { exposure: 10 }, lut: bad }, '亮一点，顺便用黄昏', names)
+        expect(d.lut, `${JSON.stringify(bad)} 不该解出滤镜`).toBeNull()
+        // 变异：把 normalizeLutChoice 里"形状烂"那两条还回 `dropped: false` → 这里红
+        expect(d.degraded, `${JSON.stringify(bad)} 丢过东西，信号要留`).toBe(true)
+      }
+    })
+
+    it('B：没有别的内容时**不许**落进 §4.7 的付费降级', () => {
+      for (const bad of BAD) {
+        const d = parseDecision({ route: 'params', lut: bad }, '用黄昏滤镜', names)
+        // 模型明明说了滤镜那一半（只是形状不对）：拿用户原话去跑一次生成，等于
+        // 花钱把「用黄昏滤镜」当图像指令送上去 —— 正是这条路要防的那件事。
+        expect(d.route, `${JSON.stringify(bad)} 不该被升成一次生成`).toBe('params')
+        expect(d.lut).toBeNull()
+        expect(d.degraded).toBe(true)
+      }
+    })
+
+    it('camelCase 那个别名也算"键在"（`lutChoice` 走同一条路）', () => {
+      const d = parseDecision(
+        { route: 'params', param_deltas: { exposure: 10 }, lutChoice: '黄昏' }, '亮一点', names)
+      expect(d.lut).toBeNull()
+      expect(d.degraded).toBe(true)
+    })
+
+    it('`lut: null` 与字段缺席都是正常的 —— 不许误伤', () => {
+      // 多给一个参数，免得落进"什么都没解出来 → 降级"那条路（那条路本来就 degraded）
+      const explicit = parseDecision(
+        { route: 'params', param_deltas: { exposure: 10 }, lut: null }, '亮一点', names)
+      expect(explicit.degraded).toBe(false)
+      const absent = parseDecision({ route: 'params', param_deltas: { exposure: 10 } }, '亮一点', names)
+      expect(absent.degraded).toBe(false)
+    })
+  })
 })

@@ -42,11 +42,14 @@ let matchedWork: WorkMeta | null = null
 /** ★ 2026-10-05（滤镜）：那一栏要的四样。面板只管摆 —— 挑哪张 / 强度多少 是 App 的事，
  *  所以这里记的是"面板有没有按下去"。 */
 let lutsFromTest: LutMeta[] = []
+/** ★ 2026-10-05 终审修复：清单到手没有（默认到手 —— 这一层的用例大多在演"拉到了"）。 */
+let lutsKnownFromTest = true
 let lutFromTest: LutRef | null = null
 let lutThumbsFromTest: { none: string | null; byId: Record<number, string> } = { none: null, byId: {} }
 let needThumbsCalls = 0
 let pickedLut: number | null | 'x' = 'x'
 let wentImport = false
+let retriedLuts = 0
 
 function Harness() {
   const [v, setV] = useState<Adjustments>(ZERO)
@@ -57,12 +60,14 @@ function Harness() {
       onMatchReference={f => { matchedRef = f }}
       onMatchWork={w => { matchedWork = w }}
       luts={lutsFromTest}
+      lutsKnown={lutsKnownFromTest}
       lut={lutFromTest}
       lutThumbs={lutThumbsFromTest}
       onPickLut={id => { pickedLut = id }}
       onLutAmount={() => {}}
       onNeedLutThumbs={() => { needThumbsCalls++ }}
       onGoImport={() => { wentImport = true }}
+      onRetryLuts={() => { retriedLuts++ }}
     />
   )
 }
@@ -258,11 +263,13 @@ describe('滤镜那一栏（2026-10-05）', () => {
 
   beforeEach(() => {
     lutsFromTest = []
+    lutsKnownFromTest = true
     lutFromTest = null
     lutThumbsFromTest = { none: null, byId: {} }
     needThumbsCalls = 0
     pickedLut = 'x'
     wentImport = false
+    retriedLuts = 0
   })
 
   it('★ 默认收着 —— 而且**收着的时候一次缩略图都不去要**', async () => {
@@ -305,5 +312,19 @@ describe('滤镜那一栏（2026-10-05）', () => {
     expect(c.textContent).toContain('还没有导入过滤镜')
     await click(c.querySelector('.lut-import-go')!)
     expect(wentImport).toBe(true)
+  })
+
+  it('★ 清单还没到手 → 不摆「还没有导入过滤镜」，摆的是「再试一次」（那块口子接得上）', async () => {
+    // 终审修复：这句**关于用户资产**的话只许在"服务端真的回了空清单"时说 ——
+    // 这一层钉的是"面板把 `lutsKnown` 一路传到了格子上"（App 那一侧在
+    // `App.test.tsx` 的「清单取不到」那条里演）。
+    lutsKnownFromTest = false
+    const c = await mount(<Harness />)
+    await click(headOf(c))
+    expect(c.textContent).not.toContain('还没有导入过滤镜')
+    expect(c.textContent).toContain('还没到手')
+    await click(c.querySelector('.lut-import-go')!)
+    expect(retriedLuts).toBe(1)
+    expect(wentImport).toBe(false)        // 这一颗不是「去导入」—— 用户该做的不是再导一个
   })
 })

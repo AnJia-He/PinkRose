@@ -48,6 +48,8 @@ type Props = {
    *  命名和 `AdjustmentPanel` 那边**一模一样** —— 两处是同一批东西，
    *  名字不同只会让人以为来源不同（它们其实是 App 里那同一个 `lutsApi` + `lut`）。 */
   luts: readonly LutMeta[]
+  /** ★ 2026-10-05 终审修复：清单**到手了没有**（看 `LutPicker` 的 `lutsKnown`）。 */
+  lutsKnown: boolean
   lut: LutRef | null
   lutThumbs: { none: string | null; byId: Record<number, string> }
   onPickLut: (lutId: number | null) => void
@@ -56,12 +58,14 @@ type Props = {
   onNeedLutThumbs: () => void
   /** 一个滤镜都没有时那颗「去导入」。 */
   onGoImport: () => void
+  /** 清单没到手时那颗「再试一次」（重拉一次清单）。 */
+  onRetryLuts: () => void
 }
 
 export default function ChatPanel({
   messages, cards, busy, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
   jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
-  luts, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport,
+  luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
 }: Props) {
   // 这颗按钮自己管开合（和微调区那一栏一样，`LutPicker` 只管格子本体）。
   // 默认收着：它摆在输入框上面，句句话都摊开着一整排格子太吵。
@@ -166,8 +170,9 @@ export default function ChatPanel({
           滤镜
         </button>
         {lutOpen && (
-          <LutPicker luts={luts} value={lut} thumbs={lutThumbs.byId} noneThumb={lutThumbs.none}
-            onPick={onPickLut} onAmount={onLutAmount} onGoImport={onGoImport} />
+          <LutPicker luts={luts} lutsKnown={lutsKnown} value={lut} thumbs={lutThumbs.byId}
+            noneThumb={lutThumbs.none} onPick={onPickLut} onAmount={onLutAmount}
+            onGoImport={onGoImport} onRetryLuts={onRetryLuts} />
         )}
       </div>
 

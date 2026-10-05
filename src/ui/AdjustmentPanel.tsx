@@ -41,6 +41,8 @@ type Props = {
    * 分层：这一层管长相，取字节 / 解析 cube / 画缩略图都在 App 和 `app/useLuts`。
    */
   luts: readonly LutMeta[]
+  /** ★ 2026-10-05 终审修复：清单**到手了没有**（看 `LutPicker` 的 `lutsKnown`）。 */
+  lutsKnown: boolean
   /** 现在用着哪个（null = 不用）。**有它的时候这一栏的标题点亮**（§5.2）。 */
   lut: LutRef | null
   /** 缩略图：`byId` 是 id → dataURL（缺的那格画占位），`none` 是「不用」那格。 */
@@ -51,6 +53,8 @@ type Props = {
   onNeedLutThumbs: () => void
   /** 一个滤镜都没有时那颗「去导入」（跳到设置里那一页）。 */
   onGoImport: () => void
+  /** 清单没到手时那颗「再试一次」（重拉一次清单）。 */
+  onRetryLuts: () => void
 }
 
 /**
@@ -85,7 +89,7 @@ const GRADIENTS: Partial<Record<keyof Adjustments, string>> = {
 
 export default function AdjustmentPanel({
   value, onChange, onReset, onMatchReference, onMatchWork,
-  luts, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport,
+  luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
 }: Props) {
   const refInput = useRef<HTMLInputElement>(null)
 
@@ -268,8 +272,9 @@ export default function AdjustmentPanel({
         </button>
         {lutOpen && (
           <div className="panel-group-body">
-            <LutPicker luts={luts} value={lut} thumbs={lutThumbs.byId} noneThumb={lutThumbs.none}
-              onPick={onPickLut} onAmount={onLutAmount} onGoImport={onGoImport} />
+            <LutPicker luts={luts} lutsKnown={lutsKnown} value={lut} thumbs={lutThumbs.byId}
+              noneThumb={lutThumbs.none} onPick={onPickLut} onAmount={onLutAmount}
+              onGoImport={onGoImport} onRetryLuts={onRetryLuts} />
           </div>
         )}
       </section>

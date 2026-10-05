@@ -56,6 +56,31 @@ export const MODEL_ID_REQUIRED = '模型名不能为空'
 /** 名字空着就按了提交。登录页本地拦一道，`checkUsername` 再拦一道。 */
 export const NAME_REQUIRED = '起个名字吧'
 
+// ── 滤镜导入那两句（`src/ui/LutSettings.tsx` / `server/luts.ts`）────────
+//
+// ★ 2026-10-05 终审收进来的（原来两边各写一份）。两句话**两边都要说**：
+//   前端拦的是体验（不让用户白等一次注定 400 的往返），服务端拦的是规矩
+//   （请求可以伪造，前端那一道不算数）—— 和上面模型设置那五句同一个道理。
+//
+// ⚠️ 这两个是**函数、不是常量**：句子里那个数字必须来自 `shared/lut.ts` 的
+//    `MAX_LUT_FILE_BYTES` / `MAX_LUTS`。写成写死数字的常量的话，上限一改、
+//    这句话就开始对用户撒谎 —— 而且是**两个地方一起**撒（正是这个文件开头
+//    那段要防的事），没有任何东西会红。
+
+/**
+ * 导入的 `.cube` 太大。
+ * @param maxBytes 上限（字节）—— 传 `MAX_LUT_FILE_BYTES`。
+ */
+export const LUT_FILE_TOO_BIG = (maxBytes: number): string =>
+  `这个文件超过 ${Math.round(maxBytes / (1024 * 1024))} MB 了。`
+
+/**
+ * 滤镜到条数上限了（导入那颗按钮旁边那句）。
+ * @param max 上限条数 —— 传 `MAX_LUTS`。
+ */
+export const LUT_LIMIT_REACHED = (max: number): string =>
+  `最多 ${max} 个滤镜，先删掉几个再导入。`
+
 // ── 通用的那声「没成」────────────────────────────────────────────────
 
 /**

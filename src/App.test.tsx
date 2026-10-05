@@ -5912,4 +5912,91 @@ describe('滤镜', () => {
     // 当前这一版该落成的也是它（同一步的两面）
     expect(body.lut).toEqual({ lutId: 1, amount: 100 })
   })
+
+  /**
+   * ★ 2026-10-05 终审修复（Important）：**清单"取不到"不是"清单是空的"**。
+   *
+   * 旧写法里 `useLuts.reload()` 失败时回一个空数组，而 `refreshLuts` 拿它照镜子 ——
+   * 失败场景很平常（离线 / 5xx / 后端刚重启）：用户在 `/app/luts` 上**什么都没删**，
+   * 点离开那一页，这一下 `GET /api/luts` 挂了 → 当帧把用户手上的滤镜清掉、
+   * 把历史里那几步的 `lut` 也清掉、还告诉他「那个滤镜刚被你删掉了」——
+   * 而清单里那条**还在**（`setLuts` 根本没被调用）：屏幕上"格子里有它、当前却是不用"，
+   * 下一次落盘还会把 null 写回服务端。
+   */
+  it('★ 刷新清单**失败**时什么都不照：不许把还在的滤镜当成"刚被删掉了"', async () => {
+    const s = makeSession(7, 3, '上次那句', 'S7')
+    s.steps[s.steps.length - 1]!.lut = { lutId: 1, amount: 80 }
+    withSessions([s])
+    vi.mocked(lutsMod.listLuts)
+      .mockResolvedValueOnce({ luts: [HUT] })     // App 挂载那一次：还在
+      .mockRejectedValue(new api.ApiError('UPSTREAM_FAILED', 'SENTINEL-清单拉不回来'))  // 离开那一页那一次：挂了
+
+    await renderApp()
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')   // 前提：它真在用
+
+    await gotoPath('/app/luts')
+    await goNav('修图')                            // 离开那一页 → 刷新清单（这一发失败）
+
+    // ① 不许说那句假话（"刚被你删掉了"是**用户会照做**的一句通报）
+    expect(container.querySelector('.notice')?.textContent ?? '').not.toContain('刚被你删掉了')
+    // ② 手上那层还在：格子照旧亮着
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+    // ③ 历史里那几步也没被清（落盘的那份还是它）
+    await waitPersist()
+    expect(lastPutBody().lut).toEqual({ lutId: 1, amount: 80 })
+  })
+
+  /**
+   * ★ 2026-10-05 终审修复（Important）：滤镜文件取不回来时要**说得出口**。
+   *
+   * 旧写法：`lutFileText` 扔裸 Error、`useLuts` 吞成一行 console ——
+   * 用户看到的是"格子亮着、画面不变、一句话都不说"，再点同一格也不重试
+   * （取 cube 那条 effect 的依赖是 `lutId`，没变）。
+   */
+  it('★ 滤镜文件取不回来：通报一句（不是"格子亮着、画面没变、一声不吭"）', async () => {
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    vi.mocked(lutsMod.lutFileText).mockRejectedValue(
+      new api.ApiError('UPSTREAM_FAILED', '连不上服务器，检查一下网络？'))
+
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await openLutPanel()
+    await click(tileNamed('黄昏'))
+
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('没取回来')
+    // ⚠️ 还原默认：这个文件没有 `clearMocks`，mock 状态跨用例活着 ——
+    //    留着这发失败的实现，后面任何"cube 该取得回来"的用例都会踩到它。
+    vi.mocked(lutsMod.lutFileText).mockResolvedValue(CUBE2_TEXT)
+  })
+
+  /**
+   * ★ 2026-10-05 终审修复（Important）：面板分不出"还没到手 / 取不到"和"真的没有"。
+   *
+   * 「还没有导入过滤镜。」是**关于用户资产的一句陈述**，只许在服务端真的回了
+   * 空清单时说。触发场景很平：App 挂载那次 `listLuts()` 失败（离线 / 后端刚重启 /
+   * 页面里重新登录过）→ 面板永远空态、**而且没有重试的口子**。
+   */
+  it('★ 清单取不到：面板不说「还没有导入过滤镜」，那颗「再试一次」真的接在重拉上', async () => {
+    vi.mocked(lutsMod.listLuts)
+      .mockRejectedValue(new api.ApiError('UPSTREAM_FAILED', 'SENTINEL-清单拉不回来'))
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await openLutPanel()
+
+    const text = () => adjustPanel().textContent ?? ''
+    expect(text()).not.toContain('还没有导入过滤镜')
+    expect(text()).toContain('还没到手')
+
+    // 服务端缓过来了 —— 点那颗「再试一次」，清单真的到手、格子出来
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    await click(adjustPanel().querySelector('.lut-import-go') as HTMLButtonElement)
+    expect(tileNamed('黄昏')).toBeTruthy()
+    expect(text()).not.toContain('还没到手')
+  })
 })

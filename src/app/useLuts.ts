@@ -17,12 +17,29 @@ import type { Adjustments } from '../../shared/adjustments.ts'
  *    而不是这个入口。留着它是接口那一半（"这个 hook 知道当事人手上是什么参数"），
  *    别当成笔误删掉。
  */
-export function useLuts({ lut, image, params: _params }: {
+export function useLuts({ lut, image, params: _params, onError }: {
   lut: LutRef | null
   image: DecodedImage | null
   params: Adjustments
+  /**
+   * ★ 2026-10-05 终审修复：出事时**说给用户听**的那一句（App 传 `noticeBad` 进来）。
+   *
+   * 为什么必须有这个口子：这个 hook 里的失败原来只有一行 `console.error` ——
+   * 最典型的后果是"格子亮着（状态说选中了）、画面不变、一句话都不说"。
+   * 可选：不传就只留 console（测试和别的调用点不必被迫接一个通报）。
+   */
+  onError?: (msg: string) => void
 }) {
   const [luts, setLuts] = useState<LutMeta[]>([])
+  /**
+   * 清单**真的从服务端拿到过一次**没有。
+   *
+   * ⚠️ 它和 `luts.length === 0` 是**两件事**：还没到手 / 取不到时，
+   *    「还没有导入过滤镜。」是一句**关于用户资产的假话**（他的滤镜还在服务端上）。
+   *    只有拿到过空清单，那句才是事实（`LutSettings` 的四态、`AccountPage`
+   *    的 `lutCount !== null` 都是同一个道理，见 `LutPicker` 的 `lutsKnown`）。
+   */
+  const [lutsKnown, setLutsKnown] = useState(false)
   const [cube, setCube] = useState<Cube | null>(null)
   const [thumbs, setThumbs] = useState<{ none: string | null; byId: Record<number, string> }>(
     { none: null, byId: {} })
@@ -34,6 +51,13 @@ export function useLuts({ lut, image, params: _params }: {
   // 两条"这一趟还算不算数"的序号：切滤镜 / 换照片时各自作废前面的异步
   const cubeSeq = useRef(0)
   const thumbSeq = useRef(0)
+
+  /**
+   * `onError` 的影子。⚠️ **刻意不进任何依赖数组**：它是"出事那一刻读一下"的东西
+   * （调用方写了个内联箭头就等于每次渲染换个身份，把那两条 effect 全带着重跑）。
+   */
+  const onErrorRef = useRef(onError)
+  useEffect(() => { onErrorRef.current = onError }, [onError])
 
   // ⚠️ 懒建 + 卸载时 dispose：**StrictMode 会把挂载重放一遍**，在 effect 里
   //    建、在 cleanup 里 dispose 的话，第二次挂载拿到的是一个已经 dispose 的实例。
@@ -56,14 +80,24 @@ export function useLuts({ lut, image, params: _params }: {
     }
   }, [])
 
-  const reload = useCallback(async (): Promise<LutMeta[]> => {
+  /**
+   * 拉一遍清单。
+   *
+   * ★ 2026-10-05 终审修复：失败时回 **`null`**，**不回空数组**。
+   *   空数组在调用方那边和"服务端说清单是空的"长得一模一样：`refreshLuts` 会据此
+   *   把用户手上正用着的滤镜当成"刚被删掉了"清掉（还告诉他一句假话）—— 而
+   *   `GET /api/luts` 挂在离线 / 5xx / 后端刚重启时都成立，用户其实什么都没删。
+   *   `null` 的意思只有一个：**这次没问出来，什么都不许照**。
+   */
+  const reload = useCallback(async (): Promise<LutMeta[] | null> => {
     try {
       const { luts: list } = await listLuts()
       setLuts(list)
+      setLutsKnown(true)
       return list
     } catch (e) {
       console.error('滤镜清单没取回来：', e)
-      return []
+      return null
     }
   }, [])
 
@@ -74,7 +108,14 @@ export function useLuts({ lut, image, params: _params }: {
   useEffect(() => {
     const seq = ++cubeSeq.current
     if (lutId === null) { setCube(null); return }
-    void loadCube(lutId).then((c) => { if (seq === cubeSeq.current) setCube(c) })
+    void loadCube(lutId).then((c) => {
+      if (seq !== cubeSeq.current) return
+      setCube(c)
+      // ★ 2026-10-05 终审修复：取不到要**说得出口**。不说的话用户看到的是
+      //   "格子亮着、画面不变、一句话都没有" —— 而再点同一格也不会重试
+      //   （这条 effect 的依赖是 `lutId`，没变），得换一个滤镜才动。
+      if (c === null) onErrorRef.current?.('那个滤镜没取回来 —— 换一个试试，或者刷新一下。')
+    })
   }, [lutId, loadCube])
 
   // 换照片 → 缩略图作废（下次打开格子重画；这里的 `image` 刻意进依赖）
@@ -106,5 +147,5 @@ export function useLuts({ lut, image, params: _params }: {
     })().catch((e) => console.error('滤镜缩略图没画出来：', e))
   }, [luts, loadCube])
 
-  return { luts, cube, thumbs, ensureThumbs, reload }
+  return { luts, lutsKnown, cube, thumbs, ensureThumbs, reload }
 }

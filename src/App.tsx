@@ -153,6 +153,39 @@ export default function App() {
 
   const [image, setImage] = useState<DecodedImage | null>(null)
   const [params, setParams] = useState<Adjustments>(ZERO)
+
+  /**
+   * 顶上那条**通报**：有件事要跟你说一声，说完可以收走（2026-09-30）。
+   *
+   *  它取代了原来三处 `window.alert`。系统弹窗有两个毛病：它把整页冻住，
+   *  而且长得**不像这个产品的一部分** —— 一个花了一整天做视觉的产品，
+   *  出错时突然跳出一个灰扑扑的系统框，那一下就把"做完了"的感觉打回去了。
+   *
+   *  `tone` 只有两种：`bad`（这件事没成，留着等用户看完自己点掉 ——
+   *  他可能要去别处看一眼再决定怎么办）和 `ok`（成了，几秒后自己走）。
+   *
+   *  ★ **「存好了」也走这里，不是因为它是个错误**：手机上打开调色面板时
+   *  **对话栏整个是隐藏的**（面板和对话在抢竖向空间，见 styles.css 那条 `:has`），
+   *  而那一刻正是用户拖完滑块、按「保存」的时候 —— 那句话会落进
+   *  **一个用户看不见的地方**。（2026-09-30 全链路回归在手机那趟抓到的：
+   *  桌面那一趟全绿，只有"打开面板再保存"这一串下来屏上什么都没有。）
+   *
+   *  ⚠️ 它和 `saveFail` 是**两种东西，别合并**：那条横幅是"图还在，先拿到手"，
+   *  自带一个下载按钮，而且**不许被关掉**（关掉用户就真的拿不到那张图了）；
+   *  这条只是通报，「知道了」就该收走。
+   *
+   *  ⚠️ ★ 2026-10-05：这三行原来住在下面（`setCurrentSession` 之后）——
+   *  挪到这儿是因为 `useLuts` 要接 `noticeBad`（"滤镜没取回来"那一句），
+   *  而**参数在调用点必须已经声明**（`const` 是 TDZ：写在后面就是运行时报错）。
+   */
+  const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'bad' } | null>(null)
+  /** 通报一句"没成"。**身份必须是稳定的** —— 它直接传给 Canvas 的 `onFail`，
+   *  而那边进了 effect 的依赖数组（理由见 Canvas.tsx 那段）。 */
+  const noticeBad = useCallback((text: string) => setNotice({ text, tone: 'bad' }), [])
+  /** 通报一句"成了"。和 `noticeBad` 一样，身份必须稳定（两者都会进
+   *  `useDelivery` 的依赖数组）。 */
+  const noticeOk = useCallback((text: string) => setNotice({ text, tone: 'ok' }), [])
+
   /**
    * ★ 2026-10-05（滤镜）：这张照片现在用着哪个滤镜、强度多少。null = 不用。
    *
@@ -173,8 +206,12 @@ export default function App() {
    *
    * ⚠️ 它挂在**组件顶上**、每一次渲染都调：这是一个 hook，不许被条件包起来。
    * 它不碰画布、不碰 history —— 只认"清单 + 当前这个 id + 当前这张照片"。
+   *
+   * ★ 2026-10-05 终审修复：`onError` 接的是 `noticeBad` —— 滤镜文件取不回来时
+   *   **说一句**（原来是吞成一行 console：格子亮着、画面不变、一句话都没有）。
+   *   `noticeBad` 的身份是稳定的（`useCallback([])`），正合这个 hook 的要求。
    */
-  const lutsApi = useLuts({ lut, image, params })
+  const lutsApi = useLuts({ lut, image, params, onError: noticeBad })
   /**
    * 单拎出来一个 `reload`（★ 2026-10-05）—— `lutsApi` 是每次渲染新造的**对象**，
    * 拿它当依赖的话，挂在 `refreshLuts` 上那个 effect 每次渲染都要重跑一遍
@@ -255,31 +292,6 @@ export default function App() {
     sessionIdRef.current = id
     setSessionId(id)
   }, [])
-  /** 顶上那条**通报**：有件事要跟你说一声，说完可以收走（2026-09-30）。
-   *
-   *  它取代了原来三处 `window.alert`。系统弹窗有两个毛病：它把整页冻住，
-   *  而且长得**不像这个产品的一部分** —— 一个花了一整天做视觉的产品，
-   *  出错时突然跳出一个灰扑扑的系统框，那一下就把"做完了"的感觉打回去了。
-   *
-   *  `tone` 只有两种：`bad`（这件事没成，留着等用户看完自己点掉 ——
-   *  他可能要去别处看一眼再决定怎么办）和 `ok`（成了，几秒后自己走）。
-   *
-   *  ★ **「存好了」也走这里，不是因为它是个错误**：手机上打开调色面板时
-   *  **对话栏整个是隐藏的**（面板和对话在抢竖向空间，见 styles.css 那条 `:has`），
-   *  而那一刻正是用户拖完滑块、按「保存」的时候 —— 那句话会落进
-   *  **一个用户看不见的地方**。（2026-09-30 全链路回归在手机那趟抓到的：
-   *  桌面那一趟全绿，只有"打开面板再保存"这一串下来屏上什么都没有。）
-   *
-   *  ⚠️ 它和 `saveFail` 是**两种东西，别合并**：那条横幅是"图还在，先拿到手"，
-   *  自带一个下载按钮，而且**不许被关掉**（关掉用户就真的拿不到那张图了）；
-   *  这条只是通报，「知道了」就该收走。 */
-  const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'bad' } | null>(null)
-  /** 通报一句"没成"。**身份必须是稳定的** —— 它直接传给 Canvas 的 `onFail`，
-   *  而那边进了 effect 的依赖数组（理由见 Canvas.tsx 那段）。 */
-  const noticeBad = useCallback((text: string) => setNotice({ text, tone: 'bad' }), [])
-  /** 通报一句"成了"。和 `noticeBad` 一样，身份必须稳定（两者都会进
-   *  `useDelivery` 的依赖数组）。 */
-  const noticeOk = useCallback((text: string) => setNotice({ text, tone: 'ok' }), [])
 
   /**
    * ★ 2026-10-05（滤镜）：「当前用的滤镜没了」—— **唯一**处理它的地方
@@ -308,12 +320,34 @@ export default function App() {
    *
    * ⚠️ 读当下的 `lut` 用的是**影子**（`lutRef`），不是把它写进依赖：写进去的话
    * 这个回调和挂在它上面的那个 effect 会跟着**每一次选滤镜**重建/重跑一遍。
+   *
+   * ★ 2026-10-05 终审修复：`reloadLuts()` 回 **`null` = 这次没问出来**（离线 / 5xx /
+   *   后端刚重启）—— 那一刻**什么都不许照**。照空数组的下场很具体：用户在那
+   *   一页上什么都没删，只是点离开，却被他手上那层滤镜被清掉 + 听到一句
+   *   「那个滤镜刚被你删掉了」（而清单里那条明明还在）。"真的没有了"是
+   *   **拿到清单、里面确实没有它**，不是"没拿到清单"。
    */
   const refreshLuts = useCallback(async () => {
     const list = await reloadLuts()
-    const cur = lutRef.current            // 用一个 ref 读当下那个 id，别把它写进依赖
+    if (list === null) return                // 没问出来 → 照旧，什么都不动
+    const cur = lutRef.current               // 用一个 ref 读当下那个 id，别把它写进依赖
     if (cur && !list.some((l) => l.id === cur.lutId)) dropGoneLut(cur.lutId)
   }, [reloadLuts, dropGoneLut])
+
+  /**
+   * 「打开滤镜那一栏」那一刻叫一次（微调区和对话区两个宿主共用这一份行为）。
+   *
+   * 两件事：
+   *   · 缩略图 —— 很贵（每个滤镜各画一张当前照片），收着时白画是纯浪费；
+   *   · ★ 2026-10-05 终审修复：清单**还没到手过**就顺手重拉一次。App 挂载那一次
+   *     `listLuts()` 失败（离线 / 后端刚重启 / 页面里重新登录过）之后，不点这一下
+   *     用户手上就一直没有清单，而面板上挂着的是"还没有导入过滤镜"那句假话。
+   *     重拉再失败也没关系：面板那边有 `lutsKnown`，说的是中性的话 + 一颗重试。
+   */
+  const needLutThumbs = () => {
+    if (!lutsApi.lutsKnown) void reloadLuts()
+    lutsApi.ensureThumbs(image, params)
+  }
 
   // "成了"的通报自己会走：它是**回执**，不是待办。
   // 用函数式更新加一道守卫 —— 这几秒里用户可能已经触发了别的通报，
@@ -1965,12 +1999,15 @@ export default function App() {
                   //   ⚠️ `onNeedLutThumbs` 同样传**当下的** image / params：
                   //   缩略图要画的就是"用户此刻看到的这张照片 + 这套参数 + 那个滤镜"。
                   luts={lutsApi.luts}
+                  // ★ 2026-10-05 终审修复：清单到手没有（面板靠它区分"取不到"和"没有"）。
+                  lutsKnown={lutsApi.lutsKnown}
                   lut={lut}
                   lutThumbs={lutsApi.thumbs}
                   onPickLut={(id) => setLut(id === null ? null : { lutId: id, amount: 100 })}
                   onLutAmount={(amount) => setLut((cur) => (cur ? { ...cur, amount } : cur))}
-                  onNeedLutThumbs={() => lutsApi.ensureThumbs(image, params)}
+                  onNeedLutThumbs={needLutThumbs}
                   onGoImport={() => go({ kind: 'luts' })}
+                  onRetryLuts={() => void reloadLuts()}
                 />
               )}
 
@@ -2007,12 +2044,15 @@ export default function App() {
                   //      hook 里存一份）：缩略图要画的就是"用户此刻看到的这张照片、
                   //      这套参数 + 那个滤镜"。
                   luts={lutsApi.luts}
+                  // ★ 2026-10-05 终审修复：和对话区那颗**同一份**（见 ChatPanel 那边）。
+                  lutsKnown={lutsApi.lutsKnown}
                   lut={lut}
                   lutThumbs={lutsApi.thumbs}
                   onPickLut={(id) => setLut(id === null ? null : { lutId: id, amount: 100 })}
                   onLutAmount={(amount) => setLut((cur) => (cur ? { ...cur, amount } : cur))}
-                  onNeedLutThumbs={() => lutsApi.ensureThumbs(image, params)}
+                  onNeedLutThumbs={needLutThumbs}
                   onGoImport={() => go({ kind: 'luts' })}
+                  onRetryLuts={() => void reloadLuts()}
                 />
               )}
             </main>

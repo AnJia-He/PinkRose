@@ -4,6 +4,7 @@ import { createLut, deleteLut, listLuts, lutUsage, renameLut } from '../api/luts
 import {
   MAX_LUT_FILE_BYTES, MAX_LUTS, MAX_LUT_NAME, LutParseError, parseCube, type LutMeta,
 } from '../../shared/lut.ts'
+import { LUT_FILE_TOO_BIG, LUT_LIMIT_REACHED } from '../../shared/copy.ts'
 import { formatSize } from './AccountPage.tsx'
 import { Btn } from './kit/Btn.tsx'
 import { Field, TextInput } from './kit/Field.tsx'
@@ -130,9 +131,10 @@ export function LutSettings() {
   const importFrom = async (file: File) => {
     if (busy) return
     setErr(null)
-    // ① 太大：连读都不读。这句是 spec §6.3 冻死的，和 `server/luts.ts` 一字不差 ——
-    //    两处各写一句的那天，用户会对同一个毛病看到两种说法。
-    if (file.size > MAX_LUT_FILE_BYTES) { setErr('这个文件超过 8 MB 了。'); return }
+    // ① 太大：连读都不读。这句和 `server/luts.ts` 用的是**同一个常量**
+    //    （`shared/copy.ts` 的 `LUT_FILE_TOO_BIG`，spec §6.3 冻死的那句）——
+    //    两边各写一份的那天，用户会对同一个毛病看到两种说法。
+    if (file.size > MAX_LUT_FILE_BYTES) { setErr(LUT_FILE_TOO_BIG(MAX_LUT_FILE_BYTES)); return }
 
     setBusy(true)
     try {
@@ -244,7 +246,7 @@ export function LutSettings() {
             if (file) void importFrom(file)
           }}
         />
-        {full && <span className="luts-hint">{`最多 ${MAX_LUTS} 个滤镜，先删掉几个再导入。`}</span>}
+        {full && <span className="luts-hint">{LUT_LIMIT_REACHED(MAX_LUTS)}</span>}
       </div>
 
       {err && <p className="luts-error">{err}</p>}

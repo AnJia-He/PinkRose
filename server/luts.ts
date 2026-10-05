@@ -3,6 +3,7 @@ import type { Db } from './db.ts'
 import { HttpError, asObject, str } from './http.ts'
 import { assertRoomFor } from './quota.ts'
 import type { Storage } from './storage.ts'
+import { LUT_FILE_TOO_BIG, LUT_LIMIT_REACHED } from '../shared/copy.ts'
 import {
   MAX_LUTS, MAX_LUT_FILE_BYTES, LutParseError, lutNameOk, normalizeLutRef, parseCube,
   type Cube, type LutMeta, type LutRef,
@@ -58,7 +59,11 @@ export async function createLut(
   //   Task 4 起 `bytes` 要进 5 GB 配额账本，非 ASCII 的输入（比如中文 TITLE）
   //   按码元数算会**偏小**，账本跟着偏。
   const encoded = new TextEncoder().encode(text)
-  if (encoded.byteLength > MAX_LUT_FILE_BYTES) throw new HttpError('BAD_REQUEST', '这个文件超过 8 MB 了。')
+  // 这句话在**界面那一侧**也拦一道（`LutSettings.tsx` 里选了文件当场就说）——
+  // 两处用的是 `shared/copy.ts` 里同一个常量，别在这儿另写一句。
+  if (encoded.byteLength > MAX_LUT_FILE_BYTES) {
+    throw new HttpError('BAD_REQUEST', LUT_FILE_TOO_BIG(MAX_LUT_FILE_BYTES))
+  }
 
   let cube: Cube
   try {
@@ -76,7 +81,7 @@ export async function createLut(
   const count = (deps.db.raw
     .prepare('SELECT COUNT(*) AS n FROM luts WHERE user_id = ?')
     .get(user.id) as { n: number }).n
-  if (count >= MAX_LUTS) throw new HttpError('BAD_REQUEST', `最多 ${MAX_LUTS} 个滤镜，先删掉几个再导入。`)
+  if (count >= MAX_LUTS) throw new HttpError('BAD_REQUEST', LUT_LIMIT_REACHED(MAX_LUTS))
   assertNameFree(name, user, deps)
 
   // 配额和落盘都走既有的那一套（Task 4 会把 luts 计入 storedBytes）
