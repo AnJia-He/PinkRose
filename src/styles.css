@@ -1173,8 +1173,24 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   flex: 1; overflow-y: auto; padding: var(--sp-4);
   display: flex; flex-direction: column; gap: var(--sp-3);
 }
+/* ★ 2026-10-05：一条消息现在是**两块**（用户原话：「对话区 ai 的回答文字跟图片
+   分成两部分，文字在上，图片在下分为两个」）—— 文字一块、图（和挂在图下面的
+   那两颗按钮）一块。所以外面多了一层 `.msg`：
+     · 它管**对齐**（谁在左谁在右）和**这条消息能有多宽**（88%）；
+     · 里面两块自己排，间距是 `--sp-2`（比两条消息之间的 `--sp-3` 紧一档 ——
+       "同一条消息的两个部分"读起来该比"两条消息"更近）。
+   ⚠️ `max-width` 从 `.bubble` 挪到了这里：留在气泡上的话，文字气泡和图片那块
+   会各自按 88% 算，两块反而比原来更宽、还对不齐。 */
+.msg { display: flex; flex-direction: column; gap: var(--sp-2); max-width: 88%; }
+.msg.user { align-self: flex-end; align-items: flex-end; }
+.msg.assistant { align-self: flex-start; align-items: flex-start; }
+/* 第二块：那一步的画面 + 它下面那两颗按钮。
+   ⚠️ 小图可能**还没生成完**（`thumbs[id]` 是空串那一阵），这时候这一块里只有
+   两颗按钮 —— 它照样要在，别让它跟着图一起消失。 */
+.shot { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
+
 .bubble {
-  max-width: 88%; border-radius: var(--r-md); padding: 9px 13px;
+  border-radius: var(--r-md); padding: 9px 13px;
   font-size: 13.5px; line-height: 1.65;
 }
 .bubble.user {
@@ -1182,7 +1198,6 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      5.48:1）—— 它是大面积的"面"，吃主色的**深档**而不是按钮那种亮档
      （亮档 9.8:1 是给按钮/选中态那种小面积用的）；但**色相跟着主色走**
      （一屏只讲一种色，别留一支"别人家的蓝"）。⚠️ 改主色时这里跟着看一眼。 */
-  align-self: flex-end;
   background: #0f766e;
   color: #fff;
   border-bottom-right-radius: var(--sp-1);
@@ -1190,7 +1205,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 助手气泡比用户气泡多一道极淡的描边：两种气泡底色本来就接近
    （--raised 和 --hover 只差一档），不给描边时**连成一片**看不出谁说的。 */
 .bubble.assistant {
-  align-self: flex-start; background: var(--raised); border: 1px solid var(--line);
+  background: var(--raised); border: 1px solid var(--line);
   border-bottom-left-radius: var(--sp-1);
 }
 /* 「正在…」那一条。**不用斜体** —— 中文字体没有真斜体，浏览器会把它掰成
@@ -1206,9 +1221,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    正好是这个项目最在意的那种"点不到"。撑到 32px 高（触屏的最小可点尺寸），
    悬停时整颗变粉。 */
 /* 一条回复下面那排操作（2026-09-30 起有两颗：↶ 回到这一步 / ↻ 再来一版）。
-   间距由外面这一层管 —— 两颗按钮各自写 margin 的话，加第三颗时
+   间距由外面那一层（`.shot`）管 —— 两颗按钮各自写 margin 的话，加第三颗时
    间距会随前一颗有没有出现而变。 */
-.bubble-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-2); }
+.bubble-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .bubble-jump, .bubble-rerun {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 6px 12px; font-size: 12px;
@@ -1428,7 +1443,6 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   width: 120px;
   max-width: 100%;
   border-radius: var(--r-sm);
-  margin-bottom: var(--sp-2);
   cursor: pointer;
   border: 1px solid var(--line-2);
   transition: border-color var(--dur-1) ease, transform var(--dur-2) var(--ease);

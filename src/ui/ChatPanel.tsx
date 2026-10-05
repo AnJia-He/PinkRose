@@ -93,45 +93,70 @@ export default function ChatPanel({
   return (
     <aside className="chat">
       <div className="chat-log">
-        {messages.map(m => (
-          <div key={m.id} className={`bubble ${m.role}`}>
-            <div className="bubble-text">{m.text}</div>
-            {m.role === 'assistant' && thumbs[m.id] && (
-              <img
-                className="bubble-thumb"
-                src={thumbs[m.id]}
-                alt="这一步的效果"
-                onClick={() => jumpableIds.includes(m.id) && onJump(m.id)}
-              />
-            )}
-            {m.role === 'assistant' && (jumpableIds.includes(m.id) || rerunnable.includes(m.id)) && (
-              <div className="bubble-actions">
-                {jumpableIds.includes(m.id) && (
-                  <button className="bubble-jump" onClick={() => onJump(m.id)}>
-                    <Undo2 size={13} aria-hidden="true" />
-                    回到这一步
-                  </button>
-                )}
-                {/* 「再来一版」= 同一句话重掷一次。**和「回到这一步」并排但不同**：
-                    一个是回去，一个是回去**并且立刻重来**（靠 ↶ / ↻ 区分）。
-                    ⚠️ 它是这两颗里**唯一**要禁用的那颗 —— 忙的时候再掷一次
-                    就是两次生成同时在跑，钱是两倍（「回到这一步」不禁用是有意的，
-                    见 App.tsx 的 onJump 那段）。
-                    ★ 2026-10-01：两个箭头以前是 CSS 的 `content: '↶' / '↻'`，
-                    现在是 lucide 图标。**仍然是装饰**（`aria-hidden`）：
-                    图标是 svg，进不了 textContent，所以按文字找按钮的地方
-                    和读屏软件看到的都还只有「回到这一步」/「再来一版」这五个字。 */}
-                {rerunnable.includes(m.id) && (
-                  <button className="bubble-rerun" disabled={!!busy} onClick={() => onRerun(m.id)}>
-                    <RotateCw size={13} aria-hidden="true" />
-                    再来一版
-                  </button>
-                )}
+        {messages.map(m => {
+          // ★ 2026-10-05：一条回复**分两块**（用户原话：「对话区 ai 的回答文字跟
+          //   图片分成两部分，文字在上，图片在下分为两个」）。
+          //
+          //   以前文字、小图、两颗按钮挤在**同一个气泡框**里 —— 读起来像"一段
+          //   带插图的句子"，可它们本来是两件事：**他跟我说的那句话** /
+          //   **我交给他的那张图**。所以现在上面一块是话、下面一块是东西。
+          //   ⚠️ 两块里**只要有一块要出现，第二块就得在**（小图可能还没生成完
+          //      —— `thumbs[id]` 是空串那阵子，按钮不能跟着一起消失）。
+          const shot = m.role === 'assistant' && !!thumbs[m.id]
+          const acts = m.role === 'assistant' &&
+            (jumpableIds.includes(m.id) || rerunnable.includes(m.id))
+          return (
+            <div key={m.id} className={`msg ${m.role}`}>
+              {/* ① 上面那一块：话 */}
+              <div className={`bubble ${m.role}`}>
+                <div className="bubble-text">{m.text}</div>
               </div>
-            )}
+              {/* ② 下面那一块：那一步的画面 + 挂在它下面的两颗按钮 */}
+              {(shot || acts) && (
+                <div className="shot">
+                  {shot && (
+                    <img
+                      className="bubble-thumb"
+                      src={thumbs[m.id]}
+                      alt="这一步的效果"
+                      onClick={() => jumpableIds.includes(m.id) && onJump(m.id)}
+                    />
+                  )}
+                  {acts && (
+                    <div className="bubble-actions">
+                      {jumpableIds.includes(m.id) && (
+                        <button className="bubble-jump" onClick={() => onJump(m.id)}>
+                          <Undo2 size={13} aria-hidden="true" />
+                          回到这一步
+                        </button>
+                      )}
+                      {/* 「再来一版」= 同一句话重掷一次。**和「回到这一步」并排但不同**：
+                          一个是回去，一个是回去**并且立刻重来**（靠 ↶ / ↻ 区分）。
+                          ⚠️ 它是这两颗里**唯一**要禁用的那颗 —— 忙的时候再掷一次
+                          就是两次生成同时在跑，钱是两倍（「回到这一步」不禁用是有意的，
+                          见 App.tsx 的 onJump 那段）。
+                          ★ 2026-10-01：两个箭头以前是 CSS 的 `content: '↶' / '↻'`，
+                          现在是 lucide 图标。**仍然是装饰**（`aria-hidden`）：
+                          图标是 svg，进不了 textContent，所以按文字找按钮的地方
+                          和读屏软件看到的都还只有「回到这一步」/「再来一版」这五个字。 */}
+                      {rerunnable.includes(m.id) && (
+                        <button className="bubble-rerun" disabled={!!busy} onClick={() => onRerun(m.id)}>
+                          <RotateCw size={13} aria-hidden="true" />
+                          再来一版
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+        {busy && (
+          <div className="msg assistant">
+            <div className="bubble assistant pending">{busy}</div>
           </div>
-        ))}
-        {busy && <div className="bubble assistant pending">{busy}</div>}
+        )}
       </div>
 
       {/* spec §6.3 的歧义兜底：请用户在图上点一下，点完**确认了才花钱**

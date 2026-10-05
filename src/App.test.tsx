@@ -1326,6 +1326,29 @@ describe('历史缩略图：每一步都看得见', () => {
     expect(thumbOf(0)).toBe('thumb:' + JSON.stringify(ZERO))
   })
 
+  /**
+   * ★ 2026-10-05：助手那一条现在是**两块**（用户原话：「对话区 ai 的回答文字跟
+   * 图片分成两部分，文字在上，图片在下分为两个」）。
+   *
+   * 以前文字、小图、两颗按钮挤在**同一个气泡框**里 —— 读起来像"一段带插图的
+   * 长句子"，可它们其实是两件事：他跟我说的那句话 / 我交给他的那张图。
+   * 判据按**结构**钉（用 `:scope >`，不认"图在气泡的哪个角落里"这种松判据）：
+   * 图**不在**文字那个气泡里，它在下面那一块。
+   */
+  it('★ 文字一块、图（和那两颗按钮）一块 —— 图不在文字气泡里面', async () => {
+    await renderApp()
+    await uploadPhoto()
+    const msg = container.querySelector('.msg.assistant')
+    expect(msg).toBeTruthy()
+    // 上面那一块：气泡里**只有字**
+    const bubble = msg!.querySelector(':scope > .bubble.assistant')
+    expect(bubble?.textContent).toBe('准备好啦，说说想怎么改？')
+    expect(bubble?.querySelector('.bubble-thumb')).toBeNull()
+    // 下面那一块：图和操作都在这儿
+    expect(msg!.querySelector(':scope > .shot .bubble-thumb')).toBeTruthy()
+    expect(msg!.querySelector(':scope > .shot .bubble-actions')).toBeTruthy()
+  })
+
   it('⚠️ 缩略图必须是**画面画完之后**抓的，不能是上一步的颜色', async () => {
     // 这条是整件事最容易错的地方。快照是在 setParams 的同一个批次里推入的，
     // 那一刻画布还没重画 —— 谁要是"推快照的时候顺手抓一张"，抓到的就是
@@ -4245,7 +4268,11 @@ describe('用户管理页', () => {
 
     expect(location.pathname).toBe('/app/luts')
     // 前提：这一页**真的开着**（少了它，下面那条会因为"整页没渲染"假绿）
-    expect(container.querySelector('.luts-title')?.textContent).toBe('滤镜')
+    // ⚠️ 这里**不钉死那几个字**（★ 2026-10-05）：标题是用户自己定的文案，
+    //   他刚把它从「滤镜」改成了「Lut」。这条断言的本意只是"这一页开着"，
+    //   钉死字样的话他每改一次文案这里就红一次，而红的地方跟它要守的东西无关
+    //   （文案该不该这么写是《文案规范》和人的事，不是这条测试的事）。
+    expect(container.querySelector('.luts-title')?.textContent?.trim()).toBeTruthy()
     // 真的一个都没有 —— 这才是说「还没有导入过滤镜。」的时候
     expect(container.textContent).toContain('还没有导入过滤镜')
 
