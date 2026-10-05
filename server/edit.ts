@@ -3,10 +3,13 @@ import { MAX_DIMENSION, checkModelSize } from '../shared/size.ts'
 import { HttpError } from './http.ts'
 import { buildEditPrompt } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
-import { SnError, type SenseNovaClient } from './sn.ts'
+import { SnError, type ModelClient } from './sn.ts'
 
 export type EditDeps = {
-  client: SenseNovaClient
+  // 接口类型（★ 2026-10-05）：改图只走「图片」那一路，而 Anthropic 形状
+  // **没有图片生成**（它的 edit() 会抛）—— 所以 image × anthropic-compatible
+  // 在 models.ts 存配置那一层就拒了，那种组合到不了这里。
+  client: ModelClient
   queue: SerialQueue
   /**
    * 用户按了「停止」时会被 abort（★ 2026-09-30）。

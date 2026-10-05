@@ -2,10 +2,11 @@ import type { Route, SuggestCard, SuggestRequest, SuggestResponse } from '../sha
 import { HttpError } from './http.ts'
 import { CARD_LABEL_MAX, SUGGEST_SYSTEM } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
-import { redactSecrets, type SenseNovaClient } from './sn.ts'
+import { redactSecrets, type ModelClient } from './sn.ts'
 import { ROUTES, coerceToObject, inferRoute, normalizeDeltas } from './validate.ts'
 
-export type SuggestDeps = { client: SenseNovaClient; queue: SerialQueue }
+// 同 route.ts：接口类型（★ 2026-10-05），哪一类在 clientFor.ts 一处决定。
+export type SuggestDeps = { client: ModelClient; queue: SerialQueue }
 
 /** 最多几张卡片。spec §2.3 说的是 3 张。 */
 export const MAX_CARDS = 3

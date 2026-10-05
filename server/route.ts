@@ -3,10 +3,13 @@ import type { RouteRequest, RouteResponse } from '../shared/protocol.ts'
 import { HttpError, CHECK_YOUR_KEY_TIP } from './http.ts'
 import { ROUTER_SYSTEM, buildRouterUser } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
-import { SnError, redactSecrets, type SenseNovaClient } from './sn.ts'
+import { SnError, redactSecrets, type ModelClient } from './sn.ts'
 import { fallbackDecision, parseDecision } from './validate.ts'
 
-export type RouteDeps = { client: SenseNovaClient; queue: SerialQueue }
+// client 用**接口**类型（★ 2026-10-05）：对话这一路两种协议形状都合法（§7.4），
+// 具体拿哪一类在 clientFor.ts 一处决定。原来这里钉着 SenseNovaClient ——
+// 加了 Anthropic 形状之后 app.ts 传 ModelClient 进来就通不过类型检查了。
+export type RouteDeps = { client: ModelClient; queue: SerialQueue }
 
 /** 用户输入的字符上限。超过就截断——prompt 长度也是钱。 */
 export const MAX_USER_TEXT = 500
