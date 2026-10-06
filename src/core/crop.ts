@@ -19,8 +19,10 @@
 export type CropRect = { x: number; y: number; w: number; h: number }
 export type CropSpec = { rect: CropRect; angle: number }
 export const MAX_STRAIGHTEN = 15
-/** 框的最小边长（归一化）：别让它缩成一条线。 */
-const MIN_SIDE = 0.02
+/** 框的最小边长（归一化）：别让它缩成一条线。
+ *  ★ 2026-10-06（T4）：**导出了** —— `ui/CropOverlay` 拖把手时要在内接区里
+ *  再夹一道最小边，抄一个 0.02 过去就是同一个数有两个来源。 */
+export const MIN_SIDE = 0.02
 
 const rad = (deg: number) => (deg * Math.PI) / 180
 

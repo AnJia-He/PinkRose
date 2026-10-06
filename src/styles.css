@@ -752,6 +752,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   display: flex; align-items: center; justify-content: center;
 }
 .canvas-wrap.zoomed .canvas-clip { overflow: hidden; overflow: clip; }
+/* ★ 2026-10-06（裁剪）：**转照片的时候也要剪** —— 和放大是同一条规矩、同一个理由：
+   转过之后照片的四个角会伸出它那块地方（伸出去的正是"空角"，框永远不裁它们，
+   可它们也别糊到左边预设栏和上下的带子上去）。判据是 `App` 传下来的裁剪现场
+   （`Canvas` 给 wrap 挂 `.cropping`）。 */
+.canvas-wrap.cropping .canvas-clip { overflow: hidden; overflow: clip; }
 .canvas-peek {
   position: absolute;
   inset: 0;
@@ -858,6 +863,56 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 放大之后鼠标变小手：那是在说"这里可以拖"（和上面那条回溯带子同一套语言）。 */
 .canvas-wrap.zoomed { cursor: grab; }
 .canvas-wrap.zoomed:active { cursor: grabbing; }
+
+/* ── 裁剪框（★ 2026-10-06，`ui/CropOverlay`）──────────────────────────
+   照片上那个框：框外压暗、"要留下的那块"亮着（spec §3.1），八个把手指哪拖哪。
+
+   ⚠️ 它画在**剪裁层外面**（和红圈同一个待遇，见 `Canvas` 里那段 JSX 注释）：
+   把手正好挂在照片边上，剪在里头会被切掉半个。
+
+   ⚠️ 暗罩是**框那一条 `box-shadow` 铺出去的**（9999px 的扩散），不是四个矩形：
+   四块拼起来的暗罩在放大 / 转动时接缝会露白边，而且"框里亮框外暗"这件事
+   本来就是"一条阴影"最直白的写法。
+   ⚠️ 阴影会顺着 9999px 糊到照片区以外（左边的预设栏、上下的带子）——
+   所以这一层自己 `overflow: hidden`，把暗罩**收在照片区里**。
+   收的代价：把手必须住在框**里面**（贴在外沿的那半会被切掉）——下面的
+   `left/top` 都是 0 而不是 -1px，理由就在这儿。
+
+   颜色不走令牌（和 `.canvas-marker` / `.canvas-veil` 同一类东西）：
+   这是画在**照片**上的记号，底下是晚霞还是雪地都得看得见。 */
+.crop {
+  position: absolute; inset: 0;
+  overflow: hidden;
+}
+.crop-frame {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, .92);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .45);
+  cursor: move;
+}
+/* 八个把手：18px 的方块（四角）/ 36×14 的短条（四边）。
+   ⚠️ 全身都在框**里面** —— 见上面"收在照片区里"那段。 */
+.crop-h {
+  position: absolute;
+  width: 18px; height: 18px;
+  background: rgba(255, 255, 255, .94);
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+}
+.crop-h[data-h="nw"] { left: 0; top: 0; cursor: nwse-resize; }
+.crop-h[data-h="ne"] { right: 0; top: 0; cursor: nesw-resize; }
+.crop-h[data-h="sw"] { left: 0; bottom: 0; cursor: nesw-resize; }
+.crop-h[data-h="se"] { right: 0; bottom: 0; cursor: nwse-resize; }
+.crop-h[data-h="n"], .crop-h[data-h="s"] {
+  left: 50%; margin-left: -18px; width: 36px; height: 14px; cursor: ns-resize;
+}
+.crop-h[data-h="n"] { top: 0; }
+.crop-h[data-h="s"] { bottom: 0; }
+.crop-h[data-h="w"], .crop-h[data-h="e"] {
+  top: 50%; margin-top: -18px; width: 14px; height: 36px; cursor: ew-resize;
+}
+.crop-h[data-h="w"] { left: 0; }
+.crop-h[data-h="e"] { right: 0; }
 
 /* ── 历史转盘（★ 2026-10-06，`StepStrip`）──────────────────────────────
    照片**上方**那一圈：一步一格摆在一个圆的边上，**站的那一格在正面**
@@ -1004,6 +1059,29 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .tool-cell:hover { background: var(--hover); color: var(--text); }
 .tool-cell.on { color: var(--accent-300); border-color: var(--accent); background: var(--accent-tint); }
+
+/* ── 裁剪那一行的控件（★ 2026-10-06，`App` 塞进 `ToolBar` 的 children）──
+   比例 / 左转 / 右转 / 水平矫正 / 取消 / 完成。
+   ⚠️ 它们是**真按钮**，所以照 `.tool-cell` 那条老路逐条按掉全局 `button{}`
+   的方框（灰底 + 描边 + 内边距）—— 少写一条就长回一排灰方框。 */
+.crop-ratios, .crop-tools { display: flex; align-items: center; gap: 2px; }
+/* 「取消 / 完成」推到这一行的**最右边**：它们是"这一趟怎么办"，和左边那些
+   "怎么裁"不是一类东西（和顶栏那三颗同一套分法）。 */
+.crop-tools { margin-left: auto; gap: var(--sp-2); }
+.crop-chip, .crop-btn {
+  padding: 5px 10px; background: none; border: 1px solid transparent;
+  border-radius: var(--r-pill); color: var(--muted); font-size: 13px; cursor: pointer;
+}
+.crop-chip { font-size: 12px; }
+.crop-chip:hover, .crop-btn:hover { background: var(--hover); color: var(--text); }
+.crop-chip.on { color: var(--accent-300); border-color: var(--accent); background: var(--accent-tint); }
+/* 「水平矫正」用的是调色面板**同一个滑块零件**（`ui/kit/Slider`）——
+   在这一行里给它一块固定的宽度（面板里那套"标签 72px / 轨道 / 数值"在横向条里
+   太宽了，缩一档；标签列按它自己的字宽走）。 */
+.tool-row-second .slider { width: 240px; margin: 0; grid-template-columns: auto 1fr 40px; }
+/* 「完成」是主按钮（`kit/Btn` 带的 `.btn-primary` 长相），这一行的尺寸归这里管
+   —— 和 `.tool-cell` 同一档高度。 */
+.tool-row-second .btn-primary { padding: 5px 14px; font-size: 13px; }
 
 /* ── 上传前那一屏（2026-09-30 重做） ────────────────────────────────
    这是登录之后看到的第一张脸。原来是**一个虚线框、里面四个字**，浮在一整片

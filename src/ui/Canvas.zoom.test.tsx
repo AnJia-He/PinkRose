@@ -28,6 +28,7 @@ vi.mock('../render/pipeline', () => ({
 }))
 
 import Canvas from './Canvas'
+import type { CropScene } from './Canvas'
 
 const P = { ...ZERO }
 const noFail = () => {}
@@ -48,16 +49,30 @@ const rect = (r: { left: number; top: number; width: number; height: number }) =
 const stubRects = () => {
   Element.prototype.getBoundingClientRect = function (this: Element) {
     if (!this.classList.contains('canvas')) return rect(AREA)
-    const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(
-      (this as HTMLElement).style.transform,
-    )
-    if (!m) return rect(FIT)
-    const s = Number(m[3])
-    const w = FIT.width * s
-    const h = FIT.height * s
-    const cx = FIT.left + FIT.width / 2
-    const cy = FIT.top + FIT.height / 2
-    return rect({ left: cx + Number(m[1]) - w / 2, top: cy + Number(m[2]) - h / 2, width: w, height: h })
+    const style = (this as HTMLElement).style.transform
+    const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(style)
+    if (m) {
+      const s = Number(m[3])
+      const w = FIT.width * s
+      const h = FIT.height * s
+      const cx = FIT.left + FIT.width / 2
+      const cy = FIT.top + FIT.height / 2
+      return rect({ left: cx + Number(m[1]) - w / 2, top: cy + Number(m[2]) - h / 2, width: w, height: h })
+    }
+    // ★ 2026-10-06（裁剪）：**转过之后量到的就是转完那个包围盒** ——
+    //   浏览器里 `getBoundingClientRect()` 算的正是变换后的可见盒子，
+    //   而这一整套东西（框、外面那圈留白）全靠它。照真浏览器算一遍。
+    const r = /rotate\((-?[\d.]+)deg\) scale\(([\d.]+)\)/.exec(style)
+    if (r) {
+      const a = (Number(r[1]) * Math.PI) / 180
+      const k = Number(r[2])
+      const w = (FIT.width * Math.abs(Math.cos(a)) + FIT.height * Math.abs(Math.sin(a))) * k
+      const h = (FIT.width * Math.abs(Math.sin(a)) + FIT.height * Math.abs(Math.cos(a))) * k
+      const cx = FIT.left + FIT.width / 2
+      const cy = FIT.top + FIT.height / 2
+      return rect({ left: cx - w / 2, top: cy - h / 2, width: w, height: h })
+    }
+    return rect(FIT)
   }
 }
 
@@ -69,8 +84,20 @@ type Opts = {
   resetKey?: unknown
   /** ★ 2026-10-06（工具行）：工具开着 = 手势停用（滚轮 / 拖动 / 双击、按钮不画）。 */
   viewLocked?: boolean
+  /** ★ 2026-10-06（裁剪）：裁剪的现场（null / 不给 = 没在裁）。 */
+  crop?: CropScene | null
   onPickPoint?: (x: number, y: number) => void
 }
+
+/** 裁剪现场（框 / 内接区这些**算式**不归这一层管，这里只关心角度怎么落成 CSS）。 */
+const scene = (angle: number, over: Partial<CropScene> = {}): CropScene => ({
+  rect: { x: 0, y: 0, w: 1, h: 1 },
+  onRect: () => {},
+  aspect: null,
+  inner: { x: 0, y: 0, w: 1, h: 1 },
+  angle,
+  ...over,
+})
 
 const roots: { root: Root; container: HTMLElement }[] = []
 
@@ -87,7 +114,7 @@ async function mount(o: Opts = {}) {
         image={next.image ?? IMG} params={P} lutCube={null} lutAmount={0}
         originalPreview={next.originalPreview ?? null} canvasRef={canvasRef}
         picking={next.picking} marker={next.marker} onPickPoint={next.onPickPoint}
-        resetKey={next.resetKey} viewLocked={next.viewLocked} onFail={noFail}
+        resetKey={next.resetKey} viewLocked={next.viewLocked} crop={next.crop} onFail={noFail}
       />,
     )
   })
@@ -390,5 +417,94 @@ describe('红圈（用户点的那一点）', () => {
     expect(left).toBeLessThan(50)                // 左上角跟着跑到负的
     // 圈是**照片上的记号**，放大之后它占的那块地方没变，所以它在屏幕上也该跟着变大
     expect(Number.parseFloat(dot.style.width)).toBeGreaterThan(sizeAtFit)
+  })
+})
+
+/**
+ * ★ 2026-10-06（裁剪）：**预览那一帧** —— 照片转多少度、缩多少倍。
+ *
+ * ⚠️ 这两个数各有一次"看着对、其实错"的机会，而两边都**不会报错**：
+ *   · **方向**：约定是"θ > 0 ⇒ 照片在输出里逆时针转"（`image/crop.ts` 的 JSDoc），
+ *     而 CSS 的正角度是**顺时针** → 这里必须 `rotate(-θ)`。写成正的，预览和
+ *     成片会朝相反方向转，而外框尺寸、输出尺寸两边**一模一样** ——
+ *     计划里那些测试和探针全都看不出来。
+ *   · **倍数 k**：转完外框比照片大，不缩回去就会溢到预设栏 / 上面的带子 /
+ *     右边对话栏上。k = min(1, imgW/外框w, imgH/外框h)，只吃底图自己的尺寸
+ *     （去量盒子来算 k 是循环依赖，量到的是被自己改过的盒子）。
+ */
+describe('裁剪：预览那一帧（转 + 缩）', () => {
+  /** 从画布的内联样式里读"裁剪那一帧"。没在裁 / 没样式 = null。 */
+  const readCrop = (c: HTMLElement) => {
+    const m = /rotate\((-?[\d.]+)deg\) scale\(([\d.]+)\)/.exec(
+      (c.querySelector('.canvas') as HTMLElement).style.transform)
+    return m ? { deg: Number(m[1]), k: Number(m[2]) } : null
+  }
+
+  it('★ 转 15° → CSS 写的是 rotate(-15deg)（和成片同向），并按外框缩回 0.7755', async () => {
+    const c = await mount({ crop: scene(15) })
+    const got = readCrop(c.container)!
+    expect(got.deg).toBe(-15)
+    // 1000×800 转 15° → 外框 1172.98×1031.56 → k = min(1, 1000/1172.98, 800/1031.56)
+    expect(got.k).toBeCloseTo(0.7755, 4)
+    expect(got.k).toBeLessThanOrEqual(1)          // 只缩不放大
+  })
+
+  it('不转就不缩（k = 1）；转 90° 长宽对调 → k = 0.8', async () => {
+    const zero = await mount({ crop: scene(0) })
+    expect(readCrop(zero.container)).toEqual({ deg: 0, k: 1 })
+    const turn = await mount({ crop: scene(-90) })
+    expect(readCrop(turn.container)!.deg).toBe(90)   // -(-90)
+    expect(readCrop(turn.container)!.k).toBeCloseTo(0.8, 6)
+  })
+
+  it('★ 没在裁的时候，画布上一个内联样式都不留（和"适应窗口"那一帧同一条规矩）', async () => {
+    const c = await mount()
+    expect((c.container.querySelector('.canvas') as HTMLElement).style.transform).toBe('')
+    await c.rerender({ crop: scene(15) })
+    expect(readCrop(c.container)).not.toBeNull()
+    await c.rerender({ crop: null })
+    expect((c.container.querySelector('.canvas') as HTMLElement).style.transform).toBe('')
+  })
+
+  it('★ 转起来之后外框会漏出去 —— wrap 要挂 cropping（剪裁层照 .zoomed 那条生效）', async () => {
+    const c = await mount({ crop: scene(15) })
+    expect(c.wrap().className).toContain('cropping')
+    await c.rerender({ crop: null })
+    expect(c.wrap().className).not.toContain('cropping')
+  })
+
+  it('★ 框画在**剪裁层外面**（把手挂在照片边上，剪在里头会被切掉半个）', async () => {
+    const c = await mount({ crop: scene(0) })
+    const box = c.container.querySelector('.crop')
+    expect(box).toBeTruthy()
+    expect(c.container.querySelector('.canvas-clip .crop'), '框不能住在剪裁层里').toBeNull()
+    expect([...c.wrap().children].some(el => el.classList.contains('crop'))).toBe(true)
+  })
+
+  it('裁着的时候不画红圈（它和外框不是一个坐标系）', async () => {
+    const c = await mount({ crop: scene(0), marker: { x: 0.5, y: 0.5 } })
+    expect(c.container.querySelector('.canvas-marker')).toBeNull()
+  })
+
+  it('★ 转过之后，框量的是**转完那个包围盒**（量尺子必须跟着角度重跑）', async () => {
+    // 照片 1000×800 适应窗口 = 500×400（FIT，中心在 300,200）。
+    // 转 90° → 外框 400×500，k = 0.8 → 量出来该是 320×400、居中。
+    // ⚠️ `ResizeObserver` 看不见 transform（布局尺寸没变），所以这条量的是
+    //    "角度变了之后**重量了一次**"：谁把 measurement effect 里 `crop?.angle`
+    //    那个依赖删掉，框就会停在转之前的位置上，而画面上一切"看起来正常"。
+    const c = await mount({ crop: scene(90) })
+    const frame = () => c.container.querySelector('.crop-frame') as HTMLElement
+    /** 内联样式是 px 字符串；比数字（90° 的 `cos` 是 6.1e-17，硬比字符串会差最后一位）。 */
+    const at = (v: string) => Number.parseFloat(v)
+    expect(at(frame().style.left)).toBeCloseTo(140, 6)     // 300 - 320/2
+    expect(at(frame().style.top)).toBeCloseTo(0, 6)        // 200 - 400/2
+    expect(at(frame().style.width)).toBeCloseTo(320, 6)
+    expect(at(frame().style.height)).toBeCloseTo(400, 6)
+
+    // 转回 0°：又是一开始那块（500×400 的照片盒子）
+    await c.rerender({ crop: scene(0) })
+    expect(at(frame().style.left)).toBeCloseTo(50, 6)
+    expect(at(frame().style.width)).toBeCloseTo(500, 6)
+    expect(at(frame().style.height)).toBeCloseTo(400, 6)
   })
 })

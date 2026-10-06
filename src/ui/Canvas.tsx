@@ -6,9 +6,34 @@ import type { NormPoint } from '../image/mark'
 import { markerRadius } from '../image/mark'
 import type { Adjustments } from '../../shared/adjustments.ts'
 import type { Cube } from '../../shared/lut.ts'
+import { rotatedBounds, type CropRect } from '../core/crop'
+import CropOverlay from './CropOverlay'
 import {
   FIT, clampView, fitBox, maxScale, oneToOne, panBy, zoomTo, type Size, type View,
 } from './viewport'
+
+/**
+ * 裁剪的现场（★ 2026-10-06）—— `App` 算好交下来的一整块：
+ * `Canvas` 只做两件事，**算式一个字都不在这儿**：
+ *   · 把照片按 `angle` 转、按算出来的倍数缩（预览），
+ *   · 把 `ui/CropOverlay` 摆到照片上（框和把手）。
+ */
+export type CropScene = {
+  /** 归一化（相对**外框**）的裁剪框。 */
+  rect: CropRect
+  /** 用户拖了框 → 喊回 App。框是**受控**的，组件自己不留一份。 */
+  onRect: (r: CropRect) => void
+  /** 归一化空间的宽高比（w/h），null = 自由 —— 换算见 `ui/CropOverlay`。 */
+  aspect: number | null
+  /** 框不许越出的区域（归一化）：旋转留下的四个空角在它外面。 */
+  inner: CropRect
+  /**
+   * 照片要转多少度（= `effectiveAngle(spec, turns)`）。
+   * ⚠️ **正数 = 照片在输出里逆时针转**；所以这儿的 CSS 是 `rotate(-angle)`
+   *    —— 和 `image/crop.ts` 里那串"反过来画"是同一个方向，别写反。
+   */
+  angle: number
+}
 
 type Props = {
   image: DecodedImage | null
@@ -50,6 +75,11 @@ type Props = {
    * 理由：裁剪时一边拉框一边缩放会让框和手指打架（spec §3.1）。
    */
   viewLocked?: boolean
+  /**
+   * ★ 2026-10-06（裁剪）：裁剪的现场。null / 不传 = 没在裁（那时这一整块不存在，
+   * 照片一个内联样式都不留 —— 和缩放那条"适应窗口"的规矩一样）。
+   */
+  crop?: CropScene | null
   /** 画面这条路出了事，把**要说给用户的那句话**交出去（由 App 决定在哪儿显示）。
    *  组件自己不弹窗、不存状态：它只负责"把话说清楚"，说不说、在哪儿说是上层的事。 */
   onFail?: (message: string) => void
@@ -101,7 +131,7 @@ export function describeFailure(e: unknown): string {
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
 export default function Canvas({
   image, params, lutCube, lutAmount, originalPreview, canvasRef, picking, marker, onPickPoint, onFail,
-  busy, resetKey, viewLocked,
+  busy, resetKey, viewLocked, crop,
 }: Props) {
   const innerRef = useRef<HTMLCanvasElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -288,8 +318,13 @@ export default function Canvas({
    *
    * 不补这一枪，红圈（`.canvas-marker`）就会**停在放大前的位置上**，而屏幕上
    * 一切"看起来正常"：照片确实大了，圈也确实还在，只是不在你点的那块地方。
+   *
+   * ★ 2026-10-06（裁剪）：**转照片那一下同理**，而且比缩放更要紧 —— 裁剪框
+   *   整个是照量出来的盒子摆的（`CropOverlay` 的定位基准就是它）。转 90° 或拖
+   *   矫正滑杆之后不重量的话，框会停在转之前的地方，而照片已经转过去了。
+   *   （`k` 那半不依赖测量值 —— 那是**故意**的，量盒子去算 k 是循环依赖。）
    */
-  useLayoutEffect(() => { measureRef.current() }, [view])
+  useLayoutEffect(() => { measureRef.current() }, [view, crop?.angle])
 
   /** 换照片 / 换会话 → 收回「适应窗口」（判据和理由见 `resetKey` 那条 prop）。 */
   useEffect(() => { putView(FIT) }, [resetKey, putView])
@@ -460,6 +495,39 @@ export default function Canvas({
     ? undefined
     : { transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }
 
+  /**
+   * ★ 2026-10-06（裁剪）：**预览那一帧**。转多少度、缩多少倍，都在这儿。
+   *
+   *   · **转**：CSS 是 `rotate(-angle)`。约定（写在 `image/crop.ts` 的 JSDoc 里）：
+   *     `angle > 0` ⇒ 照片在**输出**里逆时针转；CSS 的正角度是顺时针，所以
+   *     要取负号。⚠️ 写成 `rotate(angle)` 的话，预览和成片会朝**相反方向**转，
+   *     而外框尺寸和输出尺寸两边一模一样 —— 单测/探针都看不出这个错。
+   *   · **缩**：转过来之后外框（`rotatedBounds`）比照片大，不缩回去就会溢到
+   *     左边预设栏、上面带子和右边对话栏上。倍数 `k = min(1, imgW/bw, imgH/bh)`：
+   *     它保证转完的**外框**仍然塞得进照片原来那块地方（`imgW/imgH` 是底图自己的
+   *     尺寸，不是量出来的 —— 拿盒子来算就是循环依赖），而且 `≤ 1` 不放大。
+   *     例子：1200×800 转 15° → 外框 1366×1084 → k = min(1, .879, .738) = .738。
+   *
+   * 转和缩都绕**元素中心**（CSS `transform-origin` 默认值），而画布是居中在
+   * 剪裁层里的 —— 所以变换后照片的包围盒仍然居中、大小正好是
+   * `k × 适应窗口的尺寸` 乘上外框的形状。`measure()` 量的
+   * `getBoundingClientRect()` 给的就是**这个包围盒**（它算变换后的可见盒子），
+   * 于是 `CropOverlay` 拿到的 `box` 正好是"外框在屏幕上的位置" —— 归一化矩形
+   * 和它一比就是框该摆的地方。
+   *
+   * ⚠️ 裁剪时视图一定在「适应窗口」（进工具时 `resetKey` 归位 + 手势停用），
+   *    所以这里直接顶掉 `zoomStyle`、不做两个变换的叠加。
+   */
+  const cropK = crop && image
+    ? (() => {
+      const b = rotatedBounds(image.width, image.height, crop.angle)
+      return Math.min(1, image.width / b.w, image.height / b.h)
+    })()
+    : 1
+  const stageStyle = crop
+    ? { transform: `rotate(${-crop.angle}deg) scale(${cropK})` }
+    : zoomStyle
+
   /** 那排按钮自己的指针事件**不许冒泡到照片上**（理由见下面那段注释）。 */
   const swallow = (e: React.SyntheticEvent) => e.stopPropagation()
   /**
@@ -482,7 +550,9 @@ export default function Canvas({
     <div
       ref={wrapRef}
       // 放大之后鼠标变成小手（CSS 里 `.zoomed`）：那是在说"这里可以拖"
-      className={view.scale > 1 ? 'canvas-wrap zoomed' : 'canvas-wrap'}
+      // ★ 2026-10-06（裁剪）：`cropping` 和 `.zoomed` 走的是同一条剪裁规矩
+      //   （见 CSS）—— 转出来的外框会比照片大，不剪会漏到舞台和对话栏上。
+      className={`canvas-wrap${view.scale > 1 ? ' zoomed' : ''}${crop ? ' cropping' : ''}`}
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
       onContextMenu={e => e.preventDefault()}
@@ -501,12 +571,19 @@ export default function Canvas({
         <canvas ref={node => {
           innerRef.current = node
           canvasRef.current = node
-        }} className="canvas" style={zoomStyle} />
+        }} className="canvas" style={stageStyle} />
         {peeking && originalPreview && (
-          <img className="canvas-peek" src={originalPreview} alt="原图" draggable={false} style={zoomStyle} />
+          <img className="canvas-peek" src={originalPreview} alt="原图" draggable={false} style={stageStyle} />
         )}
       </div>
-      {marker && box && (
+      {/* ★ 2026-10-06（裁剪）：**框和把手**。和红圈同一个待遇 —— 画在剪裁层
+          **外面**（把手正好挂在照片边上，剪在里头会被切掉半个）。
+          ⚠️ `box` 是量出来的（`getBoundingClientRect` 算变换后的可见盒子），
+          裁着的时候它正好是"外框摆在哪、多大"。
+          ⚠️ 红圈这时候**不画**：它现在是"外框"的坐标，而红圈是**照片上**的记号
+          （相对照片左上角归一化）—— 转起来之后两者不再是同一个坐标系，
+          画出来会在错的地方（点选那条路本来也不该在裁剪时进行）。 */}
+      {marker && box && !crop && (
         <span
           className="canvas-marker"
           // 用**像素**、以画布盒子为基准（不是 wrapper 的百分比 —— 理由见上面
@@ -522,6 +599,12 @@ export default function Canvas({
             marginLeft: -markerSize / 2,
             marginTop: -markerSize / 2,
           }}
+        />
+      )}
+      {crop && box && (
+        <CropOverlay
+          box={box} rect={crop.rect} aspect={crop.aspect} inner={crop.inner}
+          onRect={crop.onRect}
         />
       )}
       {/* ★ 2026-10-06：生成中那层**暗罩 + 转圈**（用户原话：「要让用户知道你在

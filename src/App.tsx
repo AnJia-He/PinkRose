@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Btn } from './ui/kit/Btn.tsx'
-import Canvas from './ui/Canvas'
+import { Slider } from './ui/kit/Slider.tsx'
+import Canvas, { type CropScene } from './ui/Canvas'
 import Uploader from './ui/Uploader'
 import AdjustEmpty from './ui/AdjustEmpty'
 import AdjustmentPanel from './ui/AdjustmentPanel'
@@ -27,14 +28,20 @@ import {
 import { decodeImageFile, type DecodedImage } from './image/decode'
 import { resizeBitmap } from './image/resize'
 import { samplePixels } from './image/sample'
+import { cropToBitmap } from './image/crop'
 import { matchToReference } from './core/colorMatch'
 import { activePresetId } from './core/presets'
+import {
+  MAX_STRAIGHTEN, clampRect, effectiveAngle, fitAspect, inscribedRect, rectFromSize,
+  rotatedBounds, type CropRect, type CropSpec,
+} from './core/crop'
 import { fitToLimit, probeLimit } from './render/limits'
 import { applyDeltas, clampAdjustments, ZERO, type Adjustments } from '../shared/adjustments.ts'
 import { canShareImage, downloadImage } from './export/save'
 import { prepareForRouting } from './image/prepare'
 import { ApiError, isUnauthorized, postRoute } from './api/client'
 import { bitmapsToClose, attachThumb, type Snapshot } from './core/history'
+import { localStep } from './app/useLocalStep'
 import { GALLERY_THUMB_MAX_SIDE, THUMB_MAX_SIDE, bitmapToDataUrl, makeThumbnail } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
 import { useDelivery } from './app/useDelivery'
@@ -130,6 +137,43 @@ async function fitToDevice(
  */
 function closeBitmaps(imgs: readonly DecodedImage[]): void {
   for (const img of imgs) img.bitmap.close()
+}
+
+/** 裁剪的比例档（★ 2026-10-06）。`value` 是**像素**宽高比，`null` = 自由。 */
+type CropRatio = { name: string; value: number | null }
+
+/**
+ * 第二行那一排比例（spec §3.1 点名的六个）。
+ * ⚠️ 「原始」是**这张照片**自己的比例 —— 它得等照片到手才算得出来，
+ *    所以这是个函数、不是模块级常量。
+ * ⚠️ 判"哪一档亮着"用的是**全等**比较（`crop.aspect === r.value`）：挑过哪一档
+ *    存的就是那个数，`原始` 存的是 `imgW/imgH` 本身，对得上。
+ */
+const cropRatios = (img: DecodedImage): CropRatio[] => [
+  { name: '自由', value: null },
+  { name: '1:1', value: 1 },
+  { name: '4:3', value: 4 / 3 },
+  { name: '3:4', value: 3 / 4 },
+  { name: '16:9', value: 16 / 9 },
+  { name: '原始', value: img.width / img.height },
+]
+
+/**
+ * 某个角度下**默认的那个框**：居中的最大内接矩形（不碰空角），
+ * 再按比例档收一下（"装得下为前提"那件事交给 `core/crop` 的 `fitAspect`）。
+ *
+ * ★ 2026-10-06（跨任务裁定）：**角度一变，框就重置成它** —— 这是
+ *   `core/crop.ts` 文件头那条硬规矩的落点。之后用户拖来拖去的过程中，
+ *   框还会被 `CropOverlay` 夹在**内接区**里（同一块地方，见那边的注释）——
+ *   两处合起来，"永远不裁出空白角"才成立。
+ */
+function defaultCropRect(
+  imgW: number, imgH: number, angleDeg: number, aspect: number | null,
+): CropRect {
+  return rectFromSize(
+    fitAspect(inscribedRect(imgW, imgH, angleDeg), aspect),
+    rotatedBounds(imgW, imgH, angleDeg),
+  )
 }
 
 /**
@@ -1013,6 +1057,155 @@ export default function App() {
       cursorIdRef,
     })
 
+  // ── 裁剪（★ 2026-10-06，工具行第一颗）────────────────────────────────
+  //  几何算式全在 `core/crop.ts`（外框 / 内接矩形 / 比例 / 输出尺寸），
+  //  框的手势在 `ui/CropOverlay`，落到像素上在 `image/crop.ts`。
+  //  这一层只干三件事：**记住现场**、**把该重算的算出来**、**完成时推新的一步**。
+
+  /** 裁剪的现场：null = 没在裁。`turns` 是整转（90° 的倍数），`spec.angle` 是矫正角。 */
+  const [crop, setCrop] = useState<{ spec: CropSpec; turns: number; aspect: number | null } | null>(null)
+
+  /** 进裁剪：按当前底图算"默认的那个框"（居中的最大内接矩形）。 */
+  const openCrop = useCallback(() => {
+    if (!image) return
+    setCrop({
+      spec: { rect: defaultCropRect(image.width, image.height, 0, null), angle: 0 },
+      turns: 0, aspect: null,
+    })
+  }, [image])
+
+  /**
+   * 工具行点了一下：切工具，并顺手开 / 收裁剪的现场。
+   * ⚠️ 再点一下当前那颗 = 收回（`ToolBar` 传 null 进来）—— 那就等于「取消」。
+   */
+  const pickTool = (t: ToolId | null) => {
+    setTool(t)
+    if (t === 'crop') openCrop()
+    else setCrop(null)
+  }
+
+  /** 框动了（`CropOverlay` 拖出来的归一化矩形）。 */
+  const setCropRect = useCallback((rect: CropRect) => {
+    setCrop(c => (c ? { ...c, spec: { ...c.spec, rect } } : c))
+  }, [])
+
+  /**
+   * **角度变了**（左转 / 右转 / 水平矫正滑杆）→ 框**重置成居中的最大内接矩形**
+   * （再按比例档收一下，见 `defaultCropRect`）。
+   * 这是 `core/crop.ts` 文件头那条硬规矩：一转就有空角，框得先收回来 ——
+   * 之后用户再拖，`CropOverlay` 也在同一块内接区里夹着它。
+   */
+  const setCropAngle = useCallback((patch: { turns?: number; angle?: number }) => {
+    setCrop(c => {
+      if (!c || !image) return c
+      const turns = patch.turns ?? c.turns
+      const angle = patch.angle ?? c.spec.angle
+      const eff = effectiveAngle({ rect: c.spec.rect, angle }, turns)
+      return {
+        ...c, turns,
+        spec: { ...c.spec, angle, rect: defaultCropRect(image.width, image.height, eff, c.aspect) },
+      }
+    })
+  }, [image])
+
+  /**
+   * 换个比例档：把**现在这个框**按新比例收一下（`fitAspect` 只缩不放），
+   * 心还是原来那个心，收完再夹回内接区里 ——
+   * 挑个比例不该把框甩到别的地方去，也不该悄悄把它放大。
+   */
+  const pickCropAspect = useCallback((aspect: number | null) => {
+    setCrop(c => {
+      if (!c || !image) return c
+      const eff = effectiveAngle(c.spec, c.turns)
+      const bounds = rotatedBounds(image.width, image.height, eff)
+      const inner = rectFromSize(inscribedRect(image.width, image.height, eff), bounds)
+      const px = fitAspect({ w: c.spec.rect.w * bounds.w, h: c.spec.rect.h * bounds.h }, aspect)
+      const w = px.w / bounds.w
+      const h = px.h / bounds.h
+      const cx = c.spec.rect.x + c.spec.rect.w / 2
+      const cy = c.spec.rect.y + c.spec.rect.h / 2
+      return {
+        ...c, aspect,
+        spec: {
+          ...c.spec,
+          rect: clampRect({
+            x: Math.min(inner.x + inner.w - w, Math.max(inner.x, cx - w / 2)),
+            y: Math.min(inner.y + inner.h - h, Math.max(inner.y, cy - h / 2)),
+            w, h,
+          }),
+        },
+      }
+    })
+  }, [image])
+
+  /** 「取消」= **什么都没发生**（spec §3.1）：框、角度、工具一起收掉。 */
+  const cancelCrop = () => { setCrop(null); setTool(null) }
+
+  /**
+   * 「完成」——**这个工具的全部意义**：本地裁一张新的底图、推新的一步。
+   * 不花钱、不占额度、**不动参数**（spec §3.1：调好的滑块原样跟着走）。
+   *
+   * 它和生成那条路是同一件事，只是没有网络那一半 —— 所以推快照走的是
+   * `localStep`（那边也是 `cutAfter` + `pushSnapshot`），位图回收照抄
+   * `useGeneration` 那一段（新的一步会挤掉 / 切掉旧步骤，不关就是漏 GPU 内存）。
+   */
+  const commitCrop = useCallback(async () => {
+    if (!crop || !image) return
+    try {
+      const bitmap = await cropToBitmap(image.bitmap, crop.spec, crop.turns)
+      const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
+      // ⚠️ 发号器是顶上那个 `idRef`（**和生成那条共用**）—— "消息 id 就是步骤 id"
+      //   那条老约定靠它；另开一个计数器会撞号（撞号的后果见 `loadSession` 里那段）。
+      const id = ++idRef.current
+      setHistory(prev => {
+        const next = localStep(prev, {
+          id, label: '裁剪', base, params, lut,
+          // 此刻站在哪一步 —— 大于它的一律切掉（**站在中间裁**就是这个意思）。
+          // `?? id` 那一格到不了（有照片 ⇒ 位置非空），写上是不让类型缺口变成
+          // 一个"点了没反应"的按钮。
+          cursorId: cursorIdRef.current ?? id,
+        })
+        // 被切掉 / 被挤出去的位图要还回去；原图永远不关（和 `useGeneration`
+        // 那一段一字不差）。`close()` 幂等，StrictMode 重放也安全。
+        for (const s of bitmapsToClose(prev, next, { protectOriginal: true })) {
+          s.bitmap.close()
+        }
+        return next
+      })
+      setImage(base)
+      // state + 影子 ref 一起写（`cursorIdRef` 的注释说了为什么）
+      moveCursor(id)
+      // 助手那句话和图片同批落（"裁好了。"—— 短、准，和「停了。」同一副语气）。
+      setMessages(m => [...m, { id, role: 'assistant', text: '裁好了。' }])
+      setCrop(null)
+      setTool(null)
+    } catch (e) {
+      console.error(e)
+      // 裁不动时**说清楚**，别让屏幕上什么都没有：多半是这张图太大，这个浏览器
+      // 开不出够大的画布（`cropToBitmap` 那两条失败路径）。
+      noticeBad('这张照片没裁成。再试一次；还不行就换一张小一点的。')
+    }
+  }, [crop, image, params, lut, moveCursor, noticeBad])
+
+  /**
+   * 交给 `Canvas` 的裁剪现场 —— 每次渲染现算。
+   * ⚠️ 换算只有这一处：**归一化比 = 像素比 × 外框高 / 外框宽**
+   *   （框是相对外框归一化的，而比例档说的是像素；外框宽高不等时两者不同）。
+   */
+  const cropScene: CropScene | null = (() => {
+    // `tool === 'crop'` 那半是保险：现场和工具是同一个动作里一起设的，
+    // 谁也不该单独留在屏上。
+    if (!image || !crop || tool !== 'crop') return null
+    const angle = effectiveAngle(crop.spec, crop.turns)
+    const bounds = rotatedBounds(image.width, image.height, angle)
+    return {
+      rect: crop.spec.rect,
+      onRect: setCropRect,
+      aspect: crop.aspect === null ? null : crop.aspect * bounds.h / bounds.w,
+      inner: rectFromSize(inscribedRect(image.width, image.height, angle), bounds),
+      angle,
+    }
+  })()
 
   const onPick = useCallback(async (file: File, wish = '') => {
     // ★ **进门第一件事**，在下面两趟 await 之前：从这一刻起"用户自己动手了"。
@@ -1184,6 +1377,11 @@ export default function App() {
     // ★ 2026-10-05（设计 §4.5）：那条"要切掉后面吗"同理 —— 照片都换了，
     //   它说的那件事已经不存在（`setPendingReplace` 是稳定 setter，不进依赖）。
     setPendingReplace(null)
+    // ★ 2026-10-06（裁剪）：工具和裁剪现场也一起收 —— 它们是**照上一张照片**
+    //   算的（框、内接区、比例里的"原始"全按它来），留着就是让下一张照片
+    //   一进门就顶着一个别人的框。
+    setTool(null)
+    setCrop(null)
     dismissAsk()
     setOriginalPreview(null)
     originalFileRef.current = null
@@ -1969,7 +2167,10 @@ export default function App() {
 
   // ★ 工具行只在调色屏；切走时把工具收掉 —— 不然回到调色屏时它还开着，
   //   而那时候照片可能已经换了（裁剪框会落在新照片上）。
-  useEffect(() => { setTool(null) }, [view.kind])
+  // ★ 2026-10-06（裁剪）：**裁剪的现场跟着一起收** —— 两个是同一个动作里设的，
+  //   留下一个就是"框还在、工具没了"那种半截状态（回到调色屏时框会重新出现，
+  //   而用户以为自己已经出去了）。
+  useEffect(() => { setTool(null); setCrop(null) }, [view.kind])
 
   /**
    * 点导航：改状态，顺手把地址栏换成对应的那条。
@@ -2309,7 +2510,46 @@ export default function App() {
                     位置是历史转盘（下面 `StepStrip`），两个屏各用一次这块地方。
                     ⚠️ 切走屏时要收掉工具，见顶上那条 `[view.kind]` 的 effect。 */}
                 {view.kind === 'adjust' && (
-                  <ToolBar active={tool} onPick={setTool}>{/* Task 4 把裁剪的第二行塞这儿 */}</ToolBar>
+                  <ToolBar active={tool} onPick={pickTool}>
+                    {/* ★ 2026-10-06（裁剪）：第二行 —— 比例 / 左右转 / 水平矫正 /
+                        取消 / 完成（spec §3.1 点名的这几样）。
+                        ⚠️ 比例档住在一排小药丸里；「水平矫正」用的是调色面板**同一个**
+                        滑块零件（`ui/kit/Slider`：轨道 + 拇指 + 读屏一口气都有，
+                        双击还能回 0）；它在这一行的宽度由 CSS 给。 */}
+                    {tool === 'crop' && crop && image && (
+                      <>
+                        <div className="crop-ratios" role="group" aria-label="比例">
+                          {cropRatios(image).map(r => {
+                            const on = crop.aspect === r.value
+                            return (
+                              <button
+                                key={r.name} type="button"
+                                className={`crop-chip${on ? ' on' : ''}`}
+                                aria-pressed={on}
+                                onClick={() => pickCropAspect(r.value)}
+                              >{r.name}</button>
+                            )
+                          })}
+                        </div>
+                        {/* 坐标方向：**正角度 = 照片在输出里逆时针转**（见
+                            `image/crop.ts` 的 JSDoc）—— 所以「左转」是 +1 个直角。 */}
+                        <button type="button" className="crop-btn"
+                          onClick={() => setCropAngle({ turns: crop.turns + 1 })}>左转</button>
+                        <button type="button" className="crop-btn"
+                          onClick={() => setCropAngle({ turns: crop.turns - 1 })}>右转</button>
+                        <Slider
+                          label="水平矫正" value={crop.spec.angle}
+                          min={-MAX_STRAIGHTEN} max={MAX_STRAIGHTEN} step={0.5}
+                          changed={crop.spec.angle !== 0}
+                          onChange={angle => setCropAngle({ angle })}
+                        />
+                        <div className="crop-tools">
+                          <button type="button" className="crop-btn" onClick={cancelCrop}>取消</button>
+                          <Btn className="crop-done" onClick={() => void commitCrop()}>完成</Btn>
+                        </div>
+                      </>
+                    )}
+                  </ToolBar>
                 )}
                 {/* ★ 2026-10-06（晚）：**历史转盘**（`ui/StepStrip`）——
                     照片上方那一圈（用户先画草图提的「对话区不留下照片了…
@@ -2363,6 +2603,9 @@ export default function App() {
                   //   值必须**按值稳定**（字符串），别传对象/数组（每渲染一次都是新身份）。
                   resetKey={`${sessionId ?? ''}:${tool ?? ''}`}
                   viewLocked={tool !== null}
+                  // ★ 2026-10-06（裁剪）：框 + 预览那一帧的现场。没在裁时是 null
+                  //   —— 那时画布上一个内联样式都不留（和"适应窗口"那一帧同一条规矩）。
+                  crop={cropScene}
                   // ★ 2026-10-06：生成中给照片盖一层淡淡的暗罩 + 转圈（那十几秒
                   //   照片原来完全没反应）。传的是 `generating` 不是 `busy` ——
                   //   「正在思考」/上传/切会话那几句**不盖**（一闪一暗会闪），

@@ -33,7 +33,11 @@ const canvasProps = vi.hoisted(() => ({
   //   （滚轮 / 拖动 / 双击不响应、右下角那排按钮不画）**那一半量在真画布那边**
   //   （`Canvas.zoom.test.tsx` 里量真的 DOM），这儿只钉 App 有没有把它送出去。
   props: [] as { originalPreview: string | null; picking: boolean; marker: unknown
-                  params: Record<string, number>; busy: boolean; viewLocked: boolean }[],
+                  params: Record<string, number>; busy: boolean; viewLocked: boolean
+                  // ★ 2026-10-06（裁剪）：`crop` 是"框 + 预览那一帧"的现场 ——
+                  //   真画布按它转照片、摆框（那两条量在 `Canvas.zoom.test.tsx`
+                  //   里），这一层只钉 App 有没有把现场交下去。
+                  crop: unknown }[],
 }))
 
 /** 画布：真的那个要 WebGL2。这里给一个真 <canvas> 并挂上 ref ——
@@ -41,9 +45,9 @@ const canvasProps = vi.hoisted(() => ({
 vi.mock('./ui/Canvas', async () => {
   const React = await import('react')
   return {
-    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint, busy, viewLocked }: any) => {
+    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint, busy, viewLocked, crop }: any) => {
       canvasProps.images.push(image)
-      canvasProps.props.push({ originalPreview, picking, marker, params, busy, viewLocked })
+      canvasProps.props.push({ originalPreview, picking, marker, params, busy, viewLocked, crop })
       return React.createElement('canvas', {
         ref: (node: HTMLElement | null) => {
           canvasRef.current = node
@@ -126,6 +130,12 @@ vi.mock('./core/thumbnail', async (importOriginal) => {
  *  `getContext('2d')` 那儿抛，`confirmMark` 走进 catch，`postEdit` 一次都不会被调。 */
 vi.mock('./image/mark', () => ({ markImage: vi.fn(), MARKER_RADIUS_RATIO: 0.06 }))
 
+/** ★ 2026-10-06（裁剪）：**整个假掉** —— `cropToBitmap` 要真 2D 上下文 +
+ *  `createImageBitmap`，jsdom 两样都没有。这一层要验的只是**接线**
+ *  （推了步、参数没动、光标挪了、能回去）；像素对不对是 Task 6 真机的事。
+ *  假实现返回一张带记号的小位图，"送进去的是哪张、换上来的是哪张"都看得见。 */
+vi.mock('./image/crop', () => ({ cropToBitmap: vi.fn() }))
+
 /** 解码用户选的文件：要 createImageBitmap + 2D 画布。
  *  用 importOriginal 保留它的转发导出（size 那几个），因为别处会 import。 */
 vi.mock('./image/decode', async (importOriginal) => {
@@ -201,6 +211,7 @@ import * as resizeMod from './image/resize'
 import * as saveMod from './export/save'
 import * as thumbMod from './core/thumbnail'
 import * as markMod from './image/mark'
+import * as cropMod from './image/crop'
 import * as sampleMod from './image/sample'
 import * as lutsMod from './api/luts'
 
@@ -560,6 +571,10 @@ beforeEach(() => {
 
   // 上传染回来的那张底（包一层：要用的是它的 .bitmap）
   vi.mocked(decodeMod.decodeImageFile).mockResolvedValue(fakeDecoded('upload'))
+  // ★ 2026-10-06（裁剪）：「完成」裁出来的那一张。真实现要 2D 上下文，整个假掉
+  //   （见顶上那个 `vi.mock`）—— 记号是 `cropped`，断言里一眼分得开
+  //   （送进去的是 `upload`，回来的是 `cropped`）。
+  vi.mocked(cropMod.cropToBitmap).mockResolvedValue(fakeBitmap('cropped'))
   // 「照着这张调」的两个采样点：jsdom 里读不了像素，默认给一块中性灰。
   // 只有照调那条用例会覆盖它（覆盖成"源图和参考图分得开"的假数据 ——
   // 拟合要真的算出一个不为零的结果）。
@@ -1689,6 +1704,184 @@ describe('历史小图：每一步都看得见（照片上方那条时间轴上�
     await say('把那个去掉')
 
     expect(container.querySelectorAll('.strip-node')).toHaveLength(1)  // 只有原图那格
+  })
+})
+
+/**
+ * ★ 2026-10-06（裁剪）：工具行第一颗 —— 框 + 第二行 + **完成 = 本地生成新的一步**。
+ *
+ * 这一层只验**接线**（送的是当前底图、推了步、参数没被重置、能回到上一步）。
+ * 像素对不对是 Task 6 真机的事：jsdom 里连 `createImageBitmap` 都没有，
+ * 所以 `src/image/crop` 整个假掉（见文件顶上的 `vi.mock`），
+ * 真画布那半（转多少度、缩多少倍、框画在哪）量在 `Canvas.zoom.test.tsx`。
+ */
+describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () => {
+  /** 打到某条会话上的更新请求（`steps` 是唯一看得见历史的地方）。 */
+  const putCalls = (url: string) =>
+    fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === 'PUT')
+  /** 交给画布的裁剪现场（App 算好那一整块）。 */
+  const sceneOf = () => canvasProps.props.at(-1)?.crop as {
+    rect: { x: number; y: number; w: number; h: number }
+    aspect: number | null
+    angle: number
+    inner: { x: number; y: number; w: number; h: number }
+  } | null
+
+  /** 进裁剪：先去调色屏，再点工具行那颗「裁剪」。 */
+  async function openCrop() {
+    await goNav('调色')
+    const cell = container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
+    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(container.querySelector('.tool-row-second'), '开着裁剪时第二行该在').toBeTruthy()
+  }
+
+  /** 拨「水平矫正」（走调色面板同一个滑块零件：点数字 → 输入 → 回车）。 */
+  async function setStraighten(v: number) {
+    const row = [...container.querySelectorAll('.tool-row-second .slider')]
+      .find(el => el.querySelector('.slider-label')?.textContent === '水平矫正')!
+    expect(row, '第二行该有一条「水平矫正」').toBeTruthy()
+    await act(async () => {
+      (row.querySelector('.slider-value') as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const box = row.querySelector('input.slider-edit') as HTMLInputElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(box, String(v))
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  it('★ 裁完之后：是新的一步、参数没被重置、还能回到上一步', async () => {
+    await renderApp()
+    await uploadPhoto()
+    // ① 先把亮度改到 30（本文件里"改参数"的标准写法：说一句话 → 路由给增量）
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 30 }, reply: '亮了一点。' }))
+    await say('亮一点')
+    expect(canvasProps.props.at(-1)?.params.exposure).toBe(30)
+
+    // ② 进裁剪 → 完成
+    await openCrop()
+    expect(sceneOf(), '开着裁剪时现场该交给画布').toBeTruthy()
+    await clickByText('完成')
+
+    // ③ 裁的是**底图**（送进去的是当前这张），回来的那张成了新底图
+    expect(vi.mocked(cropMod.cropToBitmap)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(cropMod.cropToBitmap).mock.calls[0]![0]).toMatchObject({ __tag: 'upload' })
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'cropped' } })
+
+    // ④ 参数一个都没丢（铁律：裁剪只改几何）
+    expect(canvasProps.props.at(-1)?.params.exposure).toBe(30)
+    // ⑤ 已经不在裁了（现场和工具一起收掉）
+    expect(sceneOf()).toBeNull()
+    expect(container.querySelector('.tool-row-second')).toBeNull()
+
+    // ⑥ 历史真的多了一步（落盘那趟是唯一看得见 steps 的地方）
+    await waitPersist()
+    const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
+    expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图', '裁剪'])
+
+    // ⑦ 回修图屏：助手说了一句「裁好了。」；转盘上两格，点回原图那格能回去
+    //   （调色那一屏**没有对话栏**，所以那句回话得到这一屏才看得见）
+    await goNav('修图')
+    expect(lastReply()).toBe('裁好了。')
+    const nodes = () => [...container.querySelectorAll('.strip-node')] as HTMLElement[]
+    expect(nodes()).toHaveLength(2)
+    await act(async () => { nodes()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
+  })
+
+  it('★ 第二行：比例 / 左右转 / 水平矫正 —— 角度一变，框重置成居中的最大内接矩形', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await openCrop()
+
+    // 开着的这一刻：角度 0、自由档 → 框就是整张照片（外框 = 照片本身）
+    expect(sceneOf()!.angle).toBe(0)
+    expect(sceneOf()!.rect).toEqual({ x: 0, y: 0, w: 1, h: 1 })
+    expect(sceneOf()!.aspect).toBeNull()
+
+    // ① 挑 1:1：框按比例收成居中的正方形（1200×800 的照片 → 宽 800/1200）
+    await clickByText('1:1')
+    const sq = sceneOf()!
+    expect(sq.rect.w).toBeCloseTo(800 / 1200, 6)
+    expect(sq.rect.h).toBeCloseTo(1, 6)
+    expect(sq.rect.x).toBeCloseTo((1 - 800 / 1200) / 2, 6)
+    // ⚠️ 交给框的比例是**归一化**的：像素比 1 × 外框高 / 外框宽（800/1200）
+    expect(sq.aspect).toBeCloseTo(800 / 1200, 6)
+
+    // ② 左转：角度 +90（正角度 = 照片逆时针转），框跟着重置
+    await clickByText('左转')
+    expect(sceneOf()!.angle).toBe(90)
+    expect(sceneOf()!.rect.w).toBeCloseTo(1, 6)          // 转直角 → 外框就是那张竖过来的照片
+    expect(sceneOf()!.rect.h).toBeCloseTo(2 / 3, 6)      // 锁着 1:1 → 高按比例收
+    expect(sceneOf()!.rect.y).toBeCloseTo(1 / 6, 6)      // 居中
+
+    // ③ 右转两下：回到 -90°（再来一遍，方向要能反着走）
+    await clickByText('右转')
+    await clickByText('右转')
+    expect(sceneOf()!.angle).toBe(-90)
+
+    // ④ 拖水平矫正到 7°：角度实时进预览，框**重置**成"居中的最大内接矩形"
+    //    （转过就有空角，框必须缩回来 —— 按 1:1 收过之后是个居中的正方形）
+    //    ⚠️ 报出来的是**合角**（`effectiveAngle` = 整转 × 90 + 矫正角）：
+    //    上面右转两下把 turns 走到 -1，所以是 -90 + 7。
+    await setStraighten(7)
+    const tilt = sceneOf()!
+    expect(tilt.angle).toBe(-90 + 7)
+    expect(tilt.rect.w).toBeLessThan(1)
+    // 框守住了比例档：**归一化**的宽高比 == 交给框的那个数。
+    // ⚠️ 拿 `rect.w ≈ rect.h` 当"这是正方形"是错的 —— 像素 1:1 在斜过来的
+    //    外框里**不是**归一化 1:1（外框宽高不等），两者之差正是 `aspect` 那一次换算。
+    expect(tilt.rect.w / tilt.rect.h).toBeCloseTo(tilt.aspect!, 6)
+    expect(tilt.rect.x).toBeCloseTo((1 - tilt.rect.w) / 2, 6)         // 居中
+    expect(tilt.rect.y).toBeCloseTo((1 - tilt.rect.h) / 2, 6)
+  })
+
+  it('★「取消」= 什么都没发生：不推步、不换底图、工具收掉', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await openCrop()
+    await clickByText('取消')
+
+    expect(vi.mocked(cropMod.cropToBitmap)).not.toHaveBeenCalled()
+    expect(sceneOf()).toBeNull()
+    expect(container.querySelector('.tool-row-second')).toBeNull()
+    // 历史上还是只有原图那一步（落盘那趟也不该多送什么）
+    await waitPersist()
+    const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
+    expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图'])
+  })
+
+  it('★ 站在中间那一步裁：被切掉的步骤，它们的位图要还回去（不关就是漏 GPU 内存）', async () => {
+    await renderApp()
+    await uploadPhoto()
+    // 先生成一版（生成回来的那张位图由 `decodedBitmaps` 记着）
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉路人', reply: '好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue({
+      imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
+    })
+    await say('去掉路人')
+    const generated = decodedBitmaps.at(-1)!
+    expect(generated.close).not.toHaveBeenCalled()
+
+    // 回到**原图**那一步（转盘第一格），在那儿裁 —— 那一步之后的会被切掉，
+    // 它的位图从这一刻起没人用了（`localStep` 里那条 `cutAfter`）。
+    await act(async () => {
+      (container.querySelectorAll('.strip-node')[0] as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await openCrop()
+    await clickByText('完成')
+
+    expect(generated.close, '被切掉那一步的位图必须关掉').toHaveBeenCalled()
   })
 })
 
