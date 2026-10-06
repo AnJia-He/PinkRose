@@ -810,7 +810,9 @@ git add -A src/ && git commit -m "feat(裁剪): 框 + 比例/旋转/矫正 + 完
 
 **Interfaces:**
 - Produces:
-  - `CompareSplit({ src, transform, onLeave })`：`src` = 原图的 data URL，`transform` = 和画布**同一个**变换字符串
+  - `CompareSplit({ src, transform })`：`src` = 原图的 data URL，`transform` = 和画布**同一个**变换字符串
+    （⚠️ 2026-10-06 实现期更正：**原本写的 `onLeave` 划掉了** —— 组件内没有第三个出口，
+    留着就是个死回调。将来真加"Esc 退出"时再补。）
   - `Canvas` 新 prop：`compareWith?: string | null`
 
 - [ ] **Step 1: 写测试**（拖动把手改 `--split`，松手不回弹；`clip-path` 跟着变）
