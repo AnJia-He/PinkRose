@@ -1983,6 +1983,25 @@ button:where(:disabled) { opacity: .45; cursor: default; }
     position: static; flex: none; width: 64px; height: 44px;
     transform: none !important; opacity: 1 !important;
   }
+
+  /* ★ 2026-10-06（终审 C1）：**第二个工具行不折行** —— 折 3 行 = 136px 是从照片
+     身上抠走的（它坐在照片上方，而这一档的照片本来就只靠高度那条链活着：
+     实测被挤到 175×116，低于本仓 240×150 那条线 =「看不到图」）。
+     横着滑，和上面这条窄屏历史带子同款。
+     ⚠️ 只管窄屏这一档：桌面它折两行是**已验收的版面**（照片 479×320），
+     别顺手改成全局的 —— 那会动到 desktop 的照片尺寸。 */
+  .tool-row-second { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  /* ⚠️ 光 `nowrap` 不够：flex 孩子默认会**缩**（实测「完成」被挤成 43×51、
+     「水平矫正」四个字竖着排成一列 —— 那一屏第二行反而还有 95px 高，
+     照片只回到 235×157）。和上面 `.strip-node` 的 `flex: none` 同一条：
+     每个控件保持天然宽度，挤不下就**让这一行横向滚**（实测修完 49px；
+     判据留到 64px，就算某个浏览器给滚动条占一条高度也容得下）。 */
+  .tool-row-second > * { flex: none; }
+  /* 「取消 / 完成」钉在右边：横滑之后它俩**永远够得着**（这两颗才是这一行的出口）。
+     底必须实心（和工具行同一个底）—— 透明的话，滑过去的控件会从字底下穿出来。 */
+  .crop-tools { position: sticky; right: 0; background: var(--raised); padding-left: var(--sp-3); }
+  /* 滑块自己要吃下横向拖动，否则"拖矫正"会变成"滑带子"（和色轮那条同一条规矩）。 */
+  .tool-row-second .slider-control { touch-action: none; }
   /* ★ 2026-10-05：**窄屏上预设栏不出现**（桌面那一档才有）。
      这一档里三样东西抢竖向空间，照片本来就只靠宽度那条链活着（见上），
      再横塞一条预设栏要么把照片压小、要么得把面板挤掉一截。

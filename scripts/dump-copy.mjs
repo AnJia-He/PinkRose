@@ -196,6 +196,18 @@ async function main() {
     await page.waitForTimeout(600)
     await grab(page, 'App · 调色面板')
 
+    // ★ 2026-10-06（终审 B）：**工具行的字上次一条都没进过稿子** —— 这一趟原来
+    //   到「调色面板」就停了，而点开「裁剪」之后那一行（自由 / 1:1 / 左转 / 右转 /
+    //   水平矫正 / 取消 / 完成）恰恰是新加的界面文案里**最少被人读过**的那一段。
+    //   ⚠️ 抓完要**收掉**（「取消」）—— 不收的话后面每一屏都多一条第二行，
+    //   抓下来的稿子和用户真实的常态对不上。
+    await page.click('.tool-cell:has-text("裁剪")')
+    await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+    await page.waitForTimeout(300)
+    await grab(page, 'App · 调色面板 · 开着裁剪')
+    await page.click('.crop-tools button:has-text("取消")')
+    await page.waitForTimeout(300)
+
     // 存一张，好让作品页/详情页有东西可看
     await page.click('.actions button:has-text("存进作品")')
     await page.waitForTimeout(4000)

@@ -1955,6 +1955,93 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     await goNav('修图')
     expect(container.querySelectorAll('.strip-node'), '站中间裁必须切掉后面那几步').toHaveLength(2)
   })
+
+  it('★（终审 I1）生成在裁剪那几百毫秒里落地 → 这一刀作废：不推步、不换底图、位图还回去', async () => {
+    // 根因：`commitCrop` 的 `await cropToBitmap` 那几百毫秒里，生成完全可能落地
+    // （推 baseSeq、换底图、推一步）。不设防的话裁剪的 updater 会把**刚花钱生成
+    // 的那一步静默切掉**，`setImage` 再把它从画面上盖掉 —— 钱花了、东西没了、
+    // 一句错都不报。做法照 `useGeneration` 那道 `seqAtStart` 闸门：进函数先记下
+    // 当时的 `baseSeqRef`，await 回来第一件事是对它 —— 对不上就把刚裁出来的那张
+    // 还回去、说一句、收掉裁剪，一步不推（连点两下「完成」也被它挡住：第二次
+    // 进函数时读到的序号还是第一次推之前那个）。
+    // 变异：去掉那道闸 → ①②③④全红（位图没还、画面变成 cropped、转盘上
+    // 「生成式编辑」被切成「裁剪」、还没话）。
+    await renderApp()
+    await uploadPhoto()
+
+    // 生成挂住不回：它一定落在裁剪那句 await 里面
+    const editGate = makeGate<typeof OK>()
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉路人', reply: '好了。' }))
+    vi.mocked(api.postEdit).mockReturnValueOnce(editGate.promise)
+    await say('去掉路人')
+
+    await openCrop()
+    // 「完成」也挂住：先放行生成（推步 + 换底图），再放行裁剪
+    const cropGate = makeGate<ImageBitmap>()
+    const cropped = fakeBitmap('cropped')
+    vi.mocked(cropMod.cropToBitmap).mockReturnValueOnce(cropGate.promise)
+    const done = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '完成') as HTMLButtonElement
+    await act(async () => { done.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    await act(async () => {
+      editGate.open(OK)
+      await new Promise(r => setTimeout(r, 0))
+      cropGate.open(cropped)
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // ① 那张裁出来的位图**还回去了**（不关就是漏 GPU 内存，和别的失败路径一个待遇）
+    expect(cropped.close, '作废的那张要 close()').toHaveBeenCalled()
+    // ② 不换底图：画面还是生成回来的那张 —— 裁剪盖上去 = 刚花钱买的那一版没了
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'decoded-1' } })
+    // ③ 不推步，也不切：落盘那趟（唯一看得见 steps 的地方）里没有「裁剪」
+    await waitPersist()
+    const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
+    expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图', '生成式编辑'])
+    // ④ 生成那一步的位图**没有被顺手关掉**（它还在历史里、还看得见）
+    expect(decodedBitmaps.at(-1)!.close).not.toHaveBeenCalled()
+    // ⑤ 说了一句（不许静默）：哪不对 + 怎么办 —— 和 I2 那句同族（"画面已经变了"）
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('画面已经变了')
+    // ⑥ 裁剪收掉了（这一刀已经不成立，别留一个能对着旧框再按一次的现场）
+    expect(container.querySelector('.tool-row-second')).toBeNull()
+  })
+
+  it('★（终审 I3）挂着「要切掉后面吗」时裁一刀 → 条子收了（点「继续改」不许切掉刚裁的那一步）', async () => {
+    // 裁剪是**第四个换底图的地方**（前三个：`onPick` / `loadSession` / `resetEditor`
+    // 各有一批"上一条照片的临时状态一起清"），而那条确认条在底图换掉之后就不成立了
+    // —— 不清的话：条子停在屏上，点「继续改」的切点还落在原图上，把**刚裁出来的
+    // 那一步**切掉，条子自己还会改口说"后面还有 0 步"（自相矛盾的胡话）。
+    // 变异：`commitCrop` 不清 `pendingReplace` → 这一条红（条子还在）。
+    await renderApp()
+    await uploadPhoto()
+    // 先造出"后面还有一步"：生成一版
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉路人', reply: '好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await say('去掉路人')
+
+    // 回到原图那一步再说话 —— 从旧步骤生成，先问一句
+    await act(async () => {
+      (container.querySelectorAll('.strip-node')[0] as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '换个方向', reply: '好，这就去改。' }))
+    await say('换个方向')
+    expect(container.textContent).toContain('后面还有 1 步')
+
+    // 挂着条子裁一刀（调色屏 → 裁剪 → 完成）
+    await openCrop()
+    await clickByText('完成')
+
+    // 回修图屏：条子必须已经收了，而且刚裁出来的那一步还在（转盘两格：原图 + 裁剪）
+    await goNav('修图')
+    expect(container.textContent).not.toContain('后面还有')
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
+    expect(api.postEdit).toHaveBeenCalledTimes(1)   // 就那次生成 —— 「继续改」没被点过
+  })
 })
 
 /**
@@ -7143,7 +7230,7 @@ describe('「回到这一步」不再删后面的步骤', () => {
     // 另一条会话。两条会话**步数故意相同**（都是 3 步、步骤 id 都是 1/3/5）：
     // 撞号时旧虫走的是**静默**那条 —— 站的位置恰好等于新会话的 tip，确认条
     // 都不弹，直接生成，把这张照片的生成写进另一条会话（串会话，错了不报错）。
-    // 变异：去掉 `send` 里那道闸 → ①③ 当场红（屏幕上没有"切走"那句通报、
+    // 变异：去掉 `send` 里那道闸 → ①③ 当场红（屏幕上没有"画面已经变了"那句通报、
     // postEdit 被调用）。
     const a = { ...makeSession(9, 3, 'A 的话', 'TA'), originalName: '九号.jpg' }
     const b = { ...makeSession(7, 3, 'B 的话', 'TB'), originalName: '七号.jpg' }
@@ -7174,8 +7261,10 @@ describe('「回到这一步」不再删后面的步骤', () => {
       await new Promise(r => setTimeout(r, 0))
     })
 
-    // ① 通报一句（说清哪一趟、还能怎么办）
-    expect(container.querySelector('.notice')?.textContent ?? '').toContain('切走')
+    // ① 通报一句（说清哪一趟、还能怎么办）—— ★ 2026-10-06 终审 I2 改了措辞：
+    //    裁剪也会推 baseSeq 触发同一道闸，而用户根本没切走，所以那句
+    //    「你切走时…」是假话。现在说的是两边都成立的那件事：画面已经变了。
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('画面已经变了')
     // ② 没有确认条 —— 尤其不许出现"后面还有 0 步"那种自相矛盾的胡话
     expect(container.textContent).not.toContain('后面还有')
     // ③ 钱没花：这一趟在闸门处就作废了
@@ -7184,12 +7273,12 @@ describe('「回到这一步」不再删后面的步骤', () => {
     expect(bubbleTexts()).not.toContain('换个方向')
   })
 
-  it('★（终审残留）上传后立刻说话、建会话这时才回来 → 照常生成（不许拿"切走"的假话打发）', async () => {
-    // 它是上面那道闸的**另一半**：`onPick` 里建会话是不 await 的（"锦上添花"，
+  it('★（终审残留）上传后立刻说话、建会话这时才回来 → 照常生成（不许拿"画面已经变了"的假话打发）', async () => {
+    // 它和上面那道闸的**另一半**：`onPick` 里建会话是不 await 的（"锦上添花"，
     // `busy` 在它回来之前就清了），所以用户完全可能在建会话回来之前先说了一句。
     // 这趟出发时 `sidAt === null`，建会话回来把 `sessionIdRef` 从 null 拨成 id ——
-    // 那是**同一条会话在长出来**，不是"人走了"。闸门要是连这一格也比，用户会拿到
-    // 一句**假话**（他根本没走），而且刚说的那句话被扔掉（"这边没动它"）。
+    // 那是**同一条会话在长出来**，不是"画面变了"。闸门要是连这一格也比，用户会拿到
+    // 一句**假话**（屏幕上根本没换东西），而且刚说的那句话被扔掉（"这边没动它"）。
     // 变异：闸门写回 `sessionIdRef.current !== sidAt`（不排 null）→ 这条当场红。
     const sessionGate = makeGate<{ id: number }>()
     const inner = fetchMock.getMockImplementation()!
@@ -7218,7 +7307,7 @@ describe('「回到这一步」不再删后面的步骤', () => {
       await new Promise(r => setTimeout(r, 0))
     })
 
-    expect(container.querySelector('.notice')?.textContent ?? '').not.toContain('切走')
+    expect(container.querySelector('.notice')?.textContent ?? '').not.toContain('画面已经变了')
     expect(api.postEdit).toHaveBeenCalledTimes(1)      // 这句话照常生效
   })
 })

@@ -1155,6 +1155,15 @@ export default function App() {
    */
   const commitCrop = useCallback(async () => {
     if (!crop || !image) return
+    // ★ 终审 I1：这一刀是冲着**哪一版底图**去的。`await cropToBitmap` 那几百毫秒里
+    //   生成完全可能落地（推 `baseSeqRef`、换底图、推一步）—— 不认这一版的话，
+    //   下面的 updater 会把**刚花钱生成的那一步静默切掉**（它的切点还是出发时
+    //   那个），`setImage` 再把它从画面上盖掉：钱花了、东西没了、一句错都不报。
+    //   和 `useGeneration` 那道 `seqAtStart` 闸门同一族，方向相反：那边守
+    //   "结果回来时画面换了"，这边守"裁到一半画面换了"。
+    //   ⚠️ 连点两下「完成」也被它挡住：第二下进函数时读到的还是第一次推之前的
+    //   序号，它回来时一样对不上 —— 不用另写一个"正在裁"的 ref。
+    const seqAt = baseSeqRef.current
     // ⚠️ **"此刻站在哪一步"必须在 `await` 之前读出来**（评审 Important ②）——
     //    这不是洁癖，是 `setHistory` 的 updater **不保证当场跑**：
     //    React 的 eager 路径只在"这个 fiber 没有挂起的更新"时才立刻算一遍，
@@ -1168,6 +1177,17 @@ export default function App() {
     const at = cursorIdRef.current
     try {
       const bitmap = await cropToBitmap(image.bitmap, crop.spec, crop.turns)
+      // ★ 终审 I1：回来先对一次序号 —— 对不上就说明这段等待里底图换了版
+      //   （生成落地 / 切走 / 换了张照片），这一刀从一张**已经不在屏上的**
+      //   底图上裁出来，写进去就是上面说的那场静默事故。
+      if (baseSeqRef.current !== seqAt) {
+        bitmap.close()
+        console.error('裁剪回来时底图已经换了一版（多半是生成落地），这一刀不写进去')
+        noticeBad('裁的时候画面已经变了 —— 这一刀没算数。要的话，再裁一次。')
+        setCrop(null)
+        setTool(null)
+        return
+      }
       const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
       // ⚠️ 发号器是顶上那个 `idRef`（**和生成那条共用**）—— "消息 id 就是步骤 id"
       //   那条老约定靠它；另开一个计数器会撞号（撞号的后果见 `loadSession` 里那段）。
@@ -1195,6 +1215,16 @@ export default function App() {
       //   （"删掉最新一步"那条路推的是同一个记号，那边钉的是封面。）
       baseSeqRef.current++
       setImage(base)
+      // ★ 终审 I3：**底图换了 = 那批"上一条照片的临时状态"一起清** —— `onPick` /
+      //   `loadSession` / `resetEditor` 三处都写着这条规矩，裁剪是**第四个**
+      //   换底图的地方，原来漏了。两条后果各有一半是"错了不报错"：
+      //   ① 点选那半：红圈存的是**旧底图**的归一化坐标（还在屏上、还能点
+      //      「就改这里」）—— 那是**花钱**的一次生成，改的位置是错的；
+      //   ② 确认条那半：挂着"要切掉后面吗"时裁一刀，回修图屏点「继续改」，
+      //      它的切点还落在原图上，会把**刚裁出来的那一步**切掉（条子自己还会
+      //      改口说"后面还有 0 步"）。两个 setState 放在同一批里，和上面那三处一样。
+      setPending(null)
+      setPendingReplace(null)
       // state + 影子 ref 一起写（`cursorIdRef` 的注释说了为什么）
       moveCursor(id)
       // 助手那句话和图片同批落（"裁好了。"—— 短、准，和「停了。」同一副语气）。
@@ -1716,13 +1746,15 @@ export default function App() {
       //   半路（`onPick` 里那句是不 await 的，而 `busy` 早清了）—— 它会在这段
       //   窗口里把 `sessionIdRef` 从 null 拨成 id，那是**同一张照片的同一条会话
       //   在长出来**（`onPick` 有 `originalFileRef.current === file` 守着），
-      //   不是"人走了"。比了就是拿一句"你切走时…"的**假话**把用户刚说的话扔掉
+      //   不是"人走了"。比了就是拿一句"画面已经变了…"的**假话**把用户刚说的话扔掉
       //   （2026-10-05 探针实测到，见「上传后立刻说话、建会话这时才回来」那条用例）。真换会话 / 换照片
       //   几条路**都推 `baseSeqRef`**（`loadSession` / `onPick` / `onSessionDeleted`
       //   各一处），`startNew` 走的是 `sidAt` 非 null 那一半 —— 漏掉 null 这一小格，
       //   一个真出口都漏不掉。
+      //   ★ 2026-10-06（终审 I2）：**裁剪**也推 `baseSeqRef`（同属"底图换了一版"），
+      //   所以这道闸拦下的不只是"人走了" —— 通报那句必须两边都成立（见下面那行）。
       if ((sidAt !== null && sessionIdRef.current !== sidAt) || baseSeqRef.current !== seqAt) {
-        noticeBad('你切走时，刚才那句话还没算完 —— 这边没动它。要的话，回去再说一遍。')
+        noticeBad('刚才那句话还没算完，画面已经变了 —— 这边没动它。要的话，再说一遍。')
         return
       }
       await applyDecision(decision, uid)
@@ -1742,7 +1774,7 @@ export default function App() {
     //   都是新对象，等于这个回调每渲染重建一次（`refreshLuts` 那边有同款注释）。
     // ★ 2026-10-05：`cancelReplace` 同上（上面那一行清它）。
     // ★ 2026-10-05（终审残留）：`noticeBad` 也进来 —— 挡住的那一趟要说一句
-    //   （"你切走时…"）。它身份稳定，但按这个文件的规矩：**读到的就写进依赖**。
+    //   （"画面已经变了…"）。它身份稳定，但按这个文件的规矩：**读到的就写进依赖**。
     //   两个 ref（`sessionIdRef` / `baseSeqRef`）是稳定身份，不进依赖。
   }, [busy, params, applyDecision, say, image, lutsApi.luts, lut, cancelReplace, noticeBad])
 

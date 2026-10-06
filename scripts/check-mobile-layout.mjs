@@ -843,6 +843,81 @@ function judgeSaveFail(label, m, view) {
   }
 }
 
+// ── ★ 2026-10-06（终审 C1）：调色屏「开着裁剪」那一态 ────────────────────
+//
+// 为什么单独量：**工具行的第二行**（比例 / 左右转 / 水平矫正 / 取消 / 完成）坐在
+// **照片上方**，而窄屏那一档的照片本来就只靠高度那条链活着 —— 第二行折几行，
+// 每一行都是从照片身上抠走的。实测过（Task 6）：390px 上它折成 3 行 = 136px，
+// 照片被挤到 **175×116**（低于 MIN_LONG/MIN_SHORT 那条线 = "用户看不见"），
+// 而当时**没有任何判据量得到它** —— 上面那些状态一个都没开过工具。
+//
+// 两条判据：① 第二行自己的高度 ≤ 64px（把"折了几行"变成会红的数：
+// 一行 ≈ 45px、两行 ≈ 90px）；② 「完成」「取消」两颗**完整落在视口里** ——
+// 它们是这一行的出口，窄屏横滑之后靠 `position: sticky` 钉在右边，滑多远都够得着。
+
+/** 量工具行第二行（只在「裁剪」开着的时候存在）。 */
+async function measureToolRow(page) {
+  return page.evaluate(() => {
+    const box = el => {
+      if (!el) return null
+      const b = el.getBoundingClientRect()
+      return {
+        w: Math.round(b.width), h: Math.round(b.height),
+        top: Math.round(b.top), left: Math.round(b.left),
+        bottom: Math.round(b.bottom), right: Math.round(b.right),
+      }
+    }
+    const btn = text => [...document.querySelectorAll('.crop-tools button')]
+      .find(b => (b.textContent ?? '').trim() === text) ?? null
+    return {
+      row: box(document.querySelector('.tool-row-second')),
+      done: box(btn('完成')),
+      cancel: box(btn('取消')),
+      scrollW: document.documentElement.scrollWidth,
+      clientW: document.documentElement.clientWidth,
+    }
+  })
+}
+
+function judgeToolRow(label, m, view) {
+  const fmt = b => (b ? `${b.w}x${b.h} @${b.left},${b.top}` : '不在 DOM 里')
+  console.log(`── ${label}`)
+  console.log(`     第二行 ${fmt(m.row)}   完成 ${fmt(m.done)}   取消 ${fmt(m.cancel)}`)
+  if (!m.row || m.row.w <= 0 || m.row.h <= 0) {
+    fails.push(`${label}：点了「裁剪」却没有第二行（.tool-row-second）——` +
+      '那个工具的控件整个不见了')
+    return
+  }
+  // ① 高度：**窄屏那一档**的账 —— 折一行就多约 45px，而这一行坐在照片上方
+  //    （那一档的照片只靠高度那条链活着，折出来的每一行都是直接从照片身上抠走的：
+  //    实测 3 行 = 136px，把照片挤到 175×116）。桌面那一档它**本来就折两行**
+  //    （舞台被预设栏 + 微调面板夹到 ~604px，而这一排控件约 770px 放不下），
+  //    照片仍然 479×320 —— 那是已验收的版面（Task 6 真机过，账在
+  //    `.superpowers/sdd/2026-10-06-edit-tools/`），所以这个数只管窄屏：
+  //    把它放开成全局判据的话，会在**健康的**桌面上亮红（假警报比没有判据更坏）。
+  if (view.width <= 640 && m.row.h > 64) {
+    fails.push(`${label}：工具行第二行有 ${m.row.h}px 高（判据 ≤ 64px）—— ` +
+      '它**折行**了。这一行坐在照片上方，折出来的每一行都是从照片身上抠走的' +
+      '（实测 3 行 = 136px，把 390px 那档的照片挤到 175×116）；' +
+      '窄屏该走"横向滑"那条路（和窄屏的历史带子 .strip 同款）')
+  }
+  // ② 出口：这两颗是这一行的"怎么办"，窄屏横滑之后必须**永远够得着**
+  for (const [name, b] of [['完成', m.done], ['取消', m.cancel]]) {
+    if (!b || b.w <= 0 || b.h <= 0) {
+      fails.push(`${label}：第二行里没有「${name}」这颗按钮 —— 那个工具就没有出口了`)
+      continue
+    }
+    if (!inViewport(b, view)) {
+      fails.push(`${label}：「${name}」没有完整落在视口里（${fmt(b)}，` +
+        `视口 ${view.width}x${view.height}）—— 窄屏横滑之后它得钉在右边，` +
+        '不然用户滑到哪里都点不到"这一趟怎么办"')
+    }
+  }
+  if (m.scrollW > m.clientW) {
+    fails.push(`${label}：页面横向溢出，要左右滑（${m.scrollW} > ${m.clientW}）`)
+  }
+}
+
 // ── 2026-09-30 加：上传前那一屏（`.welcome`）─────────────────────────────
 /**
  * 为什么补这一段：**上面每一条判据都是"传完照片之后"的** —— 而这一屏是
@@ -1412,6 +1487,28 @@ try {
         await page.waitForTimeout(500)
         judgeMarker(`${view.name} · 开着调色面板，圈还得钉在照片上`, await measurePick(page), null)
         judge(`${view.name} · 打开调色面板后`, await measure(page), view)
+
+        // ── ★ 2026-10-06（终审 C1）：第四个状态「开着裁剪」──────────────
+        // 工具行的第二行坐在照片上方，而窄屏那一档照片只靠高度那条链活着 ——
+        // 它一折行就是直接从照片身上抠走（实测过 175×116）。量法见 judgeToolRow。
+        // ⚠️ 点之前先问它在不在（和上面那颗「调色」同一条防呆）：少了这一句，
+        //   那一格没了的话整个探针会**崩在这里**（locator 超时抛出去），
+        //   后面每一屏、每一条判据全部不再跑。
+        const cropCell = page.locator('.tool-cell', { hasText: '裁剪' })
+        if (!(await cropCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「裁剪」那颗工具格 ——` +
+            '「开着裁剪」这一态量不了（下面两条判据先跳过）')
+        } else {
+          await cropCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.waitForTimeout(300)   // 让排版落定（横滑条出现会再占一点高）
+          judge(`${view.name} · 开着裁剪`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着裁剪`, await measureToolRow(page), view)
+          // 量完收掉（「取消」= 什么都没发生）—— 不收的话后面每一屏都多一条第二行，
+          // 而那些判据量的是别的功能。
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
       }
 
       // 一路走下来，花钱的那条路一次都不该被碰过。
@@ -1864,6 +1961,9 @@ if (fails.length) {
   console.log(`✅ ${VIEWS.length} 档 × 3 种状态都过（刚传完照片 / 打开调色面板 / 存失败之后）：` +
     `照片 ≥ ${MIN_LONG}x${MIN_SHORT}、画布完整在视口内、输入框在屏内、不用左右滑、`)
   console.log('   外加：红圈圆心落在点的地方、直径按画布长边算、小图真的解得出像素（全程零付费调用）')
+  console.log('   外加调色屏「开着裁剪」那一态（★ 2026-10-06 终审 C1）：工具行的第二行' +
+    '不折（窄屏 ≤ 64px，折出来的每一行都是从照片身上抠走的）、' +
+    '「完成 / 取消」两颗完整在视口里（窄屏横滑之后也够得着）')
   console.log('   外加存失败（§6.6 ①）：横幅和那个「下载到电脑」都完整在视口里、不用滚动、' +
     '画布还在、两个按钮的字各顶一行（不被 flex 挤扁）')
   console.log(`   外加作品页：${GALLERY_FAKE} 条时首屏只摆 ${GALLERY_FIRST} 张、圈在转、` +
