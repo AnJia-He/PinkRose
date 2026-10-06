@@ -1859,8 +1859,7 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图'])
   })
 
-  it('★ 站在中间那一步裁：被切掉的步骤，它们的位图要还回去（不关就是漏 GPU 内存）', async () => {
-    await renderApp()
+  it('★ 站在中间那一步裁：被切掉的步骤，它们的位图要还回去（不关就是漏 GPU 内存）', async () => {    await renderApp()
     await uploadPhoto()
     // 先生成一版（生成回来的那张位图由 `decodedBitmaps` 记着）
     vi.mocked(api.postRoute).mockResolvedValueOnce(
@@ -1882,6 +1881,72 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     await clickByText('完成')
 
     expect(generated.close, '被切掉那一步的位图必须关掉').toHaveBeenCalled()
+  })
+
+  it('★（评审 Critical）裁完之后那一趟落盘必须**重新带底图** —— 不带就等于没裁', async () => {
+    // 根因：`commitCrop` 只推了 history，没推 `baseSeqRef` —— 而落盘那趟判
+    // "底图换过没有"（`changed`）用的就是它，`patch.base` / `patch.thumb` 全在
+    // 那个 `if (changed)` 里。不推的后果**一句错都不报**：
+    //   服务端手里还是没裁过的那张，第 2 步被记成 `reusesPrev`，
+    //   刷新之后画面是原图（宽高比 1.5），转盘上却还留着一个叫「裁剪」的格子。
+    // 同一条规矩在"删掉最新一步"那边也有（那条用例钉的是封面）—— 换了底图就要重传。
+    await renderApp()
+    await uploadPhoto()
+    await openCrop()
+    await clickByText('完成')
+    await waitPersist()
+
+    const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
+    expect(body.base, '裁剪之后那一趟必须重新带上底图').toBeTruthy()
+    expect(body.thumb, '封面也要跟着换（左栏列表上显示的是"最后那张"）').toBeTruthy()
+    expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图', '裁剪'])
+  })
+
+  it('★（评审 Important ②）同一批次里还有别的 setState 时，站中间裁照样把未来那几步切掉', async () => {
+    // 根因：`commitCrop` 在 `setHistory` 的 **updater 里面**读 `cursorIdRef.current`，
+    // 而同一批次末尾的 `moveCursor(id)` 会把同一个 ref 改成**新步骤自己的 id**。
+    // React 的"eager 路径"只在"这个 fiber 没有挂起的更新"时才当场跑 updater ——
+    // 一旦同一批里还有别的 setState，updater 就落到**渲染时**才跑，读到的已经是新值：
+    // `cutAfter(prev, id)` 找不到那个 id → 未来那几步**不会被切**（顺序也跟着错）。
+    // ⚠️ 所以这条用例必须**制造那个"别的 setState"**：平时（只有它一个）走 eager 路径，
+    //    测试全绿 —— 那正是这个 Bug 一直没被测出来的原因。
+    //    做法：把建议卡片那趟挂住，在裁剪那句 await 回来之前放行它
+    //    （`suggesting` 由真变假 = 一个真实的 App state 更新，会占住 lane）。
+    const cardsGate = makeGate<SuggestResponse>()
+    vi.mocked(api.postSuggest).mockReturnValueOnce(cardsGate.promise)
+
+    await renderApp()
+    await uploadPhoto()
+    // 先造出"未来那一步"：生成一版
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉路人', reply: '好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await say('去掉路人')
+    // 回到原图那一步（转盘第一格）—— 在那儿裁 = **站中间裁**
+    await act(async () => {
+      (container.querySelectorAll('.strip-node')[0] as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await openCrop()
+
+    // 「完成」卡在 cropToBitmap 上：先放行卡片那趟（占住 lane），再放行裁剪
+    const gate = makeGate<ImageBitmap>()
+    vi.mocked(cropMod.cropToBitmap).mockReturnValueOnce(gate.promise)
+    const done = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '完成') as HTMLButtonElement
+    await act(async () => { done.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    await act(async () => {
+      cardsGate.open({ cards: [], degraded: false })
+      await Promise.resolve()
+      await Promise.resolve()
+      gate.open(fakeBitmap('cropped'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // 未来那一步（生成的那一版）必须已经被切掉：转盘上只剩「原图 + 裁剪」两格
+    await goNav('修图')
+    expect(container.querySelectorAll('.strip-node'), '站中间裁必须切掉后面那几步').toHaveLength(2)
   })
 })
 

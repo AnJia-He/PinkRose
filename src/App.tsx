@@ -1151,6 +1151,17 @@ export default function App() {
    */
   const commitCrop = useCallback(async () => {
     if (!crop || !image) return
+    // ⚠️ **"此刻站在哪一步"必须在 `await` 之前读出来**（评审 Important ②）——
+    //    这不是洁癖，是 `setHistory` 的 updater **不保证当场跑**：
+    //    React 的 eager 路径只在"这个 fiber 没有挂起的更新"时才立刻算一遍，
+    //    同一批里只要还有别的 setState（等待裁剪位图那几十~几百毫秒里，
+    //    卡片的应答 / 某个计时器 / 别处的一次 setState 任意一个落下来），
+    //    updater 就推到**渲染时**才跑 —— 而那时同一批次末尾的 `moveCursor(id)`
+    //    已经把 `cursorIdRef` 改成**新步骤自己的 id**了：`cutAfter(prev, id)`
+    //    找不到它，站在中间裁时**未来那几步不会被切**（顺序也跟着错）。
+    //    和 `useGeneration` 的 `origin` 显式入参是同一条规矩：隔着 await 的地方，
+    //    位置一律**当场读、传值**。
+    const at = cursorIdRef.current
     try {
       const bitmap = await cropToBitmap(image.bitmap, crop.spec, crop.turns)
       const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
@@ -1160,10 +1171,11 @@ export default function App() {
       setHistory(prev => {
         const next = localStep(prev, {
           id, label: '裁剪', base, params, lut,
-          // 此刻站在哪一步 —— 大于它的一律切掉（**站在中间裁**就是这个意思）。
+          // 大于它的一律切掉（**站在中间裁**就是这个意思）—— 用上面读好的 `at`，
+          // 别在 updater 里现读 ref（理由见函数头）。
           // `?? id` 那一格到不了（有照片 ⇒ 位置非空），写上是不让类型缺口变成
           // 一个"点了没反应"的按钮。
-          cursorId: cursorIdRef.current ?? id,
+          cursorId: at ?? id,
         })
         // 被切掉 / 被挤出去的位图要还回去；原图永远不关（和 `useGeneration`
         // 那一段一字不差）。`close()` 幂等，StrictMode 重放也安全。
@@ -1172,6 +1184,12 @@ export default function App() {
         }
         return next
       })
+      // ★（评审 Critical）**底图换了一版，记号要往前挪** —— 落盘那趟判
+      //   "要不要重传 base / 封面"用的就是它（`changed`）。不推的话服务端手里
+      //   还是**没裁过**的那张：第 2 步被记成 `reusesPrev`，刷新之后画面是原图、
+      //   转盘上却还留着一个叫「裁剪」的格子 —— 一句错都不报。
+      //   （"删掉最新一步"那条路推的是同一个记号，那边钉的是封面。）
+      baseSeqRef.current++
       setImage(base)
       // state + 影子 ref 一起写（`cursorIdRef` 的注释说了为什么）
       moveCursor(id)
