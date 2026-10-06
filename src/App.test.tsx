@@ -6966,25 +6966,34 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
   }
 
   it('纯文字那条：点开「…」→【删除】直接删 —— 不问、时间轴不跟着走、钱一分不花', async () => {
-    await oneVersion()
-    expect(bubbleTexts()).toEqual(['准备好啦，说说想怎么改？', '先改一次', '好，改好了。'])
-    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)   // 原图 + 这一步
+    // ★ 2026-10-06（更晚）：**「…」一轮只有一颗、挂在助手的回复上**（用户原话：
+    //   「不用每个对话下面都有省略号，可以一段对话里有一个了，一问一答就是一段
+    //   对话」）—— 所以这条用例演的"纯文字那条"从**用户的话**换成了**助手的
+    //   纯文字回复**（`route: 'params'` 那种，身后没有一步）。用户自己那句话
+    //   现在末尾没有「…」，单删它只剩批选那条路（见下面多选那一组）。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 10 }, reply: '这句不用改图。' }))
+    await renderApp()
+    await uploadPhoto()
+    await say('你好')
+    expect(bubbleTexts()).toEqual(['准备好啦，说说想怎么改？', '你好', '这句不用改图。'])
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(1)   // 只有原图
     const posts = vi.mocked(api.postEdit).mock.calls.length
 
     // ① 点「…」之前没有菜单；点开之后菜单里有【删除】
     expect(container.querySelector('.msg-menu')).toBeNull()
-    await clickEl(moreBtnOf('先改一次'))
-    expect(menuDelOf('先改一次').textContent).toBe('删除')
-    await clickEl(menuDelOf('先改一次'))
+    await clickEl(moreBtnOf('这句不用改图。'))
+    expect(menuDelOf('这句不用改图。').textContent).toBe('删除')
+    await clickEl(menuDelOf('这句不用改图。'))
 
     // ② 那条话**立刻**没了（身后没有一步，不用确认）
-    expect(bubbleTexts()).not.toContain('先改一次')
+    expect(bubbleTexts()).not.toContain('这句不用改图。')
     expect(container.querySelectorAll('.msg')).toHaveLength(2)
     // ③ 没有确认条；菜单也跟着那条消息一起没了（别留一条悬着的菜单）
     expect(container.textContent).not.toContain('删了就找不回来了')
     expect(container.querySelector('.msg-menu')).toBeNull()
     // ④ 它身后没有一步：时间轴上一格不少、也没花什么钱
-    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(1)
     expect(api.postEdit).toHaveBeenCalledTimes(posts)
   })
 
@@ -7020,19 +7029,28 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
   })
 
   it('「…」是开关：再点一下就收起；开一条时别的自己收 —— 一次只开一条', async () => {
-    await oneVersion()
+    // ★ 2026-10-06（更晚）：「…」一轮一颗、挂在**助手那条**上 —— 所以"开 A 再开
+    //   B"要**两轮**（两条回复）才演得出来，原来那版是拿"用户话 + 回复"凑的。
+    vi.mocked(api.postRoute)
+      .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '改一下', reply: '第一版好了。' }))
+      .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '再改一下', reply: '第二版好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')
+    await say('再改一次')
     // 点开 → 一条菜单；同一个「…」再点 → 收起
-    await clickEl(moreBtnOf('先改一次'))
+    await clickEl(moreBtnOf('第一版好了。'))
     expect(container.querySelectorAll('.msg-menu')).toHaveLength(1)
-    await clickEl(moreBtnOf('先改一次'))
+    await clickEl(moreBtnOf('第一版好了。'))
     expect(container.querySelectorAll('.msg-menu')).toHaveLength(0)
     // 开 A、再开 B：只剩 B 那条（A 自己收起来，不会两条菜单并排挂着）
-    await clickEl(moreBtnOf('先改一次'))
-    await clickEl(moreBtnOf('好，改好了。'))
+    await clickEl(moreBtnOf('第一版好了。'))
+    await clickEl(moreBtnOf('第二版好了。'))
     const menus = container.querySelectorAll('.msg-menu')
     expect(menus).toHaveLength(1)
     expect(menus[0]!.closest('.msg')?.querySelector('.bubble-text')?.textContent)
-      .toBe('好，改好了。')
+      .toBe('第二版好了。')
   })
 
   /**
@@ -7085,6 +7103,21 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
         await clickEl(mores[mores.length - 1])
         expect(container.querySelector('.msg-menu')).toBeTruthy()
         expect(log.scrollTop).toBe(0)
+      } finally { restore() }
+    })
+
+    /**
+     * ★ 真机上量到的：修好之后菜单底边还差 **0.42px** 露在外面 —— `scrollTop`
+     * 会被浏览器落成整数，差不到一个像素的那一加等于没动。所以那一滚要**向上
+     * 取整**（多滚 1px 的代价是零，少滚 0.4px 就是"底下永远缺一条边"）。
+     */
+    it('只伸出不到一个像素 → 也要滚（scrollTop 走整数，向上取整）', async () => {
+      await oneVersion()
+      const { log, restore } = fakeBoxes(200.4, 260.8)  // 伸出 60.4px（.4 那截要进上去）
+      try {
+        const mores = [...container.querySelectorAll<HTMLButtonElement>('.msg-more')]
+        await clickEl(mores[mores.length - 1])
+        expect(log.scrollTop).toBe(61)
       } finally { restore() }
     })
   })
@@ -7206,8 +7239,29 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
       m => (m.querySelector('.bubble-text')?.textContent ?? '').includes('准备好啦'))
     expect(welcome).toBeTruthy()
     expect(welcome!.querySelector('.msg-more')).toBeNull()
-    // ⚠️ 这不是"选择器没找着"：别的消息上那颗照常在（用户话 + 回复，两条）
-    expect(msgs.filter(m => m.querySelector('.msg-more'))).toHaveLength(2)
+    // ⚠️ 这不是"选择器没找着"：助手那条回复上那颗照常在（★ 2026-10-06 更晚：
+    //    **「…」一轮只有一颗**，所以这里从 2 变成了 1 —— 用户自己那句话也没有了，
+    //    下一条用例专门钉那件事）。
+    expect(msgs.filter(m => m.querySelector('.msg-more'))).toHaveLength(1)
+  })
+
+  /**
+   * ★★ 2026-10-06（更晚）用户原话：「**不用每个对话下面都有省略号，可以一段对话里
+   * 有一个了，一问一答就是一段对话**」。
+   *
+   * 落成两条：① 一轮（一问 + 一答）**只有一颗**「…」；② 挂在**助手那句回复**上
+   * （一轮的末尾）—— 豆包也是这么放的（操作挂在回答底下）。
+   *
+   * ⚠️ 判据是 `hasMenu` 不是 `delable`：用户那句话**照样勾得动、批选里删得掉**
+   *   （下面多选那一组钉着）—— "一轮一颗「…」"不该顺手把批量删除也削掉一块。
+   */
+  it('★「…」一轮只有一颗：挂在助手的回复上，用户自己那句话没有', async () => {
+    await oneVersion()
+    const byText = (t: string) => [...container.querySelectorAll<HTMLElement>('.msg')]
+      .find(m => (m.querySelector('.bubble-text')?.textContent ?? '') === t)!
+    expect(byText('先改一次').querySelector('.msg-more')).toBeNull()      // 用户的话：没有
+    expect(byText('好，改好了。').querySelector('.msg-more')).toBeTruthy() // 助手的回复：有
+    expect(container.querySelectorAll('.msg-more')).toHaveLength(1)       // 全屏就这一颗
   })
 
   it('删完之后落盘那一趟：被删的步骤 id 和那句话都不在 PUT 里', async () => {
@@ -7230,22 +7284,23 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
   })
 
   it('忙的时候「…」是禁用的 —— 点了也删不动', async () => {
+    await oneVersion()
     // 用**路由**那一段挂住（「正在思考…」，还没开始生成）：钉的是 `busy` 这个
     // 总闸门，不是"生成中"那一格。
+    // ★ 2026-10-06（更晚）：「…」只在**助手的回复**上 —— 所以要挂住的是**第二轮**
+    //   的路由，这样前一轮那条回复（带着「…」）还留在屏幕上；挂第一轮的话，
+    //   屏幕上压根没有「…」可点。
     const gate = makeGate<RouteDecision>()
     vi.mocked(api.postRoute).mockReturnValueOnce(gate.promise)
-
-    await renderApp()
-    await uploadPhoto()
-    await say('先改一次')
+    await say('再改一次')
     expect(canvasProps.props.at(-1)?.busy).toBe(false)     // 这趟还没走到生成
 
-    const btn = moreBtnOf('先改一次')
+    const btn = moreBtnOf('好，改好了。')
     expect(btn.disabled).toBe(true)
 
     await clickEl(btn)                                     // 点了也打不开菜单
     expect(container.querySelector('.msg-menu')).toBeNull()
-    expect(bubbleTexts()).toContain('先改一次')
+    expect(bubbleTexts()).toContain('好，改好了。')
 
     // 放行，让这一趟收工（不留下挂着的 promise）
     await act(async () => {
@@ -7267,10 +7322,10 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
    */
   it('菜单第二项【多选】→ 选择模式：每条一个勾选框（原图没有）、输入框让位给操作条、别的按钮全收', async () => {
     await oneVersion()
-    await clickEl(moreBtnOf('先改一次'))
-    expect(pickItemOf('先改一次').textContent).toBe('多选')
+    await clickEl(moreBtnOf('好，改好了。'))
+    expect(pickItemOf('好，改好了。').textContent).toBe('多选')
 
-    await clickEl(pickItemOf('先改一次'))
+    await clickEl(pickItemOf('好，改好了。'))
 
     // 勾选框：用户话 + 回复各一个；「原图」那条没有（它是锚，不给勾）
     expect(container.querySelectorAll('.msg-pick')).toHaveLength(2)
@@ -7287,7 +7342,7 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
 
   it('勾一条算一条：点勾选框、点那条消息都能勾；再点一下取消', async () => {
     await oneVersion()
-    await enterSelect('先改一次')
+    await enterSelect('好，改好了。')
     const countText = () => container.querySelector('.chat-select')?.textContent ?? ''
 
     await clickEl(pickBoxOf('先改一次'))
@@ -7312,7 +7367,7 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
 
   it('一条都没勾时【删除】是禁用的 —— 不留一个点了没用的按钮', async () => {
     await oneVersion()
-    await enterSelect('先改一次')
+    await enterSelect('好，改好了。')
     expect(selectDelBtn().disabled).toBe(true)
     await clickEl(pickBoxOf('先改一次'))
     expect(selectDelBtn().disabled).toBe(false)
@@ -7320,7 +7375,7 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
 
   it('勾的全是纯文字：点【删除】直接删 —— 不问、不花钱、删完退出选择模式', async () => {
     await oneVersion()
-    await enterSelect('先改一次')
+    await enterSelect('好，改好了。')
     const posts = vi.mocked(api.postEdit).mock.calls.length
     await clickEl(pickBoxOf('先改一次'))
     await clickEl(selectDelBtn())

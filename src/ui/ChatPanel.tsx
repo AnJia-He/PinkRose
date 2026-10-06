@@ -261,7 +261,10 @@ export default function ChatPanel({
     const log = logRef.current, menu = menuElRef.current
     if (!log || !menu) return
     const over = menu.getBoundingClientRect().bottom - log.getBoundingClientRect().bottom
-    if (over > 0) log.scrollTop += over
+    // ⚠️ `Math.ceil` 不是洁癖：`scrollTop` 会被浏览器落成整数，差 0.4px 的话
+    //    那一加等于没动 —— 菜单底边就永远差那么一丁点露在滚动区外面
+    //    （真机上量到过 `伸出 0.42px`）。多滚 1px 的代价是零。
+    if (over > 0) log.scrollTop += Math.ceil(over)
   }, [menuId])
 
   useEffect(() => {
@@ -287,6 +290,20 @@ export default function ChatPanel({
           const isStep = jumpableIds.includes(m.id)
           // 「原图」那条（= 欢迎语，同一条消息）不摆 ✕ —— 它是这条会话的锚。
           const delable = m.id !== originalId
+          /**
+           * ★ 2026-10-06（更晚，用户原话：「**不用每个对话下面都有省略号，可以
+           * 一段对话里有一个了，一问一答就是一段对话**」）：**「…」一轮只有一颗**，
+           * 挂在**助手那句回复**上（一轮的末尾），用户自己那句话不摆 ——
+           * 豆包也是这么放的（操作挂在回答底下）。
+           *
+           * ⚠️ 和 `delable` **是两个判据，别合并**：`delable` 管的是"这条能不能
+           *   删"（批选里每一条都还勾得动、删得掉），`hasMenu` 只管"末尾摆不摆
+           *   那颗「…」"。合并的话，用户那句话在**批选**里也会跟着变得不可选 ——
+           *   而"一轮只有一颗「…」"不该顺手把批量删除也削掉一块。
+           * ⚠️ 代价（用户点名要的）：**单删一句自己说的话**从此只能走批选
+           *   （「…」→【多选】→ 勾上它 → 删除）。
+           */
+          const hasMenu = delable && m.role === 'assistant'
           return (
             <div key={m.id} className={`msg ${m.role}`}>
               {/* ① 话。
@@ -297,17 +314,21 @@ export default function ChatPanel({
                 <div className="bubble-text">{m.text}</div>
               </div>
               {/* ② 末尾那一排：再来一版 / 「…」。
-                  ★ 2026-10-06：它不再套在 `.shot` 里了 —— 这一排现在是**每段都有**
-                  的（用户要的豆包式：「放个这个图标在每段对话的最后」）：纯文字
-                  那条只有「…」一颗；「原图」那条**一颗都没有**（它不是可重掷的
-                  那一步，也是这条会话的锚）。间距由 `.msg` 自己的 gap 管。
+                  ★ 2026-10-06：它不再套在 `.shot` 里了 —— 这一排是**每一轮
+                  末尾**都有的（用户要的豆包式：「放个这个图标在每段对话的最后」）。
+                  ★ 2026-10-06（更晚）：**一轮只有一颗「…」**，而且只挂在**助手
+                  那句回复**上（`hasMenu`，理由见上面那段）—— 用户自己那句话
+                  整排都不出现。「原图」那条**一颗都没有**（它不是可重掷的那一步，
+                  也是这条会话的锚）。间距由 `.msg` 自己的 gap 管。
                   ★ 2026-10-06（晚）：这一排原来领头的是「回到这一步 / 你在这里」
                   —— 用户指着它说「**那这些文字提示就可以不要了**」（转盘上已经
                   写着"你在哪、回到哪一版"）。两颗一起撤了，`onJump` / `currentId`
                   两个 prop 也跟着删；**"在哪一步"这件事从此只有转盘一个出处**。
                   ★ 2026-10-06 下午：**选择模式里这一排整个让位给一颗勾选框** ——
                   平时那些按钮一个不留（选东西的时候没有别的可点，「再来一版」
-                  更是花钱的，不能混在里面）。 */}
+                  更是花钱的，不能混在里面）。
+                  ⚠️ 勾选框走的是 `delable`（**每条非原图的消息都有**，包括用户
+                  自己那句）—— 和上面 `hasMenu` 那条规矩是两码事。 */}
               {selecting ? delable && (
                 <div className="bubble-actions">
                   {/* ⚠️ 原生 checkbox 就够了：系统画的勾选框比自绘的有辨识度
@@ -318,7 +339,7 @@ export default function ChatPanel({
                     onChange={() => togglePick(m.id)}
                     aria-label="选中这条记录" />
                 </div>
-              ) : (rerunnable.includes(m.id) || delable) && (
+              ) : (rerunnable.includes(m.id) || hasMenu) && (
                 <div className="bubble-actions">
                   {/* 「再来一版」= 同一句话重掷一次。**它不是"回到这一步"那类提示**
                       —— 它是一件真事：拿着当初那句话再花一次钱重跑（见 App 的
@@ -341,6 +362,10 @@ export default function ChatPanel({
                       但灰灰小小的，不跟内容抢眼。点开**就地展开**菜单，不弹浮层
                       （全站规矩）。永远排在最后一个（豆包也是主操作在前、
                       「…」收尾）。
+                      ★ 判据是 `hasMenu` **不是** `delable`：**一轮只有这一颗**
+                      （挂在助手那条回复上，见上面那段）—— 写成 `delable` 的话
+                      用户自己那句话末尾也会长出一颗（用户 2026-10-06 更晚点名
+                      不要的，就是那个）。
                       ⚠️ `aria-label` 是读屏和"按标签找元素"的唯一依据（图标键和
                       左栏「个人设置」同一条规矩）；`aria-expanded` 报开合。
                       ⚠️ `busy` 时禁用（和「就改这里」同款）：忙的时候删等于在一次
@@ -348,7 +373,7 @@ export default function ChatPanel({
                       真闸门）。
                       ⚠️ 确认条开着时这颗收掉（`confirmingId !== m.id`）—— 那条
                       已经在问同一个问题了，两颗并存会像"删除按钮点了没反应"。 */}
-                  {delable && confirmingId !== m.id && (
+                  {hasMenu && confirmingId !== m.id && (
                     <button className="msg-more" aria-label="更多操作"
                       aria-expanded={menuId === m.id} disabled={!!busy}
                       onClick={() => setMenuId(cur => (cur === m.id ? null : m.id))}>
