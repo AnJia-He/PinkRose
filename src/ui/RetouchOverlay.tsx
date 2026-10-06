@@ -69,10 +69,14 @@ export default function RetouchOverlay(props: {
       for (let x = x0; x < x1; x++) {
         const v = mask[y * W + x]!
         const i = ((y - y0) * (x1 - x0) + (x - x0)) * 4
+        // 记号色 = 照片上那个红圈的**同一种红**（`styles.css` 的 `.canvas-marker`
+        // 与 `image/mark.ts` 画进图里的 #ff3b30）—— 照片上的红记号全站一种墨，
+        // 别各挑各的（2026-10-07 交付前对照检查抓到过两颗不同的红）。
         img.data[i] = 255
-        img.data[i + 1] = 64
-        img.data[i + 2] = 64
-        img.data[i + 3] = Math.round((v / 255) * 140)
+        img.data[i + 1] = 59
+        img.data[i + 2] = 48
+        // 浓度 50%：PS 快速蒙版那套惯例（"要动的区域"半透明盖一层）
+        img.data[i + 3] = Math.round((v / 255) * 128)
       }
     }
     ctx.putImageData(img, x0, y0)

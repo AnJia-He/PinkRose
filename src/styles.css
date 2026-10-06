@@ -1008,8 +1008,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   border-radius: var(--r-sm);
 }
 /* 画笔光标圈：**屏幕像素**大小（组件按显示比例算好）—— 放大时它不该跟着变大。
-   颜色不走令牌（和 `.canvas-marker` / `.crop-h` 同一类）：画在照片上的记号，
-   底下是晚霞还是雪地都得看得见。 */
+   颜色不走令牌，属于"画在照片上的东西"那一族；**白圈 + 双面黑描边**（和
+   `.crop-h` 把手、`.compare-handle` 同一种墨）：它是**工具**（圈出笔有多大），
+   白色读作"手上的东西"；照片上的**红**留给**记号**（`.canvas-marker` 的圈、
+   掩码预览的红影）—— 工具白、记号红，两套语言别混。 */
 .retouch-cursor {
   position: absolute;
   border-radius: 50%;
