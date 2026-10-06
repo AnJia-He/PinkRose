@@ -977,11 +977,20 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
 /* ── 调色屏的工具行（★ 2026-10-06）────────────────────────────────────
    和上面那条历史转盘带子**同一套语言**（同一块地方，两个屏各用一次）：
-   `--raised` 实心 + 一道 `--line`。第一行是三颗工具，第二行是当前工具的控件。 */
+   `--raised` 实心 + 一道 `--line`。第一行是两颗工具，第二行是当前工具的控件。 */
 .tool-row {
   flex: none;
   background: var(--raised);
   border-bottom: 1px solid var(--line);
+}
+/* ★ 和 `.strip` 那条**一模一样**的"铺满"（见上面「第二版：它得铺满舞台」那段）：
+   只给底色 + 一道线的话，真机上四周全是舞台留白 —— 读起来还是"悬在中间的一块
+   矩形"，不像"上下分成两块"。两个负外边距顶到舞台的上边和左右边（舞台内边距的
+   同一个 `--stage-pad-y`），底下的留白再**原样还给照片区**。
+   ⚠️ 选择器只吃调色屏那一屏：`.tool-row` 只在 `view.kind === 'adjust'` 渲染，
+   修图屏那条位置上坐的是 `.strip`（它自己那条在上面），两者不重叠。 */
+.workspace .stage > .tool-row {
+  margin: calc(-1 * var(--stage-pad-y)) calc(-1 * var(--sp-5)) var(--stage-pad-y);
 }
 .tool-row-main { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); }
 .tool-row-second {

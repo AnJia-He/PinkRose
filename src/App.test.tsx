@@ -29,8 +29,11 @@ const canvasProps = vi.hoisted(() => ({
   images: [] as { width: number; height: number }[],
   // ★ 2026-10-06：`busy` 是"生成中照片上那层暗罩"的唯一依据（真的 Canvas 按它
   //   渲染 `.canvas-veil`）—— 这个假画布看不到暗罩本身，就只能看它拿到的 prop。
+  //   ★ 2026-10-06（工具行）：`viewLocked` 同理 —— 工具开着时的手势停用
+  //   （滚轮 / 拖动 / 双击不响应、右下角那排按钮不画）**那一半量在真画布那边**
+  //   （`Canvas.zoom.test.tsx` 里量真的 DOM），这儿只钉 App 有没有把它送出去。
   props: [] as { originalPreview: string | null; picking: boolean; marker: unknown
-                  params: Record<string, number>; busy: boolean }[],
+                  params: Record<string, number>; busy: boolean; viewLocked: boolean }[],
 }))
 
 /** 画布：真的那个要 WebGL2。这里给一个真 <canvas> 并挂上 ref ——
@@ -38,9 +41,9 @@ const canvasProps = vi.hoisted(() => ({
 vi.mock('./ui/Canvas', async () => {
   const React = await import('react')
   return {
-    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint, busy }: any) => {
+    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint, busy, viewLocked }: any) => {
       canvasProps.images.push(image)
-      canvasProps.props.push({ originalPreview, picking, marker, params, busy })
+      canvasProps.props.push({ originalPreview, picking, marker, params, busy, viewLocked })
       return React.createElement('canvas', {
         ref: (node: HTMLElement | null) => {
           canvasRef.current = node
@@ -1604,10 +1607,28 @@ describe('历史小图：每一步都看得见（照片上方那条时间轴上�
     expect(container.querySelector('.tool-row')).toBeTruthy()
     expect(container.querySelector('.strip')).toBeNull()
 
+    // ★ 开着工具 = 手势停用：App 把 `viewLocked` 交给 Canvas。真画布按它停掉
+    //   滚轮 / 拖动 / 双击、并且不画那排缩放按钮 —— 那几条（含 `.zoom-bar`
+    //   不在）量在 `Canvas.zoom.test.tsx` 里，这儿的画布是假的、量不到那些 DOM，
+    //   所以这一层只钉"App 有没有把它送出去"。
+    const cropCell = () => container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
+    await act(async () => { cropCell().click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(cropCell().className).toContain('on')                 // 亮着了
+    expect(canvasProps.props.at(-1)?.viewLocked).toBe(true)      // 手势已停用
+
     // 切回修图屏：工具行跟着没了（它只在调色那一屏）。
     await goNav('修图')
     expect(container.querySelector('.tool-row')).toBeNull()
     expect(container.querySelector('.stage .strip')).toBeTruthy()
+
+    // ★ 切屏要把工具**收掉**（App 里那条 `[view.kind]` 的 effect —— 不收的话
+    //   回到调色屏时它还开着，而那时候照片可能已经换了，裁剪框会落在新照片上）。
+    //   判据：刚才开着的那颗不再亮、第二行不在、手势也放开了。
+    await goNav('调色')
+    expect(container.querySelector('.tool-row')).toBeTruthy()
+    expect(cropCell().className).not.toContain('on')
+    expect(container.querySelector('.tool-row-second')).toBeNull()
+    expect(canvasProps.props.at(-1)?.viewLocked).toBe(false)
   })
 
   /**

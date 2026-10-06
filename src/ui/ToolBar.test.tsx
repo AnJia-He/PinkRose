@@ -17,7 +17,7 @@ const pick = async (label: string) => {
 }
 
 describe('工具行', () => {
-  it('三个格子；点一下告诉上层，再点一下收回', async () => {
+  it('两个格子；点一下告诉上层，再点一下收回', async () => {
     const seen: (string | null)[] = []
     await act(async () => { root.render(<ToolBar active={null} onPick={t => seen.push(t)} />) })
     expect(container.querySelectorAll('.tool-cell')).toHaveLength(2)

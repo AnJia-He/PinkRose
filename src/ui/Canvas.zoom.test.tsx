@@ -67,6 +67,8 @@ type Opts = {
   picking?: boolean
   marker?: { x: number; y: number } | null
   resetKey?: unknown
+  /** ★ 2026-10-06（工具行）：工具开着 = 手势停用（滚轮 / 拖动 / 双击、按钮不画）。 */
+  viewLocked?: boolean
   onPickPoint?: (x: number, y: number) => void
 }
 
@@ -85,7 +87,7 @@ async function mount(o: Opts = {}) {
         image={next.image ?? IMG} params={P} lutCube={null} lutAmount={0}
         originalPreview={next.originalPreview ?? null} canvasRef={canvasRef}
         picking={next.picking} marker={next.marker} onPickPoint={next.onPickPoint}
-        resetKey={next.resetKey} onFail={noFail}
+        resetKey={next.resetKey} viewLocked={next.viewLocked} onFail={noFail}
       />,
     )
   })
@@ -334,6 +336,42 @@ describe('什么时候归位', () => {
     // 换会话 / 换照片：那是另一回事了
     await c.rerender({ resetKey: 2, image: IMG2 })
     expect(c.view()).toEqual({ x: 0, y: 0, scale: 1 })
+  })
+})
+
+/**
+ * ★ 2026-10-06（工具行）：工具开着时**手势停用** —— 滚轮 / 拖动 / 双击全不响应，
+ * 右下角那排缩放按钮也不画。理由：裁剪时一边拉框一边缩放会让框和手指打架
+ * （spec §3.1）。判据是 App 传下来的 `viewLocked`（`tool !== null`）。
+ */
+describe('工具开着时（viewLocked）：手势停用', () => {
+  it('滚轮一格都不动 —— 而且**也不拦默认行为**（监听压根没挂）', async () => {
+    const c = await mount({ viewLocked: true })
+    const e = await wheel(c.wrap(), AREA.width / 2, AREA.height / 2, -360)
+    expect(c.view()).toEqual({ x: 0, y: 0, scale: 1 })
+    // `preventDefault` 是"我接了这一滚、页面别跟着滚"才做的事 —— 没接就不该拦。
+    // 这一条顺带把"监听到底挂没挂"量出来：只断言 scale 不变的话，
+    // "挂了监听但里面判了 viewLocked"也照样绿。
+    expect(e.defaultPrevented).toBe(false)
+  })
+
+  it('右下角那排缩放按钮不画（放大 / 缩小 / 适应窗口 三颗都不在）', async () => {
+    const c = await mount({ viewLocked: true })
+    expect(c.bar()).toBeNull()
+  })
+
+  it('★ 先开着再锁上：滚轮那条监听要真的摘掉（钉住依赖数组）', async () => {
+    // ⚠️ 这条是**唯一**能抓住"依赖数组里漏了 viewLocked"的：漏了的话 effect
+    //    不重跑、旧监听还挂在 wrap 上，而它的闭包里是上一轮的 viewLocked（假）——
+    //    用户开着工具滚一下，**画面照样缩放、全程不报错**。
+    const c = await mount()
+    await wheel(c.wrap(), AREA.width / 2, AREA.height / 2, -360)
+    const zoomed = c.view().scale
+    expect(zoomed).toBeGreaterThan(1)              // 没锁时确实放大了
+
+    await c.rerender({ viewLocked: true })
+    await wheel(c.wrap(), AREA.width / 2, AREA.height / 2, -360)
+    expect(c.view().scale, '锁上之后滚轮必须一步都不动').toBe(zoomed)
   })
 })
 
