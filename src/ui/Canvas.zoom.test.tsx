@@ -211,18 +211,35 @@ describe('拖动 = 平移', () => {
     expect(c.view()).toEqual({ x: 0, y: 0, scale: 1 })
   })
 
-  it('放大之后拖到哪算哪，拖过头就停在边上', async () => {
+  it('放大之后拖到哪算哪，拖过头就停在"照片的边贴到画面正中间"', async () => {
     const c = await mount()
-    await press(c.byLabel('放大'))            // 1.4 倍：两边各能挪 50 / 80
+    await press(c.byLabel('放大'))            // 1.4 倍：照片 700×560，最多各挪半张（350 / 280）
     await down(c.wrap(), 100, 100)
     await move(140, 130)                      // +40 / +30
     await up()
     expect(c.view()).toEqual({ x: 40, y: 30, scale: 1.4 })
 
     await down(c.wrap(), 100, 100)
-    await move(500, 100)                      // 想挪 400 → 只给到边界
+    await move(500, 100)                      // 想挪 400 → 只给到半张宽
     await up()
-    expect(c.view().x).toBe(50)
+    expect(c.view().x).toBe(350)
+  })
+
+  it('★ 照片角上的细节能一路拖到画面正中间（用户 2026-10-06 晚要的）', async () => {
+    // 他原话：「假如我想把右上角的细节点放大放到正中间来是没法实现的」——
+    // 旧的夹法（照片必须盖满可视区）只允许把角拉到**屏幕的角**上，
+    // 照片外圈那一带永远到不了中间。现在：任何一点都能拉到正中间。
+    const c = await mount()
+    await dblclickAt(c.wrap(), 300, 200)      // 100%：照片 1000×800，正居中
+    await down(c.wrap(), 300, 200)
+    await move(-200, 600)                     // 往左下拖半张 → 右上角走到中间
+    await up()
+
+    expect(c.view()).toEqual({ x: -500, y: 400, scale: 2 })
+    // 右上角此刻落在画布盒子的右上角 —— 而那个点就是可视区的正中心
+    const r = (c.container.querySelector('.canvas') as HTMLElement).getBoundingClientRect()
+    expect(r.right).toBeCloseTo(AREA.width / 2)
+    expect(r.top).toBeCloseTo(AREA.height / 2)
   })
 
   it('手抖那几像素不算拖动（阈值以内画面不动）', async () => {

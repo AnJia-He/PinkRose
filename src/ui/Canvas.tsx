@@ -253,11 +253,11 @@ export default function Canvas({
           ? prev
           : next
       })
-      // ★ 缩放：窗口变小 / 切到窄屏之后，原来那个平移量可能已经把照片拉出边界了
-      //   （见 `viewport.clampView` 那条"照片永远盖满可视区"）—— 顺手收回来。
+      // ★ 缩放：窗口变小 / 切到窄屏之后，原来那个平移量可能已经把照片拉出去太远了
+      //   （见 `viewport.clampView` 那条"画面中心永远有照片"）—— 顺手收回来。
       //   没动的话 `clampView` 返回的是同一个对象，不会白渲染一次。
       if (image) {
-        const next = clampView(viewRef.current, fitBox(image, areaRef.current), areaRef.current)
+        const next = clampView(viewRef.current, fitBox(image, areaRef.current))
         if (next !== viewRef.current) putView(next)
       }
     }
@@ -367,7 +367,7 @@ export default function Canvas({
         setPeeking(false)                              // 动起来了，那就不叫"按住看原图"
       }
       const area = areaRef.current
-      putView(panBy(p.base, dx, dy, fitBox(image, area), area))
+      putView(panBy(p.base, dx, dy, fitBox(image, area)))
     }
 
     /** 三种"松手"共用它：抬手、系统把指针抢走（来电、通知、滚动接管）——

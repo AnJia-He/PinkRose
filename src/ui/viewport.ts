@@ -55,18 +55,26 @@ export function maxScale(img: Size, fit: Size): number {
 }
 
 /**
- * 把视图收进合法范围：**照片永远盖满可视区**，边上不许拉出空白来。
- * 某根轴上照片比可视区还小（比如竖图放大得不够）时，那一根轴只能在正中间 ——
- * 这条同时也是"适应窗口时拖不动"的实现：倍数 1 时两个方向的余量都是 0。
+ * 把视图收进合法范围。规矩只有一条：**画面中心永远有照片。**
+ *
+ * 也就是说，照片的边**最多拉到画面正中间**为止；反过来说 —— **照片上任何一个
+ * 点都能拉到正中间来**，包括最角上那一个。这一条是用户 2026-10-06 晚上亲自要的：
+ * 「假如我想把右上角的细节点放大放到正中间来是没法实现的」。原来那条"照片永远
+ * 盖满可视区"比他要的更严：它只允许把角拉到**屏幕的角**上，照片外圈那一带
+ * （2 倍时差不多是四周各三成）根本到不了中间 —— 而那正是"看细节"最常去的地方。
+ *
+ * ⚠️ 代价是：照片的边进了画面之后，**旁边让出来的那块是空的**。这是"任何细节
+ * 都能摆正"必然的样子，**别当成 bug 又收紧回"盖满可视区"**。
+ * ⚠️ 适应窗口（1 倍）是唯一的例外：那一档只有一个位置（正中间）——
+ * "整张都在眼前"的时候挪它没有任何意义，而且滚轮缩回 1 倍时必须能**回正**。
  *
  * 没动的时候**返回原来那个对象**：手势里每帧都过一遍这里，白换身份会让下游
  * 白白重渲染。
  */
-export function clampView(v: View, fit: Size, area: Size): View {
-  const mx = Math.max(0, (fit.width * v.scale - area.width) / 2)
-  const my = Math.max(0, (fit.height * v.scale - area.height) / 2)
-  const x = clampAxis(v.x, mx)
-  const y = clampAxis(v.y, my)
+export function clampView(v: View, fit: Size): View {
+  const half = v.scale <= MIN_SCALE ? 0 : v.scale / 2
+  const x = clampAxis(v.x, fit.width * half)
+  const y = clampAxis(v.y, fit.height * half)
   return x === v.x && y === v.y ? v : { scale: v.scale, x, y }
 }
 
@@ -92,13 +100,13 @@ export function zoomTo(
   const cy = area.height / 2
   const ux = (anchor.x - cx - v.x) / v.scale
   const uy = (anchor.y - cy - v.y) / v.scale
-  return clampView({ scale: s, x: anchor.x - cx - ux * s, y: anchor.y - cy - uy * s }, fit, area)
+  return clampView({ scale: s, x: anchor.x - cx - ux * s, y: anchor.y - cy - uy * s }, fit)
 }
 
 /**
  * 拖着看：`dx/dy` 是**相对按下那一刻**的总位移，不是每一帧的增量 —— 一次按下
  * 拖到哪算哪，中途被边界挡住之后再拖回来不会"粘"在边上（增量式就会粘）。
  */
-export function panBy(v: View, dx: number, dy: number, fit: Size, area: Size): View {
-  return clampView({ scale: v.scale, x: v.x + dx, y: v.y + dy }, fit, area)
+export function panBy(v: View, dx: number, dy: number, fit: Size): View {
+  return clampView({ scale: v.scale, x: v.x + dx, y: v.y + dy }, fit)
 }

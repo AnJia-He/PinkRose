@@ -52,19 +52,26 @@ describe('oneToOne / maxScale —— 放大到哪儿为止', () => {
   })
 })
 
-describe('clampView —— 照片永远盖满可视区，边上不许拉出空白', () => {
-  it('适应窗口时平移量只能是 0（没有可挪的余地）', () => {
-    expect(clampView({ scale: 1, x: 99, y: -99 }, BIG_FIT, AREA)).toEqual({ scale: 1, x: 0, y: 0 })
+describe('clampView —— 画面中心永远有照片（照片的边最多拉到正中间）', () => {
+  it('适应窗口只有一个位置：正中间', () => {
+    expect(clampView({ scale: 1, x: 99, y: -99 }, BIG_FIT)).toEqual({ scale: 1, x: 0, y: 0 })
   })
 
-  it('放大 2 倍后：横向最多挪 (2000-1000)/2 = 500，纵向 (1500-800)/2 = 350', () => {
-    expect(clampView({ scale: 2, x: 9999, y: -9999 }, BIG_FIT, AREA))
-      .toEqual({ scale: 2, x: 500, y: -350 })
+  it('放大之后，最多把照片的边拉到画面正中间（2 倍时是半张：1000×750）', () => {
+    expect(clampView({ scale: 2, x: 9999, y: -9999 }, BIG_FIT))
+      .toEqual({ scale: 2, x: 1000, y: -750 })
   })
 
-  it('还在范围内的视图**原样返回同一个对象**（手势里每帧都过一遍，别白换身份）', () => {
+  it('★ 最角上那一个点也能拉到正中间（用户 2026-10-06 晚亲自要的）', () => {
+    // 右上角离照片中心正好是半张（1000×750）—— 拉到正中间要的平移量就是它，
+    // 也就是说**它正好在允许范围的边界上**，不是被夹在门外。
+    expect(clampView({ scale: 2, x: -1000, y: 750 }, BIG_FIT))
+      .toEqual({ scale: 2, x: -1000, y: 750 })
+  })
+
+  it('还在范围内的视图原样返回同一个对象（手势里每帧都过一遍，别白换身份）', () => {
     const v: View = { scale: 2, x: 120, y: -30 }
-    expect(clampView(v, BIG_FIT, AREA)).toBe(v)
+    expect(clampView(v, BIG_FIT)).toBe(v)
   })
 })
 
@@ -96,20 +103,23 @@ describe('zoomTo —— 放大时"指针底下那块别跑"', () => {
     expect(zoomTo(FIT, 100, { x: 500, y: 400 }, BIG_FIT, AREA, 6).scale).toBe(6)
   })
 
-  it('★ 贴在边上放大也要被夹回来：不许因为锚点在角落就露出一块空白', () => {
+  it('★ 锚点在照片的角上：照样摆得准（"把边上的细节拉到中间"要的就是这一下）', () => {
     const next = zoomTo(FIT, 2, { x: 0, y: 0 }, BIG_FIT, AREA)
-    expect(next).toEqual({ scale: 2, x: 500, y: 350 })   // 两头都顶到边界
+    expect(next).toEqual({ scale: 2, x: 500, y: 400 })
+    // 照片左上角那一点仍然压在可视区左上角上（没被夹走）
+    expect(at(next, -500, 'x')).toBeCloseTo(0)
+    expect(at(next, -400, 'y')).toBeCloseTo(0)
   })
 })
 
 describe('panBy —— 拖着看', () => {
   it('给的是**相对按下那一刻**的总位移（不是每帧的增量）', () => {
-    expect(panBy({ scale: 2, x: 0, y: 0 }, 30, -20, BIG_FIT, AREA))
+    expect(panBy({ scale: 2, x: 0, y: 0 }, 30, -20, BIG_FIT))
       .toEqual({ scale: 2, x: 30, y: -20 })
   })
 
-  it('拖过头就停在边界上', () => {
-    expect(panBy({ scale: 2, x: 480, y: 0 }, 100, 0, BIG_FIT, AREA))
-      .toEqual({ scale: 2, x: 500, y: 0 })
+  it('拖过头就停在边界上（照片的边正好到画面正中间）', () => {
+    expect(panBy({ scale: 2, x: 980, y: 0 }, 100, 0, BIG_FIT))
+      .toEqual({ scale: 2, x: 1000, y: 0 })
   })
 })
