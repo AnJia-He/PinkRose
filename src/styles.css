@@ -782,47 +782,66 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .canvas-veil::before { width: 20px; height: 20px; }
 
-/* ── 历史时间轴（★ 2026-10-06，`StepStrip`）────────────────────────────
-   照片**上方**那一条：一步一格、格子之间有线连着（像 git 的提交链），
-   点某一格 = 回到那一步，下面的大图跟着换（用户画了草图提的：
-   「对话区不留下照片了…上方是可左右滚动的历史记录照片类似于 git 吧
-   也就是回到那一步，下方对应记录的图片」）。
-   ★ 它是从对话区**搬过来**的 —— 每一步的小图原来挂在气泡下面
-   （`.bubble-thumb`），那条规则已退役。
+/* ── 历史转盘（★ 2026-10-06，`StepStrip`）──────────────────────────────
+   照片**上方**那一圈：一步一格摆在一个圆的边上，**站的那一格在正面**
+   （最大最亮），两边的转身、后退、变暗；拖 = 转、点 = 转到正面，
+   下面的大图跟着换。
+
+   来路：用户先画了草图（"上方历史、下方当前图片"，像 git），第一版做成
+   一条平铺可滑的时间轴；他看完说「我画的是一种圆盘转动的感觉吧」——
+   画板里三种转盘真尺寸摆出来让他上手玩，他挑了**竖轴转盘**那一版
+   （`.superpowers/brainstorm/398-1791272118`，交互和参数都照那版）。
+   ★ 每一步的小图是从对话区**搬过来**的（原来挂在气泡下面 `.bubble-thumb`）。
+   ⚠️ 原先那排"格子之间的连线"（`.strip-link`）随平铺版一起退役 ——
+   转盘靠转身和前后顺序说话，不用再画线。
 
    ⚠️ 它吃的是**照片的高度**（舞台为它改成竖排，见 `.workspace .stage`）：
-   格子 56 + 呼吸 ≈ 72px —— 竖图会小一档，横图不受影响（横图被宽度顶着，
-   头上本来就空着）。这条线是量着定的，动它要跑 `check-mobile-layout.mjs`。
-   ⚠️ 底色**不铺**：这一块全是照片的地盘，轴自己悬在舞台那层顶光上
-   （`.rail` 是实心面板 —— 那条旁边是微调工具，这条旁边是照片）。 */
+   130px —— 竖图会小 ~62px，横图不受影响（横图被宽度顶着，头上本来就有富余）。
+   这条线是量着定的，动它要跑 `check-mobile-layout.mjs`。
+   ⚠️ 底色**不铺**：这一块全是照片的地盘，转盘自己悬在舞台那层顶光上
+   （`.rail` 是实心面板 —— 那条旁边是微调工具，这圈旁边是照片）。
+   ⚠️ 窄屏（≤640）**不走转盘**：文件末尾那条媒体查询把这一整套 3D 中和掉、
+   塌回"平铺可滑的一条"（那一档转盘会挤掉照片的高度，量过）。 */
 .strip {
   flex: none;
-  display: flex; align-items: center;
-  overflow-x: auto;
-  padding-bottom: var(--sp-3);
-  scrollbar-width: thin;
+  height: 130px;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  /* 转得动这件事得让人看得出来：手型 + 别在拖的时候顺手选中什么。
+     ⚠️ `touch-action: none` 只在这一档（桌面转盘）成立 —— 窄屏那条是
+     **可滑的平铺**，那里把它交还给浏览器（见媒体查询里的 `touch-action: auto`），
+     不然手指划不动。 */
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
 }
-/* 格子和格子之间的连线（第一格前面没有 —— 那条在 StepStrip 里就不渲染）。 */
-.strip-link {
-  flex: none; width: 16px; height: 1px;
-  background: var(--line-3);
+.strip:active { cursor: grabbing; }
+/* 圆环 —— 一个 0×0 的锚点：每一格靠 `rotateY(角位) translateZ(半径)`
+   摆到它周围（角度是内联的，`StepStrip` 算）。`perspective` 也在内联
+   （和角度同一个 transform 里）—— 它得跟着转，不能挂在这儿静态放着。 */
+.strip-ring {
+  position: relative; width: 0; height: 0;
+  transform-style: preserve-3d;
 }
-/* 一格：**高是定的、宽随照片自己的比例** —— 竖的窄、横的宽，和素材一样
-   参差才认得出哪一格是哪一版（一律裁成方块反而认不出）。
+/* 一格：104×70 的小相纸，缩略图**统一裁成这个比例**（`cover`）。
+   ⚠️ 平铺版那会儿是"高定死、宽随照片比例"，转盘上不成立 —— 一圈格子
+   宽窄不一时圆环的节奏就散了（画板那版就是统一裁的，用户照它挑的）。
    当前那一格是 `<span>`（不是按钮）—— 它只报"你在这里"，点不动。 */
 .strip-node {
-  flex: none; display: block; height: 56px;
+  position: absolute; left: -52px; top: -35px;
+  width: 104px; height: 70px;
   /* ⚠️ 全局 `button{}` 的方框（底 + 边）要显式按掉，少写一条就长回方框。 */
   padding: 0; border: 0; background: none;
   border-radius: var(--r-sm);
   cursor: pointer;
+  /* 转到背面那几格不画 —— "看着像一圈"的关键（和欢迎页那颗照片球同一条）。 */
+  backface-visibility: hidden;
+  will-change: transform, opacity;
 }
 .strip-node.current { cursor: default; }
 .strip-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .strip-thumb {
-  display: block; height: 100%; width: auto;
-  /* 特别宽的全景封个顶（多出来的用 cover 裁掉）—— 不封的话一格能占掉半条轴。 */
-  max-width: 96px;
+  display: block; width: 100%; height: 100%;
   object-fit: cover;
   border-radius: var(--r-sm);
   border: 1px solid var(--line-2);
@@ -833,17 +852,18 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    「你在这里」是同一件事，只是这儿画在图上。 */
 .strip-node.current .strip-thumb { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 
-/* 生成中"图要出现的地方"（对话里那块 `.shot-skeleton` 整块搬过来的）：
-   挂在**站的那一格后面**（从旧步骤重掷时，新的一版就落在那儿）。
-   ⚠️ 宽度不写死：`aspect-ratio` 由内联传进来（这张照片的宽 / 高），
-   换真图时横向不跳；没传时退回下面这条 1:1。
-   ⚠️ 只写 height、**不写 width** —— 两个都写的话 `aspect-ratio` 就不生效了。 */
+/* 生成中"图上要出现的地方"（对话里那块 `.shot-skeleton` 整块搬过来的）：
+   摆在**队尾的后一格**（新的一版会落在那儿）。角位/透明度由 `StepStrip`
+   内联给（和真格子同一套算法，转过来时一起转、一起变暗）。 */
 .strip-pending {
-  position: relative; overflow: hidden;
-  flex: none; height: 56px; aspect-ratio: 1; max-width: 96px;
+  position: absolute; left: -52px; top: -35px;
+  width: 104px; height: 70px;
+  overflow: hidden;
   border-radius: var(--r-sm);
   border: 1px solid var(--line-2);
   background: var(--hover);
+  backface-visibility: hidden;
+  will-change: transform, opacity;
 }
 /* 一道微光**扫过去**（不是整块闪烁）：从左走到右、来回一遍。
    闪烁读起来是"坏了"，扫光读起来是"还在做"。
@@ -1666,18 +1686,34 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
   .workspace { flex-direction: column; }
   .workspace .stage { flex: 1 1 auto; }
-  /* ★ 2026-10-06（晚）：时间轴在窄屏上**收矮一档**（56 → 44、下面那点呼吸
-     也收一档）—— 这一档的照片本来就只靠宽度那条链活着，而时间轴是从**竖向**
-     抠出来的：不收的话"存失败之后"那一屏实测照片长边 234 < 240（240 是量出来的
-     "用户还看得见"的下限，见 `check-mobile-layout.mjs` 的 `MIN_LONG`）。
-     ⚠️ 44 同时也是触摸目标的下限（iOS HIG）—— 竖图那格只有 25px 宽，
-     所以宽度上另兜一道 `min-width`（少了它，一指头下去常常点到隔壁那一版）。 */
-  .strip { padding-bottom: var(--sp-2); }
-  .strip-node {
-    display: flex; align-items: center; justify-content: center;
-    height: 44px; min-width: 44px;
+  /* ★ 2026-10-06（晚）：转盘在窄屏上**整个中和掉**，塌回"平铺可滑的一条" ——
+     这一档的照片只靠宽度那条链活着，而转盘那 130px 是从**竖向**抠出来的：
+     量过，「存失败之后」那一屏会掉到 240 那条线以下（`check-mobile-layout.mjs`
+     的 `MIN_LONG`）。反正 web 这版是给电脑用的（手机那侧交给小程序）。
+     ⚠️ 那三条 `!important` 都是必须的：角位、透明度、整圈的旋转全是
+     **内联样式**，普通规则盖不过它 —— 少了任何一条，转盘的残影会和这一档
+     的排布打架（格子重叠、有的还停在半透明上）。
+     ⚠️ `transform-style: flat` 也是必须的：留着 preserve-3d 的话，
+     这些已经被中和成 `none` 的格子还会落在 3D 上下文里，层叠顺序看运气。 */
+  .strip {
+    height: auto; overflow-x: auto; justify-content: flex-start;
+    padding: var(--sp-2) var(--sp-4);
+    scrollbar-width: thin;
+    cursor: auto;
+    touch-action: auto;   /* 上面那条 none 是给转盘用的；这一档手指要能划 */
   }
-  .strip-pending { height: 44px; }
+  .strip-ring {
+    display: flex; gap: 8px; width: auto; height: auto;
+    transform: none !important; transform-style: flat;
+  }
+  .strip-node {
+    position: static; flex: none; width: 64px; height: 44px;
+    transform: none !important; opacity: 1 !important;
+  }
+  .strip-pending {
+    position: static; flex: none; width: 64px; height: 44px;
+    transform: none !important; opacity: 1 !important;
+  }
   /* ★ 2026-10-05：**窄屏上预设栏不出现**（桌面那一档才有）。
      这一档里三样东西抢竖向空间，照片本来就只靠宽度那条链活着（见上），
      再横塞一条预设栏要么把照片压小、要么得把面板挤掉一截。

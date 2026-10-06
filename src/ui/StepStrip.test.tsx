@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { act } from 'react'
-import { createRoot } from 'react-dom/client'
+import { act, useState } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { describe, expect, it } from 'vitest'
 import StepStrip, { type StripStep } from './StepStrip.tsx'
 
@@ -21,17 +21,32 @@ const THREE: StripStep[] = [
 const noop = () => {}
 const base = { steps: THREE, currentId: 5, generating: false, onJump: noop }
 
-/** 每一格/每一颗占位块是什么（按 DOM 顺序）—— 结构断言全用它。 */
-function kinds(c: HTMLElement): string[] {
-  return [...c.querySelector('.strip')!.children].map(el => el.className.split(' ')[0]!)
+const ringOf = (c: HTMLElement) => c.querySelector('.strip-ring') as HTMLElement
+
+/**
+ * 带状态的父级 —— **拖动那几条必须用它**：真 App 里 `onJump` 会回头把
+ * `currentId` 改掉（转盘的角度只是它的画法）。只传死 prop 的话，组件会
+ * 发现"圈转过去了、可爹说还站在老地方"，又把自己拉回来 —— 那是真实
+ * 语义，不是 bug（测试假环境才不该那么演）。
+ */
+function Harness({ initial, onJump }: { initial: number; onJump: (id: number) => void }) {
+  const [cur, setCur] = useState(initial)
+  return <StepStrip steps={THREE} currentId={cur} generating={false}
+    onJump={id => { onJump(id); setCur(id) }} />
 }
 
-describe('历史时间轴（照片上方那一条）', () => {
-  it('一步一格 + 格子之间的连线；原图在最前', async () => {
+describe('历史转盘（照片上方那圈）', () => {
+  it('一步一格；站的那一格被转到正面（整圈转 -120°）', async () => {
     const c = await mount(<StepStrip {...base} />)
-    expect(kinds(c)).toEqual(['strip-node', 'strip-link', 'strip-node', 'strip-link', 'strip-node'])
+    expect(c.querySelectorAll('.strip-node')).toHaveLength(3)
     expect([...c.querySelectorAll('.strip-thumb')].map(i => i.getAttribute('src')))
       .toEqual(['thumb:原图', 'thumb:第一版', 'thumb:第二版'])
+    // currentId=5 是第 3 格（index 2）→ 转盘转 -2×60 = -120°，把它转到正面
+    expect(ringOf(c).style.transform).toContain('rotateY(-120deg)')
+    // 每一格自己还摆在自己的角位上（0°/60°/120°）
+    const nodes = [...c.querySelectorAll<HTMLElement>('.strip-node')]
+    expect(nodes[0]!.style.transform).toContain('rotateY(0deg)')
+    expect(nodes[2]!.style.transform).toContain('rotateY(120deg)')
   })
 
   it('点某一格 = 回到那一步（onJump 收到那一格的 id）', async () => {
@@ -50,7 +65,6 @@ describe('历史时间轴（照片上方那一条）', () => {
     expect(nodes[1]!.className).toContain('current')
     expect(nodes[0]!.tagName).toBe('BUTTON')
     expect(nodes[2]!.tagName).toBe('BUTTON')
-    // 点它什么都不会发生 —— 它不是一个能按的东西
     await act(async () => { nodes[1]!.click() })
     expect(jumps).toEqual([])
   })
@@ -58,29 +72,71 @@ describe('历史时间轴（照片上方那一条）', () => {
   it('按钮的名字分得开（原图 / 第 N 步）—— 读屏念得出点的是哪一步', async () => {
     const c = await mount(<StepStrip {...base} />)
     expect([...c.querySelectorAll('.strip-node')].map(n => n.getAttribute('aria-label')))
-      .toEqual(['回到这一步：原图', '回到这一步：第 1 步', null])   // 站着那格不是按钮，没有名字
+      .toEqual(['回到这一步：原图', '回到这一步：第 1 步', null])   // 站着那格不是按钮
   })
 
-  it('★ 生成中：站的那格后面挂一颗"正在画"的占位块，宽度按照片比例', async () => {
-    const c = await mount(<StepStrip {...base} generating aspectRatio={1.5} />)
-    expect(kinds(c)).toEqual([
-      'strip-node', 'strip-link', 'strip-node', 'strip-link', 'strip-node', 'strip-pending',
-    ])
-    const pending = c.querySelector<HTMLElement>('.strip-pending')!
+  it('★ currentId 从外面变了（对话里点了「回到这一步」）→ 转盘自己转过去', async () => {
+    // "转盘的角度"和"站在哪一步"必须只有一个真相：从外面跳步时，转盘不能
+    // 自己停在原处（那样正面那格和大图指的不是同一版）。
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root: Root = createRoot(container)
+    await act(async () => { root.render(<StepStrip {...base} currentId={1} />) })
+    expect(ringOf(container).style.transform).toContain('rotateY(0deg)')
+
+    await act(async () => { root.render(<StepStrip {...base} currentId={5} />) })
+    expect(ringOf(container).style.transform).toContain('rotateY(-120deg)')
+
+    await act(async () => { root.render(<StepStrip {...base} currentId={3} />) })
+    expect(ringOf(container).style.transform).toContain('rotateY(-60deg)')
+  })
+
+  it('★ 按住往左拖 = 往前转：拖过一格松手，落到那一格（onJump 收到它）', async () => {
+    const jumps: number[] = []
+    const c = await mount(<Harness initial={1} onJump={id => jumps.push(id)} />)
+    const strip = c.querySelector('.strip') as HTMLElement
+
+    await act(async () => {
+      strip.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 300 }))
+    })
+    await act(async () => {
+      // 往左拖 160px ≈ 67°（系数 0.42）→ 转过一格还多
+      window.dispatchEvent(new MouseEvent('pointermove', { clientX: 140 }))
+      window.dispatchEvent(new MouseEvent('pointerup'))
+    })
+
+    expect(jumps.at(-1)).toBe(3)                                  // 落到第 2 格（id 3）
+    expect(ringOf(c).style.transform).toContain('rotateY(-60deg)') // 吸附到整格
+  })
+
+  it('拖完手一松落在原来的格子上时，不重复喊 onJump', async () => {
+    const jumps: number[] = []
+    const c = await mount(<Harness initial={1} onJump={id => jumps.push(id)} />)
+    const strip = c.querySelector('.strip') as HTMLElement
+    await act(async () => {
+      strip.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 300 }))
+    })
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent('pointermove', { clientX: 285 }))   // 只挪 15px ≈ 6°
+      window.dispatchEvent(new MouseEvent('pointerup'))
+    })
+    expect(jumps).toEqual([])                                     // 还在第 1 格
+    expect(ringOf(c).style.transform).toContain('rotateY(0deg)')
+  })
+
+  it('★ 生成中：一颗会扫光的空格子摆在"轮到它的位置"（队尾的后一格）；六格满了不摆', async () => {
+    const c = await mount(<StepStrip {...base} generating />)
+    const pending = c.querySelector('.strip-pending') as HTMLElement
+    expect(pending, '生成中该有一颗占位格子').toBeTruthy()
     expect(pending.getAttribute('aria-hidden')).toBe('true')
-    expect(pending.style.aspectRatio).toBe('1.5')
-    // 没传比例就别写内联样式（退回 CSS 那条兜底）
-    const bare = await mount(<StepStrip {...base} generating />)
-    expect(bare.querySelector<HTMLElement>('.strip-pending')!.style.aspectRatio).toBe('')
-  })
+    // 三格占了 0/1/2 号位 → 它落在 3 号位（180°）
+    expect(pending.style.transform).toContain('rotateY(180deg)')
 
-  it('★ 从旧步骤再生成：占位块落在**站的那一格**后面，不是整条尾巴', async () => {
-    // 人站在第 1 步上重掷时，新的一版落地会顶掉后面那两步 ——
-    // 占位块挂到尾巴上的话，它指的位置和东西真正出现的地方是两回事。
-    const c = await mount(<StepStrip {...base} currentId={3} generating />)
-    expect(kinds(c)).toEqual([
-      'strip-node', 'strip-link', 'strip-node', 'strip-pending', 'strip-link', 'strip-node',
-    ])
+    // 六格满了（MAX_SNAPSHOTS = 6）—— 没有空位，不摆（画布暗罩和对话里那三颗点还在说"在忙"）
+    const SIX: StripStep[] = Array.from({ length: 6 }, (_, i) =>
+      ({ id: i * 2 + 1, thumb: 'thumb:' + i, isOriginal: i === 0 }))
+    const full = await mount(<StepStrip steps={SIX} currentId={11} generating onJump={noop} />)
+    expect(full.querySelector('.strip-pending')).toBeNull()
   })
 
   it('没在生成就不摆占位块（「正在思考」那 1.5 秒也不算）', async () => {
@@ -95,32 +151,5 @@ describe('历史时间轴（照片上方那一条）', () => {
     ]} />)
     expect(c.querySelectorAll('.strip-node')).toHaveLength(2)   // 格子本身照旧在
     expect(c.querySelectorAll('.strip-thumb')).toHaveLength(1)
-  })
-
-  /**
-   * ★ 站的那一格要滑进**视野的中间**（用户点名要的"可左右滚动"—— 步数多起来
-   * 这条轴自己滚，但不该让用户自己把它滚回来）。
-   * ⚠️ jsdom 没有排版（`offsetLeft` / `clientWidth` 全是 0），所以这里自己摆
-   * 一套几何、再给 `scrollLeft` 接一根线 —— 断言的是"往右滚了多少"这个数。
-   * 走的是**小图挂上来那一刻**（`<img>` 的 `onLoad`）：data URL 解码完宽度才
-   * 长出来，早于这一步算出来的位置是错的。
-   */
-  it('★ 小图长出来时把"站的那一格"滑到视野中间', async () => {
-    const c = await mount(<StepStrip {...base} currentId={5} />)
-    const strip = c.querySelector('.strip') as HTMLElement
-    const current = c.querySelectorAll<HTMLElement>('.strip-node')[2]!
-    // 摆几何：这一格在 1000px 处、宽 60，容器可视宽 600
-    Object.defineProperty(current, 'offsetLeft', { value: 1000 })
-    Object.defineProperty(current, 'offsetWidth', { value: 60 })
-    Object.defineProperty(strip, 'clientWidth', { value: 600 })
-    let written = -1
-    Object.defineProperty(strip, 'scrollLeft', {
-      configurable: true, get: () => written, set: (v: number) => { written = v },
-    })
-
-    const img = current.querySelector('img') as HTMLImageElement
-    await act(async () => { img.dispatchEvent(new Event('load')) })
-    // 1000 - (600 - 60) / 2 = 730
-    expect(written).toBe(730)
   })
 })

@@ -958,9 +958,9 @@ describe('对话式修图：钱花在对的地方', () => {
    *   ② 图要出现的地方先摆一颗**占位块**（图到了原地换掉）；
    *   ③ 画布拿到 `busy: true`（真的 Canvas 按它盖那层暗罩 —— 画布在 App 测试里
    *      是假掉的，所以看到的是它收到的那一帧 prop）。
-   * ★ 2026-10-06（晚）：②那块占位从**对话里**搬到了**照片区上方那条时间轴上**
+   * ★ 2026-10-06（晚）：②那块占位从**对话里**搬到了**照片区上方那圈转盘上**
    *   （用户：「对话区不留下照片了」）—— 判据跟着改成 `.strip-pending`，
-   *   位置也一起钉：它挂在**站的那一格后面**。
+   *   位置也一起钉：它摆在**队尾的后一格**（新的一版会落在那儿）。
    * 放行之后三样都要收工：占位块消失、真图换上、画布不再忙。
    */
   it('★ 生成中「等待看得见」—— 跳动的点 + 时间轴上的占位块 + 画布暗罩，放行后收工', async () => {
@@ -977,13 +977,11 @@ describe('对话式修图：钱花在对的地方', () => {
     const dots = container.querySelector('.bubble.pending .pending-dots')
     expect(dots, '那条「正在…」气泡上没有跳动的点').toBeTruthy()
     expect(dots!.querySelectorAll('i')).toHaveLength(3)
-    // ② 占位块（等十几秒的那一块）—— 挂在时间轴上、**站的那格后面**，
-    //    宽度跟着**这张照片的宽高比**（假解码器给的是 1200×800 = 1.5；
-    //    App→StepStrip 这根线断了的话内联样式是空的，占位块退回 1:1）
+    // ② 占位格子（等十几秒的那一块）—— 摆在转盘上、**队尾的后一格**
+    //    （这条会话只有原图一格 → 落在 1 号位 = rotateY(60deg)）
     const pending = container.querySelector('.strip-pending') as HTMLElement
-    expect(pending, '生成中时间轴上没有占位块').toBeTruthy()
-    expect(pending.style.aspectRatio).toBe('1.5')
-    expect(pending.previousElementSibling?.className).toContain('current')
+    expect(pending, '生成中转盘上没有占位格子').toBeTruthy()
+    expect(pending.style.transform).toContain('rotateY(60deg)')
     // ③ 照片那边的暗罩（判据是这一帧 prop，不是字符串）
     expect(canvasProps.props.at(-1)?.busy).toBe(true)
 
