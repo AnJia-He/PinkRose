@@ -926,6 +926,10 @@ export default function App() {
       setPendingReplace(null)
       setSavedId(null)
       dismissAsk()
+      // ★ 2026-10-06（对比）：同一批 —— 备的是**上一条会话**那张原图，
+      //   切过来之后按「对比」会拿它当**这一条**的原图给用户比（一张别人的照片，
+      //   而且不报错）。下一次按「对比」时按这一条重新备。
+      setCompareSrc(null)
       // 建议卡片也不留：它是照着**上一张**照片算出来的，点一下就是花钱去改
       // 一件在这张照片上根本没发生的事。
       setCards([])
@@ -1225,6 +1229,78 @@ export default function App() {
     }
   })()
 
+  // ── 对比（★ 2026-10-06，工具行第二颗）────────────────────────────────
+  //  分屏那一层本身在 `ui/CompareSplit`（叠图 / 剪裁 / 拖把手），这一层只管
+  //  两件事：**开没开**，以及**那份够清楚的原图**。
+
+  /**
+   * 「对比」开着没有（spec §3.0：它是个**开关**，不是模式）。
+   *
+   * ★★ 它**不算"工具开着"**（2026-10-06 裁定）：`viewLocked` / `resetKey`
+   *   这两样只认裁剪。理由是 spec §3.3 那句"对比态里缩放 / 平移照常能用"——
+   *   用户多半**正放大着**才去按对比，这时候把他拽回「适应窗口」正好毁掉这个用法。
+   */
+  const comparing = tool === 'compare'
+  /** 「工具开着」= **裁剪**那种要占住手势的模式（「对比」是开关，不在里面）。 */
+  const toolIsModal = tool === 'crop'
+
+  /**
+   * 对比用的原图（★ 2026-10-06）：第一次点「对比」才做（懒做），长边 ≤ 2048。
+   * ⚠️ 不许拿 `originalPreview`（那是 480 的缩略图）：分屏是**并排比**，
+   *   左边糊右边清楚，用户会以为是我们把照片弄糊了。
+   * 备好之后留在内存里（同一条会话里反复进出对比不用再编一遍）；
+   * 换照片 / 换会话时跟着清（那三处）。
+   */
+  const [compareSrc, setCompareSrc] = useState<string | null>(null)
+
+  /**
+   * 备一份够大的原图。两条路：手里有那个 `File` 就直接解开；没有（极少数 ——
+   * `loadSession` 那次取原图失败了）就**再问服务端要一次**。
+   * ⚠️ 恢复出来的会话**走的就是第一条路**：`loadSession` 会把服务端那份原始字节
+   *   重新包成一个 `File` 放回 `originalFileRef`（见那边那段注释）。
+   */
+  const makeCompareSrc = useCallback(async (): Promise<string> => {
+    const file = originalFileRef.current
+    if (file) {
+      const bitmap = await createImageBitmap(file)
+      // ⚠️ `close()` 必须在 `finally` 里：`bitmapToDataUrl` 抛（拿不到 2D 上下文）
+      //    的时候，写在下一行的那个 close 根本轮不到 —— 那张位图会一直占着
+      //    GPU 内存，而这恰恰是异常路径，平时没人盯着它。
+      try { return bitmapToDataUrl(bitmap, 0.9) } finally { bitmap.close() }
+    }
+    if (sessionId === null) throw new Error('手头没有原图（也没有会话）')
+    const blob = await (await fetch(sessionOriginalUrl(sessionId))).blob()
+    const bitmap = await createImageBitmap(blob)
+    try { return bitmapToDataUrl(bitmap, 0.9) } finally { bitmap.close() }
+  }, [sessionId])
+
+  /**
+   * 懒做：**开着对比、而且还没有那一份**时才去备（进来一次、备一次）。
+   * ⚠️ `alive` 那一套照 `loadSession` 的老规矩写；但它**不是"防重复"用的** ——
+   *   StrictMode 下 effect 会挂两次，第一次那趟会被 cleanup 作废、第二次那趟
+   *   才是留下结果的那个。所以这里**不许**再拿一个"正在备"的 ref 挡第二趟：
+   *   挡了的话第一趟的结果被作废、第二趟被自己挡住 —— 原图永远备不出来，
+   *   而屏幕上看不出是为什么（这条在 `react-strictmode-alive-ref` 那笔账里）。
+   */
+  useEffect(() => {
+    if (!comparing || compareSrc) return
+    let alive = true
+    void (async () => {
+      try {
+        const src = await makeCompareSrc()
+        if (alive) setCompareSrc(src)
+      } catch (e) {
+        // 备不出来就说一句：不说的话屏幕上就是"按了对比、什么都没发生"。
+        console.error('对比的原图没备出来', e)
+        if (alive) noticeBad('原图没取回来，这次对比先算了吧。')
+      }
+    })()
+    return () => { alive = false }
+  }, [comparing, compareSrc, makeCompareSrc, noticeBad])
+
+  /** 右下角那颗「对比」按的就是这个 —— 和工具行那颗**同一个开关**。 */
+  const toggleCompare = () => pickTool(comparing ? null : 'compare')
+
   const onPick = useCallback(async (file: File, wish = '') => {
     // ★ **进门第一件事**，在下面两趟 await 之前：从这一刻起"用户自己动手了"。
     //   恢复那道闸门看的就是它（`baseSeqRef` 要等解码完才动，等它太晚 ——
@@ -1251,6 +1327,9 @@ export default function App() {
 
       originalFileRef.current = file
       setImage(img)
+      // ★ 2026-10-06（对比）：上一张那份"对比用的原图"作废 —— 不清的话，
+      //   换一张照片之后按「对比」，分屏左边还是**上一张**（而且一点不报错）。
+      setCompareSrc(null)
       try {
         // 备用一张原图预览（spec §2.5 的"按住看原图"）。用刚解码出来的位图，
         // 不是画布 —— 这时候画布上还什么都没有。
@@ -1402,6 +1481,9 @@ export default function App() {
     setCrop(null)
     dismissAsk()
     setOriginalPreview(null)
+    // ★ 2026-10-06（对比）：那份备好的原图同理（上面那句的同一个理由）——
+    //   留着的话下一张照片一进来按「对比」，左边是**上一张**。
+    setCompareSrc(null)
     originalFileRef.current = null
   }, [history, setCurrentSession, dismissAsk, moveCursor])
 
@@ -2567,6 +2649,13 @@ export default function App() {
                         </div>
                       </>
                     )}
+                    {/* ★ 2026-10-06（对比）：第二行只有一句话 —— 它是个开关，
+                        没有"完成 / 取消"那套。但这一行**不能空着**：空着的
+                        带子（`.tool-row-second` 有自己的内边距和一道线）看着
+                        像界面坏了；而"那条把手能拖"也不是一眼就看得出来的事。 */}
+                    {tool === 'compare' && (
+                      <span className="compare-hint">拖中间那条把手 —— 左边原图，右边现在</span>
+                    )}
                   </ToolBar>
                 )}
                 {/* ★ 2026-10-06（晚）：**历史转盘**（`ui/StepStrip`）——
@@ -2616,11 +2705,14 @@ export default function App() {
                   //   的判据。⚠️ 传它不传 `image`：同一条会话里换步骤
                   //   （转盘跳一步、「再来一版」）图也换，但用户正对着同一块
                   //   地方前后对比 —— 那时候把视图拽回去等于把放大镜抢走。
-                  // ★ 2026-10-06（工具行）：进工具先把视图收回「适应窗口」——
+                  // ★ 2026-10-06（工具行）：进**裁剪**先把视图收回「适应窗口」——
                   //   和"换会话"走同一条路（`resetKey` 是 dep，值一变就归位）。
                   //   值必须**按值稳定**（字符串），别传对象/数组（每渲染一次都是新身份）。
-                  resetKey={`${sessionId ?? ''}:${tool ?? ''}`}
-                  viewLocked={tool !== null}
+                  // ★★ 2026-10-06（对比裁定）：这里只认**裁剪**。对比是个开关，
+                  //   用户多半正放大着才去按它 —— 进对比就把视图拽回「适应窗口」
+                  //   正好毁掉"放大着比细节"这个用法（spec §3.3 要的是两张图同步缩放）。
+                  resetKey={`${sessionId ?? ''}:${toolIsModal ? 'crop' : ''}`}
+                  viewLocked={toolIsModal}
                   // ★ 2026-10-06（裁剪）：框 + 预览那一帧的现场。没在裁时是 null
                   //   —— 那时画布上一个内联样式都不留（和"适应窗口"那一帧同一条规矩）。
                   crop={cropScene}
@@ -2629,6 +2721,13 @@ export default function App() {
                   //   「正在思考」/上传/切会话那几句**不盖**（一闪一暗会闪），
                   //   判据在 App 顶上那一条。
                   busy={generating}
+                  // ★ 2026-10-06（对比，spec §3.3）：开关 + 那份够清楚的原图 +
+                  //   右下角那排里那颗的回调。⚠️ 原图**不在**这里备（懒做在 App
+                  //   顶上那条 effect 里）；备的路上 `compareWith` 就是 null，
+                  //   照片上安安静静，一颗都不画错。
+                  comparing={comparing}
+                  compareWith={compareSrc}
+                  onCompare={toggleCompare}
                 />
               </div>
               {/* ★ 2026-10-04：**调色那一屏没有对话栏。**

@@ -87,6 +87,11 @@ type Opts = {
   /** ★ 2026-10-06（裁剪）：裁剪的现场（null / 不给 = 没在裁）。 */
   crop?: CropScene | null
   onPickPoint?: (x: number, y: number) => void
+  /** ★ 2026-10-06（对比）：开关 + 备好的原图（`comparing` 为真且 `compareWith`
+   *  有值时，照片上才叠那一层）。 */
+  comparing?: boolean
+  compareWith?: string | null
+  onCompare?: () => void
 }
 
 /** 裁剪现场（框 / 内接区这些**算式**不归这一层管，这里只关心角度怎么落成 CSS）。 */
@@ -115,6 +120,7 @@ async function mount(o: Opts = {}) {
         originalPreview={next.originalPreview ?? null} canvasRef={canvasRef}
         picking={next.picking} marker={next.marker} onPickPoint={next.onPickPoint}
         resetKey={next.resetKey} viewLocked={next.viewLocked} crop={next.crop} onFail={noFail}
+        comparing={next.comparing} compareWith={next.compareWith} onCompare={next.onCompare}
       />,
     )
   })
@@ -506,5 +512,78 @@ describe('裁剪：预览那一帧（转 + 缩）', () => {
     expect(at(frame().style.left)).toBeCloseTo(50, 6)
     expect(at(frame().style.width)).toBeCloseTo(500, 6)
     expect(at(frame().style.height)).toBeCloseTo(400, 6)
+  })
+})
+
+/**
+ * ★ 2026-10-06（对比）：**分屏那一层**怎么落进照片区（spec §3.3）。
+ *
+ * 算式和拖动在 `ui/CompareSplit`（那一条量在 `CompareSplit.test.tsx`），
+ * 这一节只钉**接线**：层住在哪儿、吃哪个变换、那颗按钮在不在、退出干不干净。
+ */
+describe('对比：分屏那一层', () => {
+  const SRC = 'data:image/jpeg;base64,ORIGINAL'
+
+  it('★ 原图层在剪裁层里、把手在剪裁层外；两张图贴**同一个**变换', async () => {
+    const c = await mount({ comparing: true, compareWith: SRC })
+    const img = c.container.querySelector('.compare-img') as HTMLImageElement
+    expect(img).toBeTruthy()
+    // ① 原图那份**住在剪裁层里**（放大之后它也要被剪，不然会糊到旁边去）
+    expect(
+      c.container.querySelector('.canvas-clip .compare-img'),
+      '原图层要在剪裁层里面',
+    ).toBeTruthy()
+    // ② 把手**不在**剪裁层里（它不随图片缩放，也不该被那层的 overflow 剪）
+    expect(c.container.querySelector('.canvas-clip .compare-handle'), '把手不能在剪裁层里').toBeNull()
+    expect([...c.wrap().children].some(el => el.classList.contains('compare'))).toBe(true)
+
+    // ③ ★ "两张图一起缩放"：放大之后画布和原图那个串**一模一样**
+    await press(c.byLabel('放大'))
+    const canvas = c.container.querySelector('.canvas') as HTMLElement
+    expect(canvas.style.transform).toContain('scale(1.4)')
+    expect(img.style.transform, '两张图必须贴同一个变换').toBe(canvas.style.transform)
+  })
+
+  it('★ 对比态里缩放照常能用（它不是"工具开着"那种锁）', async () => {
+    // spec §3.3：用户多半正放大着才去按对比 —— 把他拽回"适应窗口"正好毁掉这个用法。
+    // 判据是 `viewLocked`（App 那边只认裁剪）；这一层钉的是"没有这个 prop 时，
+    // 滚轮 / 拖动 / 双击那套照旧"。
+    const c = await mount({ comparing: true, compareWith: SRC })
+    await wheel(c.wrap(), AREA.width / 2, AREA.height / 2, -360)
+    expect(c.view().scale).toBeGreaterThan(1)
+    expect(c.fit(), '放大之后「适应窗口」那颗该在').toBeTruthy()
+  })
+
+  it('★ 右下角那排里那颗「对比」：在不在、亮不亮、点它喊回去', async () => {
+    const calls: number[] = []
+    const c = await mount({
+      comparing: true, compareWith: SRC, onCompare: () => calls.push(1),
+    })
+    const btn = c.container.querySelector('.zoom-compare') as HTMLButtonElement
+    expect(btn, '右下角那排里该有一颗「对比」').toBeTruthy()
+    expect(btn.getAttribute('aria-pressed')).toBe('true')     // 亮着 = 在对比态
+    await press(btn)
+    expect(calls).toHaveLength(1)
+
+    // 没在对比时它是暗的，而且**照旧在**（那是入口，不是状态标记）
+    await c.rerender({ comparing: false, compareWith: SRC, onCompare: () => calls.push(1) })
+    expect(c.container.querySelector('.zoom-compare')?.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('★ 原图还没备好（懒做那半路上）：按钮照样能点，只是一层还没出来', async () => {
+    const c = await mount({ comparing: true, compareWith: null, onCompare: () => {} })
+    expect(c.container.querySelector('.compare')).toBeNull()
+    expect(c.container.querySelector('.zoom-compare'), '等在备原图时那颗按钮照旧在').toBeTruthy()
+  })
+
+  it('★ 退出之后不留痕：那一层整个撤掉（`--split` 跟着它一起没）', async () => {
+    const c = await mount({ comparing: true, compareWith: SRC })
+    expect(c.container.querySelector('.compare')).toBeTruthy()
+    expect(c.container.querySelector('[style*="--split"]'), '分屏的位置挂在那一层身上').toBeTruthy()
+
+    await c.rerender({ comparing: false, compareWith: SRC })
+    expect(c.container.querySelector('.compare')).toBeNull()
+    expect(c.container.querySelector('.compare-img')).toBeNull()
+    expect(c.container.querySelector('[style*="--split"]'), '退出后 `--split` 不许留痕').toBeNull()
   })
 })

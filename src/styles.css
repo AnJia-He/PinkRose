@@ -757,7 +757,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    可它们也别糊到左边预设栏和上下的带子上去）。判据是 `App` 传下来的裁剪现场
    （`Canvas` 给 wrap 挂 `.cropping`）。 */
 .canvas-wrap.cropping .canvas-clip { overflow: hidden; overflow: clip; }
-.canvas-peek {
+/* ★ 2026-10-06（对比）：`.compare-img` 和它**共用这一条** —— 两者都是
+   "和画布同一张位置上的那张图"，长相差一点就对不齐（一个 `clip-path` 剪一半
+   之后，边差几像素看得出来）。别抄一份出来各改各的。 */
+.canvas-peek, .compare-img {
   position: absolute;
   inset: 0;
   margin: auto;
@@ -772,6 +775,42 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      系统也就没有"这张图"可存、可复制了（Android Chrome 长按 <img>
      会弹"下载图片"）。指针事件照旧冒泡到 wrapper，松手收得到。 */
   pointer-events: none;
+}
+
+/* ── 对比分屏（★ 2026-10-06，`ui/CompareSplit`）────────────────────────
+   左「原图」、右「现在」，中间一条能拖的把手（spec §3.3 要的就是这个形状，
+   醒图那套）。这一节只管长相；层摆在哪、剪多少、拖了怎么算，全在组件里
+   （那三条硬规矩写在它的文件头）。
+
+   ⚠️ 三层各干一件事，**别合并**：
+     · `.compare`  —— 照片区大小的一层，`--split` 挂在它身上（下面两处都读它）；
+     · `.compare-layer` —— **不动的**那层（和照片区一样大），`clip-path` 剪在
+       它身上：只露左边那一半。剪在 `<img>` 上会跟着图片的缩放跑（分界线和
+       把手就对不上了 —— 组件文件头 ②）；
+     · `.compare-img` —— 和画布**同一个变换**的那张原图（长相见上面那条共用规则）。
+   把手（`.compare-handle`）**在剪裁层外**：它不随图片缩放，也不许被那层的
+   `overflow: clip` 剪掉半根。 */
+.compare { position: absolute; inset: 0; }
+.compare-layer { position: absolute; inset: 0; }
+/* 那根竖线和它的圆抓手。颜色**不走令牌**（和 `.canvas-marker` / `.canvas-veil`
+   同一类东西）：它是画在**照片**上的记号，底下是晚霞还是雪地都得看得见。 */
+.compare-handle {
+  position: absolute; top: 0; bottom: 0;
+  width: 2px; margin-left: -1px;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .28);   /* 浅色照片上也要立得住 */
+  cursor: ew-resize;
+  /* 手指拖把手不能顺便把页面滚走（和转盘那条同一条理由）。 */
+  touch-action: none;
+}
+.compare-knob {
+  position: absolute; left: 50%; top: 50%;
+  display: grid; place-items: center;
+  width: 30px; height: 30px; margin: -15px 0 0 -15px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .94);
+  color: #3a3a3c;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
 }
 
 /* 用户点的那个点。纯 DOM 元素 —— 画布是 WebGL 的，往上画 2D 图形要另开
@@ -860,6 +899,17 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   color: var(--muted); font-size: 12px; cursor: pointer;
 }
 .zoom-fit:hover { background: var(--hover); color: var(--text); }
+/* ★ 2026-10-06（对比）：那排里多一颗「对比」（spec §3.3 点名要它住在这儿 ——
+   美图也是把它摆在缩放旁边）。和 `.zoom-fit` 同一档（这一排里唯二带字的），
+   排在最前面（「适应窗口」会随缩放出现 / 消失，排在它后面的话这一颗会跟着挪）。
+   亮着 = 现在在对比态。 */
+.zoom-compare {
+  height: 30px; padding: 0 10px; margin-right: 2px;
+  background: none; border: 0; border-radius: var(--r-pill);
+  color: var(--muted); font-size: 12px; cursor: pointer;
+}
+.zoom-compare:hover { background: var(--hover); color: var(--text); }
+.zoom-compare.on { color: var(--accent-300); background: var(--accent-tint); }
 /* 放大之后鼠标变小手：那是在说"这里可以拖"（和上面那条回溯带子同一套语言）。 */
 .canvas-wrap.zoomed { cursor: grab; }
 .canvas-wrap.zoomed:active { cursor: grabbing; }
@@ -1082,6 +1132,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 「完成」是主按钮（`kit/Btn` 带的 `.btn-primary` 长相），这一行的尺寸归这里管
    —— 和 `.tool-cell` 同一档高度。 */
 .tool-row-second .btn-primary { padding: 5px 14px; font-size: 13px; }
+/* 「对比」的第二行：它是开关、没有控件，这一行只有一句话（★ 2026-10-06）。
+   ⚠️ 别改用 `.hint`：那个类自带一个转圈（它是"正在…"那几句的记号）。 */
+.compare-hint { color: var(--muted); font-size: 13px; }
 
 /* ── 上传前那一屏（2026-09-30 重做） ────────────────────────────────
    这是登录之后看到的第一张脸。原来是**一个虚线框、里面四个字**，浮在一整片

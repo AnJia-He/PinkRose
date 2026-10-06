@@ -8,6 +8,7 @@ import type { Adjustments } from '../../shared/adjustments.ts'
 import type { Cube } from '../../shared/lut.ts'
 import { rotatedBounds, type CropRect } from '../core/crop'
 import CropOverlay from './CropOverlay'
+import CompareSplit from './CompareSplit'
 import {
   FIT, clampView, fitBox, maxScale, oneToOne, panBy, zoomTo, type Size, type View,
 } from './viewport'
@@ -80,6 +81,20 @@ type Props = {
    * 照片一个内联样式都不留 —— 和缩放那条"适应窗口"的规矩一样）。
    */
   crop?: CropScene | null
+  /**
+   * ★ 2026-10-06（对比）：**在不在对比态**（开关在 App：`tool === 'compare'`）。
+   * ⚠️ 它和 `viewLocked` 是**两回事**：对比态里缩放 / 平移照常能用、两张图同步
+   *   （spec §3.3）—— 用户多半正放大着才去按对比，把他拽回「适应窗口」正好
+   *   毁掉这个用法。所以 App 那边只把裁剪算作"工具开着"。
+   */
+  comparing?: boolean
+  /**
+   * ★ 2026-10-06（对比）：**原图的 data URL**（App 备好的那一份，长边 ≤ 2048）。
+   * null / 不传 = 那一层不存在（原图还在备的路上时就是它）。
+   */
+  compareWith?: string | null
+  /** 右下角那排里那颗「对比」：切开关（和工具行那颗是**同一个**开关）。 */
+  onCompare?: () => void
   /** 画面这条路出了事，把**要说给用户的那句话**交出去（由 App 决定在哪儿显示）。
    *  组件自己不弹窗、不存状态：它只负责"把话说清楚"，说不说、在哪儿说是上层的事。 */
   onFail?: (message: string) => void
@@ -131,7 +146,7 @@ export function describeFailure(e: unknown): string {
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
 export default function Canvas({
   image, params, lutCube, lutAmount, originalPreview, canvasRef, picking, marker, onPickPoint, onFail,
-  busy, resetKey, viewLocked, crop,
+  busy, resetKey, viewLocked, crop, comparing, compareWith, onCompare,
 }: Props) {
   const innerRef = useRef<HTMLCanvasElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -576,6 +591,20 @@ export default function Canvas({
           <img className="canvas-peek" src={originalPreview} alt="原图" draggable={false} style={stageStyle} />
         )}
       </div>
+      {/* ★ 2026-10-06（对比）：**分屏那一层**（spec §3.3）—— 左「原图」、右「现在」，
+          中间一条能拖的把手。
+
+          ⚠️ 它整个（含把手）挂在 **wrap** 上、不在剪裁层里：那一层放大时有
+          `overflow: clip`，而把手要**不随图片缩放**地守在照片区上（它自己里面
+          再套一层 `.canvas-clip` 给原图用，见 `ui/CompareSplit` 文件头）。
+          ⚠️ 它排在 `.canvas-clip` **之后** → 画在画布之上；又排在红圈 / 框 /
+          暗罩 / 右下角那排**之前** → 那些各自的待遇不变（对比和它们是两个工具，
+          本来也不会同时开）。
+          ⚠️ `transform` 传的是 `stageStyle` —— 和画布**同一个**（适应窗口 / 放大 /
+          平移都跟着）：两份是"同一张位置上的两张图"，差一点就对不齐。 */}
+      {comparing && compareWith && (
+        <CompareSplit src={compareWith} transform={stageStyle} />
+      )}
       {/* ★ 2026-10-06（裁剪）：**框和把手**。和红圈同一个待遇 —— 画在剪裁层
           **外面**（把手正好挂在照片边上，剪在里头会被切掉半个）。
           ⚠️ `box` 是量出来的（`getBoundingClientRect` 算变换后的可见盒子），
@@ -631,6 +660,19 @@ export default function Canvas({
           （用户等的正好是"能不能放大看一眼"). */}
       {image && !viewLocked && (
         <div className="zoom-bar" onPointerDown={swallow} onClick={swallow} onDoubleClick={swallow}>
+          {/* ★ 2026-10-06（对比）：入口就在这排里（美图也是把它摆在缩放旁边，
+              spec §3.3）—— 排**第一颗**不是随手排的：「适应窗口」只在放大之后
+              才冒出来，把它排在后面的话，缩一下这颗按钮就跟着挪一格。
+              再点一下它 = 退出对比（和工具行那颗同一个开关）。 */}
+          {onCompare && (
+            <button
+              type="button"
+              className={`zoom-compare${comparing ? ' on' : ''}`}
+              aria-pressed={comparing}
+              title="对比原图"
+              onClick={onCompare}
+            >对比</button>
+          )}
           <button
             type="button" className="zoom-btn" aria-label="缩小" title="缩小"
             disabled={view.scale <= 1} onClick={() => zoomBy(1 / ZOOM_STEP)}

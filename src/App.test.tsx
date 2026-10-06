@@ -37,7 +37,11 @@ const canvasProps = vi.hoisted(() => ({
                   // ★ 2026-10-06（裁剪）：`crop` 是"框 + 预览那一帧"的现场 ——
                   //   真画布按它转照片、摆框（那两条量在 `Canvas.zoom.test.tsx`
                   //   里），这一层只钉 App 有没有把现场交下去。
-                  crop: unknown }[],
+                  crop: unknown
+                  // ★ 2026-10-06（对比）：开关 / 备好的原图 / 那颗按钮的回调，
+                  //   外加 `resetKey`（"对比不算工具开着"那条要钉住它**不因它变**）。
+                  comparing: boolean; compareWith: string | null; resetKey: unknown
+                  onCompare: (() => void) | undefined }[],
 }))
 
 /** 画布：真的那个要 WebGL2。这里给一个真 <canvas> 并挂上 ref ——
@@ -45,9 +49,12 @@ const canvasProps = vi.hoisted(() => ({
 vi.mock('./ui/Canvas', async () => {
   const React = await import('react')
   return {
-    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint, busy, viewLocked, crop }: any) => {
+    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint, busy, viewLocked, crop, comparing, compareWith, resetKey, onCompare }: any) => {
       canvasProps.images.push(image)
-      canvasProps.props.push({ originalPreview, picking, marker, params, busy, viewLocked, crop })
+      canvasProps.props.push({
+        originalPreview, picking, marker, params, busy, viewLocked, crop,
+        comparing, compareWith, resetKey, onCompare,
+      })
       return React.createElement('canvas', {
         ref: (node: HTMLElement | null) => {
           canvasRef.current = node
@@ -1947,6 +1954,86 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     // 未来那一步（生成的那一版）必须已经被切掉：转盘上只剩「原图 + 裁剪」两格
     await goNav('修图')
     expect(container.querySelectorAll('.strip-node'), '站中间裁必须切掉后面那几步').toHaveLength(2)
+  })
+})
+
+/**
+ * ★ 2026-10-06（对比）：**分屏 + 拖把手**（spec §3.3）—— 工具行那颗格子这一侧。
+ *
+ * 这一层只验**接线**：备的是哪一份原图、备得够不够懒、"对比不算工具开着"
+ * （不锁手势、不归位）、两个入口一个状态。分屏那一层本身（剪裁 / 拖动 / 夹取）
+ * 量在 `ui/CompareSplit.test.tsx`，交给真画布那几条量在 `Canvas.zoom.test.tsx`
+ * —— 这一层挂的画布是假的，量不到那些 DOM。
+ */
+describe('★ 对比：备原图 + 一个开关', () => {
+  const last = () => canvasProps.props.at(-1)!
+  /** 工具行那颗「对比」格子（右下角那颗住在**真画布**里，这一层挂的是假画布）。 */
+  const cell = () => container.querySelector('[aria-label="对比"]') as HTMLButtonElement
+  const clickCell = () => act(async () => {
+    cell().click(); await new Promise(r => setTimeout(r, 0))
+  })
+
+  it('★ 点「对比」才去备原图（懒做）；备的是**大图**，不是 480 的缩略图', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+
+    // 懒做：还没点它，一张位图都不该多解（每张照片白编一版 2048 是白花的）
+    expect(decodedBitmaps, '还没点「对比」，原图一份都不该备').toHaveLength(0)
+
+    await clickCell()
+    // 前缀 `original:` = 走的是 `bitmapToDataUrl`（0.9、长边 ≤ 2048 那份）。
+    // ⚠️ 拿 `originalPreview`（480 的缩略图，前缀 `thumb:`）顶上 → 这一句当场红。
+    //    分屏是**并排比**：左边糊右边清楚，用户会以为是我们把照片弄糊了。
+    expect(last().compareWith).toBe('original:decoded-1')
+    // 备图那张位图**用完就关**：`ImageBitmap` 占的是 GPU 内存（这个项目的老账）
+    expect(decodedBitmaps.at(-1)!.close).toHaveBeenCalled()
+  })
+
+  it('★「对比」不算"工具开着"：手势不停用、视图也不归位', async () => {
+    // spec §3.3：用户多半正放大着才去按对比 —— 把他拽回「适应窗口」正好毁掉
+    // 这个用法。所以 `viewLocked` / `resetKey` 这两样**只认裁剪**。
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    const resetBefore = last().resetKey
+
+    await clickCell()
+    expect(last().comparing).toBe(true)
+    expect(last().viewLocked, '对比态里缩放 / 平移照常能用').toBe(false)
+    expect(last().resetKey, '进对比不该把视图拽回「适应窗口」').toBe(resetBefore)
+    // 第二行不是空的（那儿写着"拖中间那条把手"）
+    expect(container.querySelector('.tool-row-second')?.textContent).toContain('把手')
+
+    // 再点一下同一颗 = 退出（"对比是个开关，不是模式"，spec §3.0）
+    await clickCell()
+    expect(last().comparing).toBe(false)
+    expect(container.querySelector('.tool-row-second')).toBeNull()
+  })
+
+  it('★ 右下角那颗和工具行那颗调的是**同一个**开关', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+
+    // 右下角那颗住在真画布里；这一层拿到的是同一个开关（App 只做这一份）
+    const onCompare = last().onCompare
+    expect(onCompare, 'App 要把那颗按钮的回调交给画布').toBeTypeOf('function')
+    await act(async () => { onCompare!(); await new Promise(r => setTimeout(r, 0)) })
+    expect(last().comparing).toBe(true)
+    expect(cell().className, '从右下角开，工具行那颗要跟着亮').toContain('on')
+
+    await act(async () => { last().onCompare!(); await new Promise(r => setTimeout(r, 0)) })
+    expect(last().comparing).toBe(false)
+    expect(cell().className).not.toContain('on')
+  })
+
+  it('★ 恢复出来的会话照样能对比（原图从那一条路来）', async () => {
+    withSessions([makeSession(7, 3, '上次那句', 'S7')])
+    await renderApp()
+    await goNav('调色')
+    await clickCell()
+    expect(last().compareWith).toMatch(/^original:/)
   })
 })
 
