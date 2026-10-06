@@ -1424,7 +1424,7 @@ try {
       //
       // 为了量这一屏，刚才把那个 413 写进了 `saveFails`（见上面 route 那段注释）。
       //
-      // **量的是哪一屏**：用户按了「保存」→ 存不进去 → 横幅出现。这一屏上
+      // **量的是哪一屏**：用户按了「存进作品」→ 存不进去 → 横幅出现。这一屏上
       // 他手里那张改好的图**只在屏幕上**，横幅上那个「下载到电脑」是唯一的出口
       // —— 所以"它完整在不在视口里"是**真判据**（见 measureSaveFail 那段）。
       //
@@ -1441,7 +1441,7 @@ try {
       await page.locator('.nav-item', { hasText: '修图' }).click()
       await page.waitForTimeout(300)
       saveFails = true
-      await page.getByRole('button', { name: '保存' }).click()
+      await page.getByRole('button', { name: '存进作品' }).click()
       // ⚠️ 等横幅**出现**再量：量"点了、还没回来"的那一屏等于什么都没量
       await page.waitForSelector('.save-fail', { timeout: 15_000 })
       await page.waitForTimeout(300)          // 让排版落定（换行、滚动条）

@@ -125,6 +125,19 @@ const MIME: Record<string, string> = {
  */
 type Gates = { login: Limiter; signup: Limiter; probe: Limiter; edit: Limiter; ai: Limiter }
 
+/**
+ * 每人每天能**花几次生成**（spec §6.6）。
+ *
+ * ⚠️ **数字和那句 429 共用这一个常量。** 各写一份的话，哪天调了上限度、另一处
+ *   忘了跟，那句提示就开始对用户撒谎 —— 而且没有任何东西会红（文案规范
+ *   第三条：不许写产品做不到的事；`shared/copy.ts` 里那几个函数是同一条道理）。
+ *
+ * ⚠️ 单位是**次**、不是张：闸门数的是 `/api/edit` 被调了几回，同一张照片改
+ *   二十次也算二十次。原来那句「一天大概二十来张」两头都不准 —— 数不准，
+ *   而且"大概"让它连"我到底超没超"都答不上来（用户 2026-10-06 提的"不能模棱两可"）。
+ */
+const DAILY_EDITS = 20
+
 function newGates(aiPerMinute = 10): Gates {
   return {
     login: createLimiter({ max: 10, windowMs: 15 * 60_000 }),
@@ -136,7 +149,7 @@ function newGates(aiPerMinute = 10): Gates {
     //   数取自设计文档 §6.6（每人每天 20 次生成）—— 那张表一直躺在文档里没实现。
     //   ⚠️ 2026-10-03 起 App 上传前那一屏**不再提这个数**了（用户把那些提示都撤了），
     //   现在只有当额度真的用完时，下面 `assertDailyQuota` 那句 429 才对用户说一次。
-    edit: createLimiter({ max: 20, windowMs: 24 * 60 * 60_000 }),
+    edit: createLimiter({ max: DAILY_EDITS, windowMs: 24 * 60 * 60_000 }),
     // ★ 2026-10-04：§6.6 那张表的另一半 —— **每账号每分钟 10 次 AI 调用**。
     //   三个 AI 接口（route / suggest / edit）共用这一个桶：只限 edit 的话，
     //   route/suggest 这两条花钱少、但**同样花钱**的路完全没有闸，一个人可以
@@ -154,7 +167,7 @@ function newGates(aiPerMinute = 10): Gates {
  */
 function assertDailyQuota(lim: Limiter, key: string): void {
   if (lim.hit(key).ok) return
-  throw new HttpError('TOO_MANY', '今天改得够多了（一天大概二十来张），明天再来。', 429)
+  throw new HttpError('TOO_MANY', `今天已经改了 ${DAILY_EDITS} 次，明天再来。`, 429)
 }
 
 /**

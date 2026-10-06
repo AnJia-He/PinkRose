@@ -197,7 +197,7 @@ async function main() {
     await grab(page, 'App · 调色面板')
 
     // 存一张，好让作品页/详情页有东西可看
-    await page.click('.actions button:has-text("保存")')
+    await page.click('.actions button:has-text("存进作品")')
     await page.waitForTimeout(4000)
 
     // ── 对话页（Task 6）────────────────────────────────────────────────

@@ -1425,7 +1425,7 @@ describe('导出：分享还是存下来，用户自己选', () => {
     //    ★ 2026-10-04：**最左边那颗「调色」搬去了左栏**（用户：「那个微调照片的
     //    放在导航栏单列出来」）—— 这条清单跟着少一颗，现在只剩**"把图拿走"**
     //    那三颗。谁要是往这儿再加一颗改图的按钮，这条断言会红。
-    expect(topbarButtons()).toEqual(['分享', '保存', '新的一张'])
+    expect(topbarButtons()).toEqual(['分享', '存进作品', '新的一张'])
   })
 
   it('不能分享的设备上，那一格换成「下载」', async () => {
@@ -1444,7 +1444,7 @@ describe('导出：分享还是存下来，用户自己选', () => {
     vi.mocked(saveMod.canShareImage).mockReturnValue(false)
     await renderApp()
     await uploadPhoto()
-    expect(topbarButtons()).toEqual(['下载', '保存', '新的一张'])
+    expect(topbarButtons()).toEqual(['下载', '存进作品', '新的一张'])
   })
 
   it('点「下载」→ 真的下载一份，文件名和分享那条一样', async () => {
@@ -1473,16 +1473,18 @@ describe('导出：分享还是存下来，用户自己选', () => {
     expect(vi.mocked(saveMod.shareImage).mock.calls[0][1]).toBe('p_pinkrose.jpg')
   })
 
-  it('⚠️ 点「保存」→ 不偷偷下载，也不偷偷变成分享（§3.4）', async () => {
+  it('⚠️ 点「存进作品」→ 不偷偷下载，也不偷偷变成分享（§3.4）', async () => {
     // ⚠️ **这条 2026-09-25（Task 13）改过一半。** 原文是「老老实实下载，
-    //   不许偷偷改成分享」—— §3.4 把前半句改了：保存现在只做"存进作品集"
+    //   不许偷偷改成分享」—— §3.4 把前半句改了：这颗按钮现在只做"存进作品"
     //   这一件事，下载挪到作品集里、由用户自己决定要哪张。
     //   后半句照旧守着 —— 用户原话：「那有时候不想立即分享也得分享喽」。
     //   一条"能分享就一律分享"的实现会让它红，而那正是他不要的。
+    //   ★ 2026-10-06：按钮的字从「保存」改成「存进作品」（用户提的"不能模棱两可"
+    //     —— 它和左边那颗下载都是"把图留下"，「保存」没说存到哪儿去）。
     vi.mocked(saveMod.canShareImage).mockReturnValue(true)
     await renderApp()
     await uploadPhoto()
-    await click('保存')
+    await click('存进作品')
 
     expect(saveMod.downloadImage).not.toHaveBeenCalled()
     expect(saveMod.shareImage).not.toHaveBeenCalled()
@@ -3696,10 +3698,10 @@ describe('作品详情页：这张图怎么来的', () => {
 })
 
 /**
- * 2026-09-25 加（Task 13 —— 13 个任务里的最后一个）。**「保存」= 存进作品集**（§3.4）。
+ * 2026-09-25 加（Task 13 —— 13 个任务里的最后一个）。**「存进作品」= 存进作品集**（§3.4）。
  *
  * 四件事在这一层钉住：
- *   ① 点「保存」不再偷偷下载。下载挪到作品集里，由用户自己决定要哪张、存到哪
+ *   ① 点「存进作品」不再偷偷下载。下载挪到作品集里，由用户自己决定要哪张、存到哪
  *      —— 顺带也不再往他的下载文件夹堆东西；
  *   ② 同一张照片存第二次起问一句「上次那张要替换掉吗」，而且**问完之后按下去
  *      发生的事也得是对的**：替换走 PUT（不是又 POST 一张）；
@@ -3732,7 +3734,7 @@ describe('保存 = 存进作品集（Task 13）', () => {
     }
     await act(async () => {
       btn.click()
-      // ⚠️ **两轮，不是一轮。** 点「保存」之后 App 得先把画布上那个 Blob 读成
+      // ⚠️ **两轮，不是一轮。** 点「存进作品」之后 App 得先把画布上那个 Blob 读成
       //    data URL 才发得出请求，而这一步（`blobToDataUrl`）走的是 jsdom 的
       //    `FileReader` —— 它把回调排在 **`setImmediate`** 上，和一个
       //    `setTimeout(0)` 谁先谁后**没有保证**（一个是 check 阶段、一个是 timers 阶段）。
@@ -3778,12 +3780,12 @@ describe('保存 = 存进作品集（Task 13）', () => {
       (url === '/api/works' && init?.method === 'POST') ? jsonResponse({ id: 9 }) : inner(url, init))
     await renderApp()
     await uploadPhoto()
-    await clickTop('保存')
+    await clickTop('存进作品')
     expect(savedBody()).toBeTruthy()     // 先证明那一趟真的走到存了，别让 ② 红在别的原因上
     expect(thumbMod.makeThumbnail).toHaveBeenCalledWith(expect.anything(), 480)
   })
 
-  it('★ 点「保存」是存进作品集，**没有偷偷下载**（§3.4）', async () => {
+  it('★ 点「存进作品」是存进作品集，**没有偷偷下载**（§3.4）', async () => {
     const inner = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
       (url === '/api/works' && init?.method === 'POST')
@@ -3792,7 +3794,7 @@ describe('保存 = 存进作品集（Task 13）', () => {
 
     await renderApp()
     await uploadPhoto()
-    await clickTop('保存')
+    await clickTop('存进作品')
 
     expect(savedBody()).toBeTruthy()
     // ★ 「保存不再自动下载」—— 变异：把 downloadImage 加回保存流程 → 必须红
@@ -3809,7 +3811,7 @@ describe('保存 = 存进作品集（Task 13）', () => {
     await uploadPhoto()
     vi.mocked(api.postRoute).mockResolvedValueOnce(decision({ reply: '好。' }))
     await say('亮一点')
-    await clickTop('保存')
+    await clickTop('存进作品')
 
     const body = savedBody()
     // ⚠️ **`toEqual` 不是 `toContain`，这一条是本轮改的。**
@@ -3848,7 +3850,7 @@ describe('保存 = 存进作品集（Task 13）', () => {
     await openLutPanel()
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
 
-    await clickTop('保存')
+    await clickTop('存进作品')
     expect(savedBody().recipe.lut).toEqual({ name: '黄昏', amount: 80 })
   })
 
@@ -3859,8 +3861,8 @@ describe('保存 = 存进作品集（Task 13）', () => {
 
     await renderApp()
     await uploadPhoto()
-    await clickTop('保存')
-    await clickTop('保存')          // 第二次
+    await clickTop('存进作品')
+    await clickTop('存进作品')          // 第二次
 
     expect(container.textContent).toContain('上次那张要替换掉吗')
     expect(container.textContent).toContain('替换')
@@ -3882,8 +3884,8 @@ describe('保存 = 存进作品集（Task 13）', () => {
 
     await renderApp()
     await uploadPhoto()
-    await clickTop('保存')
-    await clickTop('保存')
+    await clickTop('存进作品')
+    await clickTop('存进作品')
     await clickTop('替换')          // 回答那个问句
 
     expect(fetchMock.mock.calls.filter(c => c[0] === '/api/works/9' && c[1]?.method === 'PUT')).toHaveLength(1)
@@ -3905,8 +3907,8 @@ describe('保存 = 存进作品集（Task 13）', () => {
 
     await renderApp()
     await uploadPhoto()
-    await clickTop('保存')
-    await clickTop('保存')
+    await clickTop('存进作品')
+    await clickTop('存进作品')
     await clickTop('再存一张')
 
     expect(fetchMock.mock.calls.filter(c => c[0] === '/api/works' && c[1]?.method === 'POST')).toHaveLength(2)
@@ -3928,8 +3930,8 @@ describe('保存 = 存进作品集（Task 13）', () => {
 
     await renderApp()
     await uploadPhoto()
-    await clickTop('保存')          // 第一次：POST，savedId = 9
-    await clickTop('保存')          // 第二次：问「替换掉吗」—— **配方在这一刻定格**
+    await clickTop('存进作品')          // 第一次：POST，savedId = 9
+    await clickTop('存进作品')          // 第二次：问「替换掉吗」—— **配方在这一刻定格**
     expect(container.textContent).toContain('上次那张要替换掉吗')
 
     // 他还没回答，回头又改了一版：这一下**同时**改了 params 和"用户说过的原话"。
@@ -3963,9 +3965,9 @@ describe('保存 = 存进作品集（Task 13）', () => {
 
     await renderApp()
     await uploadPhoto()
-    await clickTop('保存')
+    await clickTop('存进作品')
 
-    expect(container.textContent).toContain('没能存进作品集')
+    expect(container.textContent).toContain('没能存进「作品」')
     // ⚠️ 按**类名**找那个盒子（结构），文案单独一条钉住 —— 不做"按文案找元素"。
     const dl = container.querySelector('.save-fail button.download') as HTMLButtonElement | null
     expect(dl?.textContent ?? '').toContain('下载到电脑')   // 文案：按钮叫这个
@@ -4003,8 +4005,8 @@ describe('保存 = 存进作品集（Task 13）', () => {
 
     await renderApp()
     await uploadPhoto()
-    await clickTop('保存')
-    expect(container.textContent).toContain('没能存进作品集')
+    await clickTop('存进作品')
+    expect(container.textContent).toContain('没能存进「作品」')
 
     // 用户没关横幅，回头又改了一版：生成一张新的底，屏幕上那张**换人了**。
     vi.mocked(api.postRoute).mockResolvedValueOnce(
@@ -4047,9 +4049,9 @@ describe('保存 = 存进作品集（Task 13）', () => {
     vi.mocked(saveMod.buildExportBlob).mockRejectedValueOnce(new Error('画布太大'))
     await renderApp()
     await uploadPhoto()
-    await clickTop('保存')
+    await clickTop('存进作品')
 
-    expect(container.textContent).toContain('没能存进作品集')
+    expect(container.textContent).toContain('没能存进「作品」')
     // 变异：把那两句的三目压成永远走第一句 → 这一条红
     expect(container.textContent).not.toContain('图还在')
     expect(container.querySelector('.save-fail button.download')).toBeNull()
@@ -5910,7 +5912,7 @@ describe('恢复：打开就接着上次那条', () => {
   it('★ 原图没取回来 —— 好消息不许把坏消息吞掉（三颗按钮都要点名）', async () => {
     // 两条通报**只有一格**（`notice` 是一个对象）。brief 的写法是"catch 里先设坏
     // 的那条、后面再无条件设一句'接着改就行'"—— 同一个批次里**后设的赢**，
-    // 用户只会看到好消息，而那一刻「保存」「分享」「下载」其实是坏的。
+    // 用户只会看到好消息，而那一刻「存进作品」「分享」「下载」其实是坏的。
     // 这条用例钉住那个合并：两半都得在，而且得留得住。
     withSessions([makeSession(7, 1, '上次那句', 'S7')], { originalFails: true })
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -5921,7 +5923,7 @@ describe('恢复：打开就接着上次那条', () => {
     expect(notice.textContent ?? '').toContain('这是上次没做完的那张')
     // ② 坏消息也要在，而且**三颗按钮都点名**（能分享的设备上，用户看到的是「分享」）
     expect(notice.textContent ?? '').toContain('原图没取回来')
-    expect(notice.textContent ?? '').toContain('「保存」「分享」「下载」')
+    expect(notice.textContent ?? '').toContain('「存进作品」「分享」「下载」')
     // ③ 它得**留得住**：只有 tone: 'ok' 那条会在 4 秒后自己走
     expect(notice.className).not.toContain('ok')
     // ④ 预览确实没生成出来 —— 不是"报了坏消息但其实一切正常"
