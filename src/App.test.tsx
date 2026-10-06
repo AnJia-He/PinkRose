@@ -1590,6 +1590,26 @@ describe('历史小图：每一步都看得见（照片上方那条时间轴上�
     expect(container.querySelector('.stage .strip')).toBeTruthy()
   })
 
+  it('★ 工具行只在调色屏；修图屏那条带子还是历史转盘', async () => {
+    // 写法照上一条（挂起 App → 上传一张照片 → 用左栏切屏）。
+    await renderApp()
+    await uploadPhoto()
+
+    // 修图屏：没有工具行 —— 这一屏照片上方那条带子是历史转盘（上一条钉的）。
+    expect(container.querySelector('.tool-row')).toBeNull()
+    expect(container.querySelector('.stage .strip')).toBeTruthy()
+
+    // 进调色屏：工具行来了（裁剪 / 对比两颗），转盘换下去了。
+    await goNav('调色')
+    expect(container.querySelector('.tool-row')).toBeTruthy()
+    expect(container.querySelector('.strip')).toBeNull()
+
+    // 切回修图屏：工具行跟着没了（它只在调色那一屏）。
+    await goNav('修图')
+    expect(container.querySelector('.tool-row')).toBeNull()
+    expect(container.querySelector('.stage .strip')).toBeTruthy()
+  })
+
   /**
    * ★ 2026-10-06（晚）：**对话区里不再有照片**（用户原话：「对话区不留下照片了」）。
    * 这条原来钉的是相反的一面 —— 2026-10-05 用户点名要"文字一块、图一块"；

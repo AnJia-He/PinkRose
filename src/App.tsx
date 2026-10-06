@@ -7,6 +7,7 @@ import AdjustmentPanel from './ui/AdjustmentPanel'
 import PresetRail from './ui/PresetRail'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import StepStrip from './ui/StepStrip'
+import ToolBar, { type ToolId } from './ui/ToolBar'
 import { LoginPage } from './ui/LoginPage'
 import { GalleryPage } from './ui/GalleryPage'
 import { SessionsPage } from './ui/SessionsPage'
@@ -182,6 +183,8 @@ export default function App() {
 
   const [image, setImage] = useState<DecodedImage | null>(null)
   const [params, setParams] = useState<Adjustments>(ZERO)
+  /** ★ 2026-10-06（工具行）：调色屏当前开着哪个工具。null = 都没开。 */
+  const [tool, setTool] = useState<ToolId | null>(null)
 
   /**
    * 顶上那条**通报**：有件事要跟你说一声，说完可以收走（2026-09-30）。
@@ -1964,6 +1967,10 @@ export default function App() {
    */
   useEffect(() => { if (view.kind !== 'adjust') lutOpenNext.current = false }, [view.kind])
 
+  // ★ 工具行只在调色屏；切走时把工具收掉 —— 不然回到调色屏时它还开着，
+  //   而那时候照片可能已经换了（裁剪框会落在新照片上）。
+  useEffect(() => { setTool(null) }, [view.kind])
+
   /**
    * 点导航：改状态，顺手把地址栏换成对应的那条。
    *
@@ -2295,6 +2302,15 @@ export default function App() {
                 />
               )}
               <div className="stage">
+                {/* ★ 2026-10-06（工具行）：照片上方那条带子（`ui/ToolBar`）——
+                    「裁剪 / 对比」两颗工具，第二行（当前工具的控件）由它自己的
+                    `children` 装（Task 4 把裁剪的塞进去）。
+                    ⚠️ 只在调色屏（和预设栏、微调面板同一条判据）—— 修图屏那一条
+                    位置是历史转盘（下面 `StepStrip`），两个屏各用一次这块地方。
+                    ⚠️ 切走屏时要收掉工具，见顶上那条 `[view.kind]` 的 effect。 */}
+                {view.kind === 'adjust' && (
+                  <ToolBar active={tool} onPick={setTool}>{/* Task 4 把裁剪的第二行塞这儿 */}</ToolBar>
+                )}
                 {/* ★ 2026-10-06（晚）：**历史转盘**（`ui/StepStrip`）——
                     照片上方那一圈（用户先画草图提的「对话区不留下照片了…
                     下方是当前图片，上方是可左右滚动的历史记录照片类似于 git
@@ -2342,7 +2358,11 @@ export default function App() {
                   //   的判据。⚠️ 传它不传 `image`：同一条会话里换步骤
                   //   （转盘跳一步、「再来一版」）图也换，但用户正对着同一块
                   //   地方前后对比 —— 那时候把视图拽回去等于把放大镜抢走。
-                  resetKey={sessionId}
+                  // ★ 2026-10-06（工具行）：进工具先把视图收回「适应窗口」——
+                  //   和"换会话"走同一条路（`resetKey` 是 dep，值一变就归位）。
+                  //   值必须**按值稳定**（字符串），别传对象/数组（每渲染一次都是新身份）。
+                  resetKey={`${sessionId ?? ''}:${tool ?? ''}`}
+                  viewLocked={tool !== null}
                   // ★ 2026-10-06：生成中给照片盖一层淡淡的暗罩 + 转圈（那十几秒
                   //   照片原来完全没反应）。传的是 `generating` 不是 `busy` ——
                   //   「正在思考」/上传/切会话那几句**不盖**（一闪一暗会闪），

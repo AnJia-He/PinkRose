@@ -44,6 +44,12 @@ type Props = {
    * 可选：不传 = 永远不归位（直接挂载它的测试不用为此表态）。
    */
   resetKey?: unknown
+  /**
+   * ★ 2026-10-06（工具行）：工具开着时**手势停用** —— 滚轮、拖动、双击都不响应，
+   * 右下角那排缩放按钮也不画。
+   * 理由：裁剪时一边拉框一边缩放会让框和手指打架（spec §3.1）。
+   */
+  viewLocked?: boolean
   /** 画面这条路出了事，把**要说给用户的那句话**交出去（由 App 决定在哪儿显示）。
    *  组件自己不弹窗、不存状态：它只负责"把话说清楚"，说不说、在哪儿说是上层的事。 */
   onFail?: (message: string) => void
@@ -95,7 +101,7 @@ export function describeFailure(e: unknown): string {
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
 export default function Canvas({
   image, params, lutCube, lutAmount, originalPreview, canvasRef, picking, marker, onPickPoint, onFail,
-  busy, resetKey,
+  busy, resetKey, viewLocked,
 }: Props) {
   const innerRef = useRef<HTMLCanvasElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -335,7 +341,7 @@ export default function Canvas({
    * 默认都会弹"下载图片 / 复制"这类系统菜单，跟按住看原图直接打架。
    */
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!image) return
+    if (!image || viewLocked) return
     // 上一次按下要是没收干净（指针被系统抢走、pointerup 没送到），先收掉
     stopRef.current?.()
 
@@ -393,7 +399,7 @@ export default function Canvas({
    */
   const onDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const wrap = wrapRef.current
-    if (!image || !wrap || picking) return
+    if (!image || !wrap || picking || viewLocked) return
     const v = viewRef.current
     if (v.scale > 1) { putView(FIT); return }
     const area = areaRef.current
@@ -413,7 +419,7 @@ export default function Canvas({
    */
   useEffect(() => {
     const wrap = wrapRef.current
-    if (!wrap || !image) return
+    if (!wrap || !image || viewLocked) return
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       const area = areaRef.current
@@ -428,7 +434,7 @@ export default function Canvas({
     }
     wrap.addEventListener('wheel', onWheel, { passive: false })
     return () => wrap.removeEventListener('wheel', onWheel)
-  }, [image, putView])
+  }, [image, putView, viewLocked])
 
   /** 那两颗按钮：以**可视区中心**为锚点放大 / 缩小一档。 */
   const zoomBy = (factor: number) => {
@@ -540,7 +546,7 @@ export default function Canvas({
           还会在按钮底下顺手插一个圈。
           ⚠️ 排在暗罩**后面**：生成中那十几秒照片被压暗，这排按钮要保持看得清
           （用户等的正好是"能不能放大看一眼"). */}
-      {image && (
+      {image && !viewLocked && (
         <div className="zoom-bar" onPointerDown={swallow} onClick={swallow} onDoubleClick={swallow}>
           <button
             type="button" className="zoom-btn" aria-label="缩小" title="缩小"

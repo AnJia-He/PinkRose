@@ -975,6 +975,27 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 @keyframes skeleton-sweep { to { transform: translateX(100%); } }
 
+/* ── 调色屏的工具行（★ 2026-10-06）────────────────────────────────────
+   和上面那条历史转盘带子**同一套语言**（同一块地方，两个屏各用一次）：
+   `--raised` 实心 + 一道 `--line`。第一行是三颗工具，第二行是当前工具的控件。 */
+.tool-row {
+  flex: none;
+  background: var(--raised);
+  border-bottom: 1px solid var(--line);
+}
+.tool-row-main { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); }
+.tool-row-second {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-3); border-top: 1px solid var(--line);
+}
+/* 真按钮 → 逐条按掉全局 `button{}` 那套方框（和 `.rail-tile` / `.lut-tile` 同一条老路） */
+.tool-cell {
+  padding: 5px 12px; background: none; border: 1px solid transparent;
+  border-radius: var(--r-pill); color: var(--muted); font-size: 13px; cursor: pointer;
+}
+.tool-cell:hover { background: var(--hover); color: var(--text); }
+.tool-cell.on { color: var(--accent-300); border-color: var(--accent); background: var(--accent-tint); }
+
 /* ── 上传前那一屏（2026-09-30 重做） ────────────────────────────────
    这是登录之后看到的第一张脸。原来是**一个虚线框、里面四个字**，浮在一整片
    黑里：不说这是什么产品、不说能拿它干嘛、也不说该怎么做。用户看完整套界面
