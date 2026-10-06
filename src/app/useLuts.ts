@@ -37,7 +37,8 @@ export function useLuts({ lut, image, params: _params, onError }: {
    * ⚠️ 它和 `luts.length === 0` 是**两件事**：还没到手 / 取不到时，
    *    「还没有导入过滤镜。」是一句**关于用户资产的假话**（他的滤镜还在服务端上）。
    *    只有拿到过空清单，那句才是事实（`LutSettings` 的四态、`AccountPage`
-   *    的 `lutCount !== null` 都是同一个道理，见 `LutPicker` 的 `lutsKnown`）。
+   *    的「模型」那一行 —— 拿不到就整格不出现 —— 都是同一个道理，
+   *    见 `LutPicker` 的 `lutsKnown`）。
    */
   const [lutsKnown, setLutsKnown] = useState(false)
   const [cube, setCube] = useState<Cube | null>(null)

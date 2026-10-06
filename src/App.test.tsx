@@ -4554,9 +4554,12 @@ describe('用户管理页', () => {
     [...(row?.querySelectorAll('button') ?? [])]
       .find(b => (b.textContent ?? '').trim() === text) as HTMLButtonElement
 
-  it('★ 个人设置里点「Lut」能进那一页；导入一个 .cube 之后列表里出现它', async () => {
-    // 两半都是**真行为**：那一行点得进去（地址栏跟着走 —— F5 / 收藏 / 转发都要认），
+  it('★ 左栏点「Lut」能进那一页；导入一个 .cube 之后列表里出现它', async () => {
+    // 两半都是**真行为**：那一格点得进去（地址栏跟着走 —— F5 / 收藏 / 转发都要认），
     // 以及选完一个文件之后清单里**真多出一行**（不是"按钮亮了"就算完）。
+    // ★ 2026-10-06（深夜）：入口从「个人设置的调色素材那一格」换成**左栏那一支** ——
+    //   用户：「这个可以从设置里面去掉了，我们的导航栏已经有了」（同一个
+    //   `kind: 'luts'` 两个入口，谁都得先判断一下"这俩是不是一个地方"）。
     const SUNSET = LUTM(9, { name: 'sunset', size: 2, bytes: 1234 })
     // 清单里**什么时候**有它：导入之后 —— 拿 `createLut` 被调过没有当判据，
     // 而不是数"第几次拉"（探身进实现里数次数，加一处调用就悄悄错位）。
@@ -4568,9 +4571,7 @@ describe('用户管理页', () => {
     vi.mocked(lutsMod.createLut).mockResolvedValue({ lut: SUNSET })
 
     await renderApp()
-    await openAccount()
-    const row = rowByLabel('Lut')
-    await act(async () => { row.click(); await settle() })
+    await goNav('Lut')
 
     expect(location.pathname).toBe('/app/luts')
     // 前提：这一页**真的开着**（少了它，下面那条会因为"整页没渲染"假绿）
@@ -4623,34 +4624,20 @@ describe('用户管理页', () => {
     expect(container.querySelector('.lut-grid')).toBeTruthy()
   })
 
-  it('★ 第 4 格右边写的是**真数**（N 个）', async () => {
-    // 和「模型」那一行同一条规矩 —— 拿得到就写真数，拿不到整格不出现（下一条）。
-    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [LUTM(1), LUTM(2)] })
-    await renderApp()
-    await openAccount()
-
-    expect(rowByLabel('Lut').querySelector('.account-row-value')?.textContent).toBe('2 个')
-  })
-
-  it('★ 清单拿不到时：第 4 格右边不出现，那一页也不说「还没有导入过 Lut」', async () => {
-    // 「0 个」对着一个导了 20 个的人是句**假话** —— 那一格宁可整个不出现
-    //（第 4 格和「模型」那一行同一个形状）。那一页同理：说"还没有导入过滤镜"
-    // 等于把"拿不到"编造成"你没有"。
+  it('★ 清单拿不到时：那一页说**服务端那句话**，不说「还没有导入过 Lut」', async () => {
+    // 「还没有导入过 Lut」对着一个导过 20 个、只是网络抖了一下的人就是句**假话**
+    // （把"拿不到"编造成"你没有"）。
     // ⚠️ 第一发（App 挂载那一次）**照常给一份名单**：`useLuts` 拿到失败会在控制台
     //    留一行「滤镜清单没取回来」—— 那是别的用例的噪声，会盖住真话（给的那份是空
-    //    名单，这一条量的是"用户管理页和那一页拿不到"，与 App 那份无关）。
+    //    名单，这一条量的是"那一页拿不到"，与 App 那份无关）。
+    // ★ 2026-10-06（深夜）：入口从「个人设置那一格」换成**左栏那一支** ——
+    //   用户把设置里那格撤了（见 `AccountPage` 那段注释）。
     vi.mocked(lutsMod.listLuts)
       .mockResolvedValueOnce({ luts: [] })
       .mockRejectedValue(new api.ApiError('UPSTREAM_FAILED', 'SENTINEL-滤镜清单拉不回来'))
     await renderApp()
-    await openAccount()
+    await goNav('Lut')
 
-    const row = rowByLabel('Lut')
-    expect(row.querySelector('.account-row-value')).toBeNull()
-    // 少一格不挡路：这一行照样点得进去
-    expect(row.disabled).toBe(false)
-
-    await act(async () => { row.click(); await settle() })
     // 说的必须是**服务端那句话**（原样），不是我们替它总结的
     expect(container.textContent).toContain('SENTINEL-滤镜清单拉不回来')
     expect(container.textContent).not.toContain('还没有导入过 Lut')
@@ -4662,11 +4649,8 @@ describe('用户管理页', () => {
     const gate = makeGate<{ luts: LutMeta[] }>()
     vi.mocked(lutsMod.listLuts).mockReturnValue(gate.promise)
     await renderApp()
-    await openAccount()
-    // 第 4 格右边也还没有数（`null` 期间不画）
-    expect(rowByLabel('Lut').querySelector('.account-row-value')).toBeNull()
     // 只切页，不放行请求 —— 要的就是"还在路上"那一瞬间
-    await act(async () => { rowByLabel('Lut').click() })
+    await goNav('Lut')
 
     expect(container.textContent).toContain('正在打开')
     expect(container.textContent).not.toContain('还没有导入过 Lut')
@@ -4684,8 +4668,8 @@ describe('用户管理页', () => {
     vi.mocked(lutsMod.createLut).mockRejectedValue(
       new api.ApiError('BAD_REQUEST', '已经有一个叫「sunset」的 Lut 了，换个名字。'))
     await renderApp()
-    await openAccount()
-    await act(async () => { rowByLabel('Lut').click(); await settle() })
+    await goNav('Lut')
+    await settle()
 
     // ① 太大：**连读都不读**（8 MB 那个上限在前，解析在后）
     await importFile(new File([new Uint8Array(MAX_LUT_FILE_BYTES + 1)], 'big.cube'))
@@ -4708,8 +4692,8 @@ describe('用户管理页', () => {
     vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
     vi.mocked(lutsMod.renameLut).mockResolvedValue({ lut: { ...HUT, name: '日落' } })
     await renderApp()
-    await openAccount()
-    await act(async () => { rowByLabel('Lut').click(); await settle() })
+    await goNav('Lut')
+    await settle()
 
     await act(async () => { btnIn(lutRow('黄昏'), '改名').click() })
     const input = container.querySelector('input[name=lutName]') as HTMLInputElement
@@ -4734,8 +4718,8 @@ describe('用户管理页', () => {
     vi.mocked(lutsMod.lutUsage).mockResolvedValue({ sessions: 2 })
     vi.mocked(lutsMod.deleteLut).mockResolvedValue({ ok: true })
     await renderApp()
-    await openAccount()
-    await act(async () => { rowByLabel('Lut').click(); await settle() })
+    await goNav('Lut')
+    await settle()
 
     await act(async () => { btnIn(lutRow('黄昏'), '删除').click(); await settle() })
 
@@ -4760,8 +4744,8 @@ describe('用户管理页', () => {
     vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
     vi.mocked(lutsMod.lutUsage).mockResolvedValue({ sessions: 0 })
     await renderApp()
-    await openAccount()
-    await act(async () => { rowByLabel('Lut').click(); await settle() })
+    await goNav('Lut')
+    await settle()
 
     await act(async () => { btnIn(lutRow('黄昏'), '删除').click(); await settle() })
 
@@ -4777,9 +4761,7 @@ describe('用户管理页', () => {
       luts: Array.from({ length: 30 }, (_, i) => LUTM(i + 1)),
     })
     await renderApp()
-    await openAccount()
-    expect(rowByLabel('Lut').querySelector('.account-row-value')?.textContent).toBe('30 个')
-    await act(async () => { rowByLabel('Lut').click(); await settle() })
+    await goNav('Lut')
 
     const btn = container.querySelector('.luts-import') as HTMLButtonElement
     expect(btn.disabled).toBe(true)
