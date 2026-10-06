@@ -2002,8 +2002,9 @@ describe('★ 对比：备原图 + 一个开关', () => {
     expect(last().comparing).toBe(true)
     expect(last().viewLocked, '对比态里缩放 / 平移照常能用').toBe(false)
     expect(last().resetKey, '进对比不该把视图拽回「适应窗口」').toBe(resetBefore)
-    // 第二行不是空的（那儿写着"拖中间那条把手"）
-    expect(container.querySelector('.tool-row-second')?.textContent).toContain('把手')
+    // ★ 开着对比**没有第二行**：它是开关、没有自己的控件，而空着的第二行会占掉
+    //   照片 37px（开着对比时照片整张跳一下，正好打在"放大着比细节"这个用法上）。
+    expect(container.querySelector('.tool-row-second'), '对比不该长出第二行').toBeNull()
 
     // 再点一下同一颗 = 退出（"对比是个开关，不是模式"，spec §3.0）
     await clickCell()

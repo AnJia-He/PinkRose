@@ -1132,9 +1132,6 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 「完成」是主按钮（`kit/Btn` 带的 `.btn-primary` 长相），这一行的尺寸归这里管
    —— 和 `.tool-cell` 同一档高度。 */
 .tool-row-second .btn-primary { padding: 5px 14px; font-size: 13px; }
-/* 「对比」的第二行：它是开关、没有控件，这一行只有一句话（★ 2026-10-06）。
-   ⚠️ 别改用 `.hint`：那个类自带一个转圈（它是"正在…"那几句的记号）。 */
-.compare-hint { color: var(--muted); font-size: 13px; }
 
 /* ── 上传前那一屏（2026-09-30 重做） ────────────────────────────────
    这是登录之后看到的第一张脸。原来是**一个虚线框、里面四个字**，浮在一整片
