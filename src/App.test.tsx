@@ -7330,3 +7330,107 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(JSON.stringify(body)).not.toContain('第一版好了')
   })
 })
+
+/**
+ * ★ 2026-10-06（用户反馈：「当用户进行提问时对话区是不会自动向下滚动的」）。
+ *
+ * 对话区（`.chat-log`）是一个**自己滚**的格子：内容长过它以后，新消息落在
+ * 视野外面 —— 用户问了话，屏幕上却"什么都没发生"。这套"跟着走"从来没写过
+ * （不是哪天改坏的），这一组把它钉住。
+ *
+ * 语义照主流聊天产品那一套：
+ *   · **贴着底**时：新内容（自己的话 / 「正在思考…」/ 回复）出现 → 跟着往下走；
+ *   · **翻到上面在看历史**时：新内容来了**不把人拽下去**（他正在读）；
+ *   · **自己按下发送** = 表态"我要看最新的" → 无条件贴回底。
+ *
+ * ⚠️ jsdom 没有排版：`scrollTop` / `scrollHeight` / `clientHeight` 全是 0，
+ *   真"滚动"根本演不出来。所以这一组给 `.chat-log` 装一份**假几何**
+ *   （高 1000、可视 200、起始 scrollTop 800 = 正贴着底），拿它当断言依据 ——
+ *   读写的用法和真浏览器里一模一样。
+ */
+describe('对话区跟着新消息往下走', () => {
+  /** 给 `.chat-log` 装一份假几何（= 一个已经滚满了的对话区，正贴着底）。 */
+  function fakeScroll(): HTMLElement {
+    const log = container.querySelector('.chat-log') as HTMLElement
+    expect(log, '屏幕上没有对话区（.chat-log）').toBeTruthy()
+    Object.defineProperty(log, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(log, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(log, 'scrollTop', { value: 800, writable: true, configurable: true })
+    return log
+  }
+  /** 演"用户自己往上翻了"（真浏览器里这会派发 scroll，监听器就是这么更新的）。 */
+  async function scrollUp(log: HTMLElement) {
+    log.scrollTop = 0
+    await act(async () => {
+      log.dispatchEvent(new Event('scroll'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  it('★ 贴着底时：说一句话 / 「正在思考…」出现 —— 对话区跟着往下走', async () => {
+    const gate = makeGate<RouteDecision>()
+    vi.mocked(api.postRoute).mockReturnValueOnce(gate.promise)
+    await renderApp()
+    await uploadPhoto()
+    const log = fakeScroll()
+
+    await say('先改一次')          // 路由被闸门挂着：用户的话 + 「正在思考…」都在了
+
+    expect(log.scrollTop).toBe(1000)   // 800 → 1000：贴到底了
+
+    // 放行，让这一趟收工（不留下挂着的 promise）
+    await act(async () => {
+      gate.open(decision({}))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  })
+
+  it('★ 翻到上面读历史时：回复来了**不把人拽下去**；自己按发送才贴回底', async () => {
+    const gate = makeGate<RouteDecision>()
+    vi.mocked(api.postRoute).mockReturnValueOnce(gate.promise)
+    await renderApp()
+    await uploadPhoto()
+    const log = fakeScroll()
+
+    await say('先改一次')          // 发送 = 表态要看最新的
+    expect(log.scrollTop).toBe(1000)
+
+    await scrollUp(log)            // 用户翻上去读旧消息
+    expect(log.scrollTop).toBe(0)
+
+    // 回复回来了：人在上面读着，**不许**把他拽到底
+    await act(async () => {
+      gate.open(decision({}))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(log.scrollTop).toBe(0)
+
+    // 自己再按一次发送 → 无条件贴回底
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({}))
+    await say('再看一眼')
+    expect(log.scrollTop).toBe(1000)
+  })
+
+  it('★ 图落地时高度会长（骨架 → 真图）：贴着底就再跟一下，别让新图探出视野', async () => {
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '改一下', reply: '好，改好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    const log = fakeScroll()
+
+    await say('先改一次')
+    // 这一趟走完，真图的小图已经挂上（测试里 thumb 是假的 data URL）
+    const img = [...container.querySelectorAll('.bubble-thumb')].at(-1) as HTMLImageElement
+    expect(img, '这一步的小图还没出现').toBeTruthy()
+
+    // 真图解码完会长高（假几何里把 scrollHeight 从 1000 调到 1200）——
+    // load 那一刻要再贴一次底，不然新图的下半张就探到视野外面去了
+    Object.defineProperty(log, 'scrollHeight', { value: 1200, configurable: true })
+    await act(async () => {
+      img.dispatchEvent(new Event('load'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(log.scrollTop).toBe(1200)
+  })
+})

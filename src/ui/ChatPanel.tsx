@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
 import { MoreHorizontal, Plus, RotateCw, SlidersHorizontal, Undo2 } from 'lucide-react'
@@ -9,6 +9,13 @@ export type ChatMessage = {
   role: 'user' | 'assistant'
   text: string
 }
+
+/**
+ * ★ 2026-10-06（用户反馈：「当用户进行提问时对话区是不会自动向下滚动的」）：
+ * **离底多近还算"贴着底"**（像素）。滚轮一格大约 100px —— 取 80 的意思是
+ * "就差一点点"也算贴着，别因为差几个像素就不跟了。
+ */
+const STICK_PX = 80
 
 type Props = {
   messages: ChatMessage[]
@@ -202,12 +209,51 @@ export default function ChatPanel({
    * ⚠️ 清单是空的时不叫：那种时候这一栏显示的是「还没有导入过滤镜。」
    *    （或者「清单还没到手」），一张缩略图都用不上。
    */
+  /**
+   * ★ 2026-10-06：对话区**跟着新消息往下走**（用户反馈：「当用户进行提问时对话区
+   * 是不会自动向下滚动的」—— 这套从来没写过）。语义照主流聊天产品那一套：
+   *   · **贴着底**时新内容出现 → 跟着滚（下面那条 effect 盯着 messages / busy /
+   *     generating / thumbs：自己的话、「正在思考…」、回复、小图，一样都不落）；
+   *   · **翻上去读历史**时不把人拽下来（`atBottomRef` 由 scroll 事件维护，
+   *     离底 < `STICK_PX` 才算"贴着"）—— 生成要十几秒，翻旧账是常事；
+   *   · **自己按发送** = 表态要看最新的 → 无条件重新贴底（见下面表单的 onSubmit）。
+   *
+   * ⚠️ 是**直接赋值** `scrollTop`、不是 `scrollTo({ behavior: 'smooth' })`：
+   *   内容会连着变好几次（用户的话 → 骨架 → 真图 → 回复），平滑动画互相打断
+   *   只会停在半路。也没有 `scroll-behavior: smooth`（CSS 里全局都没有）。
+   */
+  const logRef = useRef<HTMLDivElement | null>(null)
+  /** 现在贴着底吗。初始 `true` —— 一进来 / 刚接回来一条会话，看的就该是最新的。 */
+  const atBottomRef = useRef(true)
+  /** 贴到底（`.chat-log` 是"自己滚"的那一格，见它的 CSS）。给 `<img>` 的
+   *  `onLoad` 也用它：真图解码完高度才会长出来，那一刻要再跟一下。 */
+  function stickToBottom() {
+    const el = logRef.current
+    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
+  }
+  // 监听滚动，维护"贴着底没有"。⚠️ `passive`：滚动是高频事件，不写的话
+  // 浏览器要等这个处理器（哪怕它不 preventDefault）才能滚，白白卡一帧。
+  useEffect(() => {
+    const el = logRef.current
+    if (!el) return
+    const onScroll = () => {
+      atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
+  /** 内容变了就贴一次。`thumbs` 也在里面：小图一张张挂上来，高度跟着长。 */
+  useEffect(() => {
+    const el = logRef.current
+    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
+  }, [messages, busy, generating, thumbs])
+
   useEffect(() => {
     if (lutOpen && luts.length > 0) onNeedLutThumbs()
   }, [lutOpen, luts])
   return (
     <aside className="chat">
-      <div className="chat-log">
+      <div className="chat-log" ref={logRef}>
         {messages.map(m => {
           // ★ 2026-10-05：一条回复**分两块**（用户原话：「对话区 ai 的回答文字跟
           //   图片分成两部分，文字在上，图片在下分为两个」）。
@@ -242,6 +288,9 @@ export default function ChatPanel({
                   className="bubble-thumb"
                   src={thumbs[m.id]}
                   alt="这一步的效果"
+                  // 真图解码完高度才长出来 —— 贴着底的话这一刻要再跟一下
+                  // （骨架和真图是同一个宽高比，正常不跳；但"长了"就得跟）。
+                  onLoad={stickToBottom}
                   onClick={() => {
                     if (selecting) { if (delable) togglePick(m.id); return }
                     if (jumpableIds.includes(m.id)) onJump(m.id)
@@ -528,6 +577,9 @@ export default function ChatPanel({
           const v = input.value.trim()
           if (!v || busy) return
           input.value = ''
+          // ★ 2026-10-06：发送 = 表态"我要看最新的" —— 就算刚才翻在上面读历史，
+          // 这一下也贴回底（下面那条"内容变了才跟"的规矩管不到这一步）。
+          atBottomRef.current = true
           onSend(v)
         }}
       >
