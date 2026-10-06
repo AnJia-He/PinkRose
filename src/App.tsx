@@ -2360,7 +2360,10 @@ export default function App() {
                   onSend={send}
                   onStop={stopGeneration}
                   onCard={onCard}
-                  onJump={onJump}
+                  // ★ 2026-10-06（晚）：`onJump` 和 `currentId` 两个 prop 撤了 ——
+                  //   对话里那两颗文字提示（「回到这一步」/「你在这里」）随用户
+                  //   一句「那这些文字提示就可以不要了」一起退役：转盘上已经
+                  //   写着"你在哪、回到哪一版"了（`StepStrip` 拿的还是这个 `onJump`）。
                   onRerun={onRerun}
                   // 只有"记着当初那句话"的步骤才给「再来一版」——
                   // 原图没有那句话（`prompt` 缺席），所以它那颗按钮不会出现。
@@ -2382,9 +2385,9 @@ export default function App() {
                   canConfirmMark={!!marker && !!pendingText}
                   onConfirmMark={confirmMark}
                   onCancelMark={cancelPick}
-                  // ★ 2026-10-05（设计 §4.5/6.1）：站的位置 + 后面还有几步 +
-                  //   那条"要切掉后面吗"的确认条。
-                  currentId={cursorId}
+                  // ★ 2026-10-05（设计 §4.5/6.1）：后面还有几步 + 那条"要切掉
+                  //   后面吗"的确认条。（"站的位置"那一项 2026-10-06 晚撤了 ——
+                  //   只有转盘还用得着 `cursorId`，它就在上面。）
                   futureSteps={futureSteps}
                   replacing={pendingReplace !== null}
                   onConfirmReplace={confirmReplace}

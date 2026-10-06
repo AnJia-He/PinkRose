@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
-import { MoreHorizontal, Plus, RotateCw, SlidersHorizontal, Undo2 } from 'lucide-react'
+import { MoreHorizontal, Plus, RotateCw, SlidersHorizontal } from 'lucide-react'
 import LutPicker from './LutPicker.tsx'
 
 export type ChatMessage = {
@@ -36,12 +36,18 @@ type Props = {
    *  `key`（draft 一变就重挂一次），用户打字之后 DOM 里的值不归 React 管，
    *  和这个 form 原来的写法一致。 */
   draft?: string
-  /** 点「回到这一步」。只在 jumpableIds 里的消息上出现。 */
-  onJump: (id: number) => void
   /** 点「再来一版」—— 同一句话重掷一次（见 App.tsx 的 onRerun）。 */
   onRerun: (id: number) => void
   /** 哪几步**记着当初那句话**（= 能重掷的那些）。原图不在里面。 */
   rerunnable: number[]
+  /**
+   * 哪几条消息身后**挂着一步**（步骤 id 就是那条助手消息的 id，老约定）。
+   * ★ 2026-10-06（晚）：它原来还管着「回到这一步」那颗按钮；那两颗文字提示
+   *   撤掉之后，这里只剩一个用处 —— 单条删除时要判断"这条身后有没有一步"
+   *   （带步骤那条删之前先问一句）。
+   *   ⚠️ **屏幕上的"你在哪一步 / 回到哪一步"现在归照片区上方那圈转盘**
+   *   （`ui/StepStrip`）—— 别在这儿再长回一排文字按钮。
+   */
   jumpableIds: number[]
   /** 图上点选这条流程开着（正等着点、或者已经点过了）—— 两个按钮就出现。 */
   marking: boolean
@@ -49,11 +55,6 @@ type Props = {
   canConfirmMark: boolean
   onConfirmMark: () => void
   onCancelMark: () => void
-  /**
-   * ★ 2026-10-05：现在站在哪一步 —— 那一步上的「回到这一步」换成「你在这里」
-   *   （设计 §6.1）。`null`（还没有会话）时谁都不标。
-   */
-  currentId: number | null
   /** 后面还有几步（站在最新一步时是 0）。>0 时两条确认条都要提醒"会切掉它们"。 */
   futureSteps: number
   /** 从旧步骤再改的确认条挂着没有（见 App 的 `pendingReplace`）。 */
@@ -108,9 +109,9 @@ type Props = {
 }
 
 export default function ChatPanel({
-  messages, cards, busy, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
+  messages, cards, busy, suggesting, onSend, onStop, onCard, onRerun, rerunnable,
   jumpableIds, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
-  currentId, futureSteps, replacing, onConfirmReplace, onCancelReplace,
+  futureSteps, replacing, onConfirmReplace, onCancelReplace,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
   originalId, onDeleteMessage, onDeleteMessages,
 }: Props) {
@@ -248,8 +249,6 @@ export default function ChatPanel({
           //     要的），今天第二块整块撤掉 —— `.bubble-thumb` / `.shot-skeleton`
           //     两条 CSS 跟着退役。**别把图挂回来**：挂回来的话屏幕上同一张画面
           //     有两处出处，"回到这一步"也会有两个入口。
-          const acts = m.role === 'assistant' &&
-            (jumpableIds.includes(m.id) || rerunnable.includes(m.id))
           // ★ 2026-10-06：这一条身后有没有"一步"？（步骤 id 就是那条助手消息的
           //   id，老约定。）有 → 点 ✕ 要先问一句；没有 → 纯文字，一点就删。
           const isStep = jumpableIds.includes(m.id)
@@ -264,11 +263,15 @@ export default function ChatPanel({
                 onClick={selecting && delable ? () => togglePick(m.id) : undefined}>
                 <div className="bubble-text">{m.text}</div>
               </div>
-              {/* ② 末尾那一排：回到这一步 / 再来一版 / 「…」。
+              {/* ② 末尾那一排：再来一版 / 「…」。
                   ★ 2026-10-06：它不再套在 `.shot` 里了 —— 这一排现在是**每段都有**
                   的（用户要的豆包式：「放个这个图标在每段对话的最后」）：纯文字
-                  那条只有「…」一颗；「原图」那条没有「…」（它是这条会话的锚），
-                  但站着的那格「你在这里」照旧。间距由 `.msg` 自己的 gap 管。
+                  那条只有「…」一颗；「原图」那条**一颗都没有**（它不是可重掷的
+                  那一步，也是这条会话的锚）。间距由 `.msg` 自己的 gap 管。
+                  ★ 2026-10-06（晚）：这一排原来领头的是「回到这一步 / 你在这里」
+                  —— 用户指着它说「**那这些文字提示就可以不要了**」（转盘上已经
+                  写着"你在哪、回到哪一版"）。两颗一起撤了，`onJump` / `currentId`
+                  两个 prop 也跟着删；**"在哪一步"这件事从此只有转盘一个出处**。
                   ★ 2026-10-06 下午：**选择模式里这一排整个让位给一颗勾选框** ——
                   平时那些按钮一个不留（选东西的时候没有别的可点，「再来一版」
                   更是花钱的，不能混在里面）。 */}
@@ -282,30 +285,18 @@ export default function ChatPanel({
                     onChange={() => togglePick(m.id)}
                     aria-label="选中这条记录" />
                 </div>
-              ) : (acts || delable) && (
+              ) : (rerunnable.includes(m.id) || delable) && (
                 <div className="bubble-actions">
-                  {/* ★ 2026-10-05：站在的那一步**不是一颗按钮**，是一个位置标记
-                      （设计 §6.1）。在最新一步上，那颗「回到这一步」本来就是
-                      点了没反应的按钮 —— 换成它顺手把那个毛病修掉，而且任何
-                      时刻"我在哪"都有答案。span 不是 button：读屏和"按文字找
-                      按钮"的地方都能分清。 */}
-                  {jumpableIds.includes(m.id) && (
-                    m.id === currentId
-                      ? <span className="bubble-current" aria-current="step">你在这里</span>
-                      : <button className="bubble-jump" onClick={() => onJump(m.id)}>
-                          <Undo2 size={13} aria-hidden="true" />
-                          回到这一步
-                        </button>
-                  )}
-                  {/* 「再来一版」= 同一句话重掷一次。**和「回到这一步」并排但不同**：
-                      一个是回去，一个是回去**并且立刻重来**（靠 ↶ / ↻ 区分）。
-                      ⚠️ 它是这两颗里**唯一**要禁用的那颗 —— 忙的时候再掷一次
-                      就是两次生成同时在跑，钱是两倍（「回到这一步」不禁用是有意的，
-                      见 App.tsx 的 onJump 那段）。
-                      ★ 2026-10-01：两个箭头以前是 CSS 的 `content: '↶' / '↻'`，
+                  {/* 「再来一版」= 同一句话重掷一次。**它不是"回到这一步"那类提示**
+                      —— 它是一件真事：拿着当初那句话再花一次钱重跑（见 App 的
+                      `onRerun`），所以"提示不要了"那一次把它留下了。
+                      ⚠️ 忙的时候禁用：再掷一次就是两次生成同时在跑，钱是两倍
+                      （当年那条注释里"「回到这一步」不禁用是有意的"那半句
+                      随那颗按钮一起作废了 —— 现在这一排就它一颗是花钱的）。
+                      ★ 2026-10-01：箭头以前是 CSS 的 `content: '↻'`，
                       现在是 lucide 图标。**仍然是装饰**（`aria-hidden`）：
                       图标是 svg，进不了 textContent，所以按文字找按钮的地方
-                      和读屏软件看到的都还只有「回到这一步」/「再来一版」这五个字。 */}
+                      和读屏软件看到的都只有「再来一版」这四个字。 */}
                   {rerunnable.includes(m.id) && (
                     <button className="bubble-rerun" disabled={!!busy} onClick={() => onRerun(m.id)}>
                       <RotateCw size={13} aria-hidden="true" />

@@ -124,18 +124,19 @@ describe('图标（2026-10-01 统一走 lucide）', () => {
      读屏软件会念它，而"按文字找这颗按钮"的地方（`ModelSettings.test.tsx` 的
      `inPart`、`App.test.tsx` 里那几个 clickTop/goNav）就会认不出来。
      svg 天生不进 textContent —— 所以换成图标之后这条**更稳**了，但要有人钉着。 */
-  it('「回到这一步」里的箭头是 svg，按钮的文字还是那五个字', async () => {
+  it('「再来一版」里的箭头是 svg，按钮的文字还是那四个字', async () => {
     const c = await mount(
       <ChatPanel
         messages={[{ id: 1, role: 'assistant', text: '好，这就去掉。' }]}
         cards={[]} busy={null} suggesting={false}
         // ★ 2026-10-06（晚）：`thumbs` / `generating` / `aspectRatio` 三个摊子
-        //   一起撤了 —— 图不再挂进对话区（搬去了照片区上方那条历史时间轴，
-        //   见 `ui/StepStrip`）。少给一个 `tsc` 就红（vitest 自己不做类型检查）。
+        //   一起撤了 —— 图不再挂进对话区（搬去了照片区上方那圈转盘，
+        //   见 `ui/StepStrip`）。`onJump` / `currentId` 也在同一天晚些时候撤了
+        //   （「回到这一步 / 你在这里」两颗文字提示退役）。少给一个 `tsc` 就红。
         rerunnable={[1]} jumpableIds={[1]} marking={false} canConfirmMark={false}
-        onSend={() => {}} onStop={() => {}} onCard={() => {}} onJump={() => {}}
+        onSend={() => {}} onStop={() => {}} onCard={() => {}}
         onRerun={() => {}} onConfirmMark={() => {}} onCancelMark={() => {}}
-        currentId={null} futureSteps={0} replacing={false}
+        futureSteps={0} replacing={false}
         onConfirmReplace={() => {}} onCancelReplace={() => {}}
         // ★ 2026-10-06：又多了两个（单条记录的删除，见 ChatPanel.tsx）——
         //   同样给全，少一个 `tsc` 就红。`originalId={null}` = 这一条不是原图，
@@ -152,10 +153,10 @@ describe('图标（2026-10-01 统一走 lucide）', () => {
         onRetryLuts={() => {}}
       />,
     )
-    const jump = c.querySelector('.bubble-jump') as HTMLButtonElement
-    expect(jump.querySelector('svg')).toBeTruthy()
-    expect(jump.textContent?.trim()).toBe('回到这一步')
-    expect(jump.textContent).not.toContain('↶')
+    const rerun = c.querySelector('.bubble-rerun') as HTMLButtonElement
+    expect(rerun.querySelector('svg')).toBeTruthy()
+    expect(rerun.textContent?.trim()).toBe('再来一版')
+    expect(rerun.textContent).not.toContain('↻')
   })
 })
 

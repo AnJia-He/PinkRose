@@ -878,14 +878,13 @@ describe('对话式修图：钱花在对的地方', () => {
     await say('先改一次')     // 生成回来的那张 = decoded-1
     await say('再改一次')     // 再生成一张      = decoded-2
 
-    // 三步历史各挂一个「回到这一步」—— 但**站的那一步**不算：
-    // ★ 2026-10-05 起它标的是「你在这里」位置标记，所以这里只有 2 颗按钮
-    // （最后一颗现在是「你在这里」）。
-    const jumps = container.querySelectorAll('.bubble-jump')
-    expect(jumps.length).toBe(2)
+    // 三步 → 转盘上三格。★ 2026-10-06（晚）：对话里那两颗文字提示
+    // （「回到这一步」/「你在这里」）退役了，跳步一律点转盘上的格子。
+    const nodes = container.querySelectorAll<HTMLElement>('.strip-node')
+    expect(nodes.length).toBe(3)
 
     // 退回最开始那一步（原图）
-    await act(async () => { (jumps[0] as HTMLButtonElement).click() })
+    await act(async () => { nodes[0]!.click() })
 
     await say('再来一次')
     // ★ 2026-10-05（Task 4）：站在旧步骤上生成，先过一下确认条（设计 §4.5）。
@@ -1067,7 +1066,7 @@ describe('对话式修图：钱花在对的地方', () => {
       decision({ route: 'generate', editPrompt: '换成黄昏', reply: '好，换成黄昏。' }))
     await say('天空换成黄昏')
     await act(async () => {
-      ;(container.querySelector('.bubble-jump') as HTMLButtonElement).click()
+      ;(container.querySelector('.strip-node') as HTMLButtonElement).click()   // 转盘第一格 = 原图
       await new Promise(r => setTimeout(r, 0))
     })
 
@@ -1265,10 +1264,11 @@ describe('★ 再来一版：同一句话重掷一次', () => {
     await renderApp()
     await uploadPhoto()
 
-    // 还没改过：历史里只有原图那一步 —— 而且人正站在它上面，
-    // ★ 2026-10-05 起它显示为「你在这里」标记而不是跳按钮（所以按钮是 0 颗）
-    expect(container.querySelectorAll('.bubble-jump').length).toBe(0)
-    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
+    // 还没改过：历史里只有原图那一步 —— 转盘上就一格（对号入座那格是
+    // "你在这里"的位置，它是 `<span>`，不是按钮）。
+    // ★ 2026-10-06（晚）：对话里那两颗文字提示退役之后，这里数的是转盘。
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(1)
+    expect(container.querySelector('.strip-node.current')?.tagName).toBe('SPAN')
     expect(container.querySelectorAll('.bubble-rerun').length).toBe(0)
   })
 
@@ -1595,16 +1595,17 @@ describe('历史小图：每一步都看得见（照片上方那条时间轴上�
    * ⚠️ 判据按**结构**钉（`.chat img` 一个都不许有），不按"某个角落"那种松判据
    * —— 图哪天从别的路溜回对话区，这一条当场红。
    */
-  it('★ 对话区里不再有照片 —— 小图只在时间轴上', async () => {
+  it('★ 对话区里不再有照片 —— 小图只在转盘上', async () => {
     await renderApp()
     await uploadPhoto()
     const msg = container.querySelector('.msg.assistant')
     expect(msg).toBeTruthy()
-    // 那条消息里：只有话，加末尾那一排操作
+    // 那条消息里：只有话。★ 2026-10-06（晚）：它连操作行都没有了 ——
+    // 「你在这里」那颗位置标记退役之后，原图那条一颗按钮都不剩。
     expect(msg!.querySelector('img')).toBeNull()
     expect(msg!.querySelector('.bubble-text')?.textContent).toBe('准备好啦，说说想怎么改？')
-    expect(msg!.querySelector(':scope > .bubble-actions')).toBeTruthy()
-    // 整个对话栏里一张图都没有；小图在舞台上那一条轴里
+    expect(msg!.querySelector(':scope > .bubble-actions')).toBeNull()
+    // 整个对话栏里一张图都没有；小图在舞台上那圈转盘里
     expect(container.querySelector('.chat img')).toBeNull()
     expect(container.querySelector('.stage .strip')).toBeTruthy()
   })
@@ -1720,11 +1721,9 @@ describe('按住看原图', () => {
     expect(canvasProps.props.at(-1)?.originalPreview).toBeNull()
     // 但别的一样都不能少 —— 欢迎语、以及历史里那一步（用户要靠它回到原图）。
     // 少了这些，用户拿到的是一张没有对话入口的照片，整个应用不可用。
-    // ★ 2026-10-05：刚上传完，站的就是原图那一步 —— 它显示为「你在这里」
-    // 标记（步骤还在的证据是那个标记），所以这里没有跳按钮。
+    // ★ 2026-10-06（晚）：那一步在**转盘**上（刚上传完站在原图那格）。
     expect(lastReply()).toContain('准备好啦')
-    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(0)
-    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(1)
     // 更不能弹"这张图打不开"—— 照片明明打开了，那是句假话。
     expect(alertSpy).not.toHaveBeenCalled()
   })
@@ -1804,14 +1803,13 @@ describe('图上点选消歧', () => {
     //   谁把它改成"圈不画了、直接把原位图送上去"，这一条就红。
     expect(req.imageDataUrl).toContain('MODEL:marked:upload')
 
-    // ★ 这一步还得挂在**一条真的消息**上。时间轴上的小图和「回到这一步」
-    //   两处都是按消息 id 对号的 —— 用 `nextId()` 这种"没有消息的 id"会让
-    //   它们**双双静默失效**：用户点完圈，时间轴上什么都不多，也没法回到这一步。
-    // ★ 2026-10-05：点完「就改这里」站的就是**新的那一步** —— 它是「你在这里」
-    //   标记，跳按钮只剩 1 颗（原图那颗）。
-    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(1)
-    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
+    // ★ 这一步还得挂在**一条真的消息**上。转盘上那一格和「再来一版」都是按
+    //   消息 id 对号的 —— 用 `nextId()` 这种"没有消息的 id"会让它们**双双
+    //   静默失效**：用户点完圈，转盘上什么都不多，也没法回到这一步。
+    // ★ 2026-10-06（晚）：点完「就改这里」站的就是**新的那一步** ——
+    //   转盘上它是正面那格（`<span>`，不是按钮）。
     expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
+    expect(container.querySelectorAll('.strip-node')[1]!.className).toContain('current')
   })
 
   it('点错了还能换个地方再点 —— 第二次真的被采纳，不是"看着像成功"', async () => {
@@ -1985,7 +1983,7 @@ describe('图上点选消歧', () => {
     vi.mocked(api.postEdit).mockResolvedValue(OK)
 
     await renderApp()
-    const steps = [...container.querySelectorAll<HTMLElement>('.bubble-jump, .bubble-current')]
+    const steps = [...container.querySelectorAll<HTMLElement>('.strip-node')]
     await act(async () => { steps[0]!.click(); await new Promise(r => setTimeout(r, 0)) })  // = 原图那步
     await say('把后面那个人去掉')
     await tapPhoto()
@@ -1996,8 +1994,7 @@ describe('图上点选消歧', () => {
     await clickByText('就改这里')
 
     expect(api.postEdit).toHaveBeenCalledTimes(1)
-    // 切了：只剩原图 + 新那一步（对话里的按钮/标记、时间轴上的格子都只剩两条）
-    expect(container.querySelectorAll('.bubble-jump, .bubble-current')).toHaveLength(2)
+    // 切了：转盘上只剩原图 + 新那一步
     expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
   })
 })
@@ -5052,12 +5049,10 @@ describe('恢复：打开就接着上次那条', () => {
 
     // ③ ★ 步骤**一步都不许截断**（§7：这一版明确不做"只取最后 K 步"）。
     //    截断的后果不是"少几张缩略图"：`cutAfter` 找不到 id 就原样返回一份拷贝，
-    //    老步骤上那颗「回到这一步」会变成**点了没反应**的死按钮，而且不报错。
-    //    `MAX_SNAPSHOTS` 是 6，这里给 7 步 —— 截断的话这里只剩 5 颗跳按钮。
-    //    ★ 2026-10-05：恢复后站在**最后一步**，那一步是「你在这里」标记而不是
-    //    按钮 —— 所以按钮 6 颗 + 标记 1 个 = 7 步全在。
-    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(6)
-    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
+    //    老步骤那一格会变成**点了没反应**的死格子，而且不报错。
+    //    `MAX_SNAPSHOTS` 是 6，这里给 7 步 —— 截断的话这里只剩 5 格。
+    //    （★ 2026-10-06 晚：判据从"对话里的跳按钮"换成了转盘上的格子。）
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(7)
 
     // ④ `reusesPrev` 的那一步**不重新下载**（它和上一步是同一张图）：
     //    7 步里第 2 步（id 3）带这个标记，所以只该有 6 次取图。
@@ -5092,12 +5087,13 @@ describe('恢复：打开就接着上次那条', () => {
     expect(puts).toHaveLength(1)
     expect(bodyOf(puts[0]!).base).toBeUndefined()
 
-    // ⑨ ★ 「回到这一步」在**恢复之后**真的按得动（设计 §9 第 4 条）。
-    //    这一条和 ③ 是同一件事的两半：③ 说按钮在，⑨ 说按钮按下去画面真的回去。
+    // ⑨ ★ 跳步在**恢复之后**真的按得动（设计 §9 第 4 条）。
+    //    这一条和 ③ 是同一件事的两半：③ 说格子都在，⑨ 说点下去画面真的回去。
     //    截断步骤的后果在这里现原形 —— `cutAfter` 找不到 id 时**原样返回一份拷贝**：
-    //    按钮还在、点下去什么都不会发生、一句错也不报。
-    const jumps = [...container.querySelectorAll('.bubble-jump')] as HTMLButtonElement[]
-    await act(async () => { jumps[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    //    格子还在、点下去什么都不会发生、一句错也不报。
+    //    （★ 2026-10-06 晚：点的是**转盘上第一格**=原图，语义一字不差。）
+    const nodes = [...container.querySelectorAll('.strip-node')] as HTMLButtonElement[]
+    await act(async () => { nodes[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
     // 跳回**最老那一步**：画布换成它的底图（恢复时第一张解出来的就是它），
     // 参数也跟着回去 —— 只还原图不还原参数，画面和滑块就是对不上的两回事
     // （`onJump` 里那两行注释说的就是这个）。
@@ -5116,8 +5112,8 @@ describe('恢复：打开就接着上次那条', () => {
     withSessions([makeSession(7, 3, '上次那句', 'S7')])
     await renderApp()
 
-    const jumps = [...container.querySelectorAll('.bubble-jump')] as HTMLButtonElement[]
-    await act(async () => { jumps[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    const nodes = [...container.querySelectorAll('.strip-node')] as HTMLButtonElement[]
+    await act(async () => { nodes[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
     await waitPersist()
 
     const body = bodyOf(putCalls('/api/sessions/7').at(-1)!)
@@ -6163,10 +6159,10 @@ describe('滤镜', () => {
     await openLutPanel()
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')   // 前提：在用
 
-    // 「回到这一步」那排按钮在**对话区**（只有修图那一屏有）
+    // 跳回原图：走照片区的**转盘**（它只在修图那一屏有）
     await goNav('修图')
-    const jumps = container.querySelectorAll('.bubble-jump')
-    await click(jumps[0] as HTMLButtonElement)          // 第 0 个 = 原图那一步
+    const nodes = container.querySelectorAll('.strip-node')
+    await click(nodes[0] as HTMLButtonElement)          // 第 0 格 = 原图那一步
 
     await goNav('调色')
     await openLutPanel()
@@ -6474,14 +6470,12 @@ describe('滤镜', () => {
  */
 describe('「回到这一步」不再删后面的步骤', () => {
   /**
-   * 一步一个：`<button.bubble-jump>` 或 `<span.bubble-current>` **都算**
-   * （Task 5 起"当前那一步"显示的是位置标记而不是按钮）。顺序 = 消息顺序。
-   *
-   * ⚠️ 用它能写出**跨 Task 5 仍然成立**的计数和索引 —— 别改回只数
-   * `.bubble-jump`（那样 T5 一落地，这个 describe 里的数字全错位）。
+   * 一步一格 —— ★ 2026-10-06（晚）：判据从对话里那两颗文字提示
+   * （`.bubble-jump` / `.bubble-current`）换成了**转盘上的格子**。
+   * 顺序 = 步骤顺序（原图在最前），点一格 = `onJump`；站着那格是 `<span>`。
    */
   const stepItems = () =>
-    [...container.querySelectorAll<HTMLElement>('.bubble-jump, .bubble-current')]
+    [...container.querySelectorAll<HTMLElement>('.strip-node')]
   const bubbleTexts = () =>
     [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
 
@@ -6634,7 +6628,7 @@ describe('「回到这一步」不再删后面的步骤', () => {
       decision({ route: 'generate', editPrompt: '改一下' }))
 
     await renderApp()                                  // 接回最近动过的那条（A = id 9）
-    const steps = [...container.querySelectorAll<HTMLElement>('.bubble-jump, .bubble-current')]
+    const steps = [...container.querySelectorAll<HTMLElement>('.strip-node')]
     await act(async () => { steps[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
     await say('换个方向')
     expect(container.textContent).toContain('后面还有 2 步')
@@ -6682,21 +6676,22 @@ describe('「回到这一步」不再删后面的步骤', () => {
     expect(api.postEdit).toHaveBeenCalledTimes(1)
   })
 
-  it('★ 站的那一步标「你在这里」；跳走之后标记跟着走', async () => {
+  it('★ 站的那一格在转盘上标出来；跳走之后标记跟着走', async () => {
     await twoVersions()
 
-    // 站在最新一步：标记挂在**最末**那条回复上，跳按钮只剩两颗
-    const msgs = () => [...container.querySelectorAll('.msg.assistant')] as HTMLElement[]
-    expect(msgs().at(-1)!.querySelector('.bubble-current')?.textContent).toBe('你在这里')
-    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(2)
-    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
+    // 站在最新一步：转盘上**最末一格**是那格位置标记（`<span>`，点不动）
+    const nodes = () => [...container.querySelectorAll<HTMLElement>('.strip-node')]
+    expect(nodes().at(-1)!.className).toContain('current')
+    expect(nodes().at(-1)!.tagName).toBe('SPAN')
+    expect(container.querySelectorAll('.strip-node.current')).toHaveLength(1)
 
-    // 退回原图：标记跟到**第一条**回复上（DOM 顺序 = 消息顺序）
+    // 退回原图：标记跟到**第一格**上
     await act(async () => { stepItems()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
-    expect(msgs()[0]!.querySelector('.bubble-current')?.textContent).toBe('你在这里')
-    expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
-    // 而且刚才那颗标记（第 2 版）变回了按钮 —— 后面的步骤还能往回跳
-    expect(container.querySelectorAll('.bubble-jump')).toHaveLength(2)
+    expect(nodes()[0]!.className).toContain('current')
+    expect(nodes()[0]!.tagName).toBe('SPAN')
+    expect(container.querySelectorAll('.strip-node.current')).toHaveLength(1)
+    // 而且刚才那格（第 2 版）变回了按钮 —— 后面的步骤还能往回跳
+    expect(nodes().at(-1)!.tagName).toBe('BUTTON')
   })
 
   it('★（I1）站在旧步发话、路由还在路上就跳回最新一步 → 不弹条、照常生成', async () => {
@@ -6881,10 +6876,10 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
   /** 打到某条会话上的更新请求（照「恢复」那个 describe 里那条）。 */
   const putCalls = (url: string) =>
     fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === 'PUT')
-  /** 一步一个（`<button.bubble-jump>` 或 `<span.bubble-current>` 都算），照
-   *  「回到这一步」那一组的数法 —— 顺序 = 消息顺序。 */
+  /** 一步一格 —— **转盘上的格子**（★ 2026-10-06 晚起对话里那两颗文字提示退役了），
+   *  顺序 = 步骤顺序，站着那格是 `<span>`。 */
   const stepItems = () =>
-    [...container.querySelectorAll<HTMLElement>('.bubble-jump, .bubble-current')]
+    [...container.querySelectorAll<HTMLElement>('.strip-node')]
 
   /** 按**气泡文字**认那条消息（找不到时给一句人话，别让测试死在 null 上）。 */
   function msgOf(text: string): HTMLElement {
@@ -7068,12 +7063,10 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(decodedBitmaps[1]!.close).not.toHaveBeenCalled()
 
     // ⑤ 站在被删的那一步上 → 画面挪到**剩下的最后一步**（第 2 版），
-    //    「你在这里」跟着走 —— 位置标记不许留在一个已经不存在的步骤上
+    //    转盘上那格位置标记跟着走 —— 不许留在一个已经不存在的步骤上
     expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: decodedBitmaps[1] })
-    const marks = container.querySelectorAll('.bubble-current')
-    expect(marks).toHaveLength(1)
-    expect(marks[0]!.closest('.msg')?.querySelector('.bubble-text')?.textContent)
-      .toBe('第二版好了。')
+    expect(container.querySelectorAll('.strip-node.current')).toHaveLength(1)
+    expect(stepItems().at(-1)!.className).toContain('current')   // 标记落在最后那格
     expect(stepItems()).toHaveLength(2)                    // 原图 + 第 2 版，正好两步
   })
 
@@ -7105,9 +7098,8 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(decodedBitmaps[0]!.close).toHaveBeenCalled()
     expect(decodedBitmaps[1]!.close).not.toHaveBeenCalled()
     expect(originalBase.close).not.toHaveBeenCalled()
-    // ③ 位置也没动：还站在第 2 版上
-    expect(container.querySelector('.bubble-current')?.closest('.msg')
-      ?.querySelector('.bubble-text')?.textContent).toBe('第二版好了。')
+    // ③ 位置也没动：还站在第 2 版上（转盘那格位置标记落在最末）
+    expect(stepItems().at(-1)!.className).toContain('current')
   })
 
   it('★（评审 Important）删掉**最新那一步**：下一趟落盘要把封面一起送上去 —— 而且是新 tip 那张', async () => {
@@ -7232,9 +7224,8 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     // 输入框让位给操作条
     expect(container.querySelector('.chat-input')).toBeNull()
     expect(container.querySelector('.chat-select')?.textContent).toContain('已选 0 条')
-    // 平时那一排（回到这一步 / 再来一版 / 「…」）全收 —— 选择模式里没有别的可点
+    // 平时那一排（再来一版 / 「…」）全收 —— 选择模式里没有别的可点
     expect(container.querySelectorAll('.msg-more')).toHaveLength(0)
-    expect(container.querySelectorAll('.bubble-jump, .bubble-current')).toHaveLength(0)
     expect(container.querySelectorAll('.bubble-rerun')).toHaveLength(0)
   })
 
@@ -7340,10 +7331,12 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(container.querySelectorAll('.msg')).toHaveLength(3)
 
     // ④ 站在被删的那一步上 → 画面挪到**剩下的最后一步**（第 2 版），
-    //    「你在这里」跟着走（它挪了，说明选择模式也退出来了 —— 那排按钮回来了）
+    //    转盘上那格位置标记跟着走（它挪到了最末那格）
     expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: decodedBitmaps[1] })
-    expect(container.querySelector('.bubble-current')?.closest('.msg')
-      ?.querySelector('.bubble-text')?.textContent).toBe('第二版好了。')
+    {
+      const nodes = [...container.querySelectorAll<HTMLElement>('.strip-node')]
+      expect(nodes.at(-1)!.className).toContain('current')
+    }
 
     // ⑤ 位图账：被删那步的还了；剩下那步的还活着（画面正用着它）
     expect(decodedBitmaps[0]!.close).toHaveBeenCalled()

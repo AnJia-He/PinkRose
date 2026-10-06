@@ -152,4 +152,15 @@ describe('历史转盘（照片上方那圈）', () => {
     expect(c.querySelectorAll('.strip-node')).toHaveLength(2)   // 格子本身照旧在
     expect(c.querySelectorAll('.strip-thumb')).toHaveLength(1)
   })
+
+  it('★ 超过六步时按步数均分，谁也不叠在谁身上（恢复出来的会话可能有 7 步）', async () => {
+    // 写死 60° 的话第 7 格正好转回 0°，和第一格重合 —— 两格叠在一起，点不准。
+    const SEVEN: StripStep[] = Array.from({ length: 7 }, (_, i) =>
+      ({ id: i * 2 + 1, thumb: 'thumb:' + i, isOriginal: i === 0 }))
+    const c = await mount(<StepStrip steps={SEVEN} currentId={13} generating={false} onJump={noop} />)
+    const angles = [...c.querySelectorAll<HTMLElement>('.strip-node')]
+      .map(el => /rotateY\(([-\d.]+)deg\)/.exec(el.style.transform)?.[1])
+    expect(angles).toHaveLength(7)
+    expect(new Set(angles).size).toBe(7)     // 七个角位互不相同
+  })
 })

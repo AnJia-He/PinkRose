@@ -622,49 +622,42 @@ async function main(): Promise<void> {
     await tile(page, '不用').click()
     await waitPixel(page, (p) => dist(p, P_gen_with) > TOL)
     const P_gen_off = await pixel(page)
-    // ……再点那一步的「回到这一步」——滤镜必须跟着回来。
+    // ……再跳回那一步 —— 滤镜必须跟着回来。
     //
-    // ★ 2026-10-05（rewind）：**不能直接点「傍晚」那条的按钮** —— 生成刚回来，
-    //   人正站在那一步上，它渲染的是 span.bubble-current「你在这里」而不是
-    //   button.bubble-jump，旧写法命中 0 个（Playwright 超时，响的）。
-    //   按新语义走**两步**：先点「原图」那一步（旧步骤，按钮还在），再点「傍晚」
-    //   那一步 —— 跳转现在只移动位置、不删后面的步骤，所以第二颗按钮会原地回来。
-    //   顺带把新的非破坏行为在真机上演一遍：要是跳转又把后面切了，「傍晚」那条
-    //   连同按钮会一起消失，下面那一下直接点不着（不静默）。
-    //
-    // ⚠️ 找法用 `.msg.assistant` 不是 `.bubble.assistant`：2026-10-05 晚助手气泡
-    //   拆成了两块（`.msg` > `.bubble` 话 + `.shot` 图/两颗按钮），按钮在 `.shot`
-    //   里、是 `.bubble` 的**兄弟** —— 写 `.bubble.assistant` 的后代会命中 0 个。
-    await page.locator('.msg.assistant', { hasText: '准备好啦，说说想怎么改？' })
-      .locator('.bubble-jump').click()
+    // ★ 2026-10-06（晚）：跳步的入口从"对话里那颗按钮"换成了**照片上方的转盘**
+    //   （`.strip-node`；对话里「回到这一步」/「你在这里」两颗文字提示那天退役了）。
+    //   ⚠️ 站着的那一格是 `<span>`（点不动），所以还是走**两步**：先点 0 号格
+    //   （原图），再点 1 号格（「傍晚」那一步）—— 跳转只移动位置、不删后面的步骤，
+    //   所以第二格会原地变成可点的按钮。顺带把非破坏行为在真机上演一遍：
+    //   要是跳转又把后面切了，「傍晚」那格会跟着消失，下面那一下直接点不着（不静默）。
+    await page.locator('.strip-node').nth(0).click()
     // 画面跟着换过去了 —— 跳转真生效的证据之一。
     // ⚠️ 换到的**不是**上传那张纯色，是 77,242,217（半格表 100 作用在纯色上）：
     //   恢复会话时服务端把落盘的 lut 记在**最后一步**上（§5），而这个会话在
     //   调色区量断言 5 时最后的 lut 正是「半格表」—— 所以「原图」这一步恢复
     //   回来就带着它；跳到它 = 回到那一刻的状态（设计 §5 的口径，不是 bug）。
     const wBackOrig = await waitPixel(page, (p) => dist(p, P_gen_off) > TOL)
-    // ★ 顺带验一眼新的非破坏行为：「傍晚」那一步的「回到这一步」原地回来了
-    //   （跳转只挪"站的位置"，一个字节都没删）—— 它就是下面要点的那一颗。
-    const backJump = await page.locator('.msg.assistant', { hasText: '好，把背景换成傍晚。' })
-      .locator('.bubble-jump').count()
+    // ★ 顺带验一眼非破坏行为：「傍晚」那一格原地变回了**可点的按钮**
+    //   （跳转只挪"站的位置"，一个字节都没删）—— 它就是下面要点的那一格。
+    const backJump = await page.locator('.strip-node').nth(1)
+      .evaluate(el => (el.tagName === 'BUTTON' ? 1 : 0))
     console.log('   先跳回「原图」那一步：' + (wBackOrig
-      ? `${wBackOrig.ms}ms 后画布 ${wBackOrig.px.join(',')}；「傍晚」那一步的按钮还在（${backJump} 颗）`
-      : `⚠️ 10 秒画面没动（跳转没生效？）「傍晚」按钮 ${backJump} 颗`))
+      ? `${wBackOrig.ms}ms 后画布 ${wBackOrig.px.join(',')}；「傍晚」那一格还能点（${backJump}）`
+      : `⚠️ 10 秒画面没动（跳转没生效？）「傍晚」那一格 ${backJump}`))
     // ★ 2026-10-05（终审小项）：上面那句原来只 `console.log` —— 数出来是 0 颗也
     //   照样打印"按钮还在（0 颗）"，探针"全绿"。补一条**真断言**（它同时是 11b
     //   能点下去的前提）：跳回旧步骤后，「傍晚」那一步的按钮必须在（跳转不删后面）。
-    check('11b-0', '跳回旧步骤后，「傍晚」那一步的按钮还在（跳转不删后面）',
-      backJump === 1, `「傍晚」那一步的「回到这一步」按钮 ${backJump} 颗（要 1 颗）`)
-    // 现在「傍晚」那一步是"未来的步骤"，它的「回到这一步」按钮又出现了 —— 点它。
-    await page.locator('.msg.assistant', { hasText: '好，把背景换成傍晚。' })
-      .locator('.bubble-jump').click()
+    check('11b-0', '跳回旧步骤后，「傍晚」那一格还在（跳转不删后面）',
+      backJump === 1, `「傍晚」那一格是不是可点的按钮：${backJump}（要 1）`)
+    // 现在「傍晚」那一步是"未来的步骤"，它那一格又变成可点的按钮了 —— 点它。
+    await page.locator('.strip-node').nth(1).click()
     // 等画面自己回到"假底图 + 黄昏"。⚠️ 不能沿用 `dist(p, P_gen_off) > TOL`：
     // 刚跳回原图时画面**已经**和 P_gen_off 不同，那个条件当场成立，会读到
     // 还没重画的旧像素。
     await waitPixel(page, (p) => dist(p, P_gen_with) <= TOL)
     const P_gen_back = await pixel(page)
     const lit11 = await litTile(page)
-    check('11b', '点那一步的「回到这一步」→ 滤镜跟着回来（格子和画面都对上）',
+    check('11b', '点转盘上那一格 → 滤镜跟着回来（格子和画面都对上）',
       dist(P_gen_back, P_gen_with) <= TOL && lit11 === '黄昏' && dist(P_gen_off, P_gen_back) > TOL,
       `摘掉后 ${P_gen_off.join(',')} → 跳回后 ${P_gen_back.join(',')}（那一步是 ${P_gen_with.join(',')}），` +
       `亮的格子「${lit11}」`)

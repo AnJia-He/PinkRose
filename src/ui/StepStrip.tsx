@@ -18,12 +18,16 @@ type Props = {
 }
 
 /**
- * 转盘的格距（度）。**一共六格、每格 60°** —— 和 `MAX_SNAPSHOTS`（6）对齐：
- * 一步一格，格子不够时剩下的位置空着，六格满了就没有空位了（见占位块那段）。
- * ⚠️ 别改成"按步数均分 360°"：两步时第二格会跑到**正后方**（背朝镜头、
- * 看不见也点不到），用户只会觉得"我的第二步去哪了"。固定 60° 时它永远在侧面。
+ * 一圈**最少**六格 —— 和 `MAX_SNAPSHOTS`（6）对齐：一步一格，格子不够时
+ * 剩下的位置空着，六格满了就没有空位了（见占位格那段）。
+ * ★ 步数**超过**六步时按步数均分（`pitch = 360 / max(6, 步数)`）：恢复出来的
+ *   会话可能有 7 步甚至更多（"一步都不许截断"，见 App.test 里那条）——
+ *   写死 60° 的话第 7 格会转回 0°、正正地叠在第一格上（两格重合、点不准）。
+ * ⚠️ 也别改成"按步数均分"一条路走到黑：**两步**时第二格会跑到正后方
+ *   （背面不画、点不到），用户只会觉得"我的第二步去哪了"。六格以内固定 60° 时
+ *   它永远在侧面。
  */
-const STEP = 60
+const MIN_SLOTS = 6
 /**
  * 圆环的半径和相机距离（px）。这两个数是在画板上调出来的（用户在那里挑的
  * "竖轴转盘"），别随手改：半径小了整圈缩在中间、四周空一片；透视太强
@@ -63,7 +67,7 @@ function isNarrow() {
  *     转身、后退、变暗，绕过去的那几格背朝镜头（`backface-visibility`）；
  *   · **按住左右拖 = 转**，松手自动吸附到最近一格；**点某一格 = 把它转到正面**
  *     （也就是回到那一步，下面大图跟着换）；
- *   · 从外面把"站的位置"挪了（对话里点「回到这一步」、恢复会话）→ 整圈自己转过去；
+ *   · 从外面把"站的位置"挪了（恢复会话、删掉正站着的那一步…）→ 整圈自己转过去；
  *   · 生成中，一颗会扫光的空格子摆在**队尾的后一格**（新的一版会落在那儿）。
  *
  * ⚠️ 转盘的角度**不是新的一份真相**：它只是 `currentId` 的另一种画法。
@@ -74,9 +78,12 @@ function isNarrow() {
 export default function StepStrip({ steps, currentId, generating, onJump }: Props) {
   const stripRef = useRef<HTMLDivElement | null>(null)
 
+  /** 一圈几格、每格多少度（步数超过六步时按步数均分，见 `MIN_SLOTS` 那段）。 */
+  const slots = Math.max(MIN_SLOTS, steps.length)
+  const pitch = 360 / slots
   /** 转盘现在的角度（度）。`0` = 第一格在正面；越负越往前（更晚的步骤）。 */
   const [rot, setRot] = useState(
-    () => -Math.max(0, steps.findIndex(s => s.id === currentId)) * STEP)
+    () => -Math.max(0, steps.findIndex(s => s.id === currentId)) * pitch)
   /**
    * 角度的**影子 ref** —— 拖动处理器里要读"当下的"角度。
    * 和 App 的 `cursorIdRef` 是同一条规矩：**state 和 ref 必须一起写**，
@@ -95,10 +102,10 @@ export default function StepStrip({ steps, currentId, generating, onJump }: Prop
   const lastMovedRef = useRef(0)
 
   /** 转盘能转到哪儿：0（第一格在正面）到 -(最后一格) —— 两端到头即止，不绕圈。 */
-  const lo = -(steps.length - 1) * STEP
+  const lo = -(steps.length - 1) * pitch
   /** 角度 → 离正面最近的那一格。 */
   const nearest = useCallback(
-    (r: number) => clamp(Math.round(-r / STEP), 0, steps.length - 1), [steps.length])
+    (r: number) => clamp(Math.round(-r / pitch), 0, steps.length - 1), [pitch, steps.length])
 
   /**
    * 外面把"站的位置"挪了 → 整圈自己转过去把那一格送到正面。
@@ -110,10 +117,10 @@ export default function StepStrip({ steps, currentId, generating, onJump }: Prop
     if (dragging) return
     const i = steps.findIndex(s => s.id === currentId)
     if (i < 0) return
-    const target = -i * STEP
+    const target = -i * pitch
     // 已经在它附近（±半格以内）就不动 —— 每渲染一次都重设角度会把吸附动画打断
-    if (Math.abs(norm(target - rotRef.current)) > 30) turn(target)
-  }, [currentId, steps, dragging])
+    if (Math.abs(norm(target - rotRef.current)) > pitch / 2) turn(target)
+  }, [currentId, steps, dragging, pitch])
 
   /** 起手。⚠️ 窄屏不接管（那一档拖 = 滚动平铺的那条）。 */
   function onPointerDown(e: React.PointerEvent) {
@@ -151,7 +158,7 @@ export default function StepStrip({ steps, currentId, generating, onJump }: Prop
       dragRef.current = null
       setDragging(false)
       if (d) lastMovedRef.current = d.moved
-      const snapped = clamp(Math.round(rotRef.current / STEP) * STEP, lo, 0)
+      const snapped = clamp(Math.round(rotRef.current / pitch) * pitch, lo, 0)
       turn(snapped)
       const i = nearest(snapped)
       if (d && i !== d.at) {
@@ -190,9 +197,9 @@ export default function StepStrip({ steps, currentId, generating, onJump }: Prop
   const pendingSlot = generating && steps.length < 6 ? steps.length : null
 
   const itemStyle = (slot: number): React.CSSProperties => {
-    const a = norm(slot * STEP + rot)
+    const a = norm(slot * pitch + rot)
     return {
-      transform: `rotateY(${slot * STEP}deg) translateZ(${RADIUS}px)`,
+      transform: `rotateY(${slot * pitch}deg) translateZ(${RADIUS}px)`,
       // 正面的最亮，转到侧后方的变暗（和背面的 hidden 一起构成"转过去"的感觉）
       opacity: Math.max(0.12, 0.22 + 0.78 * Math.cos((a * Math.PI) / 180)),
     }
@@ -217,7 +224,8 @@ export default function StepStrip({ steps, currentId, generating, onJump }: Prop
                 onLoad={recenter} />
             : null
           return current ? (
-            // 站的那一格**不是按钮**（点不动）—— 和对话里那颗「你在这里」同一条规矩。
+            // 站的那一格**不是按钮**（点不动）—— 它只回答"我在哪"这一个问题
+            //（对话里那颗「你在这里」2026-10-06 晚退役了，这是全站唯一的位置标记）。
             <span key={s.id} className="strip-node current" aria-current="step"
               title={name} style={itemStyle(i)}>{thumb}</span>
           ) : (

@@ -565,7 +565,7 @@ button {
    特异性 **0-2-1** —— 比 `.nav-item.on`（0-2-0）还高。于是鼠标停在左栏当前
    那一项上时，这条通用规则把它的粉底顶掉，换成 `--hover` 的深灰底，而字色
    还是 `--accent-ink` —— **字和底糊在一起，几乎读不出来**。
-   受害者不止一个：`.bubble-jump`（0-2-0）、`button.primary`
+   受害者不止一个：`.bubble-rerun`（0-2-0）、`button.primary`
    全都被同一条压过，只是那几处的字色没跟着变，所以没那么显眼。
    `:where()` 之后，任何带类名的规则都能盖过它，以后加新按钮不必再数特异性。
    ⚠️ `.nav-item.on` 和 `.nav-item:hover` 特异性相同（0-2-0），靠**文件顺序**
@@ -1308,7 +1308,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 /* 一条消息的外壳。★ 2026-10-05 的形状是"两块"（文字一块、图一块，
    用户当时要的）；★ 2026-10-06（晚）**照片撤出对话区之后只剩一块** ——
-   气泡里的话 + 末尾那排操作（回到这一步 / 再来一版 / 「…」）。
+   气泡里的话 + 末尾那排操作（再来一版 / 「…」）。
    这一层照旧管三件事：
      · **对齐**（谁在左谁在右）；
      · **这条消息能有多宽**（88% —— ⚠️ 别挪回 `.bubble` 上：挪回去
@@ -1376,44 +1376,36 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   0%, 60%, 100% { opacity: .3; transform: translateY(0); }
   30% { opacity: 1; transform: translateY(-2px); }
 }
-/* 「回到这一步」= 撤销。**它是这一栏里第二重要的东西**（spec §2.4：不设撤销
-   按钮，翻聊天记录就是撤销），原来却是一颗 78×24 的小钮 —— 手机上够不着，
-   正好是这个项目最在意的那种"点不到"。撑到 32px 高（触屏的最小可点尺寸），
-   悬停时整颗变粉。 */
-/* 一条回复下面那排操作（2026-09-30 起有两颗：↶ 回到这一步 / ↻ 再来一版）。
-   间距由外面那一层（`.shot`）管 —— 两颗按钮各自写 margin 的话，加第三颗时
+/* 一条回复下面那排操作。★ 2026-10-06（晚）：原来领头的两颗文字提示
+   （↶ 回到这一步 / 你在这里）随用户一句「那这些文字提示就可以不要了」退役
+   —— 屏幕上的"你在哪、回到哪一版"现在归照片区上方那圈转盘
+   （`.strip`，`ui/StepStrip`）。这一排只剩 ↻ 再来一版 和末尾那颗「…」。
+   间距由 `.msg` 的 gap 管 —— 按钮各自写 margin 的话，加第三颗时
    间距会随前一颗有没有出现而变。 */
 .bubble-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-.bubble-jump, .bubble-rerun {
+/* 「再来一版」= 同一句话重掷一次（它是件真事，不是提示，所以留下来了）。
+   原来是和「回到这一步」并排的一对，药丸骨架、32px 高（触屏的最小可点尺寸，
+   当年那颗 78×24 的小钮在手机上够不着 —— 这条尺寸留着）。 */
+.bubble-rerun {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 6px 12px; font-size: 12px;
   border-radius: var(--r-pill);
   background: transparent; border-color: var(--line-2); color: var(--muted);
 }
-/* 两个箭头一个意思一个形状：↶ 是"回到那一步"，↻ 是"再来一次"。
-   字数一样、形状一样、只有这个符号和文字不同 —— 它们本来就只差这一点。
-   ★ 2026-10-01：这两个记号原来在这里用 `content: '↶' / '↻'` **画出来**，
-   现在是 lucide 图标（写在 `ChatPanel.tsx` 里，带 `aria-hidden`）。
-   换的理由和当初不用字符的理由是同一个：**记号不能进 textContent** ——
-   svg 天生就不进，比伪元素还干净。间距由上面那条 `gap: 5px` 管。 */
-.bubble-jump:hover, .bubble-rerun:hover { color: var(--accent-300); border-color: var(--accent); background: var(--accent-tint); }
+/* ↻ 这个记号 ★ 2026-10-01 起是 lucide 图标（写在 `ChatPanel.tsx` 里，带
+   `aria-hidden`）：**记号不能进 textContent** —— svg 天生就不进，
+   比伪元素还干净。间距由上面那条 `gap: 5px` 管。 */
+.bubble-rerun:hover { color: var(--accent-300); border-color: var(--accent); background: var(--accent-tint); }
 /* 忙的时候「再来一版」是禁用的。⚠️ 全局那条 `button:where(:disabled)` 只降透明度，
    **管不到颜色** —— 不写这一条，鼠标停上去它照样变粉，看着能点，
    而点下去什么都没发生（那正是这个项目最不喜欢的一种按钮）。
    特异性 0-2-0 和上面那条 hover 相同，靠**文件顺序**分胜负：这条必须在后面。 */
 .bubble-rerun:disabled { color: var(--muted-2); border-color: var(--line); background: transparent; }
-/* ★ 2026-10-05：「你在这里」＝ 位置标记，不是按钮。穿的是「回到这一步」
-   同一副药丸骨架，但它**点不动**（cursor: default）—— 它就是"你现在站的
-   那一步"这个事实本身。⚠️ 它是 span，没有全局 button 那套底色/边框，
-   所以边框得自己写（`.bubble-jump` 是借了全局 button 那一条才不用写的）。 */
-.bubble-current {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 6px 12px; font-size: 12px;
-  border-radius: var(--r-pill);
-  border: 1px solid var(--line);
-  background: transparent; color: var(--muted-2);
-  cursor: default;
-}
+/* ★ 2026-10-05 到 10-06 之间这里有一条 `.bubble-current`（「你在这里」那颗
+   **点不动的位置标记**，穿的是同一副药丸骨架）。它和「回到这一步」一起退役了
+   —— "我在哪"改由转盘正面那一格回答（`.strip-node.current`）。
+   ⚠️ 别在对话区再加回这种"位置提示"：同一件事有两个出处时，两处都会有人
+   照着改，早晚对不上。 */
 
 /* ── 消息末尾那颗「…」和它点开的菜单（★ 2026-10-06）──────────────────────
    用户原话：「我看豆包是这种做法，放个这个图标在每段对话的最后，点击这个
@@ -1424,7 +1416,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    消息上才浮出来的一颗。用户看过之后点名要豆包那种：「放个这个图标在每段对话
    的最后，点击这个符号后里面有删除选项」—— 所以它**一直看得见**（他上次找不到
    删除键，就是"悬停才出现"害的）、也不悬在气泡外面了。
-   长相：灰的、和「回到这一步 / 再来一版」同一副药丸骨架，只是窄一号（图标键）。 */
+   长相：灰的、和「再来一版」同一副药丸骨架，只是窄一号（图标键）。 */
 .msg-more {
   display: inline-flex; align-items: center; justify-content: center;
   padding: 6px 10px;
