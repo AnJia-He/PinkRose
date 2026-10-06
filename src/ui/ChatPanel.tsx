@@ -22,19 +22,6 @@ type Props = {
   cards: SuggestCard[]
   /** 非 null 时显示"正在…"气泡，并禁用发送和卡片 */
   busy: string | null
-  /**
-   * ★ 2026-10-06（用户原话：「而且中途思考要有一些加载动作比如正在思考，要让
-   * 用户知道你在干嘛」）：这一趟是不是**真的在生成**（判据在 App：
-   * `busy === BUSY_GENERATING`）。为真时在气泡下面摆一块图位的占位块，
-   * 图到了原地换成真图 —— 「正在思考…」那 1.5 秒、上传/切会话那几句都不摆。
-   */
-  generating: boolean
-  /**
-   * ★ 2026-10-06（评审 Minor）：**底图的宽 / 高比**（`image.width /
-   * image.height`）—— 占位块按它定高，换真图时纵向也不跳（照片竖着横着
-   * 都有，写死一个比例只能压中一半）。可选：不传就退回 CSS 里那条 4:3。
-   */
-  aspectRatio?: number
   /** 正在等建议卡片。**它不拦人** —— 只是在这一格上挂一句"正在看…"，
    *  发送键照常能按（见 App.tsx 的 SUGGEST_WAIT_MS 那段）。 */
   suggesting: boolean
@@ -56,8 +43,6 @@ type Props = {
   /** 哪几步**记着当初那句话**（= 能重掷的那些）。原图不在里面。 */
   rerunnable: number[]
   jumpableIds: number[]
-  /** 每一步的缩略图，键是消息 id。空串 = 还没生成。 */
-  thumbs: Record<number, string>
   /** 图上点选这条流程开着（正等着点、或者已经点过了）—— 两个按钮就出现。 */
   marking: boolean
   /** 已经点过图了，可以确认。**点「就改这里」才真正花钱**，所以它单独一个开关。 */
@@ -123,8 +108,8 @@ type Props = {
 }
 
 export default function ChatPanel({
-  messages, cards, busy, generating, aspectRatio, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
-  jumpableIds, thumbs, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
+  messages, cards, busy, suggesting, onSend, onStop, onCard, onJump, onRerun, rerunnable,
+  jumpableIds, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
   currentId, futureSteps, replacing, onConfirmReplace, onCancelReplace,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
   originalId, onDeleteMessage, onDeleteMessages,
@@ -176,7 +161,7 @@ export default function ChatPanel({
   /** 批量删除的**就地确认**开着没有（勾里有带图的步骤才会走到它）。 */
   const [batchAsk, setBatchAsk] = useState(false)
 
-  /** 勾 / 取消勾一条（勾选框、气泡、小图三个入口都走它）。 */
+  /** 勾 / 取消勾一条（勾选框、气泡两个入口都走它）。 */
   function togglePick(id: number) {
     setSelectedIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])
   }
@@ -212,25 +197,19 @@ export default function ChatPanel({
   /**
    * ★ 2026-10-06：对话区**跟着新消息往下走**（用户反馈：「当用户进行提问时对话区
    * 是不会自动向下滚动的」—— 这套从来没写过）。语义照主流聊天产品那一套：
-   *   · **贴着底**时新内容出现 → 跟着滚（下面那条 effect 盯着 messages / busy /
-   *     generating / thumbs：自己的话、「正在思考…」、回复、小图，一样都不落）；
+   *   · **贴着底**时新内容出现 → 跟着滚（下面那条 effect 盯着 messages / busy：
+   *     自己的话、「正在思考…」、回复，一样都不落）；
    *   · **翻上去读历史**时不把人拽下来（`atBottomRef` 由 scroll 事件维护，
    *     离底 < `STICK_PX` 才算"贴着"）—— 生成要十几秒，翻旧账是常事；
    *   · **自己按发送** = 表态要看最新的 → 无条件重新贴底（见下面表单的 onSubmit）。
    *
    * ⚠️ 是**直接赋值** `scrollTop`、不是 `scrollTo({ behavior: 'smooth' })`：
-   *   内容会连着变好几次（用户的话 → 骨架 → 真图 → 回复），平滑动画互相打断
+   *   内容会连着变好几次（用户的话 → 「正在…」那条 → 回复），平滑动画互相打断
    *   只会停在半路。也没有 `scroll-behavior: smooth`（CSS 里全局都没有）。
    */
   const logRef = useRef<HTMLDivElement | null>(null)
   /** 现在贴着底吗。初始 `true` —— 一进来 / 刚接回来一条会话，看的就该是最新的。 */
   const atBottomRef = useRef(true)
-  /** 贴到底（`.chat-log` 是"自己滚"的那一格，见它的 CSS）。给 `<img>` 的
-   *  `onLoad` 也用它：真图解码完高度才会长出来，那一刻要再跟一下。 */
-  function stickToBottom() {
-    const el = logRef.current
-    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
-  }
   // 监听滚动，维护"贴着底没有"。⚠️ `passive`：滚动是高频事件，不写的话
   // 浏览器要等这个处理器（哪怕它不 preventDefault）才能滚，白白卡一帧。
   useEffect(() => {
@@ -242,11 +221,14 @@ export default function ChatPanel({
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
-  /** 内容变了就贴一次。`thumbs` 也在里面：小图一张张挂上来，高度跟着长。 */
+  /** 内容变了就贴一次。
+   *  ★ 2026-10-06（晚）：`thumbs` / `generating` 从依赖里撤了 —— 图不再
+   *    挂进对话区（它们现在住在照片区上方那条时间轴上），这一栏的高度
+   *    只随**话**变（自己的话、「正在…」那条、回复）。 */
   useEffect(() => {
     const el = logRef.current
     if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
-  }, [messages, busy, generating, thumbs])
+  }, [messages, busy])
 
   useEffect(() => {
     if (lutOpen && luts.length > 0) onNeedLutThumbs()
@@ -255,15 +237,17 @@ export default function ChatPanel({
     <aside className="chat">
       <div className="chat-log" ref={logRef}>
         {messages.map(m => {
-          // ★ 2026-10-05：一条回复**分两块**（用户原话：「对话区 ai 的回答文字跟
-          //   图片分成两部分，文字在上，图片在下分为两个」）。
+          // ★ 2026-10-06（晚）：**对话区里不再有照片**（用户原话：「对话区不留下
+          //   照片了，改成像我这样的…上方是可左右滚动的历史记录照片类似于 git
+          //   吧也就是回到那一步，下方对应记录的图片」）——每一步的画面现在挂在
+          //   **照片区上方那条时间轴上**（`ui/StepStrip`：点哪一格就回到那一步，
+          //   下面的大图跟着换），气泡只装**话**。
           //
-          //   以前文字、小图、两颗按钮挤在**同一个气泡框**里 —— 读起来像"一段
-          //   带插图的句子"，可它们本来是两件事：**他跟我说的那句话** /
-          //   **我交给他的那张图**。所以现在上面一块是话、下面一块是东西。
-          //   ⚠️ 两块里**只要有一块要出现，第二块就得在**（小图可能还没生成完
-          //      —— `thumbs[id]` 是空串那阵子，按钮不能跟着一起消失）。
-          const shot = m.role === 'assistant' && !!thumbs[m.id]
+          //   ⚠️ 记一笔它从前长什么样，免得有人照旧描述改回去：2026-10-05 到
+          //     今天的形状是"一条回复分两块，文字在上、小图在下"（用户当时点名
+          //     要的），今天第二块整块撤掉 —— `.bubble-thumb` / `.shot-skeleton`
+          //     两条 CSS 跟着退役。**别把图挂回来**：挂回来的话屏幕上同一张画面
+          //     有两处出处，"回到这一步"也会有两个入口。
           const acts = m.role === 'assistant' &&
             (jumpableIds.includes(m.id) || rerunnable.includes(m.id))
           // ★ 2026-10-06：这一条身后有没有"一步"？（步骤 id 就是那条助手消息的
@@ -273,31 +257,14 @@ export default function ChatPanel({
           const delable = m.id !== originalId
           return (
             <div key={m.id} className={`msg ${m.role}`}>
-              {/* ① 上面那一块：话。
+              {/* ① 话。
                   ⚠️ 选择模式里点它 = 勾选（微信式的大点击面；那一档里没有
                   文字要读——真要读字就不会开着选择模式），别的入口照旧。 */}
               <div className={`bubble ${m.role}${selecting && delable ? ' pickable' : ''}`}
                 onClick={selecting && delable ? () => togglePick(m.id) : undefined}>
                 <div className="bubble-text">{m.text}</div>
               </div>
-              {/* ② 那一步的画面（`thumbs` 还没生成完 = 空串时，这块整个不摆）。
-                  ⚠️ 选择模式里点它也是勾选 —— 不然"点小图"会在选东西的时候
-                  把人**跳到别的步骤**上去。 */}
-              {shot && (
-                <img
-                  className="bubble-thumb"
-                  src={thumbs[m.id]}
-                  alt="这一步的效果"
-                  // 真图解码完高度才长出来 —— 贴着底的话这一刻要再跟一下
-                  // （骨架和真图是同一个宽高比，正常不跳；但"长了"就得跟）。
-                  onLoad={stickToBottom}
-                  onClick={() => {
-                    if (selecting) { if (delable) togglePick(m.id); return }
-                    if (jumpableIds.includes(m.id)) onJump(m.id)
-                  }}
-                />
-              )}
-              {/* ③ 末尾那一排：回到这一步 / 再来一版 / 「…」。
+              {/* ② 末尾那一排：回到这一步 / 再来一版 / 「…」。
                   ★ 2026-10-06：它不再套在 `.shot` 里了 —— 这一排现在是**每段都有**
                   的（用户要的豆包式：「放个这个图标在每段对话的最后」）：纯文字
                   那条只有「…」一颗；「原图」那条没有「…」（它是这条会话的锚），
@@ -427,17 +394,11 @@ export default function ChatPanel({
               {busy}
               <span className="pending-dots" aria-hidden="true"><i></i><i></i><i></i></span>
             </div>
-            {/* ★ 2026-10-06：**图要出现的位置先摆一块占位**（骨架屏，图到了
-                原地换掉、不跳）。⚠️ 只在生成时摆 —— 「正在思考…」那会儿还
-                不知道要不要生成。
-                ⚠️ 不套 `.shot`：那一层是给"图 + 按钮"用的，而这里的间距已经由
-                `.msg` 自己的 gap 管了（和真缩略图那块是同一个数，见 CSS）。
-                ★ `aspectRatio` 内联（评审 Minor）：占位块和真缩略图**同一个
-                宽高比**，竖图横图都不跳；没传时退回 CSS 里那条 4:3。 */}
-            {generating && (
-              <div className="shot-skeleton" aria-hidden="true"
-                style={aspectRatio ? { aspectRatio } : undefined} />
-            )}
+            {/* ★ 2026-10-06（晚）：这里原来摆着"图要出现的位置"那块占位
+                （`.shot-skeleton`）—— 图撤出对话区之后它整块搬去了
+                **照片区上方那条时间轴**（`StepStrip` 的 `.strip-pending`，
+                生成中挂在站的那一格后面）。**别在这儿挂回来**：同一件事
+                （"图马上要出现了"）有两处出处的话，一处停着不动就像坏了。 */}
           </div>
         )}
       </div>

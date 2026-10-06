@@ -128,10 +128,10 @@ describe('图标（2026-10-01 统一走 lucide）', () => {
     const c = await mount(
       <ChatPanel
         messages={[{ id: 1, role: 'assistant', text: '好，这就去掉。' }]}
-        cards={[]} busy={null} suggesting={false} thumbs={{}}
-        // ★ 2026-10-06：ChatPanel 又多了 `generating`（生成中图位的占位块，
-        //   见 App.tsx）—— 同样给全，少一个 `tsc` 就红。
-        generating={false}
+        cards={[]} busy={null} suggesting={false}
+        // ★ 2026-10-06（晚）：`thumbs` / `generating` / `aspectRatio` 三个摊子
+        //   一起撤了 —— 图不再挂进对话区（搬去了照片区上方那条历史时间轴，
+        //   见 `ui/StepStrip`）。少给一个 `tsc` 就红（vitest 自己不做类型检查）。
         rerunnable={[1]} jumpableIds={[1]} marking={false} canConfirmMark={false}
         onSend={() => {}} onStop={() => {}} onCard={() => {}} onJump={() => {}}
         onRerun={() => {}} onConfirmMark={() => {}} onCancelMark={() => {}}

@@ -948,19 +948,22 @@ describe('对话式修图：钱花在对的地方', () => {
     // ★ 而且**只说一遍**：这句应答今天是"只在成功那一刻说"（上一条用例钉的），
     //   将来谁要是半回退（决策出一遍、成功又补一遍），这里当场红。
     expect(texts().filter(t => t === '好，这就去改。')).toHaveLength(1)
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)  // 原图那张 + 新这一步的
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)  // 原图那格 + 新这一步的
   })
 
   /**
    * ★ 2026-10-06（用户原话：「而且中途思考要有一些加载动作比如正在思考，要让用户
    * 知道你在干嘛」）。这条钉生成中那十几秒里的三样"看得见"：
    *   ① 那条「正在…」气泡，文字后面是**三颗跳动的点**（替掉了原来 12px 的小转圈）；
-   *   ② 图要出现的位置先摆一块 `.shot-skeleton` 占位（图到了原地换掉）；
+   *   ② 图要出现的地方先摆一颗**占位块**（图到了原地换掉）；
    *   ③ 画布拿到 `busy: true`（真的 Canvas 按它盖那层暗罩 —— 画布在 App 测试里
    *      是假掉的，所以看到的是它收到的那一帧 prop）。
+   * ★ 2026-10-06（晚）：②那块占位从**对话里**搬到了**照片区上方那条时间轴上**
+   *   （用户：「对话区不留下照片了」）—— 判据跟着改成 `.strip-pending`，
+   *   位置也一起钉：它挂在**站的那一格后面**。
    * 放行之后三样都要收工：占位块消失、真图换上、画布不再忙。
    */
-  it('★ 生成中「等待看得见」—— 跳动的点 + 图位的占位块 + 画布暗罩，放行后收工', async () => {
+  it('★ 生成中「等待看得见」—— 跳动的点 + 时间轴上的占位块 + 画布暗罩，放行后收工', async () => {
     const gate = makeGate<{ imageDataUrl: string; width: number; height: number }>()
     vi.mocked(api.postRoute).mockResolvedValueOnce(
       decision({ route: 'generate', editPrompt: '去掉后面的路人', reply: '好，这就去改。' }))
@@ -974,12 +977,13 @@ describe('对话式修图：钱花在对的地方', () => {
     const dots = container.querySelector('.bubble.pending .pending-dots')
     expect(dots, '那条「正在…」气泡上没有跳动的点').toBeTruthy()
     expect(dots!.querySelectorAll('i')).toHaveLength(3)
-    // ② 图位占位（等十几秒的那一块）—— 尺寸跟着**这张照片的宽高比**
-    //    （假解码器给的是 1200×800 = 1.5；App→ChatPanel 这根线断了的话
-    //    内联样式是空的，占位块退回 CSS 那条 4:3、换图时纵向跳一格）
-    const skeleton = container.querySelector('.shot-skeleton') as HTMLElement
-    expect(skeleton, '生成中图的位置没有占位块').toBeTruthy()
-    expect(skeleton.style.aspectRatio).toBe('1.5')
+    // ② 占位块（等十几秒的那一块）—— 挂在时间轴上、**站的那格后面**，
+    //    宽度跟着**这张照片的宽高比**（假解码器给的是 1200×800 = 1.5；
+    //    App→StepStrip 这根线断了的话内联样式是空的，占位块退回 1:1）
+    const pending = container.querySelector('.strip-pending') as HTMLElement
+    expect(pending, '生成中时间轴上没有占位块').toBeTruthy()
+    expect(pending.style.aspectRatio).toBe('1.5')
+    expect(pending.previousElementSibling?.className).toContain('current')
     // ③ 照片那边的暗罩（判据是这一帧 prop，不是字符串）
     expect(canvasProps.props.at(-1)?.busy).toBe(true)
 
@@ -988,8 +992,8 @@ describe('对话式修图：钱花在对的地方', () => {
       await new Promise(r => setTimeout(r, 0))
     })
 
-    expect(container.querySelector('.shot-skeleton')).toBeNull()   // 占位让位给真图
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(container.querySelector('.strip-pending')).toBeNull()   // 占位让位给真图
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
     expect(canvasProps.props.at(-1)?.busy).toBe(false)
   })
 
@@ -1011,8 +1015,9 @@ describe('对话式修图：钱花在对的地方', () => {
     expect(container.textContent).toContain('正在思考…')
     expect(container.textContent).not.toContain('正在看照片')   // 旧文案全站下线
     expect(container.querySelector('.bubble.pending .pending-dots')).toBeTruthy()
-    // 「正在思考」不是"生成中"：占位块和暗罩都不许亮
-    expect(container.querySelector('.shot-skeleton')).toBeNull()
+    // 「正在思考」不是"生成中"：占位块和暗罩都不许亮（占位块在时间轴上，
+    // 见上面那条「等待看得见」）
+    expect(container.querySelector('.strip-pending')).toBeNull()
     expect(canvasProps.props.at(-1)?.busy).toBe(false)
 
     await act(async () => {
@@ -1516,48 +1521,94 @@ describe('导出：分享还是存下来，用户自己选', () => {
 
 /**
  * 2026-09-23 加。用户说过「对话的交付物看不到图片」—— 当时根子是版面把画布
- * 挤没了（见验收记录 §15），修好之后仍然值得把每一步的画面挂进对话里：
- * 它是「撤销」的入口（spec §2.4：不设撤销按钮，翻聊天记录就是撤销）。
+ * 挤没了（见验收记录 §15），修好之后仍然值得把每一步的画面挂出来：
+ * 它是「撤销」的入口（spec §2.4：不设撤销按钮，翻历史就是撤销）。
+ *
+ * ★ 2026-10-06（晚）**换了个家**：用户说「对话区不留下照片了，改成像我这样的…
+ * 上方是可左右滚动的历史记录照片类似于 git 吧也就是回到那一步，下方对应记录的
+ * 图片」—— 每一步的小图从**对话气泡下面**整条搬到**照片区上方那条时间轴**上
+ * （`ui/StepStrip`；它的长相和交互在 `StepStrip.test.tsx` 里钉着）。
+ * 这一组守的是**搬家路上丢没丢东西**：小图对不对得上那一步、画的是不是那一步的
+ * 颜色、以及"对话区里确实没有照片了"。
  */
-describe('历史缩略图：每一步都看得见', () => {
-  /** 从对话里读某条助手消息挂的缩略图 */
+describe('历史小图：每一步都看得见（照片上方那条时间轴上）', () => {
+  /** 时间轴上第 index 格的小图。 */
   function thumbOf(index: number): string | null {
-    const imgs = container.querySelectorAll<HTMLImageElement>('.bubble-thumb')
+    const imgs = container.querySelectorAll<HTMLImageElement>('.strip-thumb')
     return imgs[index]?.getAttribute('src') ?? null
   }
 
-  it('传完照片，欢迎语那条上挂一张缩略图', async () => {
+  it('传完照片，时间轴上就有一格（原图那张）', async () => {
     await renderApp()
     await uploadPhoto()
     expect(thumbOf(0)).toBe('thumb:' + JSON.stringify(ZERO))
   })
 
+  it('★ 点某一格 = 回到那一步：下面的大图跟着换', async () => {
+    // 这条是整件事的**产品定义**（用户画的草图）：格子不是装饰，是"回到那一步"
+    // 的第二条路 —— 和对话里那颗按钮走的是同一个 `onJump`。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '提亮一点', reply: '提亮了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    await say('亮一点')
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
+
+    // 点回「原图」那一格：画面换成上传的那张（`__tag: 'upload'` —— 生成回来的
+    // 是 `decoded-N`，一看就分得开）
+    await act(async () => {
+      container.querySelectorAll<HTMLElement>('.strip-node')[0]!.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
+    // 站的位置也跟着挪：「你在这里」落在原图那一格上（它是 span，不是按钮）
+    expect(container.querySelector('.strip-node.current')?.tagName).toBe('SPAN')
+    expect(container.querySelectorAll('.strip-node')[0]!.className).toContain('current')
+
+    // 再点回新那一步：画面又换成生成回来的那张（跳转**不删**任何一步）
+    // ⚠️ 必须**重新查一遍**：上一步把那一格从 span 换成了 button，
+    //   React 换元素类型时是整只换掉的 —— 揣着旧的引用点它等于点了空气。
+    await act(async () => {
+      container.querySelectorAll<HTMLElement>('.strip-node')[1]!.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'decoded-1' } })
+  })
+
+  it('★ 调色那一屏没有时间轴（和对话栏同一条规矩）—— 回「修图」它又在', async () => {
+    // 用户 2026-10-04 把这一屏定义成"拖滑块改"的界面区（「调色就是对图片微调
+    // 的界面区不是对话区」）—— 时间轴是"说话改"那条路上的东西，不跟过去。
+    await renderApp()
+    await uploadPhoto()
+    expect(container.querySelector('.stage .strip')).toBeTruthy()
+
+    await goNav('调色')
+    expect(container.querySelector('.strip')).toBeNull()
+
+    await goNav('修图')
+    expect(container.querySelector('.stage .strip')).toBeTruthy()
+  })
+
   /**
-   * ★ 2026-10-05：助手那一条现在是**两块**（用户原话：「对话区 ai 的回答文字跟
-   * 图片分成两部分，文字在上，图片在下分为两个」）。
-   *
-   * 以前文字、小图、两颗按钮挤在**同一个气泡框**里 —— 读起来像"一段带插图的
-   * 长句子"，可它们其实是两件事：他跟我说的那句话 / 我交给他的那张图。
-   * 判据按**结构**钉（用 `:scope >`，不认"图在气泡的哪个角落里"这种松判据）：
-   * 图**不在**文字那个气泡里，它在下面那一块。
-   *
-   * ★ 2026-10-06：那一块**不再套 `.shot`** —— 操作行不再归"图"管：它现在管着
-   *   每一段末尾那颗「…」（纯文字那条也有一排，用户要的豆包式）。图、操作行
-   *   都直接挂在 `.msg` 下面，间距由 `.msg` 自己的 gap 管（和原来 `.shot` 的
-   *   gap 是同一个数）。
+   * ★ 2026-10-06（晚）：**对话区里不再有照片**（用户原话：「对话区不留下照片了」）。
+   * 这条原来钉的是相反的一面 —— 2026-10-05 用户点名要"文字一块、图一块"；
+   * 今天第二块整条搬走（`StepStrip`），所以要钉的换成了"消息里一张图都不许有"。
+   * ⚠️ 判据按**结构**钉（`.chat img` 一个都不许有），不按"某个角落"那种松判据
+   * —— 图哪天从别的路溜回对话区，这一条当场红。
    */
-  it('★ 文字一块、图一块、操作一排 —— 图不在文字气泡里面', async () => {
+  it('★ 对话区里不再有照片 —— 小图只在时间轴上', async () => {
     await renderApp()
     await uploadPhoto()
     const msg = container.querySelector('.msg.assistant')
     expect(msg).toBeTruthy()
-    // 上面那一块：气泡里**只有字**
-    const bubble = msg!.querySelector(':scope > .bubble.assistant')
-    expect(bubble?.textContent).toBe('准备好啦，说说想怎么改？')
-    expect(bubble?.querySelector('.bubble-thumb')).toBeNull()
-    // 下面：图和操作行都直接挂在消息上
-    expect(msg!.querySelector(':scope > .bubble-thumb')).toBeTruthy()
+    // 那条消息里：只有话，加末尾那一排操作
+    expect(msg!.querySelector('img')).toBeNull()
+    expect(msg!.querySelector('.bubble-text')?.textContent).toBe('准备好啦，说说想怎么改？')
     expect(msg!.querySelector(':scope > .bubble-actions')).toBeTruthy()
+    // 整个对话栏里一张图都没有；小图在舞台上那一条轴里
+    expect(container.querySelector('.chat img')).toBeNull()
+    expect(container.querySelector('.stage .strip')).toBeTruthy()
   })
 
   it('⚠️ 缩略图必须是**画面画完之后**抓的，不能是上一步的颜色', async () => {
@@ -1585,9 +1636,9 @@ describe('历史缩略图：每一步都看得见', () => {
     expect(thumbOf(1)).toBe('thumb:' + JSON.stringify({ ...ZERO, exposure: 40 }))
   })
 
-  it('没改图的那些助手消息不挂缩略图', async () => {
-    // 「我不太确定你指的是哪个」这种消息后面没有新的一步，不该挂图 ——
-    // 挂了会让用户以为那一步真的改了什么。
+  it('没改图的那一趟不占格（时间轴上还是只有原图）', async () => {
+    // 「我不太确定你指的是哪个」这种消息后面没有新的一步 —— 时间轴上当然也
+    // 不该冒出一格（冒出来会让用户以为那一步真的改了什么）。
     vi.mocked(api.postRoute).mockResolvedValueOnce(
       decision({ route: 'generate', editPrompt: '去掉那个人', needsDisambiguation: true }))
 
@@ -1595,7 +1646,7 @@ describe('历史缩略图：每一步都看得见', () => {
     await uploadPhoto()
     await say('把那个去掉')
 
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(1)  // 只有原图那张
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(1)  // 只有原图那格
   })
 })
 
@@ -1755,14 +1806,14 @@ describe('图上点选消歧', () => {
     //   谁把它改成"圈不画了、直接把原位图送上去"，这一条就红。
     expect(req.imageDataUrl).toContain('MODEL:marked:upload')
 
-    // ★ 这一步还得挂在**一条真的消息**上。缩略图和「回到这一步」两处都是按
-    //   消息 id 对号的 —— 用 `nextId()` 这种"没有消息的 id"会让这两样**双双
-    //   静默失效**：用户点完圈，画面上什么都没多，也没法回到这一步。
+    // ★ 这一步还得挂在**一条真的消息**上。时间轴上的小图和「回到这一步」
+    //   两处都是按消息 id 对号的 —— 用 `nextId()` 这种"没有消息的 id"会让
+    //   它们**双双静默失效**：用户点完圈，时间轴上什么都不多，也没法回到这一步。
     // ★ 2026-10-05：点完「就改这里」站的就是**新的那一步** —— 它是「你在这里」
     //   标记，跳按钮只剩 1 颗（原图那颗）。
     expect(container.querySelectorAll('.bubble-jump')).toHaveLength(1)
     expect(container.querySelectorAll('.bubble-current')).toHaveLength(1)
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
   })
 
   it('点错了还能换个地方再点 —— 第二次真的被采纳，不是"看着像成功"', async () => {
@@ -1887,23 +1938,28 @@ describe('图上点选消歧', () => {
   })
 
   it('⚠️ 点选期间跳回某一步 —— 那条「就改这里」必须跟着作废', async () => {
-    // 「回到这一步」和缩略图是**全仓唯二没有 busy 闸门**的控件，而点选期间
+    // 「回到这一步」和时间轴上的小图是**全仓唯二没有 busy 闸门**的控件，而点选期间
     // busy 恰好是空的（模型说完"拿不准"就收工了）—— 所以这条路径**一个竞态都
     // 不需要**就够得到，用户点两下就能走到：点选期间跳走 → 确认条还在 →
     // 点「就改这里」→ confirmMark 的四道守卫全过 → 把**旧标记**画在**换过的
     // 底图**上、配旧那句话，扣一次生成的钱（约 12,900 tokens）。
     // 跳走和下一条消息是一回事：上一条歧义翻篇。
-    await askOnPhoto()
+    //
+    // ★ 2026-10-06（晚）：照片撤出对话区之后，"点小图跳回去"这条路走的是
+    //   **时间轴上那一格**（同一个 `onJump`）。⚠️ 这一条要的是一颗**点得动**的
+    //   格子 —— 站着那格是"你在这里"标记（`<span>`），所以这里恢复一条**两步**
+    //   的会话、站在最新的那步上，再点**原图**那一格。
+    //   （上传一条新照片的路径在这里只有一步，"点得动"的格子一个都没有。）
+    withSessions([makeSession(7, 2, '上次那句', 'S7')])
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉那个人', needsDisambiguation: true }))
+    await renderApp()
+    await say('把后面那个人去掉')
     await tapPhoto()
     expect(container.textContent).toContain('就改这里')
 
-    // ★ 2026-10-05（Task 5）：这个场景里历史只有原图一步，而人正站在它上面 ——
-    //   那颗「回到这一步」已经变成「你在这里」位置标记，**没有跳按钮可点了**。
-    //   跳回原图改走**缩略图**：缩略图点的是同一个 `onJump`
-    //   （`ChatPanel` 里 `onClick={() => jumpableIds.includes(m.id) && onJump(m.id)}`），
-    //   语义一字不差 —— 而且它和「回到这一步」是一对没有 busy 闸门的控件（见上）。
-    const jump = container.querySelector('.bubble-thumb') as HTMLElement
-    expect(jump).toBeTruthy()
+    const jump = container.querySelectorAll<HTMLElement>('.strip-node')[0]!
+    expect(jump.tagName).toBe('BUTTON')
     await act(async () => { jump.click(); await new Promise(r => setTimeout(r, 0)) })
 
     expect(container.textContent).not.toContain('就改这里')
@@ -1942,9 +1998,9 @@ describe('图上点选消歧', () => {
     await clickByText('就改这里')
 
     expect(api.postEdit).toHaveBeenCalledTimes(1)
-    // 切了：只剩原图 + 新那一步
+    // 切了：只剩原图 + 新那一步（对话里的按钮/标记、时间轴上的格子都只剩两条）
     expect(container.querySelectorAll('.bubble-jump, .bubble-current')).toHaveLength(2)
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
   })
 })
 
@@ -5077,15 +5133,17 @@ describe('恢复：打开就接着上次那条', () => {
   it('★ 恢复出来的**每一步**都带着小图 —— 刷新前后同一条对话长得一样（spec §5）', async () => {
     // 服务端不存每一步的缩略图（spec §5：「客户端本来就会给每一步生成缩略图…
     // 恢复的时候现生成就行」）—— 而恢复那条路原来给每一步塞的是 `thumb: ''`，
-    // `ChatPanel` 的 `thumbs[m.id] &&` 于是**什么都不渲染**：活着的时候每条助手
-    // 气泡下面都挂着小图，刷新之后只剩最后一步有。用户看到的差别是"我改过的那几步
-    // 去哪了"，而套件里**一个红都不会有** —— 空串只是"不渲染"。
+    // 于是**什么都不渲染**：活着的时候时间轴上每一格都有小图，刷新之后只剩
+    // 最后一格有。用户看到的差别是"我改过的那几步去哪了"，而套件里**一个红都
+    // 不会有** —— 空串只是"不渲染"。
+    // （★ 2026-10-06 晚：这套判据原来量的是"每条助手气泡下面挂的小图"，
+    //   照片搬进时间轴之后跟着搬 —— 量的是同一批 `history[].thumb`。）
     // 变异：恢复循环里改回 `thumb: ''` → 下面第一句红（只剩 1 张 = 最后那步的）。
     withSessions([makeSession(7, 3, '把天调蓝一点', 'S7')])
     await renderApp()
 
-    // 3 步 → 3 条助手气泡，每条下面都该有小图
-    const thumbs = [...container.querySelectorAll('img.bubble-thumb')]
+    // 3 步 → 时间轴上 3 格，每格都该有小图
+    const thumbs = [...container.querySelectorAll('img.strip-thumb')]
     expect(thumbs).toHaveLength(3)
     const srcs = thumbs.map(t => t.getAttribute('src') ?? '')
     expect(srcs.every(s => s.startsWith('thumb:'))).toBe(true)
@@ -5097,7 +5155,7 @@ describe('恢复：打开就接着上次那条', () => {
     // 而且补缩略图那个 effect **不会**再往上叠：它只认 `history` 最后一步，
     // `last.thumb` 非空就该收手（不收手的话每次落盘都会重算一遍）。
     await waitPersist()
-    expect(container.querySelectorAll('img.bubble-thumb')).toHaveLength(3)
+    expect(container.querySelectorAll('img.strip-thumb')).toHaveLength(3)
   })
 
   it('★ 恢复出来的会话之间不串 —— 切到另一条，上一条的话不能跟过来', async () => {
@@ -6452,9 +6510,9 @@ describe('「回到这一步」不再删后面的步骤', () => {
     //    width/height，读 `bitmap` 得这样写 —— 这个文件里那几处都是同一个路数）。
     expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })  // 画面回到原图
 
-    // ★ 后面两步**还在** —— 一步一个（按钮/标记）、小图一张不少
+    // ★ 后面两步**还在** —— 一步一个（按钮/标记）、时间轴上的格子一格不少
     expect(stepItems()).toHaveLength(3)
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(3)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(3)
 
     // ★ 2026-10-05（终审小项）：**直接**守卫"位图没被提前释放" —— 上面数的是
     //   按钮和小图（DOM 层的证据），这两行问的是那两个位图**自己**：`close`
@@ -6489,7 +6547,7 @@ describe('「回到这一步」不再删后面的步骤', () => {
 
     // 步骤：原图 + 新那一步
     expect(stepItems()).toHaveLength(2)
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
   })
 
   it('★ 从旧步骤生成**失败** → 后面的步骤一个不少（切只发生在成功之后）', async () => {
@@ -6504,7 +6562,7 @@ describe('「回到这一步」不再删后面的步骤', () => {
 
     expect(lastReply()).toContain('再试一次')      // 失败要说话
     expect(stepItems()).toHaveLength(3)            // ★ 后面的没陪葬
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(3)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(3)
   })
 
   it('★ 从旧步骤再说话 → 先问一句；「算了」= 什么都没花、什么都没切', async () => {
@@ -6522,7 +6580,7 @@ describe('「回到这一步」不再删后面的步骤', () => {
 
     expect(api.postEdit).not.toHaveBeenCalled()
     expect(stepItems()).toHaveLength(3)                               // 一个都没切
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(3)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(3)
     expect(lastReply()).toContain('那就不动这一步')                     // 有话收尾
     expect(container.textContent).not.toContain('后面还有 2 步')        // 条子收了
   })
@@ -6879,13 +6937,6 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     return el!
   }
 
-  /** 那条消息的小图（选择模式里点它 = 勾选，不再是"回到这一步"）。 */
-  function thumbImgOf(text: string): HTMLElement {
-    const el = msgOf(text).querySelector('.bubble-thumb') as HTMLElement | null
-    expect(el, `「${text}」这条上没有小图`).toBeTruthy()
-    return el!
-  }
-
   /** 选择模式操作条上那颗【删除】。 */
   function selectDelBtn(): HTMLButtonElement {
     const btn = container.querySelector('.chat-select-del') as HTMLButtonElement | null
@@ -6919,10 +6970,10 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     await say('先改一次')
   }
 
-  it('纯文字那条：点开「…」→【删除】直接删 —— 不问、小图不跟着走、钱一分不花', async () => {
+  it('纯文字那条：点开「…」→【删除】直接删 —— 不问、时间轴不跟着走、钱一分不花', async () => {
     await oneVersion()
     expect(bubbleTexts()).toEqual(['准备好啦，说说想怎么改？', '先改一次', '好，改好了。'])
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)   // 原图 + 这一步
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)   // 原图 + 这一步
     const posts = vi.mocked(api.postEdit).mock.calls.length
 
     // ① 点「…」之前没有菜单；点开之后菜单里有【删除】
@@ -6937,15 +6988,15 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     // ③ 没有确认条；菜单也跟着那条消息一起没了（别留一条悬着的菜单）
     expect(container.textContent).not.toContain('删了就找不回来了')
     expect(container.querySelector('.msg-menu')).toBeNull()
-    // ④ 它身后没有一步：小图一张不少、也没花什么钱
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    // ④ 它身后没有一步：时间轴上一格不少、也没花什么钱
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
     expect(api.postEdit).toHaveBeenCalledTimes(posts)
   })
 
   it('带图那条：菜单里【删除】先就地问一句；「算了」→ 什么都没变', async () => {
     await oneVersion()
     const msgs = container.querySelectorAll('.msg').length
-    const thumbs = container.querySelectorAll('.bubble-thumb').length
+    const thumbs = container.querySelectorAll('.strip-node').length
     const posts = vi.mocked(api.postEdit).mock.calls.length
 
     await delVia('好，改好了。')
@@ -6956,7 +7007,7 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(container.textContent).toContain('删了就找不回来了。')
     expect(bubbleTexts()).toContain('好，改好了。')
     expect(container.querySelectorAll('.msg')).toHaveLength(msgs)
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(thumbs)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(thumbs)
     expect(api.postEdit).toHaveBeenCalledTimes(posts)      // 钱也没花
     // ③ 正在问它的这条上，「…」先收掉（两颗并存会像"删除点了没反应"）
     const asking = [...container.querySelectorAll<HTMLElement>('.msg')].find(
@@ -6969,7 +7020,7 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(container.textContent).not.toContain('删了就找不回来了')
     expect(bubbleTexts()).toContain('好，改好了。')
     expect(container.querySelectorAll('.msg')).toHaveLength(msgs)
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(thumbs)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(thumbs)
     expect(moreBtnOf('好，改好了。').disabled).toBe(false)
   })
 
@@ -7001,7 +7052,7 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     await say('先改一次')
     await say('再改一次')
 
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(3)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(3)
     expect(decodedBitmaps).toHaveLength(2)                 // 两版各自的底图
     await clickEl(stepItems()[1]!)                         // 跳到第 1 版那一步
     expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: decodedBitmaps[0] })
@@ -7009,9 +7060,9 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     await delVia('第一版好了。')
     await clickByText('确认删除')
 
-    // ① 那条话没了；② 小图少一张；③ 消息少一条（剩下欢迎 + 两句用户话 + 第2版）
+    // ① 那条话没了；② 时间轴上少一格；③ 消息少一条（剩下欢迎 + 两句用户话 + 第2版）
     expect(bubbleTexts()).not.toContain('第一版好了。')
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
     expect(container.querySelectorAll('.msg')).toHaveLength(4)
 
     // ④ 被删那一步的位图**还了回去**；剩下那一步的位图还活着（画面正用着它）
@@ -7048,9 +7099,9 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     await delVia('第一版好了。')             // 删的是中间那一步
     await clickByText('确认删除')
 
-    // ① 那条话和那一步没了（小图 3 → 2），但**画面一动不动**（站的是第 2 版）
+    // ① 那条话和那一步没了（时间轴 3 格 → 2 格），但**画面一动不动**（站的是第 2 版）
     expect(bubbleTexts()).not.toContain('第一版好了。')
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
     expect(canvasProps.images.at(-1)).toBe(shown)
     // ② 位图账：被删那一步的还了；第 2 版的和原图那张**一张都没碰**
     expect(decodedBitmaps[0]!.close).toHaveBeenCalled()
@@ -7189,7 +7240,7 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(container.querySelectorAll('.bubble-rerun')).toHaveLength(0)
   })
 
-  it('勾一条算一条：点勾选框、点那条消息都能勾；再点一下取消 —— 小图在这一档只管勾，不再跳', async () => {
+  it('勾一条算一条：点勾选框、点那条消息都能勾；再点一下取消', async () => {
     await oneVersion()
     await enterSelect('先改一次')
     const countText = () => container.querySelector('.chat-select')?.textContent ?? ''
@@ -7205,10 +7256,13 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     await clickEl(bubbleOf('先改一次'))           // 点那条消息本身也能勾
     expect(countText()).toContain('已选 1 条')
 
+    // ★ 2026-10-06（晚）：小图搬出对话区之后，"点图 = 勾选（不跳）"那个双关
+    //   没有了 —— 时间轴是**纯导航**（它不在被勾的那堆东西里），选择模式下
+    //   照常能跳：勾着的一条不动，只是大图换过去看一眼。
     const shown = canvasProps.images.at(-1)
-    await clickEl(thumbImgOf('好，改好了。'))      // 小图：勾上，而不是跳过去
-    expect(countText()).toContain('已选 2 条')
-    expect(canvasProps.images.at(-1)).toBe(shown) // 画面一动不动
+    await clickEl(container.querySelectorAll<HTMLElement>('.strip-node')[0]!)  // 原图那格
+    expect(canvasProps.images.at(-1)).not.toBe(shown)   // 画面真的换过去了
+    expect(countText()).toContain('已选 1 条')           // 勾照样在
   })
 
   it('一条都没勾时【删除】是禁用的 —— 不留一个点了没用的按钮', async () => {
@@ -7229,7 +7283,7 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(container.textContent).not.toContain('删了就找不回来了')
     expect(bubbleTexts()).not.toContain('先改一次')
     expect(container.querySelectorAll('.msg')).toHaveLength(2)
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)   // 一步没动
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)   // 一步没动
     expect(api.postEdit).toHaveBeenCalledTimes(posts)
     // 退出选择模式：输入框回来了、勾选框没了
     expect(container.querySelector('.chat-select')).toBeNull()
@@ -7243,14 +7297,14 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     await clickEl(pickBoxOf('先改一次'))
     await clickEl(pickBoxOf('好，改好了。'))
     const msgs = container.querySelectorAll('.msg').length
-    const thumbs = container.querySelectorAll('.bubble-thumb').length
+    const thumbs = container.querySelectorAll('.strip-node').length
 
     await clickEl(selectDelBtn())
 
     expect(container.textContent).toContain('1 张生成过的图')
     expect(container.textContent).toContain('删了就找不回来了')
     expect(container.querySelectorAll('.msg')).toHaveLength(msgs)    // 还没删
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(thumbs)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(thumbs)
 
     await clickByText('算了')
     // 退回操作条：勾还都在、还在选择模式里
@@ -7281,10 +7335,10 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     await clickEl(selectDelBtn())
     await clickByText('确认删除')
 
-    // ① 两句被勾的话都没了；② 小图少一张；③ 消息少两条（欢迎 + 再改一次 + 第2版）
+    // ① 两句被勾的话都没了；② 时间轴少一格；③ 消息少两条（欢迎 + 再改一次 + 第2版）
     expect(bubbleTexts()).not.toContain('第一版好了。')
     expect(bubbleTexts()).not.toContain('先改一次')
-    expect(container.querySelectorAll('.bubble-thumb')).toHaveLength(2)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
     expect(container.querySelectorAll('.msg')).toHaveLength(3)
 
     // ④ 站在被删的那一步上 → 画面挪到**剩下的最后一步**（第 2 版），
@@ -7411,26 +7465,9 @@ describe('对话区跟着新消息往下走', () => {
     expect(log.scrollTop).toBe(1000)
   })
 
-  it('★ 图落地时高度会长（骨架 → 真图）：贴着底就再跟一下，别让新图探出视野', async () => {
-    vi.mocked(api.postRoute).mockResolvedValueOnce(
-      decision({ route: 'generate', editPrompt: '改一下', reply: '好，改好了。' }))
-    vi.mocked(api.postEdit).mockResolvedValue(OK)
-    await renderApp()
-    await uploadPhoto()
-    const log = fakeScroll()
-
-    await say('先改一次')
-    // 这一趟走完，真图的小图已经挂上（测试里 thumb 是假的 data URL）
-    const img = [...container.querySelectorAll('.bubble-thumb')].at(-1) as HTMLImageElement
-    expect(img, '这一步的小图还没出现').toBeTruthy()
-
-    // 真图解码完会长高（假几何里把 scrollHeight 从 1000 调到 1200）——
-    // load 那一刻要再贴一次底，不然新图的下半张就探到视野外面去了
-    Object.defineProperty(log, 'scrollHeight', { value: 1200, configurable: true })
-    await act(async () => {
-      img.dispatchEvent(new Event('load'))
-      await new Promise(r => setTimeout(r, 0))
-    })
-    expect(log.scrollTop).toBe(1200)
-  })
+  /* ★ 2026-10-06（晚）：这里原来有一条「图落地时高度会长（骨架 → 真图）：
+     贴着底就再跟一下，别让新图探出视野」—— 图撤出对话区之后，对话栏的高度
+     **不再随图变**，那条装置就没有用武之地了。
+     和它配对的那一幕（小图晚一步长出来 → 把"站的那一格"滑进视野）现在归
+     时间轴管，钉在 `StepStrip.test.tsx` 里。 */
 })

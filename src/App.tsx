@@ -6,6 +6,7 @@ import AdjustEmpty from './ui/AdjustEmpty'
 import AdjustmentPanel from './ui/AdjustmentPanel'
 import PresetRail from './ui/PresetRail'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
+import StepStrip from './ui/StepStrip'
 import { LoginPage } from './ui/LoginPage'
 import { GalleryPage } from './ui/GalleryPage'
 import { SessionsPage } from './ui/SessionsPage'
@@ -2278,6 +2279,29 @@ export default function App() {
                 />
               )}
               <div className="stage">
+                {/* ★ 2026-10-06（晚）：**历史时间轴**（`ui/StepStrip`）——
+                    照片上方那一条（用户画了草图提的：「对话区不留下照片了…
+                    上方是可左右滚动的历史记录照片类似于 git 吧也就是回到那一步，
+                    下方对应记录的图片」）。它和对话区的关系是一次**搬家**：
+                    每一步的小图原来挂在对话气泡下面，现在整条挪到这儿。
+
+                    ⚠️ 只在「修图」这一屏（`view.kind !== 'adjust'`）—— 和对话栏
+                    同一条判据：调色那一屏是"拖滑块改"的界面区（用户 2026-10-04
+                    的原话），那一屏的照片边上没有它。要加回去的话这一处和
+                    `.workspace .stage` 的竖排样式一起看。
+                    ⚠️ 点某一格 = `onJump`（和对话里「回到这一步」**同一个函数**）
+                    —— 「跳转不删任何东西」那套契约一个字都不动。
+                    ⚠️ `steps` 里的小图直接来自 `history`（客户端早为每一步画好了）
+                    —— 这里一格都不新画、一分钱都不花。 */}
+                {view.kind !== 'adjust' && (
+                  <StepStrip
+                    steps={history.map(s => ({ id: s.id, thumb: s.thumb, isOriginal: s.isOriginal }))}
+                    currentId={cursorId}
+                    generating={generating}
+                    aspectRatio={image.width / image.height}
+                    onJump={onJump}
+                  />
+                )}
                 {/* params 直接传下去：[-100,100] → [-1,1] 的换算只发生在
                     TonePipeline.render 里（唯一入口）
                     ★ 2026-10-05（滤镜）：滤镜走**另外两个 prop**（`lutCube` /
@@ -2330,14 +2354,6 @@ export default function App() {
                   messages={messages}
                   cards={cards}
                   busy={busy}
-                  // ★ 2026-10-06：生成中才摆"图位的占位块"（和画布那层暗罩同一
-                  //   个判据、同一个来源）。「正在思考…」那 1.5 秒不摆 ——
-                  //   那会儿还不知道要不要生成。
-                  generating={generating}
-                  // ★ 2026-10-06（评审 Minor）：占位块按**这张照片自己的宽高比**
-                  //   定高（这里 `image` 必非空 —— 整个 workspace 就在 `{image &&`
-                  //   里面），换真图时横竖都不跳。不传会退回 CSS 里那条 4:3。
-                  aspectRatio={image.width / image.height}
                   suggesting={suggesting}
                   draft={draft}
                   onSend={send}
@@ -2349,7 +2365,9 @@ export default function App() {
                   // 原图没有那句话（`prompt` 缺席），所以它那颗按钮不会出现。
                   rerunnable={history.filter(s => s.prompt).map(s => s.id)}
                   jumpableIds={history.map(s => s.id)}
-                  thumbs={Object.fromEntries(history.map(s => [s.id, s.thumb]))}
+                  // ★ 2026-10-06（晚）：`thumbs` 这个 prop 撤了 —— 每一步的小图
+                  //   现在挂在照片区上方那条时间轴上（`ui/StepStrip` 拿的是
+                  //   `history` 里同一份小图），对话区里不再有照片。
                   // ★ 2026-10-06：单条记录的删除。`originalId` = 「原图」那一步
                   //   的消息 id（欢迎语和它是同一条）—— 那一条上**不摆** ✕：
                   //   它是这条会话的锚（删了它，这一屏就没有落脚的地方了）。

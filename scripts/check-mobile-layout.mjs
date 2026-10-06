@@ -37,8 +37,9 @@
  * 2026-09-23 还加了两件**自动化覆盖一直是零**的东西（见下面 §图上点选）：
  *   4. 红圈的几何：屏幕坐标 → 归一化坐标 → 红圈圆心。这条线上买的是**一次生成的
  *      钱**（约 12,900 tokens），此前唯一的证据是 gitignore 目录里的一次性探针。
- *   5. 真的 `makeThumbnail`（对话里那张小图）。jsdom 那条测试整个把它假掉了，
- *      真函数没人验过；这里量的是它的产出真有像素。
+ *   5. 真的 `makeThumbnail`（每一步那张小图；★ 2026-10-06 晚从对话气泡下面
+ *      搬到了照片区上方的时间轴上 —— 判据跟着搬，量法不变）。
+ *      jsdom 那条测试整个把它假掉了，真函数没人验过；这里量的是它的产出真有像素。
  *
  * 2026-09-25 加了第 6 件（Task 13，§6.6 ①）：**存失败之后那一屏**。那一刻用户改好的
  * 图只在屏幕上，横幅上那个「下载到电脑」是他唯一的出口 —— 而它是 flex 排的，
@@ -95,10 +96,12 @@ const APP = `${URL}/app`
 const PHOTO = join(ROOT, 'test-photos', 'e2e_first_use.jpg')
 
 /**
- * 竖图夹具 —— 只给"对话里那张小图的清晰度"那一趟用（1080×2048，手机/AI 出的
+ * 竖图夹具 —— 只给"时间轴上那张小图的清晰度"那一趟用（1080×2048，手机/AI 出的
  * 那种比例，也是**短边最吃亏**的形状）。为什么这条要单独用竖图：
- * `makeThumbnail` 按**长边**缩，而 `.bubble-thumb` 是 `width: 120px` 的框、
- * 高度随比例 —— 横图在那个数下宽度刚好够（量不出区别），竖图才会露馅。
+ * `makeThumbnail` 按**长边**缩，而那些小图在时间轴上是**高 56px、宽随比例**的
+ * 小格子 —— 竖图那一格的宽只有 29 CSS px，两个方向谁先不够它最先露馅。
+ * （★ 2026-10-06 晚之前这张量的是对话气泡下面那张 120px 宽的小图；照片撤出
+ * 对话区之后判据跟着搬到时间轴上，缺口形状不变、量法不变。）
  * 文件在 `test-photos/`（整目录 gitignore，和 `PHOTO` 那张一样）。
  */
 const PORTRAIT = join(ROOT, 'test-photos', 'e2e_portrait.jpg')
@@ -173,11 +176,15 @@ async function checkServedBuild() {
  *
  * 手机那一档是原来就有的（iPhone 14；窄屏断点是 640，所以它落在"上下排"那一侧）：
  * 那一档里画布是被**宽度**卡住的（390 − 40 内边距 = 350），也就是说**高度那条链
- * 从来没被激活过** —— 把 .canvas-wrap 的 height: 100% 摘掉，它照样全绿。
+ * 从来没被激活过** —— 把 `.canvas-wrap` 那条撑高的规则摘掉，它照样全绿。
  *
  * 2026-09-23 补桌面这一档 1280×600：走**左右排**，而且**横竖都短** ——
- * 高度那条链（.stage 的 flex 高度 → .canvas-wrap 的 height: 100% →
- * .canvas 的 max-height: 100%）只有在"高度真的不够"的屏上才会吃上劲。
+ * 高度那条链（`.stage` 的 flex 高度 → `.canvas-wrap` 的 `flex: 1` →
+ * `.canvas` 的 `max-height: 100%`）只有在"高度真的不够"的屏上才会吃上劲。
+ * ★ 2026-10-06（晚）：`.canvas-wrap` 的 `height: 100%` 换成了 `flex: 1` ——
+ *   修图那一屏的舞台改成了**竖排**（照片上方多了一条历史时间轴
+ *   `ui/StepStrip`），照片要的是"**剩下的**整块地方"。那条链的**形状没变**，
+ *   而且从此**在两种屏幕上都真的会被吃到**：竖图现在被时间轴分走 72px。
  */
 const VIEWS = [
   { name: '手机 390x844', width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
@@ -370,15 +377,15 @@ function judgeMarker(label, m, expected) {
   }
 }
 
-/** 对话里那张小图：真的 `makeThumbnail` 的产出（data URL）得真有像素。 */
+/** 时间轴上那张小图：真的 `makeThumbnail` 的产出（data URL）得真有像素。 */
 async function judgeThumb(page, label, view) {
   let got
   try {
     await page.waitForFunction(
-      () => (document.querySelector('.bubble-thumb')?.naturalWidth ?? 0) > 0,
+      () => (document.querySelector('.strip-thumb')?.naturalWidth ?? 0) > 0,
       null, { timeout: 5_000 })
     got = await page.evaluate(() => {
-      const img = document.querySelector('.bubble-thumb')
+      const img = document.querySelector('.strip-thumb')
       const b = img.getBoundingClientRect()
       return { nw: img.naturalWidth, nh: img.naturalHeight, isData: img.src.startsWith('data:image/'),
                w: b.width, h: b.height, dpr: devicePixelRatio }
@@ -386,13 +393,13 @@ async function judgeThumb(page, label, view) {
   } catch {
     got = null
   }
-  console.log(`── ${label} · 对话里那张小图`)
+  console.log(`── ${label} · 时间轴上那张小图`)
   if (!got) {
-    fails.push(`${label}：对话里没有一张能解开的小图（.bubble-thumb 的 naturalWidth 是 0）——` +
-      '「翻聊天记录就是撤销」的那个入口没了')
+    fails.push(`${label}：时间轴上没有一张能解开的小图（.strip-thumb 的 naturalWidth 是 0）——` +
+      '「每一步回到哪一版」的那个入口没了')
     return
   }
-  console.log(`     .bubble-thumb ${got.nw}x${got.nh}（真图、${got.isData ? 'data URL' : '不是 data URL'}）`)
+  console.log(`     .strip-thumb ${got.nw}x${got.nh}（真图、${got.isData ? 'data URL' : '不是 data URL'}）`)
   if (got.nw <= 0 || got.nh <= 0) {
     // 上面 waitForFunction 已经保证 > 0，这里是"判据本身别写错"的保险
     fails.push(`${label}：小图上没有像素（${got.nw}x${got.nh}）`)
@@ -401,16 +408,14 @@ async function judgeThumb(page, label, view) {
 
   // ★ 2026-10-04（晚）：**清晰度**。用户原话「对话框里的图片缩略图好模糊」——
   //   又一个"四样检查全绿、用户先在真屏幕上看见"的例子：上面这条判据原来只问
-  //   "图上有没有像素"，不问**够不够**。160 长边的小图在 `width: 120px` 的框里
-  //   被拉 2.9 倍（DPR 2 的屏上），它照样绿。
+  //   "图上有没有像素"，不问**够不够**。160 长边的小图在当年那个 `width: 120px`
+  //   的框里被拉 2.9 倍（DPR 2 的屏上），它照样绿。
   //   和作品页那条（`judgeGallery` 的 `thumbCoverage`）是**同一把尺子**：
   //   两个方向各算一次、取小的那个，< 1 就是浏览器在凭空造像素。
-  //   这里**不吃"长边/短边"那套解释**：`.bubble-thumb` 是 `width: 120px`、
-  //   高度随比例 —— 竖图越高，它要盖的设备像素越多，所以竖图最容易露馅
-  //   （这正是上传夹具换成竖图的原因，见 `PHOTO` 那段）。
+  //   ★ 2026-10-06 晚：框换成了时间轴上那一格（**高 56px**、宽随比例）—— 同样的
+  //   480 长边现在富余得多（竖图那格 29 CSS 宽 ×DPR 2 = 59 设备像素，源有 253）。
+  //   这条**留着当回归哨**：哪天有人把它调小一个数量级、或者换了画法，它照样红。
   //   ⚠️ 同样**只判桌面档**（理由见 `judgeGallery` 里那段）。
-  //   变异：把 `THUMB_MAX_SIDE` 改回 160 → 竖图小图 84x160、框 120 CSS ×DPR 1，
-  //   覆盖度 0.70 → 这一条红。
   const needW = Math.round(got.w * got.dpr)
   const needH = Math.round(got.h * got.dpr)
   const cover = Math.min(got.nw / needW, got.nh / needH)
@@ -418,10 +423,8 @@ async function judgeThumb(page, label, view) {
     `（源 ${got.nw}x${got.nh}，框 ${got.w.toFixed(0)}x${got.h.toFixed(0)} CSS ×DPR ${got.dpr} = ` +
     `要盖 ${needW}x${needH} 设备像素${view.isMobile ? '；手机档只打不判，理由见源码注释' : ''}）`)
   if (!view.isMobile && cover < 1) {
-    fails.push(`${label}：对话里那张小图**是被拉大出来的**（源 ${got.nw}x${got.nh}，` +
-      `要盖 ${needW}x${needH} 设备像素，只盖得住 ${cover.toFixed(2)}）—— 根因不在 DPR：` +
-      '`makeThumbnail` 按**长边**缩，而 `.bubble-thumb` 是 `width: 120px` 的框、' +
-      '高度随比例 —— **竖图吃亏在宽度**（1080x2048 在 160 长边下宽只有 84）。' +
+    fails.push(`${label}：时间轴上那张小图**是被拉大出来的**（源 ${got.nw}x${got.nh}，` +
+      `要盖 ${needW}x${needH} 设备像素，只盖得住 ${cover.toFixed(2)}）——` +
       '数值在 `THUMB_MAX_SIDE`（src/core/thumbnail.ts，2026-10-04 起 480），' +
       '两个调用点（App.tsx 里恢复的 `thumbOf` 和抓快照那个 effect）都走它。')
   }
@@ -1703,17 +1706,17 @@ try {
           '那个圈在转，可东西永远取不回来')
       }
 
-      // ── ★ 2026-10-04（晚）：对话里那张小图的清晰度（**竖图**单走一趟）──────
+      // ── ★ 2026-10-04（晚）：小图的清晰度（**竖图**单走一趟）────────────────
+      // ★ 2026-10-06 晚：那张小图从对话气泡下面搬到了**照片区上方的时间轴**上
+      //   —— 判据跟着搬（`.strip-thumb`），要抓的病不变。
       //
-      // 要抓的病：`makeThumbnail` 按**长边**缩，而 `.bubble-thumb` 是
-      // `width: 120px` 的框、高度随比例 —— **竖图吃亏在宽度**（1080×2048 在
-      // 当时的 160 长边下宽只有 84，被拉近 3 倍，用户原话「对话框里的图片
-      // 缩略图好模糊」）。
+      // 要抓的病：`makeThumbnail` 按**长边**缩，而时间轴上那一格是**高 56px、
+      // 宽随比例**的小框 —— 竖图那格最窄（1080×2048 → 29 CSS 宽），两个方向
+      // 谁先不够它最先露馅。
       //
-      // ⚠️ 为什么**不借上面那趟的横图**：横图在 160 那个数下宽度刚好够
-      //    （1200×800 → 160×107，框 120 → 覆盖度 1.33），量不出区别；
-      //    而整趟换成竖图会把"面板开着 / 存失败之后照片还有多大"那几条
-      //    （按横图校准的）一起弄红 —— 那是另一件事。
+      // ⚠️ 为什么**不借上面那趟的横图**：横图那格宽得多（1200×800 → 84 CSS），
+      //    量不出区别；而整趟换成竖图会把"面板开着 / 存失败之后照片还有多大"
+      //    那几条（按横图校准的）一起弄红 —— 那是另一件事。
       //
       // 零花费：suggest / edit / route 三条在这个 page 上早就掐掉了，
       // 这一趟只上传（本地解码 + 一次 POST /api/sessions）。

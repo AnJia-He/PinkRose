@@ -629,7 +629,15 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
 /* 改：workspace 变成"左画布右对话"的一行 */
 .workspace { flex: 1; display: flex; min-height: 0; }
-.workspace .stage { flex: 1; min-width: 0; min-height: 0; }
+/* ★ 2026-10-06（晚）：舞台在「修图」这一屏改成**竖排**（上：历史时间轴，
+   下：照片）—— 时间轴是 `<StepStrip>` 那条，见下面那一节。
+   ⚠️ `align-items: stretch` 是给时间轴用的：它在横轴上要**铺满**（自己会
+   横向滚），居中放着的话宽度会缩成内容那么宽（六格 ≈ 五百来像素），
+   后面几步就被"藏"在没有滚动条的空白里了。照片的居中归 `.canvas-wrap`
+   自己管，不受影响。
+   ⚠️ 调色那一屏不渲染时间轴（判据在 App），但竖排照旧生效 ——
+   只有一张照片时竖排和横排的居中结果一模一样。 */
+.workspace .stage { flex: 1; display: flex; flex-direction: column; align-items: stretch; min-width: 0; min-height: 0; }
 
 /* ── 预设栏（★ 2026-10-05，`PresetRail`）───────────────────────────────
    照片**左边**那条：一格一张用**当前这张照片**现画的效果小图，点一下整组套上
@@ -693,14 +701,18 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 「按住看原图」的容器（spec §2.5）。
    它替 .stage 干"把画布居中"这件事：撑满 .stage 留给它的整个空间，
    再由自己的 flex 居中那张 `.canvas`（后者的 max-width/max-height: 100%
-   照旧生效，尺寸还是它自己管）。 */
+   照旧生效，尺寸还是它自己管）。
+   ★ 2026-10-06（晚）：`height: 100%` 换成 `flex: 1` —— 舞台在修图那一屏
+   变成了竖排，上面还坐着历史时间轴（`.strip`），照片要的是"**剩下的**
+   整块地方"，不是"整块地方"（写死 100% 的话它会连时间轴那条一起吃掉）。 */
 .canvas-wrap {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   /* ⚠️ 这两行在手机上不是可选的：长按图片会弹出系统的「保存图片 / 复制」
      菜单，跟"按住看原图"直接打架。桌面浏览器看不出区别，只有真机会。 */
   -webkit-touch-callout: none;
@@ -769,6 +781,82 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   pointer-events: none;
 }
 .canvas-veil::before { width: 20px; height: 20px; }
+
+/* ── 历史时间轴（★ 2026-10-06，`StepStrip`）────────────────────────────
+   照片**上方**那一条：一步一格、格子之间有线连着（像 git 的提交链），
+   点某一格 = 回到那一步，下面的大图跟着换（用户画了草图提的：
+   「对话区不留下照片了…上方是可左右滚动的历史记录照片类似于 git 吧
+   也就是回到那一步，下方对应记录的图片」）。
+   ★ 它是从对话区**搬过来**的 —— 每一步的小图原来挂在气泡下面
+   （`.bubble-thumb`），那条规则已退役。
+
+   ⚠️ 它吃的是**照片的高度**（舞台为它改成竖排，见 `.workspace .stage`）：
+   格子 56 + 呼吸 ≈ 72px —— 竖图会小一档，横图不受影响（横图被宽度顶着，
+   头上本来就空着）。这条线是量着定的，动它要跑 `check-mobile-layout.mjs`。
+   ⚠️ 底色**不铺**：这一块全是照片的地盘，轴自己悬在舞台那层顶光上
+   （`.rail` 是实心面板 —— 那条旁边是微调工具，这条旁边是照片）。 */
+.strip {
+  flex: none;
+  display: flex; align-items: center;
+  overflow-x: auto;
+  padding-bottom: var(--sp-3);
+  scrollbar-width: thin;
+}
+/* 格子和格子之间的连线（第一格前面没有 —— 那条在 StepStrip 里就不渲染）。 */
+.strip-link {
+  flex: none; width: 16px; height: 1px;
+  background: var(--line-3);
+}
+/* 一格：**高是定的、宽随照片自己的比例** —— 竖的窄、横的宽，和素材一样
+   参差才认得出哪一格是哪一版（一律裁成方块反而认不出）。
+   当前那一格是 `<span>`（不是按钮）—— 它只报"你在这里"，点不动。 */
+.strip-node {
+  flex: none; display: block; height: 56px;
+  /* ⚠️ 全局 `button{}` 的方框（底 + 边）要显式按掉，少写一条就长回方框。 */
+  padding: 0; border: 0; background: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.strip-node.current { cursor: default; }
+.strip-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.strip-thumb {
+  display: block; height: 100%; width: auto;
+  /* 特别宽的全景封个顶（多出来的用 cover 裁掉）—— 不封的话一格能占掉半条轴。 */
+  max-width: 96px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-2);
+  transition: border-color var(--dur-1) ease;
+}
+.strip-node:hover .strip-thumb { border-color: var(--accent); }
+/* 站的那一格：一圈主色描边（1px 边 + 1px 外圈 = 2px）—— 和对话里那颗
+   「你在这里」是同一件事，只是这儿画在图上。 */
+.strip-node.current .strip-thumb { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+/* 生成中"图要出现的地方"（对话里那块 `.shot-skeleton` 整块搬过来的）：
+   挂在**站的那一格后面**（从旧步骤重掷时，新的一版就落在那儿）。
+   ⚠️ 宽度不写死：`aspect-ratio` 由内联传进来（这张照片的宽 / 高），
+   换真图时横向不跳；没传时退回下面这条 1:1。
+   ⚠️ 只写 height、**不写 width** —— 两个都写的话 `aspect-ratio` 就不生效了。 */
+.strip-pending {
+  position: relative; overflow: hidden;
+  flex: none; height: 56px; aspect-ratio: 1; max-width: 96px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-2);
+  background: var(--hover);
+}
+/* 一道微光**扫过去**（不是整块闪烁）：从左走到右、来回一遍。
+   闪烁读起来是"坏了"，扫光读起来是"还在做"。
+   ⚠️ 走位用 `transform`（合成层），别动 `background-position` —— 那个每帧
+   重算绘制。亮色那半用 `--glass-hi`（白，压在浅灰上才看得见），深色那半
+   它自己就是一层很淡的白 —— 同一个令牌在两边的"对的量"本来就不一样。 */
+.strip-pending::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 35%, var(--glass-hi) 50%, transparent 65%);
+  transform: translateX(-100%);
+  animation: skeleton-sweep 1.6s ease-in-out infinite;
+}
+@keyframes skeleton-sweep { to { transform: translateX(100%); } }
 
 /* ── 上传前那一屏（2026-09-30 重做） ────────────────────────────────
    这是登录之后看到的第一张脸。原来是**一个虚线框、里面四个字**，浮在一整片
@@ -1198,14 +1286,14 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   flex: 1; overflow-y: auto; padding: var(--sp-4);
   display: flex; flex-direction: column; gap: var(--sp-3);
 }
-/* ★ 2026-10-05：一条消息现在是**两块**（用户原话：「对话区 ai 的回答文字跟图片
-   分成两部分，文字在上，图片在下分为两个」）—— 文字一块、图（和挂在图下面的
-   那两颗按钮）一块。所以外面多了一层 `.msg`：
-     · 它管**对齐**（谁在左谁在右）和**这条消息能有多宽**（88%）；
-     · 里面两块自己排，间距是 `--sp-2`（比两条消息之间的 `--sp-3` 紧一档 ——
-       "同一条消息的两个部分"读起来该比"两条消息"更近）。
-   ⚠️ `max-width` 从 `.bubble` 挪到了这里：留在气泡上的话，文字气泡和图片那块
-   会各自按 88% 算，两块反而比原来更宽、还对不齐。 */
+/* 一条消息的外壳。★ 2026-10-05 的形状是"两块"（文字一块、图一块，
+   用户当时要的）；★ 2026-10-06（晚）**照片撤出对话区之后只剩一块** ——
+   气泡里的话 + 末尾那排操作（回到这一步 / 再来一版 / 「…」）。
+   这一层照旧管三件事：
+     · **对齐**（谁在左谁在右）；
+     · **这条消息能有多宽**（88% —— ⚠️ 别挪回 `.bubble` 上：挪回去
+       操作行那排会各自按 88% 算，比气泡宽、还对不起）；
+     · 块与块的间距（`--sp-2`，比两条消息之间的 `--sp-3` 紧一档）。 */
 .msg { display: flex; flex-direction: column; gap: var(--sp-2); max-width: 88%; }
 .msg.user { align-self: flex-end; align-items: flex-end; }
 .msg.assistant { align-self: flex-start; align-items: flex-start; }
@@ -1578,6 +1666,18 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
   .workspace { flex-direction: column; }
   .workspace .stage { flex: 1 1 auto; }
+  /* ★ 2026-10-06（晚）：时间轴在窄屏上**收矮一档**（56 → 44、下面那点呼吸
+     也收一档）—— 这一档的照片本来就只靠宽度那条链活着，而时间轴是从**竖向**
+     抠出来的：不收的话"存失败之后"那一屏实测照片长边 234 < 240（240 是量出来的
+     "用户还看得见"的下限，见 `check-mobile-layout.mjs` 的 `MIN_LONG`）。
+     ⚠️ 44 同时也是触摸目标的下限（iOS HIG）—— 竖图那格只有 25px 宽，
+     所以宽度上另兜一道 `min-width`（少了它，一指头下去常常点到隔壁那一版）。 */
+  .strip { padding-bottom: var(--sp-2); }
+  .strip-node {
+    display: flex; align-items: center; justify-content: center;
+    height: 44px; min-width: 44px;
+  }
+  .strip-pending { height: 44px; }
   /* ★ 2026-10-05：**窄屏上预设栏不出现**（桌面那一档才有）。
      这一档里三样东西抢竖向空间，照片本来就只靠宽度那条链活着（见上），
      再横塞一条预设栏要么把照片压小、要么得把面板挤掉一截。
@@ -1619,53 +1719,14 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      被 `check:layout` 抓住（它量的正是这条注释说的那件事）。 */
 }
 
-/* 对话里每一步的小图。点它 = 点「回到这一步」—— spec §2.4：
-   「不设撤销按钮，翻聊天记录就是撤销」。所以它是可点的，给个手型。 */
-.bubble-thumb {
-  display: block;
-  width: 120px;
-  max-width: 100%;
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  border: 1px solid var(--line-2);
-  transition: border-color var(--dur-1) ease, transform var(--dur-2) var(--ease);
-}
-.bubble-thumb:hover { border-color: var(--accent); transform: scale(1.02); }
-
-/* ★ 2026-10-06：**生成中，图要出现的位置先摆的那一块**（骨架屏；用户原话
-   「要让用户知道你在干嘛」——原来那十几秒对话里只有一句话，图的位置是整个
-   空着的）。图到了原地换成真图。
-   ⚠️ 尺寸/圆角/描边**照着 `.bubble-thumb` 一笔一笔抄**：宽 120、圆角
-   `--r-sm`、描边 `--line-2` —— 换掉的那一下宽度上不许跳。
-   ★ 高度（评审 Minor）：比例由 App 内联传下来（`image.width / height`，
-   见 ChatPanel 的 `aspectRatio`），**和真缩略图同一个比例**，竖图横图都不跳；
-   下面这条 4:3 只是"没传"时的兜底。
-   ⚠️ **上限跟着 `.bubble-thumb` 那一档：它只有 `max-width: 100%` 一道、
-     没有 `max-height`** —— 所以这里也不写 max-height。写了的话，超长竖图
-   （1:3 那种）骨架会比真图矮一截，换图那一下正好把这次要修的"跳"又造回来；
-   列宽不够时两边一起收，"到上限就不再长"的表现因此是一致的。
-   外层的间距不用在这儿写：它挂成 `.msg` 的孩子，那层的 `gap: var(--sp-2)`
-   和缩略图那一格的间距是同一个数。 */
-.shot-skeleton {
-  position: relative; overflow: hidden;
-  width: 120px; max-width: 100%;
-  aspect-ratio: 4 / 3;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--line-2);
-  background: var(--hover);
-}
-/* 一道微光**扫过去**（不是整块闪烁）：从左走到右、来回一遍。
-   闪烁读起来是"坏了"，扫光读起来是"还在做"。
-   ⚠️ 走位用 `transform`（合成层），别动 `background-position` —— 那个每帧
-   重算绘制。亮色那半用 `--glass-hi`（白，压在浅灰上才看得见），深色那半
-   它自己就是一层很淡的白 —— 同一个令牌在两边的"对的量"本来就不一样。 */
-.shot-skeleton::after {
-  content: ''; position: absolute; inset: 0;
-  background: linear-gradient(100deg, transparent 35%, var(--glass-hi) 50%, transparent 65%);
-  transform: translateX(-100%);
-  animation: skeleton-sweep 1.6s ease-in-out infinite;
-}
-@keyframes skeleton-sweep { to { transform: translateX(100%); } }
+/* ★ 2026-10-06（晚）：这里原来是两条给"对话里的照片"用的规则 ——
+   `.bubble-thumb`（气泡下面那张可点的小图）和 `.shot-skeleton`（生成中
+   图位上的那块占位，含一条 `skeleton-sweep` 扫光动画）。用户说
+   「对话区不留下照片了」之后，小图整条搬到**照片区上方那条历史时间轴**上
+   （`.strip-thumb`），占位块跟着搬（`.strip-pending`，扫光的 keyframes
+   也搬过去了，只有一份）—— 两条规则一起退役。
+   ⚠️ **别挂回来**：挂回来的话同一张画面在屏上会有两处出处，
+   而且"回到这一步"会多出一个入口。 */
 
 /* ── 登录 / 注册（Task 7） ────────────────────────────────────────
    这是打开产品看到的第一屏。它和别的组件有一点不同：`.login` 和
