@@ -2337,6 +2337,12 @@ export default function App() {
                   marker={marker}
                   onPickPoint={onPickPoint}
                   onFail={noticeBad}
+                  // ★ 2026-10-06（缩放）：**换了一张照片**的信号 —— 传的是
+                  //   `sessionId`，`Canvas` 拿它当"该把放大镜收回适应窗口了"
+                  //   的判据。⚠️ 传它不传 `image`：同一条会话里换步骤
+                  //   （转盘跳一步、「再来一版」）图也换，但用户正对着同一块
+                  //   地方前后对比 —— 那时候把视图拽回去等于把放大镜抢走。
+                  resetKey={sessionId}
                   // ★ 2026-10-06：生成中给照片盖一层淡淡的暗罩 + 转圈（那十几秒
                   //   照片原来完全没反应）。传的是 `generating` 不是 `busy` ——
                   //   「正在思考」/上传/切会话那几句**不盖**（一闪一暗会闪），

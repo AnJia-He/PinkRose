@@ -731,6 +731,27 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   -webkit-touch-callout: none;
   user-select: none;
 }
+
+/* ★ 2026-10-06（缩放）：**照片的剪裁层**。
+   照片放大之后会撑出它自己那块地方 —— 不剪的话它会盖到上面那条回溯带子和
+   右边对话栏上去。剪在**这一层**（而不是 `.canvas-wrap` 上）有两个具体的理由：
+
+     · 用户点的**红圈**是 wrap 的孩子，它比照片大一圈（半径按照片长边算，
+       桌面上能到 90px）。剪在 wrap 上，点在照片边上的圈会被切掉半个 ——
+       而点边上是常事。这一层只管照片，圈留在外面，谁也切不到它。
+     · 剪裁层是 `inset: 0`，**和 wrap 一样大** —— 所以照片的盒子、居中的算法、
+       红圈量出来的那个盒子，全都没有变（布局探针量的还是同一张照片）。
+
+   ⚠️ **只在放大之后才剪**（`.zoomed`）：适应窗口时照片本来就在框里，一点剪裁
+   都不需要，而不剪才能保住它那圈"相纸边"和底下的投影 —— 两者都画在盒子**外面**，
+   常年剪着会被沿边切掉（浅色照片压在底上就糊了，那正是 `--photo-edge` 要治的）。
+   ⚠️ `overflow: clip` 那一条排在 `hidden` 后面：不认识 `clip` 的浏览器退回
+   `hidden`（代价只是放大时投影被剪掉一截，可以接受）。 */
+.canvas-clip {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.canvas-wrap.zoomed .canvas-clip { overflow: hidden; overflow: clip; }
 .canvas-peek {
   position: absolute;
   inset: 0;
@@ -794,6 +815,49 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   pointer-events: none;
 }
 .canvas-veil::before { width: 20px; height: 20px; }
+
+/* ── 照片右下角那排缩放按钮（★ 2026-10-06，`Canvas`）────────────────────
+   来路：用户说「在对话区设置一个功能帮助用户能够正常缩放照片和定位到具体的
+   细节区域」—— 在这之前照片永远"适应窗口"，想看一颗痘痘去掉没有只能靠猜。
+   滚轮（以指针为中心）和拖动（平移）是给"已经知道能这么干"的人用的；
+   **这排按钮是给所有人用的** —— 看得见才知道有这个功能，也是触屏上唯一的入口。
+   「适应窗口」只在放大之后才冒出来：没放大时它无事可做，摆着只是噪音。
+
+   ⚠️ 它们是**真 `<button>`**（读屏念得出、键盘走得到），所以要走
+   `.rail-tile` / `.lut-tile` 那条老路：逐条把全局 `button{}` 那套方框
+   （灰底 + 描边 + 内边距）按掉 —— 少一条，一颗颗就都会长回灰方框。
+   ⚠️ 它和红圈、暗罩不一样：那两个是**画在照片上的记号**（故意不跟界面主题走），
+   这一排是**界面控件**，所以照常走 `--panel` / `--line`。
+
+   ⚠️ 位置：`right/bottom: var(--sp-3)` —— 贴的是 `.canvas-wrap`（照片区）的角，
+   不是照片的角：照片缩小时它也守在同一个地方，不会跟着照片跑。 */
+.zoom-bar {
+  position: absolute; right: var(--sp-3); bottom: var(--sp-3);
+  display: flex; align-items: center; gap: 2px; padding: 2px;
+  border-radius: var(--r-pill);
+  background: var(--panel); border: 1px solid var(--line);
+  box-shadow: var(--shadow-1);
+}
+.zoom-btn {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; padding: 0;
+  background: none; border: 0; border-radius: var(--r-pill);
+  color: var(--muted); cursor: pointer;
+}
+.zoom-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+/* 适应窗口时「−」按不动 —— **不另写禁用色**：全局那条 `button:where(:disabled)`
+   已经统一降了透明度（"禁用要看得见"），再加一档 `--line-3` 就是**叠两层灰**、
+   暗到几乎看不见，读起来像"这颗没了"而不是"这颗现在用不上"。
+   （`.msg-more:disabled` 那边要自己写，是因为它有一条描边是全局管不到的。） */
+.zoom-fit {
+  height: 30px; padding: 0 10px; margin-left: 2px;
+  background: none; border: 0; border-radius: var(--r-pill);
+  color: var(--muted); font-size: 12px; cursor: pointer;
+}
+.zoom-fit:hover { background: var(--hover); color: var(--text); }
+/* 放大之后鼠标变小手：那是在说"这里可以拖"（和上面那条回溯带子同一套语言）。 */
+.canvas-wrap.zoomed { cursor: grab; }
+.canvas-wrap.zoomed:active { cursor: grabbing; }
 
 /* ── 历史转盘（★ 2026-10-06，`StepStrip`）──────────────────────────────
    照片**上方**那一圈：一步一格摆在一个圆的边上，**站的那一格在正面**

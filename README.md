@@ -26,7 +26,7 @@
 | 登录 / 注册 | [LoginPage.tsx](src/ui/LoginPage.tsx) |
 | 修图主界面（骨架） | [App.tsx](src/App.tsx) |
 | 对话栏（右边那一条） | [ChatPanel.tsx](src/ui/ChatPanel.tsx) |
-| 照片显示区 | [Canvas.tsx](src/ui/Canvas.tsx) |
+| 照片显示区（含放大缩小 / 拖动看细节） | [Canvas.tsx](src/ui/Canvas.tsx) + [viewport.ts](src/ui/viewport.ts) |
 | 历史转盘（照片上方那一圈小图，拖 = 转、点 = 回到那一步） | [StepStrip.tsx](src/ui/StepStrip.tsx) |
 | 上传照片（欢迎页照片球） | [WelcomeGlobe.tsx](src/ui/WelcomeGlobe.tsx) + [Uploader.tsx](src/ui/Uploader.tsx) |
 | 对话列表 | [SessionsPage.tsx](src/ui/SessionsPage.tsx) |
