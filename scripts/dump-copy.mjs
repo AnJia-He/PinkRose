@@ -210,7 +210,17 @@ async function main() {
     // ★ 就地确认那三句（「删掉这条？」「删掉」「取消」）**只在按了「删除」之后存在**，
     //   而这一版明确说好**不弹系统框** —— 那三句就是这个产品里"要删东西"时
     //   用户看到的全部字，也恰恰是最少被人读过的那几句。
-    await page.click('.session-row .session-del')
+    //
+    // ★ 2026-10-06（Task 6 顺手修）：**行操作收进「…」菜单之后这里腐烂过一次** ——
+    //   原来直点 `.session-row .session-del`，而那颗按钮自 `bea0be8` 起只在
+    //   **确认态**才存在（常态下整行只有那颗「…」）。症状是 30 秒后
+    //   `Timeout 30000ms exceeded`：**全程一个字都没打出来**，而这条脚本正是
+    //   "把稿子端出来逼人读"的 —— 它不跑完，后面每一屏的文案都没人读过。
+    //   现在的走法照 `scripts/check-mobile-layout.mjs` 那段：先点「…」，再点菜单里的
+    //   【删除】（`SessionsPage` 的 `.session-more` / `.session-menu-del`）。
+    await page.click('.session-row .session-more')
+    await page.waitForSelector('.session-menu-del', { timeout: 5_000 })
+    await page.click('.session-menu-del')
     await page.waitForSelector('.session-ask', { timeout: 5_000 })
     await page.waitForTimeout(300)
     await grab(page, '对话页 · 点了「删除」（就地确认）')
