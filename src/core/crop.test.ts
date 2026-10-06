@@ -6,6 +6,25 @@ import {
 
 const close = (a: number, b: number, tol = 1e-6) => expect(Math.abs(a - b)).toBeLessThan(tol)
 
+/**
+ * 把矩形四角（相对照片中心）**转回原图坐标系**，检查是否都还在 ±w/2 × ±h/2 之内。
+ * 这是"不碰空角"那句承诺的直接验证 —— 角戳出去就说明裁进了空白区。
+ */
+const cornersInside = (
+  size: { w: number; h: number }, imgW: number, imgH: number, angleDeg: number,
+) => {
+  const c = Math.cos((angleDeg * Math.PI) / 180)
+  const s = Math.sin((angleDeg * Math.PI) / 180)
+  for (const cx of [-size.w / 2, size.w / 2]) {
+    for (const cy of [-size.h / 2, size.h / 2]) {
+      const bx = cx * c + cy * s
+      const by = -cx * s + cy * c
+      expect(Math.abs(bx)).toBeLessThanOrEqual(imgW / 2 + 1e-6)
+      expect(Math.abs(by)).toBeLessThanOrEqual(imgH / 2 + 1e-6)
+    }
+  }
+}
+
 describe('rotatedBounds —— 转过来之后占多大一块', () => {
   it('不转就是原来那块', () => {
     expect(rotatedBounds(1000, 500, 0)).toEqual({ w: 1000, h: 500 })
@@ -43,6 +62,33 @@ describe('inscribedRect —— 转完之后，不露空角的最大矩形', () =
       expect(r.w * r.h).toBeLessThanOrEqual(1000 * 500 + 1e-6)
       expect(r.w).toBeGreaterThan(0); expect(r.h).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('inscribedRect —— 竖图不许把宽高转置（★ 评审抓的 Critical）', () => {
+  it('★ 竖图不转 = 整张照片本身（800×1200，不是 1200×800）', () => {
+    expect(inscribedRect(800, 1200, 0)).toEqual({ w: 800, h: 1200 })
+  })
+  it('★ 竖图转 15° = 533.65×1099.34，四角都还在照片里（不许戳出去）', () => {
+    const r = inscribedRect(800, 1200, 15)
+    close(r.w, 533.654, 1e-3); close(r.h, 1099.339, 1e-3)
+    cornersInside(r, 800, 1200, 15)
+  })
+})
+
+describe('inscribedRect —— 两支冷门分支的覆盖（评审补的，都不是 bug）', () => {
+  it('角度折过 90° 之后对称：@97 == @83（"转 90° 再矫正 +7°"就是这个形状）', () => {
+    const a = inscribedRect(1000, 500, 97)
+    const b = inscribedRect(1000, 500, 83)
+    close(a.w, b.w); close(a.h, b.h)
+    expect(a.w).toBeGreaterThan(0); expect(a.h).toBeGreaterThan(0)
+    expect(a.w * a.h).toBeLessThanOrEqual(1000 * 500 + 1e-6)
+    cornersInside(a, 1000, 500, 97)
+  })
+  it('3:1 的长条 @15 走"贴住短边"那一支，四角仍在照片里', () => {
+    const r = inscribedRect(3000, 1000, 15)
+    close(r.w, 1931.852, 1e-3); close(r.h, 517.638, 1e-3)
+    cornersInside(r, 3000, 1000, 15)
   })
 })
 
@@ -86,6 +132,13 @@ describe('cropOutputSize —— 裁出来多少像素', () => {
     const out = cropOutputSize({ rect: rectFromSize(r, b), angle: MAX_STRAIGHTEN }, 0, 1200, 800)
     expect(out.width * out.height).toBeLessThanOrEqual(1200 * 800 + 1)
     expect(out.width).toBeGreaterThan(0)
+  })
+  it('★★ 上面那顶帽子真会被踩到：满框转 15°（本该 1366×1083）要削回原图以内', () => {
+    // 把 cropOutputSize 里那个 if 删掉，套件本来照样全绿 —— 这条专治那个盲区：
+    // 满框 1×1、转 15°，外框 1366×1083，超了 1200×800 的额度，非削不可。
+    const out = cropOutputSize({ rect: { x: 0, y: 0, w: 1, h: 1 }, angle: 15 }, 0, 1200, 800)
+    expect(out.width * out.height).toBeLessThanOrEqual(1200 * 800 + 1)
+    expect(out.width).toBeGreaterThan(0); expect(out.height).toBeGreaterThan(0)
   })
   it('effectiveAngle 把 90 度整转和矫正角合起来', () => {
     expect(effectiveAngle(spec([0, 0, 1, 1], 7), 1)).toBe(97)
