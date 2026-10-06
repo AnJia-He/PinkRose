@@ -69,6 +69,10 @@ output/
 # SDD 工作区（临时脚手架，不入库）
 .superpowers/
 
+# 设计评审的存档（impeccable 的 critique 快照）——和上面一个性质：
+# 是工作台、不是产品；留在本机给下一次评审 / 打磨接着用。
+.impeccable/
+
 # Vite 缓存
 .vite/
 

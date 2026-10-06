@@ -176,36 +176,43 @@
 /* 这一块**破格**：比上下的文字栏宽出去，顶到接近整幅。参考站最显眼的
    一招就是"产品界面占满屏"，文字反而窄。容器自己居中，不靠 margin 算式。 */
 .lp-bleed { padding: 0 28px }
-.lp-prod { position: relative; max-width: 1560px; margin: 76px auto 0; padding-bottom: calc(9.4% - 40px) }
+/* ⚠️ **这个 reserve 不是可以凭感觉写的数**（老规矩，见下面浮层那段）：
+   它留的是浮层**挂在窗口下面**的那一截。浮层 `bottom: 0` 贴着容器底，
+   所以 `padding-bottom = 浮层高 − 40px` 时，浮层顶边正好压在窗口底边上方
+   40px —— "从窗口里掉出来一点点"。写成常数 40px 的话整张浮层会往上顶，
+   盖住窗口右半边的对话（2026-10-07 真机上踩到过一次，别改回去）。
+   浮层高 = 22% × 1.816（面板裁切的高宽比）= **39.95%，就写 40%**。 */
+.lp-prod { position: relative; max-width: 1560px; margin: 76px auto 0; padding-bottom: calc(40% - 40px) }
 /* `<picture>` 只是个"按模式选图"的壳，本身不该产生盒子 —— 它默认是 inline，
    里面那张 `display: block` 的图会因此多出一截行高（图片底下那条缝）。 */
 .lp-prod picture { display: block }
 .lp-prod-base { border-radius: var(--lp-r); overflow: hidden; border: 1px solid var(--lp-line);
   box-shadow: 0 2px 4px rgba(20, 22, 30, .05), 0 30px 70px -28px rgba(20, 22, 30, .35) }
 .lp-prod-base img { width: 100% }
-/* 浮层只从**右下角**掉出来一点点。压太多会切在主窗口的画面中间，
-   看着像渲染坏了，不像"分层"。
+/* 浮层：**右侧整根调色面板**从主窗口里"掉出来"一点点。
+   ★ 2026-10-07：面板从"底部横条"（2816×366，7.7:1）变成了**右侧一列**
+   （`crop-调色面板` 裁后 900×1634，≈1.81:1 竖的），浮层跟着换成一张**竖卡**：
+   宽度 22%，顶边压在窗口底边上方 40px、大部分挂在窗口下面 —— 老设计里
+   那条横带"掉出来"的意思不变，只是那张"零件"从横条变成了整根面板列。
 
-   ⚠️ **`padding-bottom` 不是一个可以凭感觉写的数**：它留的是浮层那点高度，
-   而浮层是 `width: 72%` 的图 —— 所以它占的行高 = `72% × 图的高宽比`。
-   图一换形状，这个数就得跟着重算，否则浮层要么和主窗口脱开一截（留太多）、
-   要么把主窗口的对话栏压掉（留太少）。
+   ⚠️ **换图重拍之后要重算两个数**：裁切后的高宽比（现在是 1.816）变了的话，
+   · 这里的 `width: 22%` 和
+   · 上面 `.lp-prod` 的 `calc(40% - 40px)`
+   要一起跟着算（浮层高 = 宽度% × 高宽比；reserve = 浮层高 − 40px）。
+   算错的症状是浮层往上顶、盖住窗口右边的对话栏 —— 真机上见过一次。
 
-   2026-10-01 产品图重拍时的实测：
-     旧图 2820×760（3.7:1）→ 行高 72% × 0.27 = **19.4%**，当年写的是 17%
-     新图 2816×366（7.7:1）→ 行高 72% × 0.13 = **9.4%**，再减去 40px 让
-     它**压住**主窗口底边一点点（不压就"掉"不出来了，那才是这个设计的意思）。
-
-   （旧注释留在这里，别的没变：原来压到 1168 那条线会横切回复气泡的缩略图，
-   所以让它往下退，让开那条回复。） */
-.lp-prod-float { position: absolute; right: -1%; width: 72%; bottom: 0; border-radius: 12px; overflow: hidden;
+   ⚠️ 边界那圈白线（rgba(255,255,255,.09)）和 12px 圆角跟着这张新图继续用
+   —— 面板本身是深底的，白线在深浅两种页面上都收得住。 */
+.lp-prod-float { position: absolute; right: -1%; width: 22%; bottom: 0; border-radius: 12px; overflow: hidden;
   border: 1px solid rgba(255, 255, 255, .09);
   box-shadow: 0 60px 120px -34px rgba(12, 12, 16, .66), 0 8px 26px -10px rgba(12, 12, 16, .4) }
 .lp-prod-float img { width: 100% }
 @media (max-width: 900px) {
   .lp-bleed { padding: 0 18px }
   .lp-prod { margin-top: 44px; padding-bottom: 0 }
-  .lp-prod-float { position: static; left: auto; right: auto; margin-top: 14px }
+  /* 窄屏上它落回文档流、挂在主窗口下面当一张小卡（58% 宽 ≈ 一个"零件"的体量；
+     拉满 100% 会变成第二扇窗，抢掉主窗口的戏）。 */
+  .lp-prod-float { position: static; left: auto; right: auto; width: 58%; margin-top: 14px }
 }
 /* ⚠️ 深色模式下那两道投影几乎看不见（浅色底上它们才是把窗口托起来的东西），
    所以窗口和页面之间只剩描边这一层 —— 描边就得从 --lp-line 提一档。 */

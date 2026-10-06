@@ -12,12 +12,17 @@ import nightMarket from '../assets/landing/night-market.jpg'
 import highway from '../assets/landing/highway.jpg'
 import beforeShot from '../assets/landing/before.jpg'
 import afterShot from '../assets/landing/after.jpg'
+// ★ 2026-10-07：**深浅两份合成一份**。App 从 10-05 起内页固定深色
+// （`.shell` 声明 `color-scheme: dark`，用户拍板"门面跟随系统、App 内页固定深色"）
+// —— 浅色访客点进去看到的也是这套深色界面，所以 `<picture>` 那套"按模式选图"
+// 没有意义了，两张 `-dark` 文件退役。
+// ⚠️ 这两张是**从活着的界面上拍的**（不是另画的）：拍法
+// `python .superpowers/scratch/landing-art/_shot_live3.py dark` →
+// `python .superpowers/scratch/landing-art/_to_webp.py`。
+// **界面一改就要重拍** —— 门面拿旧界面的图，是在给访客看一个不存在的产品
+// （2026-10-04 和 10-07 各因此重拍过一次）。
 import appWindow from '../assets/landing/app-window.webp'
 import appPanel from '../assets/landing/app-panel.webp'
-// 深色模式那两张（2026-10-01 补）。**不是另画一版**：App 在两个模式下
-// 真的长这样，两张都是从真界面上截的（`.superpowers/scratch/landing-art/_shot_live2.py`）。
-import appWindowDark from '../assets/landing/app-window-dark.webp'
-import appPanelDark from '../assets/landing/app-panel-dark.webp'
 
 /**
  * 落地页 —— **打开网站看到的第一眼**（2026-09-30 从
@@ -233,22 +238,14 @@ export default function LandingPage({ onEnter }: Props) {
         <div className="lp-bleed">
           <Reveal className="lp-prod">
             <div className="lp-prod-base">
-              {/* ⚠️ **深底上不能嵌浅色的产品图。** 这一页切到深色时，屏幕上
-                  会多出两块发光的亮粉方块 —— 人眼第一眼撞见的是它们，不是标题。
-                  `<picture>` 让它跟着访客系统里那个偏好走：选中的那张才下载。
-                  （Linear / Vercel 那类产品页都是这么做的。）
-                  ⚠️ `<picture>` 默认是 inline，得在 CSS 里改成块级，
-                  不然里面那张图会多出一截行高。 */}
-              <picture>
-                <source srcSet={appWindowDark} media="(prefers-color-scheme: dark)" />
-                <img src={appWindow} alt="PinkRose 修图界面，左边是照片，右边是对话和建议卡片" />
-              </picture>
+              {/* ⚠️ 这套图是**真机截图**，不是画的 —— 拍的是什么，App 里就得是什么。
+                  2026-10-07 重拍过一次（上一版还是 10-04 的界面：蓝色强调色、没有
+                  Lut 那一格、预设还是底部的药丸排）。重拍的判据很简单：**门面
+                  展示的界面必须存在**。下次改动修图/调色那两屏之后，记得再拍。 */}
+              <img src={appWindow} alt="PinkRose 修图界面：左边是照片和每一步的历史，右边是对话" />
             </div>
             <div className="lp-prod-float">
-              <picture>
-                <source srcSet={appPanelDark} media="(prefers-color-scheme: dark)" />
-                <img src={appPanel} alt="展开的调色面板，六套风格预设和八条调整滑块" />
-              </picture>
+              <img src={appPanel} alt="PinkRose 的调色面板：色彩平衡色轮、色温与分离色调等滑块" />
             </div>
           </Reveal>
         </div>
