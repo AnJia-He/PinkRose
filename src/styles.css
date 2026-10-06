@@ -617,8 +617,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      窗口底，而左右各有 487px 空着，读起来是"竖着挤死、横着空荡"。
      竖向这条线跟着窗口高走：矮窗口不至于被吃掉太多，高窗口给足呼吸
      （24 ~ 48px；1440 高的屏上是 48）。（横向维持 `--sp-5`：舞台的宽是给横图用的，
-     竖图本来就够不到。） */
-  padding: clamp(var(--sp-5), 7vh, var(--sp-7)) var(--sp-5);
+     竖图本来就够不到。）
+     ⚠️ 它现在**有名字**（`--stage-pad-y`）：历史转盘那条带子要拿它做负外边距
+     顶到舞台边上（见 `.workspace .stage > .strip`），两处必须是同一个值。 */
+  --stage-pad-y: clamp(var(--sp-5), 7vh, var(--sp-7));
+  padding: var(--stage-pad-y) var(--sp-5);
   /* ★ 2026-10-03：`position: relative` 是给欢迎页那颗**图片球**当包含块用的
      （它铺满整块舞台，见 `.globe`）。舞台自己不用剪裁 —— 球自己会剪。 */
   position: relative;
@@ -798,8 +801,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    ⚠️ 它吃的是**照片的高度**（舞台为它改成竖排，见 `.workspace .stage`）：
    130px —— 竖图会小 ~62px，横图不受影响（横图被宽度顶着，头上本来就有富余）。
    这条线是量着定的，动它要跑 `check-mobile-layout.mjs`。
-   ⚠️ 底色**不铺**：这一块全是照片的地盘，转盘自己悬在舞台那层顶光上
-   （`.rail` 是实心面板 —— 那条旁边是微调工具，这圈旁边是照片）。
+   ★ 2026-10-06（更晚）：用户看完真机截图说「**他们之间上下应该有分明的界限，
+   下面是照片区，上面是回溯区**」—— 这一条于是从"悬在照片地盘的顶光上"
+   改成**自己一块面**：`--raised`（比 `--panel` 再亮一档）+ 底下一道 `--line`。
+   为什么不是 `--panel`：量过，舞台那层顶光正好把照片区**上沿**提亮到
+   `--panel` 那么亮，两个色几乎一样 —— 带子会"糊"回去（第一版真机就是这样，
+   只有那条线在说话）。抬一档之后上下是两块面，线只是把缝收干净。
+   和 `.rail` 是同一套语言（那条是**竖着**的工具带，这条是**横着**的）。
    ⚠️ 窄屏（≤640）**不走转盘**：文件末尾那条媒体查询把这一整套 3D 中和掉、
    塌回"平铺可滑的一条"（那一档转盘会挤掉照片的高度，量过）。 */
 .strip {
@@ -807,6 +815,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   height: 130px;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden;
+  background: var(--raised);
+  border-bottom: 1px solid var(--line);
   /* 转得动这件事得让人看得出来：手型 + 别在拖的时候顺手选中什么。
      ⚠️ `touch-action: none` 只在这一档（桌面转盘）成立 —— 窄屏那条是
      **可滑的平铺**，那里把它交还给浏览器（见媒体查询里的 `touch-action: auto`），
@@ -816,6 +826,19 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   touch-action: none;
 }
 .strip:active { cursor: grabbing; }
+/* ★ 2026-10-06（更晚）第二版：它得**铺满舞台** —— 第一版只给了底色和一条线，
+   真机一看四周全是留白，读起来还是"悬在中间的一块矩形"，不像"上下分成两块"。
+   两个负外边距把它顶到舞台的上边和左右边（舞台内边距的同一个 `--stage-pad-y`），
+   下面那条 `margin-bottom` 再把这截留白**原样还给照片区**。
+   ⚠️ 归还这一步**不能改成为 `.canvas-wrap` 加 padding** —— 它里面 `.canvas-peek`
+   （按住看原图）和那层暗罩都是 `inset: 0` 的绝对定位，而绝对定位的包含块是
+   **内边距盒**：一加 padding，那张覆盖图就按"含 padding 的盒子"放大，
+   和底下的 `.canvas` 对不齐（按住的瞬间照片会跳一下）。
+   ⚠️ 调色那一屏没有这条带子，`margin-bottom` 挂在**带子**上而不是照片上，
+   所以那一屏的排版一个字不变。 */
+.workspace .stage > .strip {
+  margin: calc(-1 * var(--stage-pad-y)) calc(-1 * var(--sp-5)) var(--stage-pad-y);
+}
 /* 圆环 —— 一个 0×0 的锚点：每一格靠 `rotateY(角位) translateZ(半径)`
    摆到它周围（角度是内联的，`StepStrip` 算）。`perspective` 也在内联
    （和角度同一个 transform 里）—— 它得跟着转，不能挂在这儿静态放着。 */
