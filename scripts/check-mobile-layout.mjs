@@ -855,9 +855,10 @@ function judgeSaveFail(label, m, view) {
 // 一行 ≈ 45px、两行 ≈ 90px）；② 「完成」「取消」两颗**完整落在视口里** ——
 // 它们是这一行的出口，窄屏横滑之后靠 `position: sticky` 钉在右边，滑多远都够得着。
 
-/** 量工具行第二行（只在「裁剪」开着的时候存在）。 */
-async function measureToolRow(page) {
-  return page.evaluate(() => {
+/** 量工具行第二行（只在某个需要第二行的工具开着的时候存在）。
+ *  `doneText` = 那一行"这一趟怎么办"的主按钮（裁剪是「完成」、点修是「擦掉这里」）。 */
+async function measureToolRow(page, doneText = '完成') {
+  return page.evaluate(text => {
     const box = el => {
       if (!el) return null
       const b = el.getBoundingClientRect()
@@ -867,19 +868,19 @@ async function measureToolRow(page) {
         bottom: Math.round(b.bottom), right: Math.round(b.right),
       }
     }
-    const btn = text => [...document.querySelectorAll('.crop-tools button')]
-      .find(b => (b.textContent ?? '').trim() === text) ?? null
+    const btn = t => [...document.querySelectorAll('.crop-tools button')]
+      .find(b => (b.textContent ?? '').trim() === t) ?? null
     return {
       row: box(document.querySelector('.tool-row-second')),
-      done: box(btn('完成')),
+      done: box(btn(text)),
       cancel: box(btn('取消')),
       scrollW: document.documentElement.scrollWidth,
       clientW: document.documentElement.clientWidth,
     }
-  })
+  }, doneText)
 }
 
-function judgeToolRow(label, m, view) {
+function judgeToolRow(label, m, view, doneText = '完成') {
   const fmt = b => (b ? `${b.w}x${b.h} @${b.left},${b.top}` : '不在 DOM 里')
   console.log(`── ${label}`)
   console.log(`     第二行 ${fmt(m.row)}   完成 ${fmt(m.done)}   取消 ${fmt(m.cancel)}`)
@@ -902,7 +903,7 @@ function judgeToolRow(label, m, view) {
       '窄屏该走"横向滑"那条路（和窄屏的历史带子 .strip 同款）')
   }
   // ② 出口：这两颗是这一行的"怎么办"，窄屏横滑之后必须**永远够得着**
-  for (const [name, b] of [['完成', m.done], ['取消', m.cancel]]) {
+  for (const [name, b] of [[doneText, m.done], ['取消', m.cancel]]) {
     if (!b || b.w <= 0 || b.h <= 0) {
       fails.push(`${label}：第二行里没有「${name}」这颗按钮 —— 那个工具就没有出口了`)
       continue
@@ -1509,6 +1510,24 @@ try {
           await page.locator('.crop-tools button', { hasText: '取消' }).click()
           await page.waitForTimeout(200)
         }
+
+        // ── ★ 2026-10-07（点修）：第五个状态「开着点修」──────────────
+        // 第二行的形状和裁剪那一行是同一套（药丸 + 滑块 + 取消/主按钮），所以判据
+        // 也一样（judgeToolRow：窄屏行高 ≤ 64px + 出口完整在视口里）——只是主按钮
+        // 叫「擦掉这里」、它**没涂过时是禁用的**（量盒子不受影响）。
+        const retouchCell = page.locator('.tool-cell', { hasText: '点修' })
+        if (!(await retouchCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「点修」那颗工具格 ——` +
+            '「开着点修」这一态量不了（下面两条判据先跳过）')
+        } else {
+          await retouchCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着点修`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着点修`, await measureToolRow(page, '擦掉这里'), view, '擦掉这里')
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
       }
 
       // 一路走下来，花钱的那条路一次都不该被碰过。
@@ -1964,6 +1983,8 @@ if (fails.length) {
   console.log('   外加调色屏「开着裁剪」那一态（★ 2026-10-06 终审 C1）：工具行的第二行' +
     '不折（窄屏 ≤ 64px，折出来的每一行都是从照片身上抠走的）、' +
     '「完成 / 取消」两颗完整在视口里（窄屏横滑之后也够得着）')
+  console.log('   外加调色屏「开着点修」那一态（★ 2026-10-07）：同一套判据，' +
+    '主按钮叫「擦掉这里」（它没涂过时是禁用的，量盒子不受影响）')
   console.log('   外加存失败（§6.6 ①）：横幅和那个「下载到电脑」都完整在视口里、不用滚动、' +
     '画布还在、两个按钮的字各顶一行（不被 flex 挤扁）')
   console.log(`   外加作品页：${GALLERY_FAKE} 条时首屏只摆 ${GALLERY_FIRST} 张、圈在转、` +

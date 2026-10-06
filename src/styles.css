@@ -986,6 +986,38 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .crop-h[data-h="w"] { left: 0; }
 .crop-h[data-h="e"] { right: 0; }
 
+/* ── 点修的涂抹层（★ 2026-10-07，`ui/RetouchOverlay`）───────────────────
+   和 `.crop` 同一套待遇：**盖住整块照片区、把指针事件关在门里**（点修开着时
+   "按住看原图 / 拖动平移 / 图上点选"都不该被误触发），而滚轮**不拦** ——
+   放大着修细节正是这个工具的用法（滚轮挂在 `.canvas-wrap` 上，事件从这儿
+   冒泡上去照样收得到）。
+   `overflow` 收在照片区里：放大之后掩码预览会跟着照片一起撑出去，不剪的话
+   红影会糊到左边的预设栏和上下的带子上。 */
+.retouch {
+  position: absolute; inset: 0;
+  overflow: hidden; overflow: clip;
+  cursor: crosshair;
+}
+/* 掩码预览：和照片**同一张位置上的那张图** —— 摆在盒子坐标上、尺寸就是盒子
+   （组件按 `Canvas` 量出来的盒子写内联样式），所以缩放/平移下都严丝合缝。
+   圆角跟 `.canvas` 同款，免得红影从照片的圆角外溢出半格。
+   它只是给人看的：指针事件归父层。 */
+.retouch-mask {
+  position: absolute;
+  pointer-events: none;
+  border-radius: var(--r-sm);
+}
+/* 画笔光标圈：**屏幕像素**大小（组件按显示比例算好）—— 放大时它不该跟着变大。
+   颜色不走令牌（和 `.canvas-marker` / `.crop-h` 同一类）：画在照片上的记号，
+   底下是晚霞还是雪地都得看得见。 */
+.retouch-cursor {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, .9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(0, 0, 0, .35);
+  pointer-events: none;
+}
+
 /* ── 历史转盘（★ 2026-10-06，`StepStrip`）──────────────────────────────
    照片**上方**那一圈：一步一格摆在一个圆的边上，**站的那一格在正面**
    （最大最亮），两边的转身、后退、变暗；拖 = 转、点 = 转到正面，
@@ -1136,7 +1168,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    比例 / 左转 / 右转 / 水平矫正 / 取消 / 完成。
    ⚠️ 它们是**真按钮**，所以照 `.tool-cell` 那条老路逐条按掉全局 `button{}`
    的方框（灰底 + 描边 + 内边距）—— 少写一条就长回一排灰方框。 */
-.crop-ratios, .crop-tools { display: flex; align-items: center; gap: 2px; }
+.crop-ratios, .crop-tools, .retouch-modes { display: flex; align-items: center; gap: 2px; }
 /* 「取消 / 完成」推到这一行的**最右边**：它们是"这一趟怎么办"，和左边那些
    "怎么裁"不是一类东西（和顶栏那三颗同一套分法）。 */
 .crop-tools { margin-left: auto; gap: var(--sp-2); }

@@ -30,7 +30,7 @@
 | 历史转盘（照片上方那一圈小图，拖 = 转、点 = 回到那一步） | [StepStrip.tsx](src/ui/StepStrip.tsx) |
 | 上传照片（欢迎页照片球） | [WelcomeGlobe.tsx](src/ui/WelcomeGlobe.tsx) + [Uploader.tsx](src/ui/Uploader.tsx) |
 | 对话列表 | [SessionsPage.tsx](src/ui/SessionsPage.tsx) |
-| 调色面板（调色/微调；含工具行：裁剪 / 对比） | [AdjustmentPanel.tsx](src/ui/AdjustmentPanel.tsx) + [ColorWheel.tsx](src/ui/ColorWheel.tsx) ＋ 工具行 [ToolBar.tsx](src/ui/ToolBar.tsx) / [CropOverlay.tsx](src/ui/CropOverlay.tsx) / [CompareSplit.tsx](src/ui/CompareSplit.tsx)（裁剪算式在 [core/crop.ts](src/core/crop.ts)、落到像素上在 [image/crop.ts](src/image/crop.ts)） |
+| 调色面板（调色/微调；含工具行：裁剪 / 点修 / 对比） | [AdjustmentPanel.tsx](src/ui/AdjustmentPanel.tsx) + [ColorWheel.tsx](src/ui/ColorWheel.tsx) ＋ 工具行 [ToolBar.tsx](src/ui/ToolBar.tsx) / [CropOverlay.tsx](src/ui/CropOverlay.tsx) / [RetouchOverlay.tsx](src/ui/RetouchOverlay.tsx) / [CompareSplit.tsx](src/ui/CompareSplit.tsx)（裁剪算式在 [core/crop.ts](src/core/crop.ts)、落到像素上在 [image/crop.ts](src/image/crop.ts)；点修掩码在 [core/retouch.ts](src/core/retouch.ts)、修补笔在 [image/heal.ts](src/image/heal.ts)、落地在 [image/erase.ts](src/image/erase.ts) —— 移植自 Compositor，出处见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)） |
 | 预设栏（照片左边那排效果小图） | [PresetRail.tsx](src/ui/PresetRail.tsx) |
 | 作品集 | [GalleryPage.tsx](src/ui/GalleryPage.tsx) |
 | 作品详情 | [WorkDetailPage.tsx](src/ui/WorkDetailPage.tsx) |

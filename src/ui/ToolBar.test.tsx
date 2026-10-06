@@ -17,13 +17,14 @@ const pick = async (label: string) => {
 }
 
 describe('工具行', () => {
-  it('两个格子；点一下告诉上层，再点一下收回', async () => {
+  it('三个格子（裁剪 / 点修 / 对比）；点一下告诉上层，再点一下收回', async () => {
     const seen: (string | null)[] = []
     await act(async () => { root.render(<ToolBar active={null} onPick={t => seen.push(t)} />) })
-    expect(container.querySelectorAll('.tool-cell')).toHaveLength(2)
+    expect(container.querySelectorAll('.tool-cell')).toHaveLength(3)
     await pick('裁剪')
+    await pick('点修')
     await pick('对比')
-    expect(seen).toEqual(['crop', 'compare'])
+    expect(seen).toEqual(['crop', 'retouch', 'compare'])
   })
 
   it('★ 开着工具时，第二行才出现；点当前工具是"收回"（传 null）', async () => {

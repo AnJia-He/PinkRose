@@ -9,6 +9,8 @@ import type { Cube } from '../../shared/lut.ts'
 import { rotatedBounds, type CropRect } from '../core/crop'
 import CropOverlay from './CropOverlay'
 import CompareSplit from './CompareSplit'
+import RetouchOverlay from './RetouchOverlay'
+import type { BrushMode } from '../core/retouch'
 import {
   FIT, clampView, fitBox, maxScale, oneToOne, panBy, zoomTo, type Size, type View,
 } from './viewport'
@@ -34,6 +36,21 @@ export type CropScene = {
    *    —— 和 `image/crop.ts` 里那串"反过来画"是同一个方向，别写反。
    */
   angle: number
+}
+
+/**
+ * 点修的现场（★ 2026-10-07）—— `App` 算好交下来的一整块：
+ * 笔刷参数 + **掩码本体**（图片像素尺寸的缓冲区，组件往里面盖章）。
+ * `Canvas` 只负责把它摆到照片上（盒子 + 图层），算式和盖章都在
+ * `ui/RetouchOverlay` / `core/retouch`。
+ */
+export type RetouchScene = {
+  /** 画笔半径（图片像素）。 */
+  radius: number
+  mode: BrushMode
+  mask: Uint8Array
+  /** 掩码有实际改动时喊一声（App 拿它让「擦掉这里」亮起来）。 */
+  onMaskChange: () => void
 }
 
 type Props = {
@@ -95,6 +112,13 @@ type Props = {
   compareWith?: string | null
   /** 右下角那排里那颗「对比」：切开关（和工具行那颗是**同一个**开关）。 */
   onCompare?: () => void
+  /**
+   * ★ 2026-10-07（点修）：涂抹的现场。null / 不传 = 没在点修。
+   * ⚠️ 它和 `viewLocked` 是两回事：点修**不禁缩放**（放大着修细节正是这个
+   *   工具的用法）—— 手势的停用由这一层自己盖住照片区完成（见
+   *   `ui/RetouchOverlay` 文件头），滚轮从它上面冒泡上来照旧能缩放。
+   */
+  retouch?: RetouchScene | null
   /** 画面这条路出了事，把**要说给用户的那句话**交出去（由 App 决定在哪儿显示）。
    *  组件自己不弹窗、不存状态：它只负责"把话说清楚"，说不说、在哪儿说是上层的事。 */
   onFail?: (message: string) => void
@@ -146,7 +170,7 @@ export function describeFailure(e: unknown): string {
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
 export default function Canvas({
   image, params, lutCube, lutAmount, originalPreview, canvasRef, picking, marker, onPickPoint, onFail,
-  busy, resetKey, viewLocked, crop, comparing, compareWith, onCompare,
+  busy, resetKey, viewLocked, crop, comparing, compareWith, onCompare, retouch,
 }: Props) {
   const innerRef = useRef<HTMLCanvasElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -391,7 +415,7 @@ export default function Canvas({
    * 默认都会弹"下载图片 / 复制"这类系统菜单，跟按住看原图直接打架。
    */
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!image || viewLocked) return
+    if (!image || viewLocked || retouch) return
     // 上一次按下要是没收干净（指针被系统抢走、pointerup 没送到），先收掉
     stopRef.current?.()
 
@@ -449,7 +473,7 @@ export default function Canvas({
    */
   const onDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const wrap = wrapRef.current
-    if (!image || !wrap || picking || viewLocked) return
+    if (!image || !wrap || picking || viewLocked || retouch) return
     const v = viewRef.current
     if (v.scale > 1) { putView(FIT); return }
     const area = areaRef.current
@@ -611,8 +635,10 @@ export default function Canvas({
           裁着的时候它正好是"外框摆在哪、多大"。
           ⚠️ 红圈这时候**不画**：它现在是"外框"的坐标，而红圈是**照片上**的记号
           （相对照片左上角归一化）—— 转起来之后两者不再是同一个坐标系，
-          画出来会在错的地方（点选那条路本来也不该在裁剪时进行）。 */}
-      {marker && box && !crop && (
+          画出来会在错的地方（点选那条路本来也不该在裁剪时进行）。
+          ★ 2026-10-07（点修）：点修时也**不画** —— 那一屏的记号是用户正在涂的
+          掩码（红影），再叠一个对话红圈只会让人分不清谁是谁。 */}
+      {marker && box && !crop && !retouch && (
         <span
           className="canvas-marker"
           // 用**像素**、以画布盒子为基准（不是 wrapper 的百分比 —— 理由见上面
@@ -634,6 +660,25 @@ export default function Canvas({
         <CropOverlay
           box={box} rect={crop.rect} aspect={crop.aspect} inner={crop.inner}
           onRect={crop.onRect}
+        />
+      )}
+      {/* ★ 2026-10-07（点修）：**涂抹层**（spec §3.2）—— 它盖住整块照片区、
+          把指针事件关在门里（放大/平移/点选/按住看原图都不误触发），
+          滚轮不拦（放大着修细节正是这个工具的用法）。
+          ⚠️ 盒子（`box`）是量出来的**照片可见矩形** —— 缩放/平移下它跟着变，
+          所以放大着涂也落在照片上对的地方（换算在 `ui/RetouchOverlay`）。
+          ⚠️ 它排在裁剪框**之后**（两个工具不会同时开，顺序只为说明层次）、
+          排在暗罩和右下角那排**之前**：生成/擦除中的暗罩要盖住它，
+          缩放按钮也要保持可点。 */}
+      {retouch && box && image && (
+        <RetouchOverlay
+          box={box}
+          imageWidth={image.width}
+          imageHeight={image.height}
+          radius={retouch.radius}
+          mode={retouch.mode}
+          mask={retouch.mask}
+          onMaskChange={retouch.onMaskChange}
         />
       )}
       {/* ★ 2026-10-06：生成中那层**暗罩 + 转圈**（用户原话：「要让用户知道你在

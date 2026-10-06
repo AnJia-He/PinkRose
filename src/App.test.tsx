@@ -41,7 +41,9 @@ const canvasProps = vi.hoisted(() => ({
                   // ★ 2026-10-06（对比）：开关 / 备好的原图 / 那颗按钮的回调，
                   //   外加 `resetKey`（"对比不算工具开着"那条要钉住它**不因它变**）。
                   comparing: boolean; compareWith: string | null; resetKey: unknown
-                  onCompare: (() => void) | undefined }[],
+                  onCompare: (() => void) | undefined
+                  // ★ 2026-10-07（点修）：涂抹的现场（笔刷 + 掩码本体 + "涂过了"的回调）。
+                  retouch: unknown }[],
 }))
 
 /** 画布：真的那个要 WebGL2。这里给一个真 <canvas> 并挂上 ref ——
@@ -49,11 +51,11 @@ const canvasProps = vi.hoisted(() => ({
 vi.mock('./ui/Canvas', async () => {
   const React = await import('react')
   return {
-    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint, busy, viewLocked, crop, comparing, compareWith, resetKey, onCompare }: any) => {
+    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint, busy, viewLocked, crop, comparing, compareWith, resetKey, onCompare, retouch }: any) => {
       canvasProps.images.push(image)
       canvasProps.props.push({
         originalPreview, picking, marker, params, busy, viewLocked, crop,
-        comparing, compareWith, resetKey, onCompare,
+        comparing, compareWith, resetKey, onCompare, retouch,
       })
       return React.createElement('canvas', {
         ref: (node: HTMLElement | null) => {
@@ -143,6 +145,12 @@ vi.mock('./image/mark', () => ({ markImage: vi.fn(), MARKER_RADIUS_RATIO: 0.06 }
  *  假实现返回一张带记号的小位图，"送进去的是哪张、换上来的是哪张"都看得见。 */
 vi.mock('./image/crop', () => ({ cropToBitmap: vi.fn() }))
 
+/** ★ 2026-10-07（点修）：同理整个假掉 —— `eraseToBitmap` 要真 2D 上下文 +
+ *  `createImageBitmap`，jsdom 两样都没有。这一层验的是**接线**（送进去的是
+ *  哪张底图、掩码是不是现场那张、推了步、参数/滤镜没丢、太大要拦）；
+ *  像素和耗时是真照片探针的事（`.superpowers/scratch/retouch-probe/`）。 */
+vi.mock('./image/erase', () => ({ eraseToBitmap: vi.fn() }))
+
 /** 解码用户选的文件：要 createImageBitmap + 2D 画布。
  *  用 importOriginal 保留它的转发导出（size 那几个），因为别处会 import。 */
 vi.mock('./image/decode', async (importOriginal) => {
@@ -219,6 +227,8 @@ import * as saveMod from './export/save'
 import * as thumbMod from './core/thumbnail'
 import * as markMod from './image/mark'
 import * as cropMod from './image/crop'
+import * as eraseMod from './image/erase'
+import { stampBrush } from './core/retouch'
 import * as sampleMod from './image/sample'
 import * as lutsMod from './api/luts'
 
@@ -582,6 +592,10 @@ beforeEach(() => {
   //   （见顶上那个 `vi.mock`）—— 记号是 `cropped`，断言里一眼分得开
   //   （送进去的是 `upload`，回来的是 `cropped`）。
   vi.mocked(cropMod.cropToBitmap).mockResolvedValue(fakeBitmap('cropped'))
+  // ★ 2026-10-07（点修）：「擦掉这里」擦出来的那一张（记号 `erased` 一眼分得开）。
+  vi.mocked(eraseMod.eraseToBitmap).mockResolvedValue({
+    bitmap: fakeBitmap('erased'), coverage: 1200, usedSource: true,
+  })
   // 「照着这张调」的两个采样点：jsdom 里读不了像素，默认给一块中性灰。
   // 只有照调那条用例会覆盖它（覆盖成"源图和参考图分得开"的假数据 ——
   // 拟合要真的算出一个不为零的结果）。
@@ -2041,6 +2055,137 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     expect(container.textContent).not.toContain('后面还有')
     expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
     expect(api.postEdit).toHaveBeenCalledTimes(1)   // 就那次生成 —— 「继续改」没被点过
+  })
+})
+
+/**
+ * ★ 2026-10-07（点修）：涂抹层 + 第二行 + 「擦掉这里」= 本地生成新的一步。
+ *
+ * 这一层只验**接线**：现场有没有交下去（掩码是当前照片那张）、涂过之后按钮才亮、
+ * 提交送的是当前底图、推的是「擦除」这一步、参数没丢、太大要拦。
+ * 涂抹手势与坐标换算量在 `ui/RetouchOverlay.test.tsx`；像素与耗时是真照片探针
+ * （`.superpowers/scratch/retouch-probe/`）的事 —— `src/image/erase` 整个假掉。
+ */
+describe('★ 点修：涂抹层 + 第二行 + 擦掉这里 = 本地生成新的一步', () => {
+  const last = () => canvasProps.props.at(-1)!
+  /** 交给画布的点修现场（App 算好那一整块）。 */
+  const sceneOf = () => last().retouch as {
+    radius: number; mode: 'paint' | 'erase'; mask: Uint8Array; onMaskChange: () => void
+  } | null
+  const putCalls = (url: string) =>
+    fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === 'PUT')
+  const eraseButton = () => [...container.querySelectorAll('button')]
+    .find(b => (b.textContent ?? '').trim() === '擦掉这里') as HTMLButtonElement
+
+  /** 进点修：先去调色屏，再点工具行那颗「点修」。 */
+  async function openRetouch() {
+    await goNav('调色')
+    const cell = container.querySelector('[aria-label="点修"]') as HTMLButtonElement
+    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(container.querySelector('.tool-row-second'), '开着点修时第二行该在').toBeTruthy()
+  }
+
+  /** 涂一笔：走**真掩码 + 真回调**（手势本身量在 RetouchOverlay 的测试里）。 */
+  async function paint(cx: number, cy: number, r: number) {
+    const scene = sceneOf()!
+    await act(async () => {
+      stampBrush(scene.mask, 1200, 800, cx, cy, r, 'paint')
+      scene.onMaskChange()
+      await new Promise(res => setTimeout(res, 0))
+    })
+  }
+
+  it('★ 擦完之后：是新的一步（没有 prompt）、参数没被重置、还能回到上一步', async () => {
+    await renderApp()
+    await uploadPhoto()
+    // ① 先把亮度改到 30（本文件里"改参数"的标准写法）
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 30 }, reply: '亮了一点。' }))
+    await say('亮一点')
+
+    // ② 进点修：现场交下去了、掩码是当前照片的尺寸、没涂过时按钮禁用
+    await openRetouch()
+    const scene = sceneOf()!
+    expect(scene.mask.length, '掩码必须是当前照片的尺寸').toBe(1200 * 800)
+    expect(eraseButton().disabled, '还没涂过，不许按').toBe(true)
+
+    // ③ 涂一笔 → 按钮亮
+    await paint(600, 400, 40)
+    expect(eraseButton().disabled).toBe(false)
+
+    // ④ 擦
+    await act(async () => { eraseButton().click(); await new Promise(r => setTimeout(r, 0)) })
+
+    // ⑤ 送进去的是**当前底图**（upload，不是最初那张也不是别的），回来的成了新底图
+    expect(vi.mocked(eraseMod.eraseToBitmap)).toHaveBeenCalledTimes(1)
+    const [sent, sentMask] = vi.mocked(eraseMod.eraseToBitmap).mock.calls[0]!
+    expect(sent).toMatchObject({ __tag: 'upload' })
+    expect(sentMask.length).toBe(1200 * 800)
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'erased' } })
+
+    // ⑥ 参数没丢；现场和工具一起收掉（已经不在点修了）
+    expect(last().params.exposure).toBe(30)
+    expect(sceneOf()).toBeNull()
+    expect(container.querySelector('.tool-row-second')).toBeNull()
+
+    // ⑦ 历史真的多了一步「擦除」（落盘那趟是唯一看得见 steps 的地方）
+    await waitPersist()
+    const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
+    const steps = body.steps as { label: string; prompt?: string }[]
+    expect(steps.map(s => s.label)).toEqual(['原图', '擦除'])
+    // ★ 本地步骤**没有可重跑的指令**：`prompt` 必须是 undefined（写成空串也不行 ——
+    //   空串会让「再来一版」出现在一颗按不动的按钮上）
+    expect(steps[1]!.prompt).toBeUndefined()
+
+    // ⑧ 回修图屏：助手说「擦干净了。」；转盘两格，点回原图那格能回去
+    await goNav('修图')
+    expect(lastReply()).toBe('擦干净了。')
+    const nodes = () => [...container.querySelectorAll('.strip-node')] as HTMLElement[]
+    expect(nodes()).toHaveLength(2)
+    await act(async () => { nodes()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
+  })
+
+  it('★ 太大就拦：引擎一次都不跑、给一句人话、现场留着（换个小的再来）', async () => {
+    // 为什么值得一条守卫：1200 万像素的照片上，外接框面积直接决定耗时
+    // （探针：110 万像素 ≈ 4s）—— 上限被谁顺手删掉，用户撞上的是十几秒假死。
+    await renderApp()
+    // 换一张大照片（1200×800 的默认假图上最多 96 万像素，够不着 120 万的上限）
+    vi.mocked(decodeMod.decodeImageFile).mockResolvedValueOnce(
+      { bitmap: fakeBitmap('big'), width: 4000, height: 3000 })
+    await uploadPhoto()
+    await openRetouch()
+    const scene = sceneOf()!
+    expect(scene.mask.length).toBe(4000 * 3000)
+    await act(async () => {
+      // 1300×1000 = 130 万 > 上限 120 万
+      for (let y = 0; y < 1000; y++) scene.mask.fill(255, y * 4000, y * 4000 + 1300)
+      scene.onMaskChange()
+      await new Promise(res => setTimeout(res, 0))
+    })
+    await act(async () => { eraseButton().click(); await new Promise(r => setTimeout(r, 0)) })
+
+    expect(vi.mocked(eraseMod.eraseToBitmap), '拦住了就不许再跑引擎').not.toHaveBeenCalled()
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('一次擦一小块')
+    // 现场留着：用户可以削小一点直接再来（不是被踢出去重涂）
+    expect(sceneOf()).not.toBeNull()
+    expect(container.querySelector('.tool-row-second')).toBeTruthy()
+  })
+
+  it('「取消」= 什么都没发生：不跑引擎、不推步、底图不动', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await openRetouch()
+    await paint(600, 400, 40)
+    await clickByText('取消')
+
+    expect(vi.mocked(eraseMod.eraseToBitmap)).not.toHaveBeenCalled()
+    // 底图还是最初那张
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
+    expect(sceneOf()).toBeNull()
+    await waitPersist()
+    const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
+    expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图'])
   })
 })
 

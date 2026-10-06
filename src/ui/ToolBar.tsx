@@ -9,10 +9,11 @@
  *   用法上（spec §3.3 要的是两张图同步缩放）。「对比」是个开关、没有自己的控件，
  *   所以它不传 children。
  */
-export type ToolId = 'crop' | 'compare'
+export type ToolId = 'crop' | 'retouch' | 'compare'
 
 const CELLS: { id: ToolId; name: string }[] = [
   { id: 'crop', name: '裁剪' },
+  { id: 'retouch', name: '点修' },
   { id: 'compare', name: '对比' },
 ]
 

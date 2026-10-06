@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Btn } from './ui/kit/Btn.tsx'
 import { Slider } from './ui/kit/Slider.tsx'
-import Canvas, { type CropScene } from './ui/Canvas'
+import Canvas, { type CropScene, type RetouchScene } from './ui/Canvas'
 import Uploader from './ui/Uploader'
 import AdjustEmpty from './ui/AdjustEmpty'
 import AdjustmentPanel from './ui/AdjustmentPanel'
@@ -29,6 +29,8 @@ import { decodeImageFile, type DecodedImage } from './image/decode'
 import { resizeBitmap } from './image/resize'
 import { samplePixels } from './image/sample'
 import { cropToBitmap } from './image/crop'
+import { eraseToBitmap } from './image/erase'
+import { createMask, maskBounds, type BrushMode } from './core/retouch'
 import { matchToReference } from './core/colorMatch'
 import { activePresetId } from './core/presets'
 import {
@@ -175,6 +177,35 @@ function defaultCropRect(
     rotatedBounds(imgW, imgH, angleDeg),
   )
 }
+
+// ── 点修（★ 2026-10-07，工具行第二颗）────────────────────────────────────
+//  涂抹的换算法在 `ui/RetouchOverlay`，掩码工具在 `core/retouch`，
+//  像素落点在 `image/erase`。这一层只管：**笔刷参数的默认值 / 上下限**、
+//  **太大就拦**、以及**完成时推新的一步**（照裁剪那套）。
+
+/** 默认笔刷半径（图片像素）：短边的 3%，夹在 8~120px 之间。 */
+function defaultBrushRadius(w: number, h: number): number {
+  return Math.max(8, Math.min(120, Math.round(Math.min(w, h) * 0.03)))
+}
+
+/** 笔刷滑杆的上限（图片像素）：短边的 25%。 */
+function maxBrushRadius(w: number, h: number): number {
+  return Math.max(24, Math.round(Math.min(w, h) * 0.25))
+}
+
+/**
+ * 一次擦除的**外接框**上限（像素）。耗时随它线性涨 —— 真照片探针实测
+ * （`.superpowers/scratch/retouch-probe/`）：18 万像素 ≈ 1.7s、110 万 ≈ 4.1s。
+ * 拦在这里，用户看到的是一句"分几次擦"，而不是十几秒的假死。
+ */
+const MAX_ERASE_PIXELS = 1_200_000
+
+/**
+ * 外接框大过它才盖「正在擦」的暗罩（约合 0.3s 起步）。
+ * 小斑块是毫秒级 —— 盖出来的暗罩还没画到屏幕上就撤了，一闪一暗读起来是界面在抽
+ * （和 `busy` 那条"只有生成这一段才盖"同一个理由）。
+ */
+const ERASE_VEIL_PIXELS = 150_000
 
 /**
  * 正在等用户在图上点一下（spec §6.3 的歧义兜底）。null = 没在等。
@@ -1079,13 +1110,17 @@ export default function App() {
   }, [image])
 
   /**
-   * 工具行点了一下：切工具，并顺手开 / 收裁剪的现场。
+   * 工具行点了一下：切工具，并顺手开 / 收各工具自己的现场。
    * ⚠️ 再点一下当前那颗 = 收回（`ToolBar` 传 null 进来）—— 那就等于「取消」。
+   * ⚠️ 同一时刻只有一个工具（单选，spec §3.0）：开一个新的，等于把别的收掉
+   *    （裁剪现场、点修的掩码都是**照当前照片**算的，混着放没有意义）。
    */
   const pickTool = (t: ToolId | null) => {
     setTool(t)
     if (t === 'crop') openCrop()
     else setCrop(null)
+    if (t === 'retouch') openRetouch()
+    else closeRetouch()
   }
 
   /** 框动了（`CropOverlay` 拖出来的归一化矩形）。 */
@@ -1257,6 +1292,121 @@ export default function App() {
       inner: rectFromSize(inscribedRect(image.width, image.height, angle), bounds),
       angle,
     }
+  })()
+
+  // ── 点修（★ 2026-10-07，工具行第二颗）────────────────────────────────
+  //  现场 = **掩码**（图片像素的缓冲区，`ui/RetouchOverlay` 往里盖章）+ 笔刷参数。
+  //  掩码放 ref 里（千万像素级的 `Uint8Array` 不进 state）；state 只留
+  //  笔刷 / 模式 / 「有没有涂过」—— 后者让「擦掉这里」亮起来。
+
+  /** 点修的现场：null = 没在点修。`dirty` = 涂过没有（决定那颗主按钮的亮灭）。 */
+  const [retouch, setRetouch] = useState<{ radius: number; mode: BrushMode; dirty: boolean } | null>(null)
+  const retouchMaskRef = useRef<Uint8Array | null>(null)
+  /** 正在擦：算的那几百毫秒~几秒盖暗罩用（小斑块不盖，见 `ERASE_VEIL_PIXELS`）。 */
+  const [erasing, setErasing] = useState(false)
+
+  /** 进点修：按当前底图开一张空掩码。 */
+  const openRetouch = useCallback(() => {
+    if (!image) return
+    retouchMaskRef.current = createMask(image.width, image.height)
+    setRetouch({ radius: defaultBrushRadius(image.width, image.height), mode: 'paint', dirty: false })
+  }, [image])
+
+  /** 收点修（取消 / 完成 / 被别的工具顶掉都走它）：掩码**当场丢掉** ——
+   *  再进去是新的一张（和裁剪"现场不会回来"同一条：工具是走一趟，不是常驻编辑器）。 */
+  const closeRetouch = useCallback(() => {
+    retouchMaskRef.current = null
+    setRetouch(null)
+  }, [])
+
+  /** 「取消」= **什么都没发生**（和 `cancelCrop` 同一句话）：掩码一丢、工具收掉。 */
+  const cancelRetouch = () => { closeRetouch(); setTool(null) }
+
+  /** 掩码第一次有墨时喊它。同一次涂抹里反复喊是**幂等**的（已经在 dirty 就原样返回，
+   *  不白渲染）。 */
+  const markMaskDirty = useCallback(() => {
+    setRetouch(r => (r && !r.dirty ? { ...r, dirty: true } : r))
+  }, [])
+
+  /**
+   * 「擦掉这里」——这个工具的全部意义：本地擦一张新底图、推新的一步。
+   * 和 `commitCrop` **一字不差**的那几条（每一条都各有一笔账，别抄漏）：
+   *   · `baseSeqRef` / `cursorIdRef` 在 `await` **之前**当场读；
+   *   · 回来先对序号 —— 对不上就作废（那段等待里生成落地的话，这一擦是冲着
+   *     一张已经不在屏上的底图去的）；
+   *   · `localStep`（label「擦除」、**没有 prompt**、params/lut 原样带走）、
+   *     `baseSeqRef++`、清那批"上一条照片的临时状态"、`moveCursor`、位图回收。
+   */
+  const commitRetouch = useCallback(async () => {
+    const scene = retouch
+    const mask = retouchMaskRef.current
+    if (!scene || !mask || !image) return
+    const bounds = maskBounds(mask, image.width, image.height)
+    if (!bounds) return
+    const area = (bounds.x1 - bounds.x0) * (bounds.y1 - bounds.y0)
+    // 太大就拦（耗时随外接框面积涨，见 `MAX_ERASE_PIXELS`）——**留在现场**：
+    // 用户可以换小笔刷重涂，也可以把橡皮拿来削掉一块再来。
+    if (area > MAX_ERASE_PIXELS) {
+      noticeBad('这一块太大了，一次擦一小块吧 —— 分几次擦，又快又干净。')
+      return
+    }
+    const slow = area > ERASE_VEIL_PIXELS
+    const seqAt = baseSeqRef.current
+    const at = cursorIdRef.current
+    setErasing(slow)
+    try {
+      // 慢的那一档：先让暗罩**真的画到屏幕上**再开算（计算是同步的、会冻住
+      // 渲染 —— 不隔两帧的话暗罩要等算完才出现，恰好是最需要它的时候）。
+      if (slow) await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
+      const { bitmap, usedSource } = await eraseToBitmap(image.bitmap, mask)
+      if (baseSeqRef.current !== seqAt) {
+        bitmap.close()
+        console.error('擦除回来时底图已经换了一版（多半是生成落地），这一下不写进去')
+        noticeBad('擦的时候画面已经变了 —— 这一下没算数。要的话，再擦一次。')
+        closeRetouch()
+        setTool(null)
+        return
+      }
+      const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
+      const id = ++idRef.current
+      setHistory(prev => {
+        const next = localStep(prev, {
+          id, label: '擦除', base, params, lut,
+          cursorId: at ?? id,
+        })
+        for (const s of bitmapsToClose(prev, next, { protectOriginal: true })) {
+          s.bitmap.close()
+        }
+        return next
+      })
+      baseSeqRef.current++
+      setImage(base)
+      setPending(null)
+      setPendingReplace(null)
+      moveCursor(id)
+      // 兜底那条路（周围没参考）补出来是糊的 —— 说一句实话，别让人以为工具坏了。
+      setMessages(m => [...m, {
+        id, role: 'assistant',
+        text: usedSource ? '擦干净了。' : '擦掉了（这块周围没什么好参考的，补得有点糊）。',
+      }])
+      closeRetouch()
+      setTool(null)
+    } catch (e) {
+      console.error(e)
+      noticeBad('这张照片没擦成。再试一次；还不行就换一张小一点的。')
+    } finally {
+      setErasing(false)
+    }
+  }, [retouch, image, params, lut, moveCursor, noticeBad, closeRetouch])
+
+  /**
+   * 交给 `Canvas` 的点修现场 —— 每次渲染现算。
+   * ⚠️ `tool === 'retouch'` 那半是保险：现场和工具是同一个动作里一起设的。
+   */
+  const retouchScene: RetouchScene | null = (() => {
+    const mask = retouchMaskRef.current
+    if (!image || !retouch || tool !== 'retouch' || !mask) return null
+    return { radius: retouch.radius, mode: retouch.mode, mask, onMaskChange: markMaskDirty }
   })()
 
   // ── 对比（★ 2026-10-06，工具行第二颗）────────────────────────────────
@@ -1507,15 +1657,19 @@ export default function App() {
     // ★ 2026-10-06（裁剪）：工具和裁剪现场也一起收 —— 它们是**照上一张照片**
     //   算的（框、内接区、比例里的"原始"全按它来），留着就是让下一张照片
     //   一进门就顶着一个别人的框。
+    // ★ 2026-10-07（点修）：涂抹现场同理，而且更要紧 —— **掩码的尺寸就是
+    //   上一张照片的尺寸**（图片像素的缓冲区），留着的话下一张照片一进来，
+    //   掩码要么对不上号（提交时报"掩码尺寸对不上"）、要么落点全错。
     setTool(null)
     setCrop(null)
+    closeRetouch()
     dismissAsk()
     setOriginalPreview(null)
     // ★ 2026-10-06（对比）：那份备好的原图同理（上面那句的同一个理由）——
     //   留着的话下一张照片一进来按「对比」，左边是**上一张**。
     setCompareSrc(null)
     originalFileRef.current = null
-  }, [history, setCurrentSession, dismissAsk, moveCursor])
+  }, [history, setCurrentSession, dismissAsk, moveCursor, closeRetouch])
 
   /**
    * 「照着这张调」—— 用户挑了一张参考图（spec §4.6 的"我想要这种色调"）。
@@ -2302,7 +2456,7 @@ export default function App() {
   // ★ 2026-10-06（裁剪）：**裁剪的现场跟着一起收** —— 两个是同一个动作里设的，
   //   留下一个就是"框还在、工具没了"那种半截状态（回到调色屏时框会重新出现，
   //   而用户以为自己已经出去了）。
-  useEffect(() => { setTool(null); setCrop(null) }, [view.kind])
+  useEffect(() => { setTool(null); setCrop(null); closeRetouch() }, [view.kind])
 
   /**
    * 点导航：改状态，顺手把地址栏换成对应的那条。
@@ -2647,8 +2801,16 @@ export default function App() {
                         取消 / 完成（spec §3.1 点名的这几样）。
                         ⚠️ 比例档住在一排小药丸里；「水平矫正」用的是调色面板**同一个**
                         滑块零件（`ui/kit/Slider`：轨道 + 拇指 + 读屏一口气都有，
-                        双击还能回 0）；它在这一行的宽度由 CSS 给。 */}
-                    {tool === 'crop' && crop && image && (
+                        双击还能回 0）；它在这一行的宽度由 CSS 给。
+
+                        ⚠️⚠️ **两个工具的第二行收在一条三目里**（2026-10-07 踩过）：
+                        写成两个并排的 `&&` 时，React 的 children 会变成一个
+                        `[false, false]` 的**数组** —— 数组永远 truthy，
+                        `ToolBar` 那条"没有 children 就不画第二行"的判据当场失效，
+                        开「对比」（两个都 false）也会长出一条空的第二行、
+                        把照片推下去 37px。`App.test.tsx` 里那条
+                        「★「对比」不算"工具开着"」正是它的守卫。 */}
+                    {tool === 'crop' && crop && image ? (
                       <>
                         <div className="crop-ratios" role="group" aria-label="比例">
                           {cropRatios(image).map(r => {
@@ -2680,7 +2842,43 @@ export default function App() {
                           <Btn className="crop-done" onClick={() => void commitCrop()}>完成</Btn>
                         </div>
                       </>
-                    )}
+                    ) : tool === 'retouch' && retouch && image ? (
+                      /* ★ 2026-10-07（点修）：第二行 —— 画笔 / 橡皮 / 笔刷粗细 /
+                         取消 / 「擦掉这里」（spec §3.2：先涂地方，再擦）。
+                         ⚠️ **「擦掉这里」就是完成**（这一擦推新的一步）—— 没有
+                         单独的"完成"按钮，一个动作一趟。
+                         ⚠️ 它是**禁用**到涂过为止的（`retouch.dirty`）—— 空掩码
+                         提交等于什么都没发生，不如别让它可按。 */
+                      <>
+                        <div className="retouch-modes" role="group" aria-label="笔触">
+                          {([['paint', '画笔'], ['erase', '橡皮']] as const).map(([m, name]) => {
+                            const on = retouch.mode === m
+                            return (
+                              <button
+                                key={m} type="button"
+                                className={`crop-chip${on ? ' on' : ''}`}
+                                aria-pressed={on}
+                                onClick={() => setRetouch(r => (r ? { ...r, mode: m } : r))}
+                              >{name}</button>
+                            )
+                          })}
+                        </div>
+                        <Slider
+                          label="笔刷" value={retouch.radius}
+                          min={4} max={maxBrushRadius(image.width, image.height)} step={1}
+                          changed={retouch.radius !== defaultBrushRadius(image.width, image.height)}
+                          onChange={radius => setRetouch(r => (r ? { ...r, radius } : r))}
+                        />
+                        <div className="crop-tools">
+                          <button type="button" className="crop-btn" onClick={cancelRetouch}>取消</button>
+                          <Btn
+                            className="crop-done"
+                            disabled={!retouch.dirty || erasing}
+                            onClick={() => void commitRetouch()}
+                          >擦掉这里</Btn>
+                        </div>
+                      </>
+                    ) : null}
                     {/* ★ 2026-10-06（对比）：它**不传 children** —— 一个开关没有
                         自己的控件，而空着的第二行会无端占掉照片 37px（开着对比时
                         照片整张跳一下，正好打在"放大着比细节"这个用法上）。
@@ -2749,7 +2947,10 @@ export default function App() {
                   //   照片原来完全没反应）。传的是 `generating` 不是 `busy` ——
                   //   「正在思考」/上传/切会话那几句**不盖**（一闪一暗会闪），
                   //   判据在 App 顶上那一条。
-                  busy={generating}
+                  // ★ 2026-10-07（点修）：**擦除也可能慢**（大块要几秒，见
+                  //   `ERASE_VEIL_PIXELS`）——慢的那一档也盖同一层暗罩，
+                  //   小斑块（毫秒级）不盖，免得闪。
+                  busy={generating || erasing}
                   // ★ 2026-10-06（对比，spec §3.3）：开关 + 那份够清楚的原图 +
                   //   右下角那排里那颗的回调。⚠️ 原图**不在**这里备（懒做在 App
                   //   顶上那条 effect 里）；备的路上 `compareWith` 就是 null，
@@ -2757,6 +2958,11 @@ export default function App() {
                   comparing={comparing}
                   compareWith={compareSrc}
                   onCompare={toggleCompare}
+                  // ★ 2026-10-07（点修）：涂抹的现场（笔刷 + 掩码本体）。
+                  //   ⚠️ 它**不动 `resetKey` / `viewLocked`** —— 点修要的就是
+                  //   "放大着修细节"（和「对比」同一条裁定：把视图拽回适应窗口
+                  //   正好毁掉这个用法）。手势的停用由涂抹层自己盖住照片区完成。
+                  retouch={retouchScene}
                 />
               </div>
               {/* ★ 2026-10-04：**调色那一屏没有对话栏。**
