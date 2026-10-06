@@ -7035,6 +7035,60 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
       .toBe('好，改好了。')
   })
 
+  /**
+   * ★★ 2026-10-06（用户截图报的）：「**我正常点击省略号，选项却是在下面**」。
+   *
+   * 那个"下面"是**滚动区外面**：菜单是就地展开的（`.msg` 的孩子、排在操作行
+   * 后面），点**最后一条**消息的「…」时它会长到 `.chat-log` 的下沿之外 ——
+   * 真机量过：菜单 65×75.5、**伸出 68px**。屏幕上就成了"按钮亮了、菜单没出来"
+   * （要自己往下滚才看得见）—— 正是他截的那张图。
+   *
+   * ⚠️ jsdom 没有排版（`getBoundingClientRect` 全返回 0），所以这一组给**两只
+   *   盒子**装一份假几何：对话区下沿 200、菜单下沿 260 —— "伸出 60px"就是这条
+   *   要演的那件事。判据只有一条：对话区把 `scrollTop` 推了那 60px。
+   */
+  describe('「…」菜单不许开到滚动区外面', () => {
+    /** 假几何：对话区下沿 `logBottom`、菜单下沿 `menuBottom`。 */
+    function fakeBoxes(logBottom: number, menuBottom: number) {
+      const log = container.querySelector('.chat-log') as HTMLElement
+      Object.defineProperty(log, 'scrollTop', { value: 0, writable: true, configurable: true })
+      const real = Element.prototype.getBoundingClientRect
+      const rect = (bottom: number) => ({
+        x: 0, y: bottom - 10, top: bottom - 10, right: 100, bottom, left: 0,
+        width: 100, height: 10, toJSON: () => ({}),
+      }) as DOMRect
+      Element.prototype.getBoundingClientRect = function (this: Element) {
+        if ((this as HTMLElement).classList?.contains('chat-log')) return rect(logBottom)
+        if ((this as HTMLElement).classList?.contains('msg-menu')) return rect(menuBottom)
+        return real.call(this)
+      }
+      return { log, restore: () => { Element.prototype.getBoundingClientRect = real } }
+    }
+
+    it('★ 最后一条：菜单伸出下沿 → 对话区跟着滚，把它带进视野', async () => {
+      await oneVersion()
+      const { log, restore } = fakeBoxes(200, 260)      // 伸出 60px
+      try {
+        const mores = [...container.querySelectorAll<HTMLButtonElement>('.msg-more')]
+        await clickEl(mores[mores.length - 1])
+        expect(container.querySelector('.msg-menu'), '菜单没开').toBeTruthy()
+        expect(log.scrollTop, '菜单伸出去了、对话区却没跟 —— 用户看到的还是"点了没反应"')
+          .toBe(60)
+      } finally { restore() }
+    })
+
+    it('菜单本来就在视野里 → 一点都不滚（别把人家正在读的位置挪走）', async () => {
+      await oneVersion()
+      const { log, restore } = fakeBoxes(200, 180)      // 完整在视野里
+      try {
+        const mores = [...container.querySelectorAll<HTMLButtonElement>('.msg-more')]
+        await clickEl(mores[mores.length - 1])
+        expect(container.querySelector('.msg-menu')).toBeTruthy()
+        expect(log.scrollTop).toBe(0)
+      } finally { restore() }
+    })
+  })
+
   it('★「确认删除」→ 那条话和那一步一起没；站在哪一步删它，画面就挪到**剩下的最后一步**', async () => {
     // 两版：history = [原图(1), 第1版(3), 第2版(5)]。跳到**第 1 版**上把它删掉
     // —— 剩下的最后一步是**第 2 版**（不是原图，"挪到前一个"那种写法会对不上）。

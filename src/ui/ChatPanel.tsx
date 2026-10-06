@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
 import { MoreHorizontal, Plus, RotateCw, SlidersHorizontal } from 'lucide-react'
@@ -140,11 +140,20 @@ export default function ChatPanel({
    *
    * 「…」是那条菜单**唯一**的开关（再点一下收起，和输入框那颗加号同一个逻辑）；
    * 一个数装全部状态 = 一次只开一条 —— 两条菜单并排挂着的话，"点删除"删的是
-   * 哪一条会变得要猜。
+   * 哪一条会变得要猜。菜单里现在是【多选】【删除】两项（危险的那项排最后），
+   * 以后再加也是往这一条里排，不用在消息末尾越堆越多。
    *
-   * 菜单目前只有【删除】一项。做成菜单而不是直接摆一颗删除键（豆包的样子，
-   * 也是他看了豆包截图之后点名的形状）：以后要加的每一条消息上的动作，都往
-   * 这一条里排，不用在消息末尾越堆越多。
+   * ★★ 2026-10-06（更晚，用户截图报的：「**我正常点击省略号，选项却是在下面**」）。
+   *
+   * 那个"下面"是**滚动区外面**：菜单是**就地展开**的（`.msg` 的孩子、排在
+   * 操作行下面），所以点**最后一条**消息的「…」时它会长到 `.chat-log` 的下沿之外
+   * —— 真机量过：菜单 65×75.5、**伸出滚动区 68px**。屏幕上看到的是"按钮亮了、
+   * 菜单没出来"（要自己往下滚才看得见），正是他截的那张图。
+   *
+   * 修法见下面那条 `useLayoutEffect`（开的那一帧把它带进视野）。
+   * ⚠️ **不做成"没地方就朝上弹"**：就地展开是要长高的，翻上去会把那颗「…」
+   *   连同气泡一起往下推 76px —— 用户刚点的按钮自己跑掉，比滚动更糟。
+   * ⚠️ 只有一条菜单会同时存在（`menuId` 一次只装一个 id），所以一个 ref 就够。
    */
   const [menuId, setMenuId] = useState<number | null>(null)
 
@@ -230,6 +239,30 @@ export default function ChatPanel({
     const el = logRef.current
     if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
   }, [messages, busy])
+
+  /**
+   * ★★ 2026-10-06：「…」菜单开的那一帧，把它**带进视野**（理由是上面 `menuId`
+   * 那段——最后一条消息的菜单会伸出 `.chat-log` 下沿之外，实测 68px）。
+   *
+   * ⚠️ 三个约束，别改：
+   *   · `useLayoutEffect` 不是 `useEffect` —— 后者在**画完之后**才跑，
+   *     会先看见一帧"菜单被裁掉"再跳一下；
+   *   · **只滚够用的那一点**（`over`），已经在视野里就是 0、一动不动；
+   *   · 用 `getBoundingClientRect` + 直接写 `log.scrollTop`，**不用
+   *     `scrollIntoView`** —— 两个理由：它会把**外面**的祖先（整页）也一起滚，
+   *     而我们只该动这一格；jsdom 里也压根没有这个方法（测试会当场炸）。
+   *     替成 rect 之后在 jsdom 里天然是空操作（两个 rect 全 0 → 差值 0）。
+   * ⚠️ 为什么"滚一下"真的滚得动：菜单是**在流的**，它一渲染 `.chat-log` 的
+   *   scrollHeight 就长了这 76px —— 有得滚，才谈得上滚出来。
+   */
+  const menuElRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    if (menuId === null) return
+    const log = logRef.current, menu = menuElRef.current
+    if (!log || !menu) return
+    const over = menu.getBoundingClientRect().bottom - log.getBoundingClientRect().bottom
+    if (over > 0) log.scrollTop += over
+  }, [menuId])
 
   useEffect(() => {
     if (lutOpen && luts.length > 0) onNeedLutThumbs()
@@ -333,7 +366,7 @@ export default function ChatPanel({
                   ⚠️ 点【删除】分两路：带图那条转成下面的就地确认（`confirmingId`），
                   纯文字那条直接请 App 删（见 `onDeleteMessage` 那段 props 注释）。 */}
               {menuId === m.id && (
-                <div className="msg-menu">
+                <div className="msg-menu" ref={menuElRef}>
                   <button className="msg-menu-pick" disabled={!!busy}
                     onClick={() => {
                       setMenuId(null)
