@@ -16,6 +16,8 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { CSSProperties } from 'react'
 import CompareSplit from './CompareSplit'
 
@@ -97,6 +99,31 @@ describe('长相：左边原图、右边现在', () => {
     // 适应窗口那一帧：一个内联样式都不留（和画布那条规矩一样）
     const fit = await mount()
     expect(fit.img().style.transform).toBe('')
+  })
+
+  it('★ 左半边必须**不透明**（比例不同时，底下的"现在"不许透出来）', async () => {
+    // 来路（评审 2026-10-06 真机量到的）：原图 900×1200、"现在" 1200×800 时，
+    // 原图 contain 进照片区只占中间一条（左沿还差 72px）—— 那条缝里如果透明，
+    // 露出来的就是**底下那张画布（"现在"）**：左半读起来是"两张图叠着"，
+    // 而 spec §3.3 要的是"左原图、右现在"。裁过一刀、转过 90° 就会撞上。
+    //
+    // ⚠️ jsdom 里没有排版引擎、也不加载 styles.css，这条**量不到像素** ——
+    //    只能读源码把那份契约钉住（和 `AdjustmentPanel.test.ts` / `kit.test.tsx`
+    //    里那几条同款）。真机那两个读数在
+    //    `.superpowers/scratch/audit/_compare_aspect_audit.mjs`。
+    //    ⚠️ 路径走 `process.cwd()`：jsdom 环境里 `import.meta.url` 拼出来不是
+    //    `file://`，`fileURLToPath` 当场就报（`kit.test.tsx` 那边踩过）。
+    const css = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8')
+    const rule = /\.compare-layer\s*\{([^}]*)\}/.exec(css)?.[1]
+    expect(rule, 'styles.css 里该有 `.compare-layer` 那条规则').toBeTruthy()
+    const bg = /background:\s*([^;]+);/.exec(rule!)?.[1] ?? ''
+
+    expect(bg, '`.compare-layer` 要有一条 background').toBeTruthy()
+    expect(bg, '底下那层要**不透明**的（不然"现在"会从缝里透出来）').toContain('var(--bg)')
+    // 和照片区的底**同一套语言**：那份顶光的令牌由 `.stage` 定、两边共用
+    //（各写各的就会漂 —— 而且 `.stage` 上那层光会把 `--panel` 吃掉，
+    //  拿它当底会长出一条色差）。
+    expect(bg, '要用照片区那套光（`--stage-light`），别各写各的').toContain('var(--stage-light')
   })
 })
 
