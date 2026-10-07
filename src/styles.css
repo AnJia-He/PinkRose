@@ -682,15 +682,15 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .rail {
   width: 200px; flex: none; min-height: 0; overflow-y: auto;
   border-right: 1px solid var(--line); background: var(--panel);
-  padding: var(--sp-3) 10px var(--sp-4);
+  padding: 16px 12px 20px;
   scrollbar-width: thin;
 }
 .rail-head {
-  margin: 0 0 var(--sp-3); color: var(--text); font-weight: 600; font-size: 13px;
+  margin: 0 0 16px; color: var(--text); font-weight: 600; font-size: 13px;
 }
 .rail-grid {
   display: grid; grid-template-columns: repeat(2, 1fr);
-  gap: var(--sp-3) var(--sp-2); align-content: start;
+  gap: 16px 10px; align-content: start;
 }
 /* 每格是**真 `<button>`**（读屏念得出选没选中、键盘走得到），所以逐条按掉全局
    `button{}` 那套方框（灰底 + 描边 + 内边距）—— 少一条那格就长回一块灰方框
@@ -1167,14 +1167,14 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .workspace .stage > .tool-row {
   margin: calc(-1 * var(--stage-pad-y)) calc(-1 * var(--sp-5)) var(--stage-pad-y);
 }
-.tool-row-main { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); }
+.tool-row-main { display: flex; align-items: center; gap: var(--sp-2); padding: 10px 14px; }
 .tool-row-second {
   display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
   padding: var(--sp-2) var(--sp-3); border-top: 1px solid var(--line);
 }
 /* 真按钮 → 逐条按掉全局 `button{}` 那套方框（和 `.rail-tile` / `.lut-tile` 同一条老路） */
 .tool-cell {
-  padding: 5px 12px; background: none; border: 1px solid transparent;
+  padding: 6px 14px; background: none; border: 1px solid transparent;
   border-radius: var(--r-pill); color: var(--muted); font-size: 13px; cursor: pointer;
 }
 .tool-cell:hover { background: var(--hover); color: var(--text); }
@@ -1351,14 +1351,14 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      低 16px，滚起来会有一条 16px 的缝，行从缝里露出来半行、滚到底定格时
      尤其像 bug（真机截过：一行"亮度"停在组头上面）。那 16px 的呼吸改挂在
      `.panel-head` 的 `margin-top` 上，观感一模一样、但没有那条缝。 */
-  padding: 0 var(--sp-5) var(--sp-5);
+  padding: 0 28px 28px;
   overflow-y: auto;
 }
 /* ★ 2026-10-04：十五条参数分成五组（光效 / 色彩 / 色彩平衡 / 分离色调 / 效果），
    每组一个可折叠的头，组与组之间一条发丝线 —— 十五根平铺时"从哪儿到哪儿是一组"
    只能靠数数。滚动仍然由 `.panel` 自己管（上面那条），这里只排纵向顺序。 */
 .panel-groups { display: flex; flex-direction: column; }
-.panel-group + .panel-group { border-top: 1px solid var(--hair); margin-top: var(--sp-4); padding-top: var(--sp-3); }
+.panel-group + .panel-group { border-top: 1px solid var(--hair); margin-top: 24px; padding-top: 16px; }
 /* ⚠️ 这是 `<button>`（能点开合、键盘能到、`aria-expanded` 报状态），全域
    `button{}` 那套灰底 + 描边 + 圆角 + 按下缩放要**逐条按掉** —— 少一条它就在
    组标题上长回一个方框。悬停只换字色：整行铺底色在这个密度下太重。 */
@@ -1370,7 +1370,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      钉住时文字不贴边。⚠️ 底色只准用 `var(--panel)` 这一个值：面板自己就是
      这个色，任何别的色都会在"没钉住"的时候显出一块补丁。 */
   position: sticky; top: 0; z-index: 1;
-  background: var(--panel); border: 0; border-radius: 0; padding: 5px 0 4px; color: var(--muted);
+  background: var(--panel); border: 0; border-radius: 0; padding: 7px 0 6px; color: var(--muted);
   font-size: 12px; letter-spacing: .06em; transform: none;
 }
 .panel-group-head:hover { color: var(--text); }
@@ -1392,8 +1392,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   /* ★ 2026-10-05：这 16px 原来挂在 `.panel` 的 `padding-top` 上 —— 组头吸顶
      之后它变成了一条"缝"（行会从缝里露出来），挪到这里：观感一样、缝没了。
      滚动容器不折叠外边距，所以它稳稳地待在滚动内容的顶上。 */
-  margin-top: var(--sp-4);
-  margin-bottom: var(--sp-2); color: var(--text); font-weight: 600; font-size: 13px;
+  margin-top: 20px;
+  margin-bottom: 12px; color: var(--text); font-weight: 600; font-size: 13px;
 }
 /* 「重置」是这一栏里的次要动作：它不该和预设抢眼，所以是一个没有框的文字钮。
    （和顶栏那些按钮区分开 —— 顶栏是"你要做的事"，这里是"改坏了可以退"。） */
@@ -1414,7 +1414,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    全站那条通用规则，这里只补"独占一行 + 居中"。2026-10-02 加（spec §4.6）。 */
 .presets-ref {
   display: flex; align-items: center; justify-content: center; gap: var(--sp-2);
-  width: 100%; margin-bottom: var(--sp-4);
+  width: 100%; margin-bottom: 20px;
   border-radius: var(--r-md); font-size: 13px; color: var(--muted);
 }
 .presets-ref:hover { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
@@ -1523,7 +1523,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      65px）。**列宽必须是写死的**：每个 `.slider` 是自己的网格，用 auto 的话
      每行按各自文字宽 → 各行滑轨起点参差不齐。 */
   display: grid; grid-template-columns: 72px 1fr 40px;
-  align-items: center; gap: var(--sp-3); margin: 5px 0;
+  align-items: center; gap: var(--sp-3); margin: 8px 0;
 }
 .slider-label { color: var(--muted); font-size: 13px; }
 /* 数字是"这一条现在到底多少"的唯一读法。默认跟标签一样淡（满屏的 0 不该抢眼），
