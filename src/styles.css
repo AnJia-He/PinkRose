@@ -1631,8 +1631,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   border-left: 1px solid var(--line); background: var(--panel);
 }
 .chat-log {
-  flex: 1; overflow-y: auto; padding: var(--sp-4);
-  display: flex; flex-direction: column; gap: var(--sp-3);
+  flex: 1; overflow-y: auto; padding: 20px;
+  display: flex; flex-direction: column; gap: 16px;
 }
 /* 一条消息的外壳。★ 2026-10-05 的形状是"两块"（文字一块、图一块，
    用户当时要的）；★ 2026-10-06（晚）**照片撤出对话区之后只剩一块** ——
@@ -1651,7 +1651,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    `.msg` 自己的 `gap` 管（和原来 `.shot` 的 gap 是同一个数）。 */
 
 .bubble {
-  border-radius: var(--r-md); padding: 9px 13px;
+  border-radius: var(--r-md); padding: 11px 15px;
   font-size: 14px; line-height: 1.65;
 }
 .bubble.user {
@@ -1869,7 +1869,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    用户：「我觉得在对话框那边设一个加号，然后点击加号里面有滤镜以及以后添加的
    功能」。两级：**加号**开关这一行工具；每一颗工具自己再开关它的面板。
    工具行目前只有「滤镜」一项 —— 以后加新的，往这一行排就行。 */
-.chat-tools { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4) 0; }
+.chat-tools { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: 14px 18px 0; }
 /* 一项工具 = 一颗药丸（就是原来那颗「滤镜」的长相，只是从"常驻在输入框上面"
    搬进了加号里）。⚠️ 它是**真 `<button>`**：键盘走得到，`aria-expanded` 报得出
    它自己那块面板开着没有。 */
@@ -1880,7 +1880,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .chat-tool:hover { color: var(--text); }
 .chat-tool.on { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
 
-.chat-lut { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4) 0; }
+.chat-lut { display: flex; flex-direction: column; gap: var(--sp-2); padding: 14px 18px 0; }
 
 /* 输入框那一行最左边那颗**加号**。
    ⚠️ 它是**图标键**：没有可见文字，名字只在 `aria-label`（"更多工具"）上 ——
@@ -1898,7 +1898,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    （原来那颗常驻的「滤镜」还担着这个信息）。 */
 .chat-plus.on { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
 
-.chat-input { display: flex; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); }
+.chat-input { display: flex; gap: var(--sp-2); padding: 14px 18px; border-top: 1px solid var(--line); }
 .chat-input input {
   flex: 1; min-width: 0;
   background: var(--bg); color: var(--text); font: inherit; font-size: 14px;
@@ -1918,7 +1918,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    底下这一格不许跳。 */
 .chat-select {
   display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
-  padding: var(--sp-3) var(--sp-4);
+  padding: 14px 18px;
   border-top: 1px solid var(--line);
 }
 /* 左边那句计数 / 问话**吃掉中间的空**，把两颗按钮顶到右边（和输入框那一行
