@@ -2302,7 +2302,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .gallery-head {
   position: sticky; top: 0; z-index: 1;
   display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
-  padding: 16px 0 12px;
+  padding: 18px 0 14px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
@@ -2321,18 +2321,18 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .gallery-search::placeholder { color: var(--muted-2); }
 
-.gallery-day { margin-top: var(--sp-5); }
+.gallery-day { margin-top: 32px; }
 /* 日期比图小、比图淡：它是**分组线**，不是内容。
    它右边拖一条横线到尽头 —— 一列图在一片深色里没有横向的锚，分组会糊在一起。 */
 .gallery-day-title {
   display: flex; align-items: center; gap: var(--sp-3);
-  margin: 0 0 var(--sp-3); font-size: 13px; font-weight: 400; color: var(--muted);
+  margin: 0 0 14px; font-size: 13px; font-weight: 400; color: var(--muted);
 }
 .gallery-day-title::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .gallery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: var(--sp-3);
+  gap: 16px;
 }
 
 /* 一格先**给图留好方框**（aspect-ratio）：图是 loading="lazy" 一张张跳出来的，
@@ -2354,7 +2354,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .gallery-cell:hover .gallery-thumb { border-color: var(--accent); transform: translateY(-2px); }
 /* 名字可能是用户起的长名字：撑歪格子会把整行挤变形，所以一行截断。 */
 .gallery-name {
-  display: block; margin-top: var(--sp-2); font-size: 12px; color: var(--muted);
+  display: block; margin-top: 10px; font-size: 12px; color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .gallery-cell:hover .gallery-name { color: var(--text); }
@@ -2408,9 +2408,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .sessions {
   flex: 1; min-width: 0; min-height: 0;
   overflow-y: auto;
-  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+  padding: 20px 28px 28px;
 }
-.sessions-day { margin-top: var(--sp-5); }
+.sessions-day { margin-top: 32px; }
 
 /* 一行 = [缩略图][名字][几步][删除]。
    它是一**行**不是一格，所以照 `.gallery-cell` 的手感（圆角、悬停抬一点、
@@ -2419,7 +2419,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .session-row {
   display: flex; align-items: center; gap: var(--sp-2);
   padding-right: var(--sp-2);
-  margin-bottom: var(--sp-2);
+  margin-bottom: 12px;
   border: 1px solid var(--line); border-radius: var(--r-md);
   background: var(--panel);
   transition: border-color var(--dur-1) ease, background-color var(--dur-1) ease;
@@ -2431,7 +2431,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .session-open {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
+  padding: 10px 14px;
   background: none; border: 0; border-radius: var(--r-md);
   color: var(--text); text-align: left;
 }
