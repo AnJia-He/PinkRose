@@ -114,7 +114,7 @@ function BackToTop() {
           top: 0,
           behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
         })}
-      ><ArrowUp size={18} aria-hidden="true" /></button>
+      ><ArrowUp size={18} strokeWidth={1.5} aria-hidden="true" /></button>
     </div>
   )
 }

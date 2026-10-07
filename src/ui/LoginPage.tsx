@@ -44,12 +44,12 @@ function EyeIcon() {
   //   哪张图代表哪个状态、`aria-label` 说什么，一个字都没动。
   //   `strokeWidth` 给 1.7（不是默认的 2）：这是原来那两笔画出来的粗细，
   //   换库之后视觉上不该有一丝变化。
-  return <Eye size={18} strokeWidth={1.7} aria-hidden="true" />
+  return <Eye size={18} strokeWidth={1.5} aria-hidden="true" />
 }
 
 /** 划掉的那只眼睛（= 点下去把密码收回去）。见上面那段"哪张图代表哪个状态"。 */
 function EyeOffIcon() {
-  return <EyeOff size={18} strokeWidth={1.7} aria-hidden="true" />
+  return <EyeOff size={18} strokeWidth={1.5} aria-hidden="true" />
 }
 
 /** 「这一格必填」那个星号 —— 外加它的**可读等价物**（2026-09-25 用户要的）。

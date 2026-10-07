@@ -112,7 +112,7 @@ export default function CompareSplit(props: {
         className="compare-handle" style={{ left: 'var(--split)' }}
         onPointerDown={gripDown} onClick={swallow} onDoubleClick={swallow}
       >
-        <span className="compare-knob" aria-hidden="true"><ChevronsLeftRight size={15} /></span>
+        <span className="compare-knob" aria-hidden="true"><ChevronsLeftRight size={15} strokeWidth={1.5} /></span>
       </div>
     </div>
   )

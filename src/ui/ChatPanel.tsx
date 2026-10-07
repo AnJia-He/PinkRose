@@ -608,7 +608,7 @@ export default function ChatPanel({
         <button type="button" className={lut ? 'chat-plus on' : 'chat-plus'}
           aria-label="更多工具" aria-expanded={toolsOpen}
           onClick={() => setToolsOpen((o) => { if (o) setLutOpen(false); return !o })}>
-          <Plus size={16} strokeWidth={2} aria-hidden="true" />
+          <Plus size={16} strokeWidth={1.5} aria-hidden="true" />
         </button>
         {/* ⚠️ 2026-10-01：这一格**故意没过 `<Field>`** —— 它没有标签也没有注解，
             而 `.chat-input input` 身上那条 `flex: 1` 是它撑满那一行的全部依据，
