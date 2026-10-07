@@ -32,7 +32,7 @@
 **Interfaces:**
 - Produces: `src/styles.ruler.test.ts` —— 常驻守卫。Task 2/3 会往同一个文件里加断言（图标线宽、门面阶梯），文件名与读取方式（`new URL('./styles.css', import.meta.url)`）在本任务定死。
 
-- [ ] **Step 1: 写守卫测试（此刻应当全红）**
+- [x] **Step 1: 写守卫测试（此刻应当全红）**
 
 ```ts
 // src/styles.ruler.test.ts
@@ -96,12 +96,12 @@ describe('尺子守卫 · 图标线宽', () => {
 
 > ⚠️ 最后那段 `walk` 的路径换算在 Windows 上要稳：实现者若发现 `new URL('.', import.meta.url).pathname` 带前导斜杠的问题，改用 `fileURLToPath(new URL('./ui', import.meta.url))`（从 `node:url` 导入）——**以能在这个仓库跑绿为准**，两种写法任选其一。
 
-- [ ] **Step 2: 跑它，确认红（这就是"现状清单"的机器版）**
+- [x] **Step 2: 跑它，确认红（这就是"现状清单"的机器版）**
 
 Run: `npx vitest run src/styles.ruler.test.ts`
 Expected: FAIL —— 会报出 `12.5, 13.5, 14.5, 18`（字号）、`500`（字重）、以及 `strokeWidth=2 / 1.7` 几处。把这些**当作清单核对一遍**再往下。
 
-- [ ] **Step 3: 改 `src/styles.css`（逐条 before→after）**
+- [x] **Step 3: 改 `src/styles.css`（逐条 before→after）**
 
 | # | 选择器 | 现在 | 改成 |
 |---|--------|------|------|
@@ -131,19 +131,19 @@ Expected: FAIL —— 会报出 `12.5, 13.5, 14.5, 18`（字号）、`500`（字
 
 把顶部令牌区那条注释里的「12.5px 的小字」改成「12px 的小字」（`grep -n "12\.5" src/styles.css` 收尾核一遍，注释里不许再留旧档位）。
 
-- [ ] **Step 4: 跑守卫 —— 字号/字重两节转绿**（图标那节仍红，那是 Task 2）
+- [x] **Step 4: 跑守卫 —— 字号/字重两节转绿**（图标那节仍红，那是 Task 2）
 
 Run: `npx vitest run src/styles.ruler.test.ts`
 Expected: 字号、字重两组 PASS；图标组 FAIL（还剩 strokeWidth 未改）。
 
-- [ ] **Step 5: 真机扫一眼**（字号合并最怕把哪处挤破）
+- [x] **Step 5: 真机扫一眼**（字号合并最怕把哪处挤破）
 
 ```bash
 node .superpowers/scratch/audit/shoturl.mjs http://127.0.0.1:5173/ .superpowers/scratch/audit/ruler-lp.png 3000
 ```
 再开 `http://localhost:5173/app`（登录状态）顺手翻：调色屏 / 对话 / 作品 / 会话列表 / 设置三页，看有没有哪里换行变丑。
 
-- [ ] **Step 6: 全套绿 + 提交**
+- [x] **Step 6: 全套绿 + 提交**
 
 Run: `npm test` 和 `npm run typecheck`
 Expected: 前者除新守卫外全绿；守卫此时允许图标组仍红——**这一条是本任务唯一允许的"半红"，Task 2 收口**。提交：
@@ -167,12 +167,12 @@ git commit -m "polish(尺子): 字号收 9 档 + 字重两档 + 数字等宽 —
 **Interfaces:**
 - Consumes: Task 1 的守卫文件与 `strokeWidth` 断言。
 
-- [ ] **Step 1: 确认守卫红在哪**
+- [x] **Step 1: 确认守卫红在哪**
 
 Run: `npx vitest run src/styles.ruler.test.ts`
 Expected: FAIL 列出 `strokeWidth=2`（ChatPanel）/ `1.7`（LoginPage）/ 无显式值的（CompareSplit、LandingPage 用默认 2，替换后用显式 1.5）。
 
-- [ ] **Step 2: 四处改（只加/改这一个属性，别动尺寸）**
+- [x] **Step 2: 四处改（只加/改这一个属性，别动尺寸）**
 
 | 文件 | 现在 | 改成 |
 |---|---|---|
@@ -181,16 +181,16 @@ Expected: FAIL 列出 `strokeWidth=2`（ChatPanel）/ `1.7`（LoginPage）/ 无�
 | `CompareSplit.tsx` | `<ChevronsLeftRight size={15} />` | `<ChevronsLeftRight size={15} strokeWidth={1.5} aria-hidden="true" />` |
 | `LandingPage.tsx` | `<ArrowUp size={18} aria-hidden="true" />` | 补 `strokeWidth={1.5}` |
 
-- [ ] **Step 3: 守卫全绿**
+- [x] **Step 3: 守卫全绿**
 
 Run: `npx vitest run src/styles.ruler.test.ts`
 Expected: PASS（三组全绿）。
 
-- [ ] **Step 4: 真机看一眼**（图标最怕肉眼才看得出"细了没"）
+- [x] **Step 4: 真机看一眼**（图标最怕肉眼才看得出"细了没"）
 
 截一张调色屏（`board-shots-1.mjs` 同款方法）与登录页，和 `now-full.png` 对一眼。
 
-- [ ] **Step 5: 全套绿 + 提交**
+- [x] **Step 5: 全套绿 + 提交**
 
 Run: `npm test` 和 `npm run typecheck`
 Expected: 全绿。
@@ -208,12 +208,12 @@ git commit -m "polish(尺子): 图标线宽统一 1.5 —— 2 / 1.7 / 默认 �
 - Modify: `src/landing.css`（5 处）
 - Test: `src/styles.ruler.test.ts`（门面断言已在 Task 1 写；本任务转绿）
 
-- [ ] **Step 1: 确认门面守卫红**
+- [x] **Step 1: 确认门面守卫红**
 
 Run: `npx vitest run src/styles.ruler.test.ts`
 Expected: FAIL —— `landing.css 里出现了阶梯外字号: 15.5, 17.5`。
 
-- [ ] **Step 2: 改 `src/landing.css`（逐条）**
+- [x] **Step 2: 改 `src/landing.css`（逐条）**
 
 | # | 选择器 | 现在 | 改成 |
 |---|--------|------|------|
@@ -225,12 +225,12 @@ Expected: FAIL —— `landing.css 里出现了阶梯外字号: 15.5, 17.5`。
 
 （门面的 380 / 500 / 600 字重**不动**——Global Constraints。）
 
-- [ ] **Step 3: 守卫全绿 + 门面真机图**
+- [x] **Step 3: 守卫全绿 + 门面真机图**
 
 Run: `npx vitest run src/styles.ruler.test.ts` → PASS
 再按 `board-shots-3.mjs` 的拍法出一张浅色整页，和 `_lp-after-full.png` 对（差异应只在这 5 处）。
 
-- [ ] **Step 4: 全套绿 + 提交**
+- [x] **Step 4: 全套绿 + 提交**
 
 Run: `npm test` 和 `npm run typecheck`
 
@@ -247,7 +247,7 @@ git commit -m "polish(尺子): 门面字号归位(15.5→16 / 17.5→17) + 照�
 - Modify: `src/styles.css`（下述 8 条）
 - 基准：`board-shots-1.mjs` 的 `V_B` 段 + `content/vb-crop.png`
 
-- [ ] **Step 1: 改 `src/styles.css`（before→after 逐条）**
+- [x] **Step 1: 改 `src/styles.css`（before→after 逐条）**
 
 | # | 选择器 | 现在 | 改成 |
 |---|--------|------|------|
@@ -263,16 +263,16 @@ git commit -m "polish(尺子): 门面字号归位(15.5→16 / 17.5→17) + 照�
 | 10 | `.rail-head` | `margin: 0 0 var(--sp-3)` | `margin: 0 0 16px` |
 | 11 | `.rail-grid` | `gap: var(--sp-3) var(--sp-2)` | `gap: 16px 10px` |
 
-- [ ] **Step 2: `check:layout`（间距会动到它量的数字）**
+- [x] **Step 2: `check:layout`（间距会动到它量的数字）**
 
 Run: `npm run check:layout`
 Expected: 全绿。若红，看是不是照片尺寸被挤破——数值有富余，红了就**停下报数**，别硬调判据。
 
-- [ ] **Step 3: 真机对照基准**
+- [x] **Step 3: 真机对照基准**
 
 用 `board-shots-1.mjs` 重拍 `now` 的同款截图（把 `addStyleTag` 那段删掉、直接拍），和 `content/vb-full.png`、`vb-crop.png` 对照：**逐块对齐，差异只允许来自"现在 vs 注入版"的同一批值**。
 
-- [ ] **Step 4: 全套绿 + 提交**
+- [x] **Step 4: 全套绿 + 提交**
 
 Run: `npm test` 和 `npm run typecheck`
 
@@ -289,7 +289,7 @@ git commit -m "polish(节奏): 调色屏呼吸一档 —— 面板/工具行/预
 - Modify: `src/styles.css`（6 条）
 - 基准：`board-shots-2.mjs` 的 `B` 段 + `content/r2chat.png`
 
-- [ ] **Step 1: 改（before→after）**
+- [x] **Step 1: 改（before→after）**
 
 | # | 选择器 | 现在 | 改成 |
 |---|--------|------|------|
@@ -300,9 +300,9 @@ git commit -m "polish(节奏): 调色屏呼吸一档 —— 面板/工具行/预
 | 5 | `.chat-lut` | `padding: var(--sp-3) var(--sp-4) 0` | `padding: 14px 18px 0` |
 | 6 | `.chat-select` | `padding: var(--sp-3) var(--sp-4)` | `padding: 14px 18px` |
 
-- [ ] **Step 2: 真机对照 `r2chat.png`**（左=现在基线、右=注入版；改完的应等于右半）。
+- [x] **Step 2: 真机对照 `r2chat.png`**（左=现在基线、右=注入版；改完的应等于右半）。
 
-- [ ] **Step 3: `check:layout` + 全套绿 + 提交**
+- [x] **Step 3: `check:layout` + 全套绿 + 提交**
 
 Run: `npm run check:layout` → 绿；`npm test` / `npm run typecheck` → 绿。
 
@@ -319,7 +319,7 @@ git commit -m "polish(节奏): 对话屏呼吸一档 —— 气泡/输入行/工
 - Modify: `src/styles.css`（8 条）
 - 基准：`content/r2gal.png`、`content/r2ses.png`
 
-- [ ] **Step 1: 改（before→after）**
+- [x] **Step 1: 改（before→after）**
 
 | # | 选择器 | 现在 | 改成 |
 |---|--------|------|------|
@@ -333,9 +333,9 @@ git commit -m "polish(节奏): 对话屏呼吸一档 —— 气泡/输入行/工
 | 8 | `.session-row` | `margin-bottom: var(--sp-2)` | `margin-bottom: 12px` |
 | 9 | `.session-open` | `padding: var(--sp-2) var(--sp-3)` | `padding: 10px 14px` |
 
-- [ ] **Step 2: 真机对照 `r2gal.png` / `r2ses.png`**（改完 = 右半）。
+- [x] **Step 2: 真机对照 `r2gal.png` / `r2ses.png`**（改完 = 右半）。
 
-- [ ] **Step 3: `check:layout` + 全套绿 + 提交**
+- [x] **Step 3: `check:layout` + 全套绿 + 提交**
 
 Run: `npm run check:layout` → 绿；`npm test` / `npm run typecheck` → 绿。
 
@@ -353,7 +353,7 @@ git commit -m "polish(节奏): 作品页与会话列表呼吸一档 —— 照�
 
 > 这张表没有画板基准图（三轮没覆盖这几屏）——按 spec §1 的**同一类关系同一个值**推的，判据是"和已定的那几屏站在一起不突兀"。真机截图自查 + `check:layout`。
 
-- [ ] **Step 1: 改（before→after）**
+- [x] **Step 1: 改（before→after）**
 
 | # | 选择器 | 现在 | 改成 |
 |---|--------|------|------|
@@ -365,9 +365,9 @@ git commit -m "polish(节奏): 作品页与会话列表呼吸一档 —— 照�
 | 6 | `.detail-actions` | `margin-top: var(--sp-4)` | `margin-top: 20px` |
 | 7 | `.recipe-params li` | `padding: 6px 0` | `padding: 8px 0` |
 
-- [ ] **Step 2: 真机翻四屏**：个人设置 / 模型设置 / Lut / 作品详情。
+- [x] **Step 2: 真机翻四屏**：个人设置 / 模型设置 / Lut / 作品详情。
 
-- [ ] **Step 3: `check:layout` + 全套绿 + 提交**
+- [x] **Step 3: `check:layout` + 全套绿 + 提交**
 
 ```bash
 git add src/styles.css
@@ -381,7 +381,7 @@ git commit -m "polish(节奏): 设置三页与详情页吃同一把尺子"
 **Files:**
 - Modify: `src/styles.css`（窄屏媒体查询内 1 条）
 
-- [ ] **Step 1: 窄屏面板左右收一档**（28px 在 390px 手机上太宽）
+- [x] **Step 1: 窄屏面板左右收一档**（28px 在 390px 手机上太宽）
 
 在 `@media (max-width: 640px)` 块里加：
 
@@ -390,14 +390,14 @@ git commit -m "polish(节奏): 设置三页与详情页吃同一把尺子"
   .panel { padding-left: 20px; padding-right: 20px; }
 ```
 
-- [ ] **Step 2: `check:layout`（它量的就是窄屏）**
+- [x] **Step 2: `check:layout`（它量的就是窄屏）**
 
 Run: `npm run check:layout`
 Expected: 全绿（照片尺寸判据有富余；红了停下报数）。
 
-- [ ] **Step 3: 手机宽度真机扫**（390×844）：修图屏 / 调色屏 / 会话列表 / 作品页各一张，看心跳/挤压。
+- [x] **Step 3: 手机宽度真机扫**（390×844）：修图屏 / 调色屏 / 会话列表 / 作品页各一张，看心跳/挤压。
 
-- [ ] **Step 4: 全套绿 + 提交**
+- [x] **Step 4: 全套绿 + 提交**
 
 ```bash
 git add src/styles.css
@@ -412,7 +412,7 @@ git commit -m "polish(节奏): 窄屏面板左右收一档 —— 呼吸在手�
 - Modify: `src/landing.css`（7 条）
 - 基准：`board-shots-3.mjs` 的 `LP` 段 + `content/_lp-after-full.png`（浅）/`_lp-after-full-dark.png`（深）
 
-- [ ] **Step 1: 改（before→after）**
+- [x] **Step 1: 改（before→after）**
 
 | # | 选择器 | 现在 | 改成 |
 |---|--------|------|------|
@@ -427,9 +427,9 @@ git commit -m "polish(节奏): 窄屏面板左右收一档 —— 呼吸在手�
 
 ⚠️ 注意 `.lp-prod` 的 `padding-bottom`（浮层那笔账）**不要动**——那是 10-07 刚校准的浮层 reserve，改它会把浮层顶上去盖住对话栏。
 
-- [ ] **Step 2: 浅 + 深两种模式各拍整页**（照 `board-shots-3.mjs` 的拍法，去掉注入那步），和 `_lp-after-full.png` / `_lp-after-full-dark.png` 对照。
+- [x] **Step 2: 浅 + 深两种模式各拍整页**（照 `board-shots-3.mjs` 的拍法，去掉注入那步），和 `_lp-after-full.png` / `_lp-after-full-dark.png` 对照。
 
-- [ ] **Step 3: 全套绿 + 提交**
+- [x] **Step 3: 全套绿 + 提交**
 
 ```bash
 git add src/landing.css
@@ -450,3 +450,17 @@ git commit -m "polish(节奏): 门面七处 —— 标题间距统一 72 / 卡�
 - **Placeholder scan**：无 TBD/TODO；每处改动的 before/after 都写死；唯一留白是 Task 1 Step 1 里 `walk()` 的路径写法（给了两种，以跑绿为准）——这是环境差异，不是占位。
 - **Type consistency**：本计划无新函数/接口；唯一新文件 `src/styles.ruler.test.ts` 的名字在 Task 1/2/3 中一致。
 - **一个已知张力**：Task 1 结束时守卫的图标组允许仍红（Task 2 收口）——已在 Step 6 明说，不是漏洞。
+
+---
+
+## 完成记录（2026-10-07 夜）
+
+九任务四批全部完成，逐批验收：
+
+- 批1 字号/微修：`640cf6e`（app+守卫）· `13be0b4`（门面字号圆角）
+- 批2 节奏四屏：`5bfff90`(调色) · `bc27f42`(对话) · `31f66a3`(作品+会话) —— 四屏与画板基准逐像素 0.00/255
+- 批3 设置/详情/窄屏：`ffcbd0f`（check:layout 两档全绿）
+- 批4 门面七处：本轮提交 —— 浅/深整页 0.00/255，check:copy 绿
+- 每批均过 npm test + npm run typecheck；批2/3 另跑 check:layout 全绿。
+- 与计划的两处小偏差：① 批1 因「提交前必须全绿」把三个任务的提交并成两笔；
+  ② check:layout 按"每批一次"跑（覆盖面相同，见各提交信息）。
