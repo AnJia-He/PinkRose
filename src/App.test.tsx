@@ -540,6 +540,28 @@ function withSessions(initial: SessionDetail[], opts: { originalFails?: boolean 
   }
 }
 
+/**
+ * 往**受控输入框**里打字（搜索框那两处：作品页、对话列表）。
+ *
+ * ⚠️ 直接写 `box.value = '…'` 再派一个 input 事件**不行**：React 18 给受控输入
+ * 挂了自己的 value tracker，而 `el.value = x` 走的正是 React 那个 setter ——
+ * tracker 跟着一起更新，于是 React 认为"值没变"、onChange 一次都不调。
+ * 实测（brief 的字面写法）：搜完之后两个格子全都还在，这条断言红在"2 ≠ 1"。
+ * 得用**原型上的 setter** 绕过去值才真的"变"了（登录页那条同理，
+ * 见「登录这道门」里的 type()）。
+ *
+ * ★ 2026-10-07 从「作品页」那个 describe 提到这里：对话列表的页头也加了搜索框，
+ * 两边共用这一份（复制第二份的话，这条"直接赋值不行"的账只在一边写着）。
+ */
+const boxSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+async function typeIn(box: HTMLInputElement, text: string) {
+  await act(async () => {
+    boxSetter.call(box, text)
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+    await new Promise(r => setTimeout(r, 0))
+  })
+}
+
 beforeEach(() => {
   // ★ 地址栏是所有用例共用的一份全局状态：上一个用例切到了 /app/works，
   //   不清掉的话，下一个用例一 `renderApp()` 就**已经在作品页**了。
@@ -3855,23 +3877,9 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     { length: 500 }, (_, i) => WORK(i + 1, 1_700_000_000_000 - i * 2 * 86_400_000))
 
   /**
-   * 往搜索框里打字。
-   *
-   * ⚠️ 直接写 `box.value = '…'` 再派一个 input 事件**不行**：React 18 给受控输入
-   * 挂了自己的 value tracker，而 `el.value = x` 走的正是 React 那个 setter ——
-   * tracker 跟着一起更新，于是 React 认为"值没变"、onChange 一次都不调。
-   * 实测（brief 的字面写法）：搜完之后两个格子全都还在，这条断言红在"2 ≠ 1"。
-   * 得用**原型上的 setter** 绕过去值才真的"变"了（登录页那条同理，
-   * 见「登录这道门」里的 type()）。
+   * 往搜索框里打字 —— ★ 2026-10-07 提到**模块层**了（原来住在这一个 describe 里，
+   * 而对话列表那一组也要打字搜）。实现和理由在下面 `typeIn` 那一段。
    */
-  async function typeIn(box: HTMLInputElement, text: string) {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
-    await act(async () => {
-      setter.call(box, text)
-      box.dispatchEvent(new Event('input', { bubbles: true }))
-      await new Promise(r => setTimeout(r, 0))
-    })
-  }
 
   it('★ 作品页：先摆 60 张，不是 500 张一起渲染', async () => {
     // §10 点名的：造 500 条 → 首屏不能一次全渲染，不然屏幕会卡
@@ -7461,6 +7469,77 @@ describe('「回到这一步」不再删后面的步骤', () => {
 
     expect(container.querySelector('.notice')?.textContent ?? '').not.toContain('画面已经变了')
     expect(api.postEdit).toHaveBeenCalledTimes(1)      // 这句话照常生效
+  })
+})
+
+/**
+ * ★ 2026-10-07：对话列表的**页头与搜索**。
+ *
+ * 来路：一次"AI 会话管理"的市场调研（ChatGPT / Claude / Gemini / Copilot /
+ * 豆包 / Kimi / DeepSeek / 通义，8 家网页版）—— 六家有搜索，而我们自己
+ * **同一类页面两个规矩**：作品页一直能搜（按名字 / 日期），这一页不能。
+ * 这一组钉三件用户看得见的事：页头在、按名字和日期搜得中、搜不到时说的话
+ * 和"一条都没有"分得开（说错了用户会以为东西丢了）。
+ */
+describe('对话列表：页头与搜索', () => {
+  /** 页头那格搜索框。和作品页同一个类名 —— 两页不会同时在屏上。 */
+  const searchBox = () => container.querySelector('.gallery-search') as HTMLInputElement
+
+  it('页头在：标题是「我的对话」，搜索框和作品页同一副长相（同一个类名）', async () => {
+    withSessions([makeSession(7, 2, '把天调蓝一点', 'S7')])
+    await renderApp()
+    await goNav('对话')
+
+    expect(container.querySelector('.gallery-title')?.textContent).toBe('我的对话')
+    expect(searchBox()).toBeTruthy()
+    // 作品页那套头部是**吸顶**的：类名一样，样式就跟着一样（同一种组件全站一份长相）
+    expect(container.querySelector('.sessions .gallery-head')).toBeTruthy()
+  })
+
+  it('★ 按名字搜：只留下名字里带那几个字的', async () => {
+    withSessions([
+      { ...makeSession(7, 2, 'A 的话', 'A'), originalName: '古镇.jpg' },
+      { ...makeSession(9, 2, 'B 的话', 'B'), originalName: '海边日落.jpg' },
+    ])
+    await renderApp()
+    await goNav('对话')
+    expect(container.querySelectorAll('.session-row')).toHaveLength(2)
+
+    await typeIn(searchBox(), '海边')
+    const rows = [...container.querySelectorAll('.session-row')]
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.textContent ?? '').toContain('海边日落')
+  })
+
+  it('★ 搜「9月25」能找到那天改的 —— 日期住在**分组标题**上（作品页住在名字里，两页承诺一样、取法不同）', async () => {
+    const day = new Date('2026-09-25T14:30:00').getTime()
+    withSessions([
+      { ...makeSession(7, 2, 'A 的话', 'A'), updatedAt: day, originalName: '古镇.jpg' },
+      { ...makeSession(9, 2, 'B 的话', 'B'), updatedAt: new Date('2026-08-01T10:00:00').getTime(), originalName: '海边日落.jpg' },
+    ])
+    await renderApp()
+    await goNav('对话')
+
+    await typeIn(searchBox(), '9月25')
+    const rows = [...container.querySelectorAll('.session-row')]
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.textContent ?? '').toContain('古镇')
+  })
+
+  it('搜不到时说"没找到 · 换个字"，而且**不是**"还没改过照片" —— 两件事不能混（§3.7）', async () => {
+    withSessions([makeSession(7, 2, '把天调蓝一点', 'S7')])
+    await renderApp()
+    await goNav('对话')
+
+    await typeIn(searchBox(), '根本没有的字')
+    const none = container.querySelector('.gallery-none')
+    // `?? ''`：元素整个不在了时要红成一句人话，别红成 vitest 的"参数非法"
+    expect(none?.textContent ?? '').toContain('没找到')
+    expect(none?.textContent ?? '').toContain('换个字')
+    // "筛掉了"不是"一条都没有"：空态说错了，用户会以为自己的记录没了
+    expect(container.querySelector('.sessions-empty')).toBeNull()
+    // 搜索框自己得留着 —— 不然搜错一个字只能刷新页面
+    expect(searchBox()).toBeTruthy()
   })
 })
 

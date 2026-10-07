@@ -1,5 +1,6 @@
 import type { Adjustments } from './adjustments.ts'
 import type { LutRef } from './lut.ts'
+import { dayLabel } from './works.ts'
 
 /**
  * 会话的**元数据** —— 和 `WorkMeta` 同一条规矩：列表接口一次给全部，
@@ -90,4 +91,29 @@ export function sessionTitle(
   // 去扩展名：和 `works.ts` 的 `buildFilename` 用同一条正则
   const n = s.originalName?.trim().replace(/\.[^.]+$/, '')
   return n || '还没说话'
+}
+
+/**
+ * 搜索：按**屏幕上看得到的字**匹配 —— 名字，或者**那一天的日期**。
+ *
+ * ★ 2026-10-07：对话列表和作品页**同一件东西两副面孔**，这一条把两边拉平
+ * （评审前作品页能搜、这一页不能，同一个产品里两个规矩）。
+ *
+ * ⚠️ 名字那一半和作品页是同一条规矩（`works.ts` 的 `matchesQuery`）：
+ * 只认**显示出来的那个名字** —— 用户改过名之后，原来的照片文件名就搜不到了。
+ * 那是**对的**：屏幕上已经没有那几个字了。
+ * ⚠️ 日期那一半是这一页特有的取法：作品页的日期住在**名字**里（没起名时名字
+ * 就是「9月25日 14:03」），而会话的日期住在**分组标题**上（「9月25日 · 3 条」）。
+ * 两页都得让「9月25」搜得中，只是各自从不同的地方取那几个字 —— 都是屏幕上
+ * 真有的字，所以都不算"搜到看不见的东西"。
+ */
+export function sessionMatchesQuery(
+  s: Pick<SessionMeta, 'title' | 'originalName' | 'updatedAt'>,
+  query: string,
+  now: number,
+): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  return sessionTitle(s).toLowerCase().includes(q)
+      || dayLabel(s.updatedAt, now).toLowerCase().includes(q)
 }

@@ -4,7 +4,7 @@ import { Btn } from './kit/Btn.tsx'
 import { listSessions, deleteSession, updateSession, sessionThumbUrl } from '../api/sessions'
 import { groupByDay } from '../../shared/works.ts'
 import { visibleGroups } from '../core/gallery'
-import { sessionTitle, type SessionMeta } from '../../shared/sessions.ts'
+import { sessionTitle, sessionMatchesQuery, type SessionMeta } from '../../shared/sessions.ts'
 
 /** 一次摆多少条。和作品页同一个数（§3.5：「先摆 60 张，够铺满一屏多一点」） */
 const PAGE = 60
@@ -35,6 +35,13 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
   /** null = 还没拿到。**它和"一条都没有"是两件事** —— 混在一起的话，
    *  还没加载完的那一瞬间会显示"还没改过照片"，用户会以为东西没了。 */
   const [rows, setRows] = useState<SessionMeta[] | null>(null)
+  /**
+   * ★ 2026-10-07：**搜索框里那几个字**。加它的来路是"同一类页面两个规矩" ——
+   * 作品页一直能搜（按名字/日期），这一页不能。八家 AI 产品的会话列表里六家
+   * 也都有搜索（ChatGPT/Gemini 还搜全文），所以这一格是补齐，不是发明。
+   * 匹配规则在 `sessionMatchesQuery`（名字，或者那一天的日期）。
+   */
+  const [q, setQ] = useState('')
   /** 拉列表失败。**整页就是它** —— 名单都没有，"列表还在不在"无从谈起。 */
   const [failed, setFailed] = useState<string | null>(null)
   /**
@@ -131,7 +138,9 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
     return () => { alive = false }
   }, [])
 
-  const groups = useMemo(() => (rows ? groupByDay(rows, now) : []), [rows, now])
+  const groups = useMemo(
+    () => (rows ? groupByDay(rows.filter(s => sessionMatchesQuery(s, q, now)), now) : []),
+    [rows, q, now])
   const shown = useMemo(() => visibleGroups(groups, limit), [groups, limit])
   const more = shown.length < groups.length
 
@@ -197,9 +206,27 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
   //    四种状态都在里面）—— 那一层既是"自己滚"的那一格，也是空态居中所要的宽度。
   //    不包的话，空态是 `.shell` 的一个 flex 孩子，宽度按内容收缩，会**贴到左上角**去，
   //    和作品页那个居中的空态长得不一样。
+  /* ★ 2026-10-07：页头（标题 + 搜索框）。**四种状态里都在**（照作品页：那边的
+     标题和搜索框也是常驻的）—— 最要紧的是"没找到"那一档：搜索框得自己留着，
+     不然用户搜错一个字就只能刷新页面。窄屏上它会折成两行（`.gallery-head` 是
+     `flex-wrap: wrap`），和作品页同一副样子。
+     ⚠️ 类名走的是**作品页那一套**（`.gallery-head/title/search`，这一页本来就在
+     复用 `.gallery-day-title` / `.gallery-error` / `.gallery-hint`）：同一种组件
+     全站一份长相，两页各写一份迟早会长歪。 */
+  const head = (
+    <header className="gallery-head">
+      <h1 className="gallery-title">我的对话</h1>
+      <input className="gallery-search" value={q}
+             placeholder="找一条…（名字，或者 9月25 这样的日期）"
+             aria-label="找一条对话"
+             onChange={e => { setQ(e.target.value); setLimit(PAGE) }} />
+    </header>
+  )
+
   if (failed) {
     return (
       <section className="sessions">
+        {head}
         <p className="gallery-error">{failed}</p>
         {/* §3.7：说"不行"的地方，都要同时告诉他"那怎么办"。这一页**不新造按钮**，
             和作品页一样："刷新一下"是用户本来就有的那条出路。 */}
@@ -209,11 +236,12 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
   }
   // ★ 还没拿到（null）和拿到了但是没有（[]）**要分开说**
   if (rows === null) {
-    return <section className="sessions"><p className="gallery-loading">正在取…</p></section>
+    return <section className="sessions">{head}<p className="gallery-loading">正在取…</p></section>
   }
   if (rows.length === 0) {
     return (
       <section className="sessions">
+        {head}
         <div className="sessions-empty empty-state">
           {/* 空态那两句话的分工照作品页：主句说现状，下面那句（或者那颗按钮）说"那怎么办"（§3.7） */}
           <p className="sessions-empty-title empty-state-title">还没改过照片。</p>
@@ -224,8 +252,12 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
   }
   return (
     <section className="sessions">
+      {head}
       {delFailed && <p className="gallery-error">{delFailed}</p>}
       {renameFailed && <p className="gallery-error">{renameFailed}</p>}
+      {/* 搜索没命中。⚠️ 这里**不用再判 `q` 非空**：这一档里 `rows` 至少有一条，
+          没有查询词时它必然分到某一天里 —— 走到这儿就说明是搜出来的空。 */}
+      {groups.length === 0 && <p className="gallery-none">没找到。换个字试试？</p>}
       {shown.map(g => (
         <div key={g.day} className="sessions-day">
           {/* 标题上的条数是**这一天的全部条数**，和下面摆出来的数量一致 ——
