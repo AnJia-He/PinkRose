@@ -609,6 +609,20 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .btn-primary:hover:not(:disabled) { background: var(--accent-500); border-color: var(--accent-500); }
 
+/* ── 形状：两种，按"这一颗坐在什么上"分（★ 2026-10-07 设计评审后立的规矩）──
+   药丸（--r-pill）：坐在**卡片 / 空态 / 设置页动作位 / 芯片**上的按钮 ——
+     欢迎页那条输入框里的「选照片」、空态里那颗、Lut 页两颗、模型页的动作、
+     账户页那几颗、对话与工具的药丸格子、气泡上的小动作、作品详情里那张
+     配方卡上的「套用」。
+   8px（--r-sm，全局 `button{}` 的默认值）：坐在**条 / 行 / 表单**里的按钮 ——
+     顶栏三颗、对话输入行的「发送」与「＋」、登录表单、作品详情顶上那排、
+     就地确认块（删之前问一句那种）、设置卡里**表单**的按钮（改密码 / 模型
+     表单的保存取消）、列表行里的小按钮（改名 / 删除）。
+   ⚠️ 加新按钮先问一句"它坐在什么上"，再挑形状。这个病（同一族两种形状）
+   **测试量不出来**（没有一条断言看圆角）—— 2026-10-07 评审抓到的实例：
+   Lut 页的主按钮是药丸、兄弟页模型设置的「添加一套」却是方角，
+   只有人在真机上一眼能看出。 */
+
 /* 画布那一格。它同时是"还没选图"时的空舞台。
    ⚠️ 底色不是纯平的 --bg：这里铺一层很淡的**白光**（照片四周于是有了层次），
    照片再压一道投影浮起来 —— 加上照片自己那圈白边，
@@ -1407,8 +1421,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 那个文件 input 永远不该被看见 —— 点的是上面那颗按钮。 */
 .presets-ref-file { display: none; }
 
-/* 「放置预期效果照片」展开出来的两个来源（★ 2026-10-05）。就地展开，不用浮层 ——
-   这一屏没有弹窗文化，再点一下大按钮就是收起。见 AdjustmentPanel 的 refOpen 注释。 */
+/* 「照着这张调」展开出来的两个来源（★ 2026-10-05）。就地展开，不用浮层 ——
+   这一屏没有弹窗文化，再点一下大按钮就是收起。见 AdjustmentPanel 的 refOpen 注释。
+   ⚠️ 这颗按钮 2026-10-05~10-07 之间一度改名成「放置预期效果照片」，
+   10-07 的设计评审改回了「照着这张调」（全站文档/测试一直叫这个名，
+   屏幕上的字反而是例外 —— 一物二名就是这么来的）。 */
 .presets-sources {
   display: flex; flex-direction: column; gap: var(--sp-2);
   /* 大按钮自己有 margin-bottom: sp-4 —— 展开区是它的"下半身"，要贴紧它：
@@ -2587,7 +2604,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   animation: welcome-in .5s var(--ease) both;
 }
 .empty-state-title { margin: 0; font-size: 17px; }
-.empty-state .btn-primary { margin-top: var(--sp-4); }
+/* ★ 2026-10-07（评审）：药丸 —— 这和**欢迎页输入框里那颗「选照片」是同一个动作**，
+   两处本该同一副长相（原来这里是 8px 方角、那边是药丸）。见文件头「形状」段。 */
+.empty-state .btn-primary { margin-top: var(--sp-4); border-radius: var(--r-pill); }
 /* 那 18vh 只有**列表页**要：它是从顶上往下排的一条长列；
    调色那一屏的舞台自己就是居中的（`.stage` 是 flex 居中），不要再叠一层。 */
 .sessions-empty { margin-top: 18vh; }
@@ -2704,7 +2723,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    都是这一页要讲的重点 —— 用主色，不是跟标签一样的灰。 */
 .recipe-param-value { font-variant-numeric: tabular-nums; color: var(--accent-300); font-weight: 600; }
 
-.recipe-apply { width: 100%; }
+/* ★ 2026-10-07（评审）：药丸 —— 它是这张配方卡上的动作按钮（坐在卡上，
+   不在条/表单里），照文件头「形状」段那条规矩。 */
+.recipe-apply { width: 100%; border-radius: var(--r-pill); }
 .recipe-hint { margin: var(--sp-2) 0 0; font-size: 12px; color: var(--muted); }
 .recipe-edits { margin: 0; padding-left: var(--sp-5); font-size: 13px; }
 .recipe-edits li { margin: var(--sp-1) 0; }
@@ -3046,7 +3067,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    ⚠️ 那条"记号不许进 textContent"的规矩没变：`ModelSettings.test.tsx` 里是按
    `(textContent ?? '').trim() === '添加一套'` 找这颗按钮的，图标进来之后
    textContent 仍然只有那四个字（svg 不进 textContent）。 */
-.models-add { display: inline-flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3); }
+.models-add { display: inline-flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-3);
+  /* ★ 2026-10-07（评审）：药丸 —— 和兄弟页 Lut 的「导入 .cube」同一族（见文件头「形状」段）。 */
+  border-radius: var(--r-pill); padding: 8px 20px; }
 /* 「当前：……」。它回答的是"我现在到底在用哪套" —— 目录里那句话的落点。 */
 .models-now { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-4) 0 0; font-size: 13px; color: var(--muted); }
 
@@ -3058,8 +3081,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   border: 1px solid var(--danger); background: var(--danger-bg); }
 .models-warn p { margin: 0; font-size: 14px; color: var(--text); }
 .models-warn-mark { color: var(--danger); }
-/* 提示里的两颗按钮：左「换成其他的」（正经出路）右「知道了」（走开）。 */
+/* 提示里的两颗按钮：左「换成其他的」（正经出路）右「知道了」（走开）。
+   ★ 2026-10-07（评审）：药丸 + 尺寸照**账户页那组危险动作**（`.account-cancel`）
+   —— 它俩坐在同一张卡上、同一类处境，形状该是同一套（见文件头「形状」段）。 */
 .models-warn-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-3); }
+.models-warn-actions button { border-radius: var(--r-pill); padding: 8px 20px; }
 
 /* 表单。给一张自己的面（--panel）：它是"翻开来"的东西（§7.4 那句
    "型号名只在设置里翻开来才露"），和名单在视觉上就不该是一层。 */

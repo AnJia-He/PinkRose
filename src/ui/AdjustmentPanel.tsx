@@ -129,7 +129,7 @@ export default function AdjustmentPanel({
   }, [lutOpen, luts])
 
   /**
-   * 「放置预期效果照片」展开出来的两个来源（★ 2026-10-05）。
+   * 「照着这张调」展开出来的两个来源（★ 2026-10-05）。
    *
    * · `refOpen`   —— 大按钮点开/收起，两颗来源行（和可能展开的网格）都挂它下面；
    * · `worksOpen` —— 「从我的作品里选」的网格开着没有；
@@ -206,7 +206,7 @@ export default function AdjustmentPanel({
           return !o
         })}>
         <Images size={14} strokeWidth={1.5} aria-hidden="true" />
-        放置预期效果照片
+        照着这张调
       </button>
 
       {refOpen && (

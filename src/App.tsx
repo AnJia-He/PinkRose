@@ -2957,7 +2957,15 @@ export default function App() {
                   //   照片上安安静静，一颗都不画错。
                   comparing={comparing}
                   compareWith={compareSrc}
-                  onCompare={toggleCompare}
+                  // ★ 2026-10-07（设计评审）：调色屏上「对比」**只留工具行那一颗**。
+                  //   10-06 那批本来有意做"两处入口、一个状态"，真机一看是**同一
+                  //   开关的两种长相并排**（工具行的格子 + 这排的按钮，还会一起
+                  //   点亮），读起来像两个功能 —— 用户拍板"去掉一个"。
+                  //   判据放这儿而不是删 ToolBar 那颗：工具行是这一屏的主入口，
+                  //   而**修图屏没有工具行** —— 那一屏这颗照旧在，两屏各一个入口。
+                  //   ⚠️ 只藏按钮：`comparing` / `compareWith` 照传，工具行那颗
+                  //   点开的分屏在这一屏照样画得出来。
+                  onCompare={view.kind === 'adjust' ? undefined : toggleCompare}
                   // ★ 2026-10-07（点修）：涂抹的现场（笔刷 + 掩码本体）。
                   //   ⚠️ 它**不动 `resetKey` / `viewLocked`** —— 点修要的就是
                   //   "放大着修细节"（和「对比」同一条裁定：把视图拽回适应窗口

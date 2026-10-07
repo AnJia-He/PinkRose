@@ -2244,21 +2244,28 @@ describe('★ 对比：备原图 + 一个开关', () => {
     expect(container.querySelector('.tool-row-second')).toBeNull()
   })
 
-  it('★ 右下角那颗和工具行那颗调的是**同一个**开关', async () => {
+  it('★ 一个屏只有一个入口：调色屏是工具行那颗、修图屏是右下角那颗（同一个开关）', async () => {
     await renderApp()
     await uploadPhoto()
-    await goNav('调色')
 
-    // 右下角那颗住在真画布里；这一层拿到的是同一个开关（App 只做这一份）
+    // ── 调色屏：工具行是**唯一**入口 —— 右下角那颗的回调**故意不给**
+    //   （画布拿它当"画不画那颗按钮"的判据）。2026-10-07 设计评审：两颗并排
+    //   是同一开关的两种长相，读起来像两个功能，用户拍板去掉一个。
+    await goNav('调色')
+    expect(last().onCompare, '调色屏不该再给右下角那颗 —— 工具行才是这一屏的入口').toBeUndefined()
+    await clickCell()
+    expect(last().comparing, '工具行那颗照样开得起来').toBe(true)
+    await clickCell()
+    expect(last().comparing).toBe(false)
+
+    // ── 修图屏：没有工具行，右下角那颗照旧在 —— 回调还是**同一个开关**
+    await goNav('修图')
     const onCompare = last().onCompare
-    expect(onCompare, 'App 要把那颗按钮的回调交给画布').toBeTypeOf('function')
+    expect(onCompare, '修图屏要把右下角那颗的回调交给画布').toBeTypeOf('function')
     await act(async () => { onCompare!(); await new Promise(r => setTimeout(r, 0)) })
     expect(last().comparing).toBe(true)
-    expect(cell().className, '从右下角开，工具行那颗要跟着亮').toContain('on')
-
     await act(async () => { last().onCompare!(); await new Promise(r => setTimeout(r, 0)) })
     expect(last().comparing).toBe(false)
-    expect(cell().className).not.toContain('on')
   })
 
   it('★ 恢复出来的会话照样能对比（原图从那一条路来）', async () => {
