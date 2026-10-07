@@ -42,3 +42,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## MiSans · 界面中文字体（小米发布，免费商用）
+
+- **出处**：小米发布的 MiSans（v4.009）；本仓库里的这套是从 npm 包
+  [`misans`](https://www.npmjs.com/package/misans)（作者 dsrkafuu）取的
+  **官方切片版**（按小米官方的 `unicode-range` 切成 56 片 woff2，可变字体）。
+- **用在哪**：`src/assets/fonts/misans/` —— 全站的正文与按钮（`styles.css` 的
+  `--font`、`landing.css` 的 `.lp`）。2026-10-07 之前全站没有自带字体，
+  访客看到的中文字取决于他电脑装了什么（没装思源的 Windows 掉微软雅黑、
+  字重还会被合成），这条是那次评审的一等修复。
+- **许可**：小米声明 MiSans **免费商用**；npm 包的打包部分为 **Apache-2.0**。
+  许可原文副本随字体文件放在 `src/assets/fonts/misans/LICENSE.txt`。
+  改字体品牌名/再分发前先看原文。

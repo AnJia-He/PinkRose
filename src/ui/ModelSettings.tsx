@@ -197,7 +197,7 @@ export function ModelSettings() {
                         ★ 2026-10-01：那个 ✓ 字符换成图标（它是 svg，不进 textContent）。
                         ⚠️ `ModelSettings.test.tsx` 里原来断言的是 `textContent` 含 '✓'，
                         跟着改成"这一行里有那个记号元素/图标"。 */}
-                    <span className="models-mark">{c.active ? <Check size={15} aria-hidden="true" /> : null}</span>
+                    <span className="models-mark">{c.active ? <Check size={15} strokeWidth={1.5} aria-hidden="true" /> : null}</span>
                     <span className="models-alias">{c.alias}</span>
                     {/* 在用的那一行不给「用这个」：已经有 ✓ 了，再给一颗
                         "再点一次"的按钮，按下去什么都不会变，最让人迷惑。 */}
@@ -216,7 +216,7 @@ export function ModelSettings() {
             {warn?.kind === kind && (
               <div className="models-warn">
                 <p>
-                  <span className="models-warn-mark" aria-hidden="true"><TriangleAlert size={15} /></span>{' '}
+                  <span className="models-warn-mark" aria-hidden="true"><TriangleAlert size={15} strokeWidth={1.5} /></span>{' '}
                   你删掉的这套，正是你现在在用的{noun}。已经切回默认模型了。
                 </p>
                 <div className="models-warn-actions">
@@ -241,7 +241,7 @@ export function ModelSettings() {
               />
             ) : (
               <button type="button" className="models-add" onClick={() => setForm({ kind, config: null })}>
-                <Plus size={15} aria-hidden="true" />
+                <Plus size={15} strokeWidth={1.5} aria-hidden="true" />
                 添加一套
               </button>
             )}

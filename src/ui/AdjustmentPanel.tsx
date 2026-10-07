@@ -286,7 +286,7 @@ export default function AdjustmentPanel({
               effect 的活（"开着 + 清单非空"就是全部条件）。两处都叫的话，打开
               那一下会连画两趟（第二趟把第一趟作废，纯白烧）。 */}
           <span className="panel-group-title">Lut</span>
-          <ChevronDown size={14} className={lutOpen ? 'chev' : 'chev folded'} aria-hidden="true" />
+          <ChevronDown size={14} strokeWidth={1.5} className={lutOpen ? 'chev' : 'chev folded'} aria-hidden="true" />
         </button>
         {lutOpen && (
           <div className="panel-group-body">

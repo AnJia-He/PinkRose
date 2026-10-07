@@ -95,7 +95,12 @@
 .lp {
   background: var(--lp-bg);
   color: var(--lp-ink);
-  font-family: "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  /* ★ 2026-10-07：第一支换成自带的 **MiSans VF**（和 App 同一套，见 styles.css
+     的 `--font`）。**这一条是硬写的字体栈、不走 `var(--font)`** —— 所以换字体
+     时这里要**手动跟着改**（评审 RC2 就是按这条找过来的）。
+     ⚠️ 门面的 380 / 500 两个"半档"现在有了真身：MiSans VF 的轴是 150~700，
+     这两个值都是真渲染出来的，不再靠浏览器合成。 */
+  font-family: "MiSans VF", "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   font-weight: 380; font-size: 17px; line-height: 1.8;
   -webkit-font-smoothing: antialiased;
   font-variant-numeric: tabular-nums;

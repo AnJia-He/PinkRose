@@ -353,7 +353,7 @@ export default function ChatPanel({
                       和读屏软件看到的都只有「再来一版」这四个字。 */}
                   {rerunnable.includes(m.id) && (
                     <button className="bubble-rerun" disabled={!!busy} onClick={() => onRerun(m.id)}>
-                      <RotateCw size={13} aria-hidden="true" />
+                      <RotateCw size={13} strokeWidth={1.5} aria-hidden="true" />
                       再来一版
                     </button>
                   )}
@@ -379,7 +379,7 @@ export default function ChatPanel({
                       onClick={() => setMenuId(cur => (cur === m.id ? null : m.id))}>
                       {/* 图标不进 textContent（svg 天生如此）—— 按文字找按钮的
                           地方和读屏软件看到的都只有 `aria-label` 那个名字。 */}
-                      <MoreHorizontal size={15} aria-hidden="true" />
+                      <MoreHorizontal size={15} strokeWidth={1.5} aria-hidden="true" />
                     </button>
                   )}
                 </div>

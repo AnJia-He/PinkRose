@@ -722,13 +722,13 @@ export default function Canvas({
             type="button" className="zoom-btn" aria-label="缩小" title="缩小"
             disabled={view.scale <= 1} onClick={() => zoomBy(1 / ZOOM_STEP)}
           >
-            <Minus size={15} aria-hidden="true" />
+            <Minus size={15} strokeWidth={1.5} aria-hidden="true" />
           </button>
           <button
             type="button" className="zoom-btn" aria-label="放大" title="放大"
             onClick={() => zoomBy(ZOOM_STEP)}
           >
-            <Plus size={15} aria-hidden="true" />
+            <Plus size={15} strokeWidth={1.5} aria-hidden="true" />
           </button>
           {view.scale > 1 && (
             <button type="button" className="zoom-fit" onClick={() => putView(FIT)}>适应窗口</button>

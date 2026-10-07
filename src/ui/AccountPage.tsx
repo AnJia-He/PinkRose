@@ -165,12 +165,12 @@ export function AccountPage({
             <button className="account-row" aria-expanded={pwOpen}
               onClick={() => setPwOpen((o) => !o)}>
               <span className="account-row-label">改密码</span>
-              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
+              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
             </button>
             <button className="account-row account-row-danger" aria-expanded={delOpen}
               onClick={() => setDelOpen((o) => !o)}>
               <span className="account-row-label">注销账号</span>
-              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
+              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
             </button>
           </div>
 
@@ -226,7 +226,7 @@ export function AccountPage({
               {/* 拿不到名单时这一格整个不出现（见上面那个 effect 的注释）——
                   「默认」两个字在那种情况下是一句没根据的话。 */}
               {models !== null && <span className="account-row-value">{modelValue(models)}</span>}
-              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} /></span>
+              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
             </button>
           </div>
         </section>

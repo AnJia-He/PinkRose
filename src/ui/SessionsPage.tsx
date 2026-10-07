@@ -294,7 +294,7 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
                   <button className="session-more" aria-label="更多操作"
                     aria-expanded={menuId === s.id}
                     onClick={() => setMenuId(cur => (cur === s.id ? null : s.id))}>
-                    <MoreHorizontal size={15} aria-hidden="true" />
+                    <MoreHorizontal size={15} strokeWidth={1.5} aria-hidden="true" />
                   </button>
                 ))}
               </div>

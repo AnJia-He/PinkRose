@@ -211,7 +211,7 @@ export default function StepStrip({ steps, currentId, generating, onJump }: Prop
       <div className="strip-ring"
         style={{
           transform: `perspective(${PERSPECTIVE}px) rotateY(${rot}deg)`,
-          transition: dragging ? 'none' : 'transform .45s cubic-bezier(.16,1,.3,1)',
+          transition: dragging ? 'none' : 'transform var(--dur-3) var(--ease)',
         }}>
         {steps.map((s, i) => {
           const current = s.id === currentId

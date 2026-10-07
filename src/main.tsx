@@ -1,6 +1,12 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+// ★ 2026-10-07：**自带的中文字体**（MiSans VF，小米，免费商用；出处与许可见
+// `THIRD_PARTY_NOTICES.md`）。这一份里全是 `@font-face`，放在最前面 ——
+// 它不参与层叠胜负，只是"先告诉浏览器这些字从哪儿来，别急着用系统字排一遍"。
+// ⚠️ 家族名是 `MiSans VF`；真正引用它的是 `styles.css` 的 `--font` 和
+// `landing.css` 里 `.lp` 那条字体栈（两处都要跟，别只改一处）。
+import './assets/fonts/misans/misans.css'
 import './styles.css'
 // ⚠️ **落地页那份必须排在 `styles.css` 后面。**
 // 它有几条是要盖掉全局的：「`html.lp-on` 上的 `color-scheme` 和滚动条」、

@@ -183,23 +183,23 @@
 
      ★ 现在留下的规矩一句话：**按钮可以玻璃，框架不行。**
        · 框架（左栏 / 顶栏 / sticky 头 / 卡）= 实心 `--panel` + 发丝线；
-       · 只有**小块的、压在主色上的**东西才用玻璃那套高光（下面
-         `--glass-sheen/-edge/-drop`）—— 也就是亮着那颗导航药丸、悬停的行。
+       · 只有**小块的、压在别的面上的**东西才用那套高光 —— 亮着那颗导航药丸
+         （`--glass-hi`）、悬停的行（`--glass-hover`）。
+     ★ 2026-10-07 起**更收了一档**：药丸身上那道渐隐白高光和彩色柔影删了
+       （`.nav-item` 那两条规则的注释里写着理由）—— 深色扁平系统里只留
+       顶边那一条几乎看不见的内高光。
      ⚠️ `--glass`（磨砂面的底）和 `--wash`（壳子上那三团光）**已经删了**，
         别再加回来；真要用"半透明的大面"，先把上面这段读一遍。 */
   --glass-hi: light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .07));    /* 顶边那道内高光（深色里几乎看不见 —— 深底上本来就没有"光从上面来"） */
   --glass-hover: light-dark(rgba(18, 20, 28, .045), rgba(255, 255, 255, .08));  /* 磨砂面上"一行"的悬停（比 --hover 淡得多；深色里仍"比面亮一档"） */
   --hair: light-dark(rgba(18, 20, 28, .07), rgba(255, 255, 255, .09));          /* 面上**行与行之间**那条线（比 --line 淡） */
-  /* 悬着/亮着那颗导航按钮身上的三样（★ 2026-10-04 从 `.nav-item` 收进来的裸值：
-     上半那道**渐隐的白高光**、顶边一条更亮的**内高光**、底下一层**柔影**）。
-     ⚠️ 这四个**两种模式共用**（底色换过、但亮点那颗一直压在强调蓝上，白高光
-        在两边同理；柔影用的近黑在深底上本来就几乎看不见，沿用旧值 = 零视觉变化）。 */
-  --glass-sheen: rgba(255, 255, 255, .26);
-  --glass-edge: rgba(255, 255, 255, .45);
-  --glass-drop: rgba(18, 20, 28, .35);
-  --glass-drop-2: rgba(18, 20, 28, .5);
-  /* ★ 2026-10-06：**这四样是"玻璃"仅存的地方** —— 按钮级的、小面积的，
-     和"整条栏半透明"（已删）不是一回事，别一起删。 */
+  /* ★ 2026-10-07：`--glass-sheen / -edge / -drop / -drop-2` **四个都删了** ——
+     它们是"亮着那颗导航药丸"身上的糖果配方（渐隐的白高光 + 更亮的顶边 +
+     彩色柔影）。10-06 之后全站只有它还带着这种光泽：深色扁平系统里就它一处
+     在"发光"，读起来像另一个年代画的（评审 RC3）。
+     留下的规矩没变：**按钮可以带一丝光，框架不行** —— `.nav-item.on` 现在
+     只剩 `--glass-hi` 那条顶边内高光（深色里 .07，几乎看不见，但按钮级的
+     "接光"还在）。用到再加，别照旧注释加回来。 */
   /* 登录页那两层光晕（★ 也是 2026-10-04 收的裸值）。底下那层是"强调色那一档
      压得很淡"—— 主色改了就改这里（改色的账：10-01 → 10-03 换成蓝，= accent-700
      那一档）。深色版在两处都要**换回来**，理由在原处。 */
@@ -213,9 +213,27 @@
   --ease: cubic-bezier(.16, 1, .3, 1);
   --dur-1: .14s;
   --dur-2: .26s;
+  /* ★ 2026-10-07：第三档给"整块东西转身"用 —— 历史转盘那一圈。它原来把
+     `.45s cubic-bezier(.16,1,.3,1)` **内联写在 `StepStrip.tsx` 里**（曲线是
+     房子那条、时长却只有那一处知道），评审 RC4 说的"唯一有呼吸的动效没进令牌"
+     就是它。改时长别再去 tsx 里翻。 */
+  --dur-3: .45s;
 
-  --font: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui,
-          -apple-system, "Segoe UI", sans-serif;
+  /* ★★ 2026-10-07：**自带 MiSans**（小米发布、免费商用）—— 评审 RC2 那一刀。
+     改之前这一行是**纯系统字体栈**：访客看到哪一套字取决于**他电脑装了什么**。
+     本机实测（CDP `getPlatformFontsForNode`）：装了思源黑体的机器渲染思源，
+     没装的 Windows 掉到**微软雅黑** —— 而我们写的 600 会被浏览器合成成 700
+     （中文糊成一坨）、门面的 380/500 直接塌成 400。也就是说：**画板上确认过的
+     字重，在别人屏幕上根本不存在**。
+     ⚠️ 文件在 `src/assets/fonts/misans/`（56 片 woff2 + `misans.css`，4.6MB，
+     只在 `main.tsx` 里 import 一次）。它按 `unicode-range` 切片，浏览器
+     **只下载页面上真用到的片** —— 实测（登录屏首次加载）：woff2 **8 片 / 416KB**
+     ＋ 那份切片清单 CSS 80KB；之后走缓存，换页最多再补几片。
+     ⚠️ 家族名是 `MiSans VF`（可变字体，`font-weight: 150 700` 一条覆盖全字重）
+     —— 别写成 `MiSans`：那是静态版的名字，这个仓库里装的是 VF。
+     ⚠️ 后面几支仍然留着当**回退**（MiSans 缺某个生僻字时别掉进浏览器默认的宋体）。 */
+  --font: "MiSans VF", "PingFang SC", "Noto Sans SC", "Microsoft YaHei",
+          system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -268,6 +286,15 @@ body {
   font: 14px/1.5 var(--font);
   -webkit-font-smoothing: antialiased;
 }
+
+/* ★ 2026-10-07：`<b>` / `<strong>` 全站收到 **600**。
+   浏览器给它们的默认是 **700**，而 10-07 立的字重尺子只有 400/600 两档
+   （门面另有 380/500）—— 也就是说「个人设置」那一页的 6 处 `<b>`
+   （账号统计、已用/剩余那两个数）一直在按 700 渲染，**没人发现**：
+   `styles.ruler.test.ts` 只读 CSS/TSX 里的字符串，看不见渲染出来的字重。
+   评审里那条「隐藏的 700」就是它。⚠️ 以后凡是要"更重一点"，600 封顶；
+   真需要更重的层级，用字号和颜色解决，不开第三档。 */
+b, strong { font-weight: 600; }
 
 /* 键盘用户走到哪都要看得见（全站统一，各组件不必再各写一遍）。
    ⚠️ 用 :focus-visible 而不是 :focus：鼠标点一下不该在按钮上留一圈粉。 */
@@ -414,16 +441,18 @@ body {
 }
 .nav-item:hover {
   background: var(--glass-hover); color: var(--text);
-  box-shadow: inset 0 1px 0 var(--glass-hi), 0 4px 10px -6px var(--glass-drop);
 }
-/* 亮着的那一颗：**一片有高光的玻璃**，不是一块平蓝（用户说的"光滑"就是它）。
-   三件东西叠出来的：上半渐隐的白高光、顶边一条更亮的内高光、底下一层柔影
-   让它从栏上浮起来。底色还是那支蓝，白字照旧。 */
+/* 亮着的那一颗：**一片压着主色的药丸**，不是一块平蓝。
+   ★ 2026-10-07：删掉了原来那三件里的两件 —— 上半那道**渐隐的白高光**
+   （`linear-gradient(…, rgba(255,255,255,.26), …)`）和底下一层**彩色柔影**，
+   只留顶边一条几乎看不见的内高光。理由是评审 RC3：那是全站唯一一处在
+   "发光"的物件，而它旁边全是实心色块 —— 一件带光泽的东西杵在扁平系统里，
+   读起来不是"讲究"是"另一个年代"。悬停同理，只剩底色那一档
+   （和「个人设置」那些行 `.account-row:hover` 一个做法）。 */
 .nav-item.on {
   background-color: var(--accent);
-  background-image: linear-gradient(180deg, var(--glass-sheen), transparent 62%);
   border-color: var(--accent);
-  box-shadow: inset 0 1px 0 var(--glass-edge), 0 6px 16px -10px var(--glass-drop-2);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
   color: var(--accent-ink); font-weight: 600;
 }
 /* ★ 2026-10-03：左栏最底下那两颗（回门面的「产品介绍」和「个人设置」，见 Nav.tsx）。
@@ -1565,12 +1594,24 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   width: 100%; height: 20px; cursor: pointer;
 }
 .slider-track { width: 100%; height: 4px; border-radius: var(--r-pill); background: var(--line-2); }
-.slider-indicator { border-radius: var(--r-pill); background: var(--accent); }
+/* ★★ 2026-10-07：静止时**全中性** —— 填充段 `--line-3`、圆钮 `--text`（近白实心钮，
+   Lightroom 那类工具的手感）。主色在这块面板上从此只剩一个意思：
+   **「这一条我动过」**（`.on`，和标签变白、数字变薄荷是同一时刻）。
+   改之前这两样**无条件走主色**：-100~100 的滑块在值=0 时已经从最左填到中点，
+   十条一打开全是半条薄荷 —— 面板看起来"每一条都调过了"，而它恰恰在撒谎。
+   评审 RC1 量到的证据：调色屏出现最多的颜色就是薄荷（25 处，比面板灰还多）；
+   这也违反文件头自己那条「彩色只出现在按钮和选中态上，面积很小」。
+   ⚠️ 渐变轨（色温/色彩平衡/色相带）**没有填充段**（见 Slider.tsx），
+   它们靠圆钮；白色圆钮压在渐变的白中段上不会消失 —— 2px 的 `--panel` 描边
+   就是为这个留的。 */
+.slider-indicator { border-radius: var(--r-pill); background: var(--line-3); }
 .slider-thumb {
   width: 14px; height: 14px; border-radius: 50%;
-  background: var(--accent); border: 2px solid var(--panel); box-shadow: var(--shadow-1);
+  background: var(--text); border: 2px solid var(--panel); box-shadow: var(--shadow-1);
   transition: transform var(--dur-1) var(--ease), background-color var(--dur-1) ease;
 }
+.slider.on .slider-indicator { background: var(--accent); }
+.slider.on .slider-thumb { background: var(--accent); }
 /* 悬停/按下挂在**整条 control** 上，不是那 14px 的圆点上 —— 和换之前一样：
    鼠标落在滑轨上任何一处，圆点都该有反应（14px 的悬停区太窄了）。 */
 .slider-control:hover .slider-thumb { transform: scale(1.18); }
@@ -2137,6 +2178,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      上**就代换完、再整个继承下来的 —— 光覆盖 `--accent-400` 够不着走别名的
      那些（按钮背景 `.btn-primary` 走的就是它，实拍抓到的）。 */
   --accent: light-dark(#1b62d6, #3b82f6);
+  /* ★ 2026-10-07：**焦点圈也得跟着钉回蓝**。`--ring` 住在 `:root`，是全站
+     共用的一条 —— 主色 10-05 换成薄荷时它跟着换了薄荷（rgba(94,234,212,.34)），
+     而这一页上面那几行只把 `--accent-*` 覆盖回蓝。结果是聚焦时**蓝边框 +
+     薄荷色的外圈**，两个颜色（评审 P2，真机像素验过）。
+     ⚠️ 和其它几行同理：`var()` 在**声明它的那个元素上**就代换完，
+     不会因为下游覆盖了 `--accent` 而自动变蓝 —— 所以这条必须单独写。 */
+  --ring: 0 0 0 3px light-dark(rgba(27, 98, 214, .28), rgba(59, 130, 246, .35));
   display: flex; align-items: center; justify-content: center;
   /* 同 `.shell`：两行是有意的，老的退回 vh（见那一段的理由）。 */
   min-height: 100vh; min-height: 100dvh; padding: var(--sp-5);
