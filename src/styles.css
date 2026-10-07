@@ -2081,6 +2081,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
     max-height: 40vh;
     border-left: none;
     border-top: 1px solid var(--line);
+    /* ★ 2026-10-07（完成度升级）：呼吸一档在窄屏收回来一点 —— 面板四周 28 在
+       390px 手机上会挤掉内容宽度，左右各收 8px 就够。 */
+    padding-left: 20px; padding-right: 20px;
   }
 
   /* ★ 2026-10-04：这里原来有一条 `.app:has(> .panel) .chat { display: none }`
@@ -2628,7 +2631,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .detail-head {
   position: sticky; top: 0; z-index: 1;
   display: flex; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-4) 0 var(--sp-3); margin-bottom: var(--sp-4);
+  padding: 18px 0 14px; margin-bottom: var(--sp-4);
   /* ★★ 2026-10-06（深夜）：和作品页那条同一条 —— 玻璃改实心 `--panel`
      （"按钮可以玻璃，框架不行"），理由写在 `.gallery-head` 那段。 */
   background: var(--panel);
@@ -2663,7 +2666,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
 .detail-actions {
   display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
-  margin-top: var(--sp-4);
+  margin-top: 20px;
 }
 /* 「下载到我的电脑」是个 <a>（`download` 属性只有真链接才带得动）。
    主按钮那套长相现在由**组件**带过来（`<BtnLink>` 会拼上 `btn-primary`），
@@ -2714,7 +2717,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .recipe-params { list-style: none; margin: 0 0 var(--sp-4); padding: 0; }
 .recipe-params li {
   display: flex; justify-content: space-between; gap: var(--sp-3);
-  padding: 6px 0; font-size: 13px;
+  padding: 8px 0; font-size: 13px;
   border-bottom: 1px solid var(--line);
 }
 .recipe-params li:last-child { border-bottom: 0; }
@@ -2873,12 +2876,12 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .account-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--sp-5);
+  gap: 28px;
   margin-top: var(--sp-5);
   align-items: start;
 }
 /* 一框 = 小标题 + 卡（+ 展开的表单 / 确认）。gap 管"卡和展开块之间那口气"。 */
-.account-tile { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.account-tile { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 /* 框外那行小标题 —— 和「对话」列表的分组标题（`.gallery-day-title`）一个语言：
    小一号、压成 muted，说清"这框是哪一类"。 */
 .account-tile-title { margin: 0 0 0 2px; font-size: 13px; font-weight: 600; color: var(--muted); }
@@ -2903,7 +2906,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    少写一条，那一行就会重新长回一个方框（用户最早嫌的就是那个）。 */
 .account-row {
   display: flex; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-4); text-align: left;
+  padding: 14px 18px; text-align: left;
   background: transparent; border: 0; border-radius: 0;
   /* 全局那条"按下缩 3%"（`button:where(:active)`）在这几行上关掉：一行是**面上
      的一块**，缩进去会在卡片边上露出底下的磨砂。反馈走悬停那层底就够了。 */
@@ -3054,7 +3057,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
 .models-list { list-style: none; margin: var(--sp-3) 0 0; padding: 0; }
 /* 别名占满中间、按钮靠右：名字长短不一时按钮才不跟着左右抖。 */
-.models-row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 0; }
+.models-row { display: flex; align-items: center; gap: var(--sp-2); padding: 10px 0; }
 /* ⚠️ ✓ 那一格**永远占着宽度**（没在用的那行里面是空的）：不占的话两行的别名
    会差一个字符、左边缘对不齐 —— 而这一页最要紧的信息就是"哪个在用"，
    对齐比省这几像素重要。 */
