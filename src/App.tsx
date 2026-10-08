@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Btn } from './ui/kit/Btn.tsx'
-import { Slider } from './ui/kit/Slider.tsx'
 import Canvas, { type CropScene, type RetouchScene } from './ui/Canvas'
 import Uploader from './ui/Uploader'
 import AdjustEmpty from './ui/AdjustEmpty'
 import AdjustmentPanel from './ui/AdjustmentPanel'
 import PresetRail from './ui/PresetRail'
+import TopActions from './ui/TopActions'
+import Banners from './ui/Banners'
+import CropControls from './ui/CropControls'
+import RetouchControls from './ui/RetouchControls'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import StepStrip from './ui/StepStrip'
 import StepNav from './ui/StepNav'
@@ -31,11 +33,11 @@ import { resizeBitmap } from './image/resize'
 import { samplePixels } from './image/sample'
 import { cropToBitmap } from './image/crop'
 import { eraseToBitmap } from './image/erase'
-import { createMask, maskBounds, type BrushMode } from './core/retouch'
+import { createMask, defaultBrushRadius, maskBounds, type BrushMode } from './core/retouch'
 import { matchToReference } from './core/colorMatch'
 import { activePresetId } from './core/presets'
 import {
-  MAX_STRAIGHTEN, clampRect, effectiveAngle, fitAspect, inscribedRect, rectFromSize,
+  clampRect, effectiveAngle, fitAspect, inscribedRect, rectFromSize,
   rotatedBounds, type CropRect, type CropSpec,
 } from './core/crop'
 import { fitToLimit, probeLimit } from './render/limits'
@@ -46,7 +48,7 @@ import { fitToLimit, probeLimit } from './render/limits'
 //   渲染管线，spec §10 点过名）。
 import { TonePipeline } from './render/pipeline'
 import { applyDeltas, clampAdjustments, ZERO, type Adjustments } from '../shared/adjustments.ts'
-import { canShareImage, downloadImage } from './export/save'
+import { canShareImage } from './export/save'
 import { prepareForRouting } from './image/prepare'
 import { ApiError, isUnauthorized, postRoute } from './api/client'
 import { bitmapsToClose, attachThumb, closeBitmaps, type Snapshot } from './core/history'
@@ -153,25 +155,6 @@ async function fitToDevice(
   }
 }
 
-/** 裁剪的比例档（★ 2026-10-06）。`value` 是**像素**宽高比，`null` = 自由。 */
-type CropRatio = { name: string; value: number | null }
-
-/**
- * 第二行那一排比例（spec §3.1 点名的六个）。
- * ⚠️ 「原始」是**这张照片**自己的比例 —— 它得等照片到手才算得出来，
- *    所以这是个函数、不是模块级常量。
- * ⚠️ 判"哪一档亮着"用的是**全等**比较（`crop.aspect === r.value`）：挑过哪一档
- *    存的就是那个数，`原始` 存的是 `imgW/imgH` 本身，对得上。
- */
-const cropRatios = (img: DecodedImage): CropRatio[] => [
-  { name: '自由', value: null },
-  { name: '1:1', value: 1 },
-  { name: '4:3', value: 4 / 3 },
-  { name: '3:4', value: 3 / 4 },
-  { name: '16:9', value: 16 / 9 },
-  { name: '原始', value: img.width / img.height },
-]
-
 /**
  * 某个角度下**默认的那个框**：居中的最大内接矩形（不碰空角），
  * 再按比例档收一下（"装得下为前提"那件事交给 `core/crop` 的 `fitAspect`）。
@@ -192,18 +175,10 @@ function defaultCropRect(
 
 // ── 点修（★ 2026-10-07，工具行第二颗）────────────────────────────────────
 //  涂抹的换算法在 `ui/RetouchOverlay`，掩码工具在 `core/retouch`，
-//  像素落点在 `image/erase`。这一层只管：**笔刷参数的默认值 / 上下限**、
-//  **太大就拦**、以及**完成时给「当前这一版」记一笔账**（照裁剪那套）。
-
-/** 默认笔刷半径（图片像素）：短边的 3%，夹在 8~120px 之间。 */
-function defaultBrushRadius(w: number, h: number): number {
-  return Math.max(8, Math.min(120, Math.round(Math.min(w, h) * 0.03)))
-}
-
-/** 笔刷滑杆的上限（图片像素）：短边的 25%。 */
-function maxBrushRadius(w: number, h: number): number {
-  return Math.max(24, Math.round(Math.min(w, h) * 0.25))
-}
+//  像素落点在 `image/erase`。这一层只管：**太大就拦**、以及**完成时给
+//  「当前这一版」记一笔账**（照裁剪那套）。
+//  （笔刷参数的默认值 / 上下限 ★ 2026-10-08 搬进了 `core/retouch` ——
+//    `openRetouch` 和 `ui/RetouchControls` 两处都要用。）
 
 /**
  * 一次擦除的**外接框**上限（像素）。耗时随它线性涨 —— 真照片探针实测
@@ -3067,131 +3042,33 @@ export default function App() {
           时它也会跟着挂载 —— 而它是按"这张照片"来的东西，那些页面上照片根本不在。*/}
       {(view.kind === 'edit' || view.kind === 'adjust') && (
         <div className="app">
-          {/* 顶栏现在**只在有照片的时候才有**（★ 2026-10-03）。
-              它原来是一条常驻的横杠：左边品牌名、右边一颗 👤、中间这四颗按钮。
-              用户指着那一屏说「**这个一行都不要**，个人设置放到首页下面」——
-              品牌名整个下线（顶栏不再挂名字；门面和登录页那两处还都在），
-              👤 搬去了左栏（见 `ui/Nav.tsx` 的「个人设置」）。
-              这条横杠当场就只剩这四颗按钮了 —— 那就没有理由在**还没有照片**的
-              时候摆一条空杠占着地方：它们本来就只在有照片可操作的那一刻才有用。
-              于是它现在**不是"顶栏"了，是"这张照片的操作条"**。
-              ★ 2026-10-04：**里面那三颗现在真的是三颗了** —— 原来最左边那颗
-              「调色」也搬去了左栏（用户：「那个微调照片的放在导航栏单列出来」）。
-              它本来就格格不入：这三颗是**把图拿走**（下载 / 保存 / 新的一张），
-              那颗是**改这张图**。搬走之后这一条自己成立了一个说法 ——
-              **"这张照片怎么办"**。 */}
+          {/* 「这张照片怎么办」——三颗按钮那条（★ 2026-10-08 拆进 `ui/TopActions`，
+              它当年为什么从"顶着品牌名的顶栏"瘦成"这张照片的操作条"，
+              那一段历史搬在组件的文件头上）。
+              ⚠️ 改那三颗按钮的**文字**要连带改探针/测试（理由在组件里那段）。 */}
           {image && (
-            <header className="topbar">
-              <div className="actions">
-                {/* 这一格是**"把图给我"**，只是给法分两种，按这个设备认不认
-                    图片分享来选（`canShare` 只在挂载时算一次：设备能力不会中途变）。
-                    · 认 → 「分享」：弹系统面板，手机上一步选微信，跳过翻文件管理器。
-                    · 不认 → 「下载」：桌面 Chrome 就是这一档，见 onDownload
-                      —— 在那之前**桌面上根本没有把图拿到手的路**。
-                    两条路都给同一个东西（用户修好的那张图），所以它们是**同一格
-                    的两种长相**，不是两个按钮。 */}
-                {canShare ? (
-                  <Btn className="primary" onClick={() => onShare()} disabled={delivering !== null}>
-                    {delivering === 'share' ? '准备中…' : '分享'}
-                  </Btn>
-                ) : (
-                  <Btn className="primary" onClick={onDownload} disabled={delivering !== null}>
-                    {delivering === 'download' ? '准备中…' : '下载'}
-                  </Btn>
-                )}
-                {/* 「保存」= 存进作品集（§3.4）—— 它不再下载，所以走的是 `onSave`。
-                    ★ 2026-10-06（晚）：**字从「保存」改成「存进作品」** ——
-                    用户提的那句"细节点不能模棱两可"：这一格和左边那颗
-                    （下载 / 分享）都是"把图留下"，而"保存"没说存到**哪儿**去。
-                    存进「作品」——名字和左栏那一支、和成功那声通报
-                    （「存好了，在左边「作品」里。」）说的是同一个地方。
-                    ⚠️ 改这三个字要**连带**改：这个文件的 `saveFail` 横幅、
-                    「原图没取回来」那条通报、`App.test.tsx` 的 `topbarButtons()`
-                    和那处 `click('保存')`、`scripts/check-mobile-layout.mjs`
-                    和 `scripts/dump-copy.mjs`（它们按文字点这颗按钮）。 */}
-                <button onClick={onSave} disabled={delivering !== null}>
-                  {delivering === 'save' ? '准备中…' : '存进作品'}
-                </button>
-                {/* 「新的一张」= 回到上传前那一屏去选下一张（§6.4）——
-                    它是**"我再改一张"**，和「保存」（把这张存进作品）是两件事。
-                    ⚠️ 它**不删**当前这条会话：那条已经在服务端上存着了，左栏
-                      「对话」里还找得到。
-                    ⚠️ 忙的时候 disabled：生成在跑的那十几秒里，那一次回来时会往
-                       history 里写一步，而那时候这张照片早就不在屏幕上了。 */}
-                <button onClick={startNew} disabled={busy !== null}>新的一张</button>
-              </div>
-            </header>
+            <TopActions
+              canShare={canShare}
+              delivering={delivering}
+              onShare={onShare}
+              onDownload={onDownload}
+              onSave={onSave}
+              onNew={startNew}
+              busy={busy !== null}
+            />
           )}
 
-          {/* 通报条（取代了原来的 window.alert）。它和下面那两条横幅是**三种东西**：
-              这条是"这件事没成"的通报、可以收走；`.ask` 是**在问用户一句话**；
-              `.save-fail` 是"图还在，先拿到手"（自带下载按钮，而且不许关）。
-              三块都排在最上面（有照片时在操作条底下、没有时自己就是第一条）、
-              都按"一整条横幅"排，所以它们并排出现时读起来是一列消息，
-              不是三坨按钮。 */}
-          {notice && (
-            <div className={notice.tone === 'ok' ? 'notice ok' : 'notice'}>
-              <p>{notice.text}</p>
-              <button onClick={() => setNotice(null)}>知道了</button>
-            </div>
-          )}
-
-          {/* 「上次那张要替换掉吗？」（§3.4）—— 同一张照片存第二次才会出现。
-              ⚠️ **不放进 `.topbar`**：那一条是那四颗按钮的操作条，塞进去会把它们
-              挤成一团（`check:layout` 量的正是这条会不会被挤爆）。贴在它**下面**
-              也就贴在用户刚按的那个按钮的正下方 —— 问他话的地方就是他按的地方。 */}
-          {asking && (
-            <div className="ask">
-              <p>上次那张要替换掉吗？</p>
-              <button onClick={() => answerAsk(savedId)}>替换</button>
-              <button onClick={() => answerAsk(null)}>再存一张</button>
-            </div>
-          )}
-
-          {/* 存不进去（§6.6 ①）：**改好的图只在屏幕上**，所以当场给一个能拿到它
-              的按钮。§10 说这条最容易漏 —— 漏了的话用户一关页面，那张图就没了，
-              而他那一刻要的是发朋友圈；存不下是**我们这边的限制**。 */}
-          {saveFail && (
-            <div className="save-fail">
-              {/* §6.6 ②：明确告诉他，不含糊 —— 只说"存不进去"他会以为图也没了。
-                  ⚠️ **两种失败要分两句话说。** `blob` 为 null 意味着图**根本没做出来**
-                  （`buildExportBlob` 那步就炸了），这时候说"图还在"是**假的** ——
-                  用户会去找一个屏幕上根本不存在的按钮。有图才说"图还在，先拿到手"。
-                  变异：把下面这个三目压成永远走第一句 → 那条断言红。
-                  ⚠️ **说的是「刚才那张」，不是「这一张」**（2026-09-25 改）。这条横幅
-                  **不随画面变消失**（故意的：清掉的话用户就再也拿不到那张图了，而他
-                  关掉横幅之后是**真的**拿不到了）。而屏幕上的画面是会变的 —— 他回头
-                  又改了一版（「把后面那个人去掉」生成一张新的底，或者点「回到这一步」
-                  退回某一步），这时候屏幕上那张**就不是**失败那一刻那张了：
-                  「这一张」指向屏幕上这张，而按钮给的是 `saveFail.blob` 里那张
-                  （失败那一刻做出来的）。**一句话和它对不上的行为，比没有这句话更糟。**
-                  （不是"换一张照片"那个场景：应用里没有换图入口 —— Uploader 只在
-                  还没有图的时候渲染，换图的唯一动作是重开一次，而重开会把横幅
-                  一起清掉，所以横幅边上从来不会出现"另一张照片"。见 App.test.tsx
-                  那条「换一张照片」的注释。）
-                  变异：把「刚才那张」改回「这一张」→ 那条「存失败之后又改了一版」的断言红。 */}
-              {saveFail.blob
-                ? <p>刚才那张没能存进「作品」。图还在，先拿到手：</p>
-                : <p>刚才那张没能存进「作品」，图也没能导出来。再点一次「存进作品」试试。</p>}
-              {/* 把"为什么"也说出来 —— 服务端给的那句话（「这张图太大了，存不下」）
-                  比「没存进去」有用得多。存了这个字段却从不显示，等于白存。 */}
-              <p className="save-fail-why">{saveFail.why}</p>
-              {saveFail.blob && (
-                <Btn
-                  className="download"
-                  // ⚠️ 这个 `!` 是**结构上**安全的，不是"我保证"：它上面那行
-                  //    `{saveFail.blob &&` 已经把 false 那一支挡掉了，能渲染到这里
-                  //    就说明 blob 非 null。（而且不能把 `&&` 换成 `?.` —— `&&`
-                  //    也是"按钮出不出现"本身：没图就不该有这个按钮。）
-                  //    **别照着这里在别处也随手加 `!`**：换个地方它可能真的会是 null。
-                  onClick={() => downloadImage(saveFail.blob!, saveFail.name)}
-                >
-                  下载到电脑
-                </Btn>
-              )}
-              <button onClick={() => setSaveFail(null)}>知道了</button>
-            </div>
-          )}
+          {/* 顶上那三条横幅（通报 / 替换询问 / 存失败）—— ★ 2026-10-08 拆进
+              `ui/Banners`（为什么是**三种东西、别合并**，那一段在组件文件头上）。 */}
+          <Banners
+            notice={notice}
+            onDismissNotice={() => setNotice(null)}
+            asking={asking !== null}
+            savedId={savedId}
+            onAnswerAsk={answerAsk}
+            saveFail={saveFail}
+            onDismissSaveFail={() => setSaveFail(null)}
+          />
 
           {!image && (
             <main className="stage">
@@ -3251,11 +3128,9 @@ export default function App() {
                     ⚠️ 切走屏时要收掉工具，见顶上那条 `[view.kind]` 的 effect。 */}
                 {view.kind === 'adjust' && (
                   <ToolBar active={tool} onPick={pickTool}>
-                    {/* ★ 2026-10-06（裁剪）：第二行 —— 比例 / 左右转 / 水平矫正 /
-                        取消 / 完成（spec §3.1 点名的这几样）。
-                        ⚠️ 比例档住在一排小药丸里；「水平矫正」用的是调色面板**同一个**
-                        滑块零件（`ui/kit/Slider`：轨道 + 拇指 + 读屏一口气都有，
-                        双击还能回 0）；它在这一行的宽度由 CSS 给。
+                    {/* 第二行 = 当前工具的控件（★ 2026-10-08 拆成
+                        `ui/CropControls` / `ui/RetouchControls` 两个组件，
+                        DOM 一个字没改；各自的"长什么样、为什么这样"在组件文件头）。
 
                         ⚠️⚠️ **两个工具的第二行收在一条三目里**（2026-10-07 踩过）：
                         写成两个并排的 `&&` 时，React 的 children 会变成一个
@@ -3265,73 +3140,31 @@ export default function App() {
                         把照片推下去 37px。`App.test.tsx` 里那条
                         「★「对比」不算"工具开着"」正是它的守卫。 */}
                     {tool === 'crop' && crop && image ? (
-                      <>
-                        <div className="crop-ratios" role="group" aria-label="比例">
-                          {cropRatios(image).map(r => {
-                            const on = crop.aspect === r.value
-                            return (
-                              <button
-                                key={r.name} type="button"
-                                className={`crop-chip${on ? ' on' : ''}`}
-                                aria-pressed={on}
-                                onClick={() => pickCropAspect(r.value)}
-                              >{r.name}</button>
-                            )
-                          })}
-                        </div>
-                        {/* 坐标方向：**正角度 = 照片在输出里逆时针转**（见
-                            `image/crop.ts` 的 JSDoc）—— 所以「左转」是 +1 个直角。 */}
-                        <button type="button" className="crop-btn"
-                          onClick={() => setCropAngle({ turns: crop.turns + 1 })}>左转</button>
-                        <button type="button" className="crop-btn"
-                          onClick={() => setCropAngle({ turns: crop.turns - 1 })}>右转</button>
-                        <Slider
-                          label="水平矫正" value={crop.spec.angle}
-                          min={-MAX_STRAIGHTEN} max={MAX_STRAIGHTEN} step={0.5}
-                          changed={crop.spec.angle !== 0}
-                          onChange={angle => setCropAngle({ angle })}
-                        />
-                        <div className="crop-tools">
-                          <button type="button" className="crop-btn" onClick={cancelCrop}>取消</button>
-                          <Btn className="crop-done" onClick={() => void commitCrop()}>完成</Btn>
-                        </div>
-                      </>
+                      <CropControls
+                        image={image}
+                        spec={crop.spec}
+                        turns={crop.turns}
+                        aspect={crop.aspect}
+                        onPickAspect={pickCropAspect}
+                        onTurns={setCropAngle}
+                        onCancel={cancelCrop}
+                        onDone={commitCrop}
+                      />
                     ) : tool === 'retouch' && retouch && image ? (
-                      /* ★ 2026-10-07（点修）：第二行 —— 画笔 / 橡皮 / 笔刷粗细 /
-                         取消 / 「擦掉这里」（spec §3.2：先涂地方，再擦）。
-                         ⚠️ **「擦掉这里」就是完成**（这一擦推新的一步）—— 没有
-                         单独的"完成"按钮，一个动作一趟。
-                         ⚠️ 它是**禁用**到涂过为止的（`retouch.dirty`）—— 空掩码
-                         提交等于什么都没发生，不如别让它可按。 */
-                      <>
-                        <div className="retouch-modes" role="group" aria-label="笔触">
-                          {([['paint', '画笔'], ['erase', '橡皮']] as const).map(([m, name]) => {
-                            const on = retouch.mode === m
-                            return (
-                              <button
-                                key={m} type="button"
-                                className={`crop-chip${on ? ' on' : ''}`}
-                                aria-pressed={on}
-                                onClick={() => setRetouch(r => (r ? { ...r, mode: m } : r))}
-                              >{name}</button>
-                            )
-                          })}
-                        </div>
-                        <Slider
-                          label="笔刷" value={retouch.radius}
-                          min={4} max={maxBrushRadius(image.width, image.height)} step={1}
-                          changed={retouch.radius !== defaultBrushRadius(image.width, image.height)}
-                          onChange={radius => setRetouch(r => (r ? { ...r, radius } : r))}
-                        />
-                        <div className="crop-tools">
-                          <button type="button" className="crop-btn" onClick={cancelRetouch}>取消</button>
-                          <Btn
-                            className="crop-done"
-                            disabled={!retouch.dirty || erasing}
-                            onClick={() => void commitRetouch()}
-                          >擦掉这里</Btn>
-                        </div>
-                      </>
+                      <RetouchControls
+                        image={image}
+                        mode={retouch.mode}
+                        radius={retouch.radius}
+                        dirty={retouch.dirty}
+                        erasing={erasing}
+                        // 两个 setter 都照着原来那两句写：**改现场本身**（`setRetouch`
+                        // 的 r 为 null 时原样返回 —— 工具已经收掉时的一次点击不该
+                        // 凭空把它拉回来）。
+                        onMode={m => setRetouch(r => (r ? { ...r, mode: m } : r))}
+                        onRadius={radius => setRetouch(r => (r ? { ...r, radius } : r))}
+                        onCancel={cancelRetouch}
+                        onDone={commitRetouch}
+                      />
                     ) : null}
                     {/* ★ 2026-10-06（对比）：它**不传 children** —— 一个开关没有
                         自己的控件，而空着的第二行会无端占掉照片 37px（开着对比时

@@ -12,6 +12,18 @@
 
 export type BrushMode = 'paint' | 'erase'
 
+/** 默认笔刷半径（图片像素）：短边的 3%，夹在 8~120px 之间。
+ *  ★ 2026-10-08 从 `App.tsx` 搬进来（纯算式；App 的 `openRetouch` 和
+ *  `ui/RetouchControls` 两处都要用）。 */
+export function defaultBrushRadius(w: number, h: number): number {
+  return Math.max(8, Math.min(120, Math.round(Math.min(w, h) * 0.03)))
+}
+
+/** 笔刷滑杆的上限（图片像素）：短边的 25%。（同 `defaultBrushRadius`，10-08 搬。） */
+export function maxBrushRadius(w: number, h: number): number {
+  return Math.max(24, Math.round(Math.min(w, h) * 0.25))
+}
+
 export function createMask(width: number, height: number): Uint8Array {
   return new Uint8Array(width * height)
 }
