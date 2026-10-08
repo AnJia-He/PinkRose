@@ -8026,6 +8026,41 @@ describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本',
     expect(canvasProps.props.at(-1)!.params.exposure).toBe(40)
     expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
   })
+
+  it('★ 退到中间、又调了一下、立刻点「下一步」—— 那一笔不丢，按钮也不空转', async () => {
+    // ★ 2026-10-08 评审 Important 钉的就是这一下（brief 里那行 `if (target === base) return`
+    //   写错了）：账本在**中间**（future 非空、「下一步」可点）时拖一下滑块 ——
+    //   内联定稿那一下 `pushEdit` 会**清空 future**，于是紧接着的 `redoEdit` 返回
+    //   **同一引用**（真的到头了），那行早返回就把**刚定稿的那一笔**连 `setHistory`
+    //   一起丢掉了。两处后果都是"错了不报错"：
+    //     ① 刚调的那笔不在账本里（画面照变 —— 之后再按「上一步」会一次退两件事）；
+    //     ② 那颗「下一步」看着能点、点了什么都不发生。
+    //   变异：把 `ledgerStep` 里那句改回 `if (target === base) return` → 下面
+    //   「2 / 2」和最后那两句一起红。
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+
+    await cropOnce()
+    await tap(navBtns()[0]!)                       // 退到"没裁"那一笔（future 非空）
+    expect(stepNav()!.textContent).toContain('1 / 2')
+    expect(navBtns()[1]!.disabled).toBe(false)     // 「下一步」可点
+
+    await setSlider('亮度', 40)                    // 起一笔，**不定稿**
+    await tap(navBtns()[1]!)                       // ★ 立刻点「下一步」
+
+    // ① 那一笔**记上了**：这一刻它就是最新的一笔（定稿后 future 本来也空了）
+    expect(stepNav()!.textContent).toContain('2 / 2')
+    expect(canvasProps.props.at(-1)!.params.exposure).toBe(40)
+    // ② 按钮不空转：真的到头了
+    expect(navBtns()[1]!.disabled).toBe(true)
+
+    // ③ 而且它记的**正是刚调的那一笔**：再退一步，退的是"调色"，不是"调色 + 别的"
+    await tap(navBtns()[0]!)
+    expect(stepNav()!.textContent).toContain('1 / 2')
+    expect(canvasProps.props.at(-1)!.params.exposure).toBe(0)
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
+  })
 })
 
 /**

@@ -49,7 +49,9 @@ import { bitmapsToClose, attachThumb, type Snapshot } from './core/history'
 //   `flushEdit`（调色那一笔的定稿）用 `sameEdit` 判净零、用 `pushEdit` 记账；
 //   调色屏左下角那组箭头（`ledgerStep`）走 `undoEdit` / `redoEdit`，
 //   画几笔看 `ledgerTotal`。
-import { ledgerTotal, pushEdit, redoEdit, sameEdit, undoEdit, type EditState } from './core/ledger'
+import {
+  ledgerIndex, ledgerTotal, pushEdit, redoEdit, sameEdit, undoEdit, type EditState,
+} from './core/ledger'
 // ★ 2026-10-08：删除的单位是"一问一答"（用户报的"删了一条、另半条还留着"），
 //   `expandDeleteIds` 就在这儿把一条 id 补成整轮 —— 纯函数，和 ChatPanel 勾选
 //   那侧共用同一份（别在两处各写一遍配对逻辑）。
@@ -634,6 +636,13 @@ export default function App() {
     const p = editPendingRef.current
     if (!p) return
     editPendingRef.current = null
+    // ★ 号**在 updater 外面发**（2026-10-08 评审顺手件）：`setHistory` 的 updater
+    //   会被推迟到渲染时才跑、StrictMode 还会重放 —— 写在里面的话，"先发生的
+    //   那一笔"可能拿到**更大**的号，而 Task 5 的预算驱逐正是按 `seq` 挑"最老的
+    //   一笔"（挑反了就是把新的丢了、留着老的）。
+    //   ⚠️ 代价是净零 / 找不到那一版时也白跳一个号 —— **无害**（号允许有空洞，
+    //   它只用来比先后，不参与任何显示）。
+    const seq = ++editSeqRef.current
     setHistory(h => {
       const s = h.find(x => x.id === p.stepId)
       // 那一版已经不在了（被删了 / 换了会话）：原样返回，一个字节都不动。
@@ -641,7 +650,6 @@ export default function App() {
       // ⚠️ 这里**不能**用闭包里的 `params`：定时器到点时那是过去那一轮的值。
       const next = { base: s.base, params: s.params, lut: s.lut }
       if (sameEdit(p.before, next)) return h         // 净零：不记（也不惊动渲染）
-      const seq = ++editSeqRef.current
       return h.map(x => (x.id === p.stepId ? pushEdit(x, { ...p.before, seq }, next, seq) : x))
     })
   }, [])
@@ -2218,7 +2226,18 @@ export default function App() {
       }
     }
     const target = dir < 0 ? undoEdit(base) : redoEdit(base)
-    if (target === base) return              // 到头（按钮本来就 disabled，这是保险）
+    // ⚠️★ 2026-10-08（评审 Important）：这里判"到头"要**两个条件一起**。
+    //   只看 `target === base` 会吃掉两种情况，而其中一种是**真的有事发生**：
+    //   账本在中间（future 非空、「下一步」可点）时拖了一下滑块 —— 上面那下
+    //   内联 `pushEdit` **清空了 future**，于是紧接着的 `redoEdit` 返回**同一引用**，
+    //   `target === base` 成立。直接 return 的后果是"错了不报错"的两条：
+    //     ① 刚定稿的那一笔连 `setHistory` 一起丢掉（画面照变 —— 之后按「上一步」
+    //        会一次退掉两件事）；
+    //     ② 那颗「下一步」看着能点、点了什么都不发生。
+    //   `base === cur` 才叫**真到头**（什么都没变：没定稿、也没得退/进）。
+    //   反方向（`dir < 0`）不受影响：内联记账只往 `past` 里加，而 `undoEdit` 只在
+    //   `past` 空时返回原引用 —— 那时候「上一步」本来就按不动。
+    if (target === base && base === cur) return
     setHistory(h => h.map(s => (s.id === cur.id ? target : s)))
     setImage(target.base)
     setParams(target.params)
@@ -3209,10 +3228,12 @@ export default function App() {
                   const total = cur ? ledgerTotal(cur) : 1
                   if (view.kind !== 'adjust' || !image || !cur || total <= 1) return null
                   if (tool === 'crop' || tool === 'retouch') return null
-                  // 位置是**数出来的**（`past.length + 1`，1 起数）—— 别另存一个计数器。
+                  // 位置走 `ledgerIndex`（`past.length + 1`）—— **唯一**那份口径，
+                  // 别在这儿再数一遍（数法一旦和 `core/ledger.ts` 分家就是"两处各
+                  // 说各话、谁也不报错"）。
                   return (
                     <StepNav
-                      index={cur.past.length + 1}
+                      index={ledgerIndex(cur)}
                       total={total}
                       onPrev={() => ledgerStep(-1)}
                       onNext={() => ledgerStep(1)}
