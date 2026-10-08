@@ -27,7 +27,8 @@
 | 修图主界面（骨架） | [App.tsx](src/App.tsx) |
 | 对话栏（右边那一条） | [ChatPanel.tsx](src/ui/ChatPanel.tsx) |
 | 照片显示区（含放大缩小 / 拖动看细节） | [Canvas.tsx](src/ui/Canvas.tsx) + [viewport.ts](src/ui/viewport.ts) |
-| 历史转盘（照片上方那一圈小图，拖 = 转、点 = 回到那一步） | [StepStrip.tsx](src/ui/StepStrip.tsx) |
+| 历史转盘（照片上方那一圈小图，拖 = 转、点 = 回到那一版）★ **只记对话聊出来的版本**（原图 + 每次生成）；裁剪 / 点修 / 调色**不占格**，它们进「账本」 | [StepStrip.tsx](src/ui/StepStrip.tsx) |
+| 账本（**每一版自己的修改记录**：调色 / 裁剪 / 点修各记一笔）+ 调色屏左下角那组「上一步 / 下一步」箭头 | [core/ledger.ts](src/core/ledger.ts) + [StepNav.tsx](src/ui/StepNav.tsx)（接线在 `App.tsx` 的 `ledgerStep` / `commitCrop` / `commitRetouch`；设计见 [2026-10-08-adjust-ledger-design.md](docs/superpowers/specs/2026-10-08-adjust-ledger-design.md)） |
 | 上传照片（欢迎页照片球） | [WelcomeGlobe.tsx](src/ui/WelcomeGlobe.tsx) + [Uploader.tsx](src/ui/Uploader.tsx) |
 | 对话列表 | [SessionsPage.tsx](src/ui/SessionsPage.tsx) |
 | 调色面板（调色/微调；含工具行：裁剪 / 点修 / 对比） | [AdjustmentPanel.tsx](src/ui/AdjustmentPanel.tsx) + [ColorWheel.tsx](src/ui/ColorWheel.tsx) ＋ 工具行 [ToolBar.tsx](src/ui/ToolBar.tsx) / [CropOverlay.tsx](src/ui/CropOverlay.tsx) / [RetouchOverlay.tsx](src/ui/RetouchOverlay.tsx) / [CompareSplit.tsx](src/ui/CompareSplit.tsx)（裁剪算式在 [core/crop.ts](src/core/crop.ts)、落到像素上在 [image/crop.ts](src/image/crop.ts)；点修掩码在 [core/retouch.ts](src/core/retouch.ts)、修补笔在 [image/heal.ts](src/image/heal.ts)、落地在 [image/erase.ts](src/image/erase.ts) —— 移植自 Compositor，出处见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)） |
