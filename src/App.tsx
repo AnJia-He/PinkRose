@@ -44,11 +44,13 @@ import { canShareImage, downloadImage } from './export/save'
 import { prepareForRouting } from './image/prepare'
 import { ApiError, isUnauthorized, postRoute } from './api/client'
 import { bitmapsToClose, attachThumb, type Snapshot } from './core/history'
+// ★ 2026-10-08（调色区账本）：裁剪/点修不再推新快照 —— 它们给「当前这一版」
+//   记一笔账（`pushEdit` 把"改之前"压进 `past`），退这一步走账本的 `undoEdit`。
+import { pushEdit, type EditState } from './core/ledger'
 // ★ 2026-10-08：删除的单位是"一问一答"（用户报的"删了一条、另半条还留着"），
 //   `expandDeleteIds` 就在这儿把一条 id 补成整轮 —— 纯函数，和 ChatPanel 勾选
 //   那侧共用同一份（别在两处各写一遍配对逻辑）。
 import { expandDeleteIds } from './core/messages'
-import { localStep } from './app/useLocalStep'
 import { GALLERY_THUMB_MAX_SIDE, THUMB_MAX_SIDE, bitmapToDataUrl, makeThumbnail } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
 import { useDelivery } from './app/useDelivery'
@@ -186,7 +188,7 @@ function defaultCropRect(
 // ── 点修（★ 2026-10-07，工具行第二颗）────────────────────────────────────
 //  涂抹的换算法在 `ui/RetouchOverlay`，掩码工具在 `core/retouch`，
 //  像素落点在 `image/erase`。这一层只管：**笔刷参数的默认值 / 上下限**、
-//  **太大就拦**、以及**完成时推新的一步**（照裁剪那套）。
+//  **太大就拦**、以及**完成时给「当前这一版」记一笔账**（照裁剪那套）。
 
 /** 默认笔刷半径（图片像素）：短边的 3%，夹在 8~120px 之间。 */
 function defaultBrushRadius(w: number, h: number): number {
@@ -572,6 +574,17 @@ export default function App() {
    *  「回到这一步」换底图**故意不算**（它换回的是同一张照片的旧版本，
    *  卡片说的仍然成立，而且跳回原图之后那批卡片恰好又是对的）。 */
   const baseSeqRef = useRef(0)
+  /**
+   * **账本发号器**（★ 2026-10-08，调色区账本）：账本里每一笔的入账序号 ——
+   * 全局单调，预算驱逐（`enforceLedgerBudget`）按它挑"最老的那一笔"丢。
+   *
+   * ⚠️ 和 `idRef` **是两本账**，别合并：那个发的是消息 / 版本 id（"消息 id 就是
+   *   步骤 id"那条老约定靠它对齐），这个只给账本排先后 —— 裁剪/点修现在
+   *   **不产生新版本**、只登记一笔账，拿 `idRef` 顶会让版本 id 凭空跳号。
+   *   （Task 4 的 `editPendingRef` / `flushEdit` 是它的另一半：那边管"没定稿的
+   *   一笔"，号也从这儿发。）
+   */
+  const editSeqRef = useRef(0)
   /** 落盘的次序号。后一次回来时前一次可能还在路上 —— 只认最新的那一次 */
   const persistSeqRef = useRef(0)
   /** 上一次**成功写进服务端**的底图是第几版。只在写成功之后才更新 —— 见下面那句注释 */
@@ -1104,7 +1117,8 @@ export default function App() {
   // ── 裁剪（★ 2026-10-06，工具行第一颗）────────────────────────────────
   //  几何算式全在 `core/crop.ts`（外框 / 内接矩形 / 比例 / 输出尺寸），
   //  框的手势在 `ui/CropOverlay`，落到像素上在 `image/crop.ts`。
-  //  这一层只干三件事：**记住现场**、**把该重算的算出来**、**完成时推新的一步**。
+  //  这一层只干三件事：**记住现场**、**把该重算的算出来**、
+  //  **完成时给「当前这一版」记一笔账**（★ 10-08 账本：不再推新的一步）。
 
   /** 裁剪的现场：null = 没在裁。`turns` 是整转（90° 的倍数），`spec.angle` 是矫正角。 */
   const [crop, setCrop] = useState<{ spec: CropSpec; turns: number; aspect: number | null } | null>(null)
@@ -1190,73 +1204,78 @@ export default function App() {
   const cancelCrop = () => { setCrop(null); setTool(null) }
 
   /**
-   * 「完成」——**这个工具的全部意义**：本地裁一张新的底图、推新的一步。
-   * 不花钱、不占额度、**不动参数**（spec §3.1：调好的滑块原样跟着走）。
+   * 「完成」——**这个工具的全部意义**：本地裁一张新的底图，给「当前这一版」
+   * **记一笔账**。不花钱、不占额度、**不动参数**（spec §3.1：调好的滑块原样跟着走）。
    *
-   * 它和生成那条路是同一件事，只是没有网络那一半 —— 所以推快照走的是
-   * `localStep`（那边也是 `cutAfter` + `pushSnapshot`），位图回收照抄
-   * `useGeneration` 那一段（新的一步会挤掉 / 切掉旧步骤，不关就是漏 GPU 内存）。
+   * ★★ 2026-10-08（调色区账本，用户定死的关系）：裁剪是**调色区里的操作**，
+   *   只改「当前这一版」—— 不推新快照（转盘不加格）、不切未来（后面几版原样
+   *   留着）、不挪光标、不碰对话。它的"账"是这一版自己的账本：`pushEdit` 把
+   *   "裁之前"压进 `past`（spec §5.2），退这一刀走调色屏左下角那组箭头
+   *   （`undoEdit`，接线在 Task 4）。
    */
   const commitCrop = useCallback(async () => {
     if (!crop || !image) return
     // ★ 终审 I1：这一刀是冲着**哪一版底图**去的。`await cropToBitmap` 那几百毫秒里
     //   生成完全可能落地（推 `baseSeqRef`、换底图、推一步）—— 不认这一版的话，
-    //   下面的 updater 会把**刚花钱生成的那一步静默切掉**（它的切点还是出发时
-    //   那个），`setImage` 再把它从画面上盖掉：钱花了、东西没了、一句错都不报。
+    //   这一刀会记到**已经不在屏上的那一版**上，`setImage` 再把它从画面上盖掉：
+    //   钱花了、东西没了、一句错都不报。
     //   和 `useGeneration` 那道 `seqAtStart` 闸门同一族，方向相反：那边守
     //   "结果回来时画面换了"，这边守"裁到一半画面换了"。
     //   ⚠️ 连点两下「完成」也被它挡住：第二下进函数时读到的还是第一次推之前的
     //   序号，它回来时一样对不上 —— 不用另写一个"正在裁"的 ref。
     const seqAt = baseSeqRef.current
-    // ⚠️ **"此刻站在哪一步"必须在 `await` 之前读出来**（评审 Important ②）——
-    //    这不是洁癖，是 `setHistory` 的 updater **不保证当场跑**：
-    //    React 的 eager 路径只在"这个 fiber 没有挂起的更新"时才立刻算一遍，
-    //    同一批里只要还有别的 setState（等待裁剪位图那几十~几百毫秒里，
-    //    卡片的应答 / 某个计时器 / 别处的一次 setState 任意一个落下来），
-    //    updater 就推到**渲染时**才跑 —— 而那时同一批次末尾的 `moveCursor(id)`
-    //    已经把 `cursorIdRef` 改成**新步骤自己的 id**了：`cutAfter(prev, id)`
-    //    找不到它，站在中间裁时**未来那几步不会被切**（顺序也跟着错）。
+    // ⚠️ **"这一刀冲着哪一版去的"必须在 `await` 之前读出来**（评审 Important ②）——
+    //    这不是洁癖，是 `setHistory` 的 updater **不保证当场跑**：同一批里只要
+    //    还有别的 setState（等待裁剪位图那几十~几百毫秒里，卡片的应答 / 某个
+    //    计时器 / 别处的一次 setState 任意一个落下来），updater 就推到**渲染时**
+    //    才跑 —— 那时候现读 `cursorIdRef.current` 可能已经不是出发时那一版了。
     //    和 `useGeneration` 的 `origin` 显式入参是同一条规矩：隔着 await 的地方，
     //    位置一律**当场读、传值**。
     const at = cursorIdRef.current
     try {
       const bitmap = await cropToBitmap(image.bitmap, crop.spec, crop.turns)
-      // ★ 终审 I1：回来先对一次序号 —— 对不上就说明这段等待里底图换了版
-      //   （生成落地 / 切走 / 换了张照片），这一刀从一张**已经不在屏上的**
-      //   底图上裁出来，写进去就是上面说的那场静默事故。
-      if (baseSeqRef.current !== seqAt) {
+      // ★ 回来先对**两样**：底图版本 + 站的位置（`cursorIdRef` 是 10-08 加的
+      //   那一半）—— 对不上就说明这段等待里画面变了（生成落地 / 切走 / 换了张
+      //   照片 / 人跳了版本）。这一刀要么是从一张**已经不在屏上的**底图上裁出来
+      //   的，要么会被记到**别人那一版**上（光标指着 A、画面却是 B 裁出来的
+      //   样子），写进去都是静默事故。
+      if (baseSeqRef.current !== seqAt || cursorIdRef.current !== at) {
         bitmap.close()
-        console.error('裁剪回来时底图已经换了一版（多半是生成落地），这一刀不写进去')
+        console.error('裁剪回来时底图/位置已经变了（多半是生成落地或人跳了版本），这一刀不写进去')
         noticeBad('裁的时候画面已经变了 —— 这一刀没算数。要的话，再裁一次。')
         setCrop(null)
         setTool(null)
         return
       }
       const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
-      // ⚠️ 发号器是顶上那个 `idRef`（**和生成那条共用**）—— "消息 id 就是步骤 id"
-      //   那条老约定靠它；另开一个计数器会撞号（撞号的后果见 `loadSession` 里那段）。
-      const id = ++idRef.current
+      // ★ 先定稿没落定的调色、再记裁剪这一笔（顺序不能反）。
+      // TODO(Task 4): 先定稿没落定的调色（flushEdit() 接在这里，顺序不能反）
+      // ⚠️ 发号器是顶上那个 `editSeqRef`（**账本专用**，和 `idRef` 分开）——
+      //   账本序号只管预算驱逐的先后，发它**不产生新版本**。
+      const seq = ++editSeqRef.current
       setHistory(prev => {
-        const next = localStep(prev, {
-          id, label: '裁剪', base, params, lut,
-          // 大于它的一律切掉（**站在中间裁**就是这个意思）—— 用上面读好的 `at`，
-          // 别在 updater 里现读 ref（理由见函数头）。
-          // `?? id` 那一格到不了（有照片 ⇒ 位置非空），写上是不让类型缺口变成
-          // 一个"点了没反应"的按钮。
-          cursorId: at ?? id,
+        const next = prev.map(s => {
+          // 找不到 `at` 就原样返回 —— 理论上到不了（有照片 ⇒ 位置非空），
+          // 但**别顺手拿"最接近的那一版"顶上**：记错版本 = 光标和画面对不上，
+          // 而且一句错都不报。
+          if (s.id !== at) return s
+          const before: EditState = { base: s.base, params: s.params, lut: s.lut, seq }
+          // "之后"取**这一版自己的** params/lut —— 它就是"当前这一版"的现场
+          // （写回那条 effect 一直在把它们镜像成最新）；裁剪只换底图，不动调色。
+          return pushEdit(s, before, { base, params: s.params, lut: s.lut }, seq)
         })
-        // 被切掉 / 被挤出去的位图要还回去；原图永远不关（和 `useGeneration`
-        // 那一段一字不差）。`close()` 幂等，StrictMode 重放也安全。
-        for (const s of bitmapsToClose(prev, next, { protectOriginal: true })) {
-          s.bitmap.close()
-        }
+        // 位图回收照 `useGeneration` 那一段（原图永远不关）。`close()` 幂等，
+        // StrictMode 重放也安全。
+        // ⚠️ 记账**不切未来**，所以这里通常一张都不关："裁之前"那张进了账本、
+        //   还被 `past` 引用着（关了 = 退回去时闪黑）。
+        closeBitmaps(bitmapsToClose(prev, next, { protectOriginal: true }))
         return next
       })
       // ★（评审 Critical）**底图换了一版，记号要往前挪** —— 落盘那趟判
       //   "要不要重传 base / 封面"用的就是它（`changed`）。不推的话服务端手里
-      //   还是**没裁过**的那张：第 2 步被记成 `reusesPrev`，刷新之后画面是原图、
-      //   转盘上却还留着一个叫「裁剪」的格子 —— 一句错都不报。
-      //   （"删掉最新一步"那条路推的是同一个记号，那边钉的是封面。）
+      //   还是**没裁过**的那张，重开之后画面是原图 —— 一句错都不报。
+      //   （Task 7 起落盘改为按"哪一版脏了"（`stateStepId`）送，这个记号在那之前
+      //   仍是唯一判据；"删掉最新一步"那条路推的是同一个记号，那边钉的是封面。）
       baseSeqRef.current++
       setImage(base)
       // ★ 终审 I3：**底图换了 = 那批"上一条照片的临时状态"一起清** —— `onPick` /
@@ -1265,17 +1284,16 @@ export default function App() {
       //   ① 点选那半：红圈存的是**旧底图**的归一化坐标（还在屏上、还能点
       //      「就改这里」）—— 那是**花钱**的一次生成，改的位置是错的；
       //   ② 确认条那半：挂着"要切掉后面吗"时裁一刀，回修图屏点「继续改」，
-      //      它的切点还落在原图上，会把**刚裁出来的那一步**切掉（条子自己还会
+      //      它的切点还落在原图上，会把**后面那一版**切掉（条子自己还会
       //      改口说"后面还有 0 步"）。两个 setState 放在同一批里，和上面那三处一样。
       setPending(null)
       setPendingReplace(null)
-      // state + 影子 ref 一起写（`cursorIdRef` 的注释说了为什么）
-      moveCursor(id)
       // ★★ 2026-10-08（用户定死的关系）：「裁剪」是**调色区里的操作** —— 它的"账"
-      //   是照片自己的版本序列（修图屏那圈转盘 / 调色屏左下角那组箭头），
-      //   **不是对话区的一条记录**。用户原话：「而不是调色区调整一份我对话区记录
-      //   一份，那用户调整细节点多了不得几十个回溯点」——细调多了的话，对话区
-      //   会堆出几十条操作记录。原来这里落过一句「裁好了。」，撤了。
+      //   是**当前这一版自己的账本**（`past` / `future`；调色屏左下角那组箭头
+      //   翻的就是它），**不是对话区的一条记录、也不再是转盘上的一格**。
+      //   用户原话：「而不是调色区调整一份我对话区记录一份，那用户调整细节
+      //   点多了不得几十个回溯点」——细调多了的话，对话区会堆出几十条操作记录。
+      //   原来这里落过一句「裁好了。」、也在转盘上加过一格，都撤了。
       setCrop(null)
       setTool(null)
     } catch (e) {
@@ -1284,7 +1302,7 @@ export default function App() {
       // 开不出够大的画布（`cropToBitmap` 那两条失败路径）。
       noticeBad('这张照片没裁成。再试一次；还不行就换一张小一点的。')
     }
-  }, [crop, image, params, lut, moveCursor, noticeBad])
+  }, [crop, image, noticeBad])
 
   /**
    * 交给 `Canvas` 的裁剪现场 —— 每次渲染现算。
@@ -1341,13 +1359,14 @@ export default function App() {
   }, [])
 
   /**
-   * 「擦掉这里」——这个工具的全部意义：本地擦一张新底图、推新的一步。
-   * 和 `commitCrop` **一字不差**的那几条（每一条都各有一笔账，别抄漏）：
+   * 「擦掉这里」——这个工具的全部意义：本地擦一张新底图，给「当前这一版」
+   * **记一笔账**。和 `commitCrop` **一字不差**的那几条（每一条都各有一笔账，别抄漏）：
    *   · `baseSeqRef` / `cursorIdRef` 在 `await` **之前**当场读；
-   *   · 回来先对序号 —— 对不上就作废（那段等待里生成落地的话，这一擦是冲着
-   *     一张已经不在屏上的底图去的）；
-   *   · `localStep`（label「擦除」、**没有 prompt**、params/lut 原样带走）、
-   *     `baseSeqRef++`、清那批"上一条照片的临时状态"、`moveCursor`、位图回收。
+   *   · 回来先对**两样**（底图版本 + 站的位置）—— 对不上就作废（那段等待里
+   *     生成落地 / 人跳了版本的话，这一擦是冲着已经不在屏上的画面去的）；
+   *   · `pushEdit`（把"擦之前"压进 `past`；params/lut 取**这一版自己的**——
+   *     擦除只换像素、不动调色）、`baseSeqRef++`、清那批"上一条照片的临时状态"、
+   *     位图回收。**不推新快照、不挪光标、不进转盘**（10-08 账本）。
    */
   const commitRetouch = useCallback(async () => {
     const scene = retouch
@@ -1364,6 +1383,8 @@ export default function App() {
     }
     const slow = area > ERASE_VEIL_PIXELS
     const seqAt = baseSeqRef.current
+    // ⚠️ 和 `commitCrop` 同一条规矩：**"这一下冲着哪一版去的"必须在 await 之前
+    //   当场读**（updater 不保证当场跑，理由见那边那段）。
     const at = cursorIdRef.current
     setErasing(slow)
     try {
@@ -1371,33 +1392,33 @@ export default function App() {
       // 渲染 —— 不隔两帧的话暗罩要等算完才出现，恰好是最需要它的时候）。
       if (slow) await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
       const { bitmap, usedSource } = await eraseToBitmap(image.bitmap, mask)
-      if (baseSeqRef.current !== seqAt) {
+      if (baseSeqRef.current !== seqAt || cursorIdRef.current !== at) {
         bitmap.close()
-        console.error('擦除回来时底图已经换了一版（多半是生成落地），这一下不写进去')
+        console.error('擦除回来时底图/位置已经变了（多半是生成落地或人跳了版本），这一下不写进去')
         noticeBad('擦的时候画面已经变了 —— 这一下没算数。要的话，再擦一次。')
         closeRetouch()
         setTool(null)
         return
       }
       const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
-      const id = ++idRef.current
+      // ★ 先定稿没落定的调色、再记擦除这一笔（顺序不能反）。
+      // TODO(Task 4): 先定稿没落定的调色（flushEdit() 接在这里，顺序不能反）
+      const seq = ++editSeqRef.current
       setHistory(prev => {
-        const next = localStep(prev, {
-          id, label: '擦除', base, params, lut,
-          cursorId: at ?? id,
+        const next = prev.map(s => {
+          if (s.id !== at) return s                 // 找不到 `at` 就原样返回（同 `commitCrop`）
+          const before: EditState = { base: s.base, params: s.params, lut: s.lut, seq }
+          return pushEdit(s, before, { base, params: s.params, lut: s.lut }, seq)
         })
-        for (const s of bitmapsToClose(prev, next, { protectOriginal: true })) {
-          s.bitmap.close()
-        }
+        closeBitmaps(bitmapsToClose(prev, next, { protectOriginal: true }))
         return next
       })
       baseSeqRef.current++
       setImage(base)
       setPending(null)
       setPendingReplace(null)
-      moveCursor(id)
       // ★★ 2026-10-08（同 `commitCrop` 那段）：**不往对话区写记录** —— 擦除也是
-      //   调色区里的操作，版本序列是它唯一的"账"（原来这里落过「擦干净了。」）。
+      //   调色区里的操作，账本才是它唯一的"账"（原来这里落过「擦干净了。」）。
       // ⚠️ 但**兜底那条路（周围没参考）补出来是糊的**这件事得说出来 —— 不说
       //   用户会以为工具坏了。走**顶上那条通报**（"这件事得跟你说一声"那条，
       //   说完可以收走），一句话都不进对话区。
@@ -1410,7 +1431,7 @@ export default function App() {
     } finally {
       setErasing(false)
     }
-  }, [retouch, image, params, lut, moveCursor, noticeBad, closeRetouch])
+  }, [retouch, image, noticeBad, closeRetouch])
 
   /**
    * 交给 `Canvas` 的点修现场 —— 每次渲染现算。

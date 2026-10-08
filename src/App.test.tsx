@@ -1751,9 +1751,11 @@ describe('历史小图：每一步都看得见（照片上方那条时间轴上�
 })
 
 /**
- * ★ 2026-10-06（裁剪）：工具行第一颗 —— 框 + 第二行 + **完成 = 本地生成新的一步**。
+ * ★ 2026-10-06（裁剪）：工具行第一颗 —— 框 + 第二行 + **完成 = 给「当前这一版」
+ * 记一笔账**（★ 2026-10-08 账本：不再推新快照、不进转盘）。
  *
- * 这一层只验**接线**（送的是当前底图、推了步、参数没被重置、能回到上一步）。
+ * 这一层只验**接线**（送的是当前底图、改的是当前这一版、参数没被重置、
+ * 后退过的版本原样留着）。
  * 像素对不对是 Task 6 真机的事：jsdom 里连 `createImageBitmap` 都没有，
  * 所以 `src/image/crop` 整个假掉（见文件顶上的 `vi.mock`），
  * 真画布那半（转多少度、缩多少倍、框画在哪）量在 `Canvas.zoom.test.tsx`。
@@ -1800,7 +1802,7 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     })
   }
 
-  it('★ 裁完之后：是新的一步、参数没被重置、还能回到上一步', async () => {
+  it('★ 裁完之后：**不进转盘**（只改当前这一版）、参数没被重置、画面就是裁过的那张', async () => {
     await renderApp()
     await uploadPhoto()
     // ① 先把亮度改到 30（本文件里"改参数"的标准写法：说一句话 → 路由给增量）
@@ -1825,23 +1827,31 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     expect(sceneOf()).toBeNull()
     expect(container.querySelector('.tool-row-second')).toBeNull()
 
-    // ⑥ 历史真的多了一步（落盘那趟是唯一看得见 steps 的地方）
+    // ⑥ 历史里**一个格子都不多**（落盘那趟是唯一看得见 steps 的地方）：
+    //   ★ 2026-10-08（账本）裁剪只改「当前这一版」—— 记一笔账、不推新快照，
+    //   所以服务端那份 steps 里没有「裁剪」这一步（原来这里会多出一条）。
     await waitPersist()
     const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
-    expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图', '裁剪'])
+    expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图'])
 
-    // ⑦ 回修图屏：**对话区一条都没多** —— ★ 2026-10-08 用户定死的关系：
-    //   「而不是调色区调整一份我对话区记录一份，那用户调整细节点多了不得几十个
-    //   回溯点」。裁剪是调色区里的操作，它的"账"是照片自己的版本序列
-    //   （转盘 / 调色屏那组箭头），不落对话记录 —— 原来这里会多一句「裁好了。」。
-    //   变异：把 `commitCrop` 里那句 `setMessages` 加回去 → 下面两行当场红。
+    // ⑦ 回修图屏：**对话区一条都没多**、**转盘一格都没多** —— ★ 2026-10-08 用户
+    //   定死的关系：「而不是调色区调整一份我对话区记录一份，那用户调整细节点多了
+    //   不得几十个回溯点」。裁剪是调色区里的操作，它的"账"记在**当前这一版自己的
+    //   账本**上（`pushEdit` 把"裁之前"压进 `past`），转盘只记对话聊出来的版本。
+    //   它守两件事：**不落对话**（原来这里会多一句「裁好了。」—— 变异：把
+    //   `commitCrop` 里那句 `setMessages` 加回去 → 下面两句当场红）、
+    //   **不进转盘**（原来这里会多一格「裁剪」）。
+    //   ⚠️ 账本那一笔现在**看不见**（翻账本的箭头是 Task 4 的产物）—— 本任务
+    //   先钉"不进转盘 / 光标不挪"这两半，箭头那组断言 Task 4 补。
     await goNav('修图')
     expect(lastReply()).toBe('亮了一点。')
     expect(container.querySelectorAll('.bubble-text')).toHaveLength(3)   // 欢迎 + 你问 + 它答
-    const nodes = () => [...container.querySelectorAll('.strip-node')] as HTMLElement[]
-    expect(nodes()).toHaveLength(2)
-    await act(async () => { nodes()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
-    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
+    expect(container.querySelectorAll('.strip-node'), '裁剪不进转盘 —— 还是只有原图那一格')
+      .toHaveLength(1)
+    // 站的位置也没挪：那一格还是"你在这里"（`<span>`，点不动）—— 光标不动是这一刀的一部分
+    expect(container.querySelector('.strip-node.current')?.tagName).toBe('SPAN')
+    // 画面就是**裁过的那张**（裁这一刀改的是"当前这一版"，不产生新版本）
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'cropped' } })
   })
 
   it('★ 第二行：比例 / 左右转 / 水平矫正 —— 角度一变，框重置成居中的最大内接矩形', async () => {
@@ -1906,7 +1916,8 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图'])
   })
 
-  it('★ 站在中间那一步裁：被切掉的步骤，它们的位图要还回去（不关就是漏 GPU 内存）', async () => {    await renderApp()
+  it('★ 站在中间那一版裁：后面那几版**原样留着**，它们的位图不还（还在用）', async () => {
+    await renderApp()
     await uploadPhoto()
     // 先生成一版（生成回来的那张位图由 `decodedBitmaps` 记着）
     vi.mocked(api.postRoute).mockResolvedValueOnce(
@@ -1918,8 +1929,12 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     const generated = decodedBitmaps.at(-1)!
     expect(generated.close).not.toHaveBeenCalled()
 
-    // 回到**原图**那一步（转盘第一格），在那儿裁 —— 那一步之后的会被切掉，
-    // 它的位图从这一刻起没人用了（`localStep` 里那条 `cutAfter`）。
+    // 回到**原图**那一版（转盘第一格），在那儿裁。
+    // ★ 2026-10-08（账本）：裁剪只改「当前这一版」，**不再切掉后面那几版** ——
+    //   生成的这一版还在转盘上、随时能跳回去，所以它的位图**一张都不许关**
+    //   （关了就是闪黑：跳回去时画布空着，而一句错都不报）。
+    //   变异：把记账改回 `localStep`（推快照 + 切未来）→ 下面第一句当场红
+    //   （那一版被切走、位图被关，而它本该还在转盘上、还点得回去）。
     await act(async () => {
       (container.querySelectorAll('.strip-node')[0] as HTMLElement).click()
       await new Promise(r => setTimeout(r, 0))
@@ -1927,16 +1942,27 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     await openCrop()
     await clickByText('完成')
 
-    expect(generated.close, '被切掉那一步的位图必须关掉').toHaveBeenCalled()
+    expect(generated.close, '后面那一版还在 —— 它的位图还在用，不许关').not.toHaveBeenCalled()
+
+    // 转盘上还是**两格**（原图 + 生成的那一版），没有多出「裁剪」那格
+    await goNav('修图')
+    const nodes = () => [...container.querySelectorAll<HTMLElement>('.strip-node')]
+    expect(nodes()).toHaveLength(2)
+    // 而且生成的这一版**真的还能跳回去**（点下去画面换到它 —— 它还在）
+    await act(async () => { nodes()[1]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: generated })
   })
 
   it('★（评审 Critical）裁完之后那一趟落盘必须**重新带底图** —— 不带就等于没裁', async () => {
     // 根因：`commitCrop` 只推了 history，没推 `baseSeqRef` —— 而落盘那趟判
     // "底图换过没有"（`changed`）用的就是它，`patch.base` / `patch.thumb` 全在
     // 那个 `if (changed)` 里。不推的后果**一句错都不报**：
-    //   服务端手里还是没裁过的那张，第 2 步被记成 `reusesPrev`，
-    //   刷新之后画面是原图（宽高比 1.5），转盘上却还留着一个叫「裁剪」的格子。
-    // 同一条规矩在"删掉最新一步"那边也有（那条用例钉的是封面）—— 换了底图就要重传。
+    //   服务端手里还是没裁过的那张，重开之后画面是原图（宽高比 1.5）。
+    // ★ 2026-10-08（账本）：裁剪不再产生新步骤了（steps 里只有「原图」）——
+    //   "新文件落在哪个新步骤上"这条旧落点随之消失；但**换了底图就要重传**
+    //   这条规矩一个字没变（Task 7 会把它接到 `stateStepId` 那个窄口上，
+    //   在那之前这一趟照旧带 base/thumb）。
+    // 同一条规矩在"删掉最新一步"那边也有（那条用例钉的是封面）。
     await renderApp()
     await uploadPhoto()
     await openCrop()
@@ -1946,16 +1972,20 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
     expect(body.base, '裁剪之后那一趟必须重新带上底图').toBeTruthy()
     expect(body.thumb, '封面也要跟着换（左栏列表上显示的是"最后那张"）').toBeTruthy()
-    expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图', '裁剪'])
+    expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图'])
   })
 
-  it('★（评审 Important ②）同一批次里还有别的 setState 时，站中间裁照样把未来那几步切掉', async () => {
-    // 根因：`commitCrop` 在 `setHistory` 的 **updater 里面**读 `cursorIdRef.current`，
-    // 而同一批次末尾的 `moveCursor(id)` 会把同一个 ref 改成**新步骤自己的 id**。
-    // React 的"eager 路径"只在"这个 fiber 没有挂起的更新"时才当场跑 updater ——
-    // 一旦同一批里还有别的 setState，updater 就落到**渲染时**才跑，读到的已经是新值：
-    // `cutAfter(prev, id)` 找不到那个 id → 未来那几步**不会被切**（顺序也跟着错）。
-    // ⚠️ 所以这条用例必须**制造那个"别的 setState"**：平时（只有它一个）走 eager 路径，
+  it('★（评审 Important ②）同一批次里还有别的 setState 时，站中间裁照样记在**当前那一版**上（后面几版原样留着）', async () => {
+    // 根因（10-08 之前）：`commitCrop` 在 `setHistory` 的 **updater 里面**读
+    // `cursorIdRef.current`，而上游会把同一个 ref 改掉。React 的"eager 路径"只在
+    // "这个 fiber 没有挂起的更新"时才当场跑 updater —— 一旦同一批里还有别的
+    // setState，updater 就落到**渲染时**才跑、读到的已经是新值，切口跟着找错。
+    // ★ 2026-10-08（账本）："切口"本身没有了（裁剪不切未来、也不挪光标），但
+    //   **"这一刀冲着哪一版去的"必须在 `await` 之前当场读、传值**（`at`）这条
+    //   规矩一个字没变 —— updater 什么时候跑都得认同一版。这条用例钉三件事：
+    //     ① 后面那版**还在**（没被切）；② 这一刀记在**当时站的那一版**上
+    //     （不是最后一版）；③ 站的位置没挪。
+    // ⚠️ 必须**制造那个"别的 setState"**：平时（只有它一个）走 eager 路径，
     //    测试全绿 —— 那正是这个 Bug 一直没被测出来的原因。
     //    做法：把建议卡片那趟挂住，在裁剪那句 await 回来之前放行它
     //    （`suggesting` 由真变假 = 一个真实的 App state 更新，会占住 lane）。
@@ -1964,12 +1994,13 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
 
     await renderApp()
     await uploadPhoto()
-    // 先造出"未来那一步"：生成一版
+    // 先造出"后面那一版"：生成一版
     vi.mocked(api.postRoute).mockResolvedValueOnce(
       decision({ route: 'generate', editPrompt: '去掉路人', reply: '好了。' }))
     vi.mocked(api.postEdit).mockResolvedValue(OK)
     await say('去掉路人')
-    // 回到原图那一步（转盘第一格）—— 在那儿裁 = **站中间裁**
+    const generated = decodedBitmaps.at(-1)!
+    // 回到原图那一版（转盘第一格）—— 在那儿裁 = **站中间裁**
     await act(async () => {
       (container.querySelectorAll('.strip-node')[0] as HTMLElement).click()
       await new Promise(r => setTimeout(r, 0))
@@ -1978,6 +2009,7 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
 
     // 「完成」卡在 cropToBitmap 上：先放行卡片那趟（占住 lane），再放行裁剪
     const gate = makeGate<ImageBitmap>()
+    const cropped = fakeBitmap('cropped')
     vi.mocked(cropMod.cropToBitmap).mockReturnValueOnce(gate.promise)
     const done = [...container.querySelectorAll('button')]
       .find(b => (b.textContent ?? '').trim() === '完成') as HTMLButtonElement
@@ -1987,25 +2019,38 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
       cardsGate.open({ cards: [], degraded: false })
       await Promise.resolve()
       await Promise.resolve()
-      gate.open(fakeBitmap('cropped'))
+      gate.open(cropped)
       await new Promise(r => setTimeout(r, 0))
     })
 
-    // 未来那一步（生成的那一版）必须已经被切掉：转盘上只剩「原图 + 裁剪」两格
+    // 后面那一版（生成的那一版）**原样留着**：转盘上两格 = 原图 + 生成式编辑
     await goNav('修图')
-    expect(container.querySelectorAll('.strip-node'), '站中间裁必须切掉后面那几步').toHaveLength(2)
+    const nodes = () => [...container.querySelectorAll<HTMLElement>('.strip-node')]
+    expect(nodes(), '站中间裁不再切后面那几版').toHaveLength(2)
+    // 站的位置没挪：第一格还是"你在这里"
+    expect(nodes()[0]!.className).toContain('current')
+    // 这一刀记在**当时站的那一版**（原图）上，不是最后一版 —— 跳去生成的那一版：
+    // 它**没被换过底图**（要是记错了版本，这里拿到的是裁出来的那张）
+    await act(async () => { nodes()[1]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: generated })
+    // 再跳回原图那一版：返回的是**裁过之后**的样子（这一刀落在了它身上）
+    await act(async () => { nodes()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: cropped })
   })
 
-  it('★（终审 I1）生成在裁剪那几百毫秒里落地 → 这一刀作废：不推步、不换底图、位图还回去', async () => {
+  it('★（终审 I1）生成在裁剪那几百毫秒里落地 → 这一刀作废：账本一个字不动、不换底图、位图还回去', async () => {
     // 根因：`commitCrop` 的 `await cropToBitmap` 那几百毫秒里，生成完全可能落地
-    // （推 baseSeq、换底图、推一步）。不设防的话裁剪的 updater 会把**刚花钱生成
-    // 的那一步静默切掉**，`setImage` 再把它从画面上盖掉 —— 钱花了、东西没了、
-    // 一句错都不报。做法照 `useGeneration` 那道 `seqAtStart` 闸门：进函数先记下
-    // 当时的 `baseSeqRef`，await 回来第一件事是对它 —— 对不上就把刚裁出来的那张
-    // 还回去、说一句、收掉裁剪，一步不推（连点两下「完成」也被它挡住：第二次
-    // 进函数时读到的序号还是第一次推之前那个）。
-    // 变异：去掉那道闸 → ①②③④全红（位图没还、画面变成 cropped、转盘上
-    // 「生成式编辑」被切成「裁剪」、还没话）。
+    // （推 baseSeq、换底图、推一步）。不设防的话这一刀会记到**已经不在屏上的那一版**
+    // 上，`setImage` 再把它从画面上盖掉 —— 钱花了、东西没了、一句错都不报。
+    // 做法照 `useGeneration` 那道 `seqAtStart` 闸门：进函数先记下当时的
+    // `baseSeqRef` 和**站的位置**（`cursorIdRef`），await 回来第一件事是对它们 ——
+    // 对不上就把刚裁出来的那张还回去、说一句、收掉裁剪，**账本一个字不记**
+    // （连点两下「完成」也被它挡住：第二次进函数时读到的序号还是第一次推之前那个）。
+    // ★ 2026-10-08（账本）：位置那半（`cursorIdRef`）是这道闸门新加的 ——
+    //   裁剪只改「当前这一版」，所以"哪一版"和"哪张底图"一样必须当场钉死。
+    // 变异：把闸门整条去掉 → 第一条（作废的那张没还回去）当场红；
+    //   只留 `baseSeqRef` 那半、去掉位置那半 → 下面那条「人跳了版本」红
+    //   （两半各守一条，10-08 实测过）。
     await renderApp()
     await uploadPhoto()
 
@@ -2036,7 +2081,7 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     expect(cropped.close, '作废的那张要 close()').toHaveBeenCalled()
     // ② 不换底图：画面还是生成回来的那张 —— 裁剪盖上去 = 刚花钱买的那一版没了
     expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'decoded-1' } })
-    // ③ 不推步，也不切：落盘那趟（唯一看得见 steps 的地方）里没有「裁剪」
+    // ③ 账本一个字没动、也不切：落盘那趟（唯一看得见 steps 的地方）里没有「裁剪」
     await waitPersist()
     const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
     expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图', '生成式编辑'])
@@ -2048,11 +2093,56 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     expect(container.querySelector('.tool-row-second')).toBeNull()
   })
 
-  it('★（终审 I3）挂着「要切掉后面吗」时裁一刀 → 条子收了（点「继续改」不许切掉刚裁的那一步）', async () => {
+  it('★ 裁到一半**人跳了版本**（底图没换）→ 这一刀同样作废', async () => {
+    // 为什么要有这道闸（10-08 新加的那半）：裁剪要的是"把结果记到**我当时站的
+    // 那一版**上"，而几百毫秒里用户完全可能走开 —— 切屏会把裁剪现场收掉
+    // （`[view.kind]` 那条 effect），但这一趟已经出发了；他接着在转盘上跳了版本。
+    // 只看 `baseSeqRef` 的话这一刀"闸门全过"：结果记进旧那一版、`setImage` 再把
+    // 画面盖到**别的版本**上 —— 光标指着 A、画面却是 B 裁出来的样子，一句错都不报。
+    // 变异：闸门去掉 `cursorIdRef.current !== at` 那一半 → 第一条（作废的那张
+    //   没还回去）当场红 —— 10-08 实测：只有这一条红，I1 那条照旧绿（两半各守一条）。
+    await renderApp()
+    await uploadPhoto()
+    // 先造出"另一版"：生成一版（站的位置 = 生成那一步）
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉路人', reply: '好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await say('去掉路人')
+    const generated = decodedBitmaps.at(-1)!
+
+    await openCrop()
+    const gate = makeGate<ImageBitmap>()
+    const cropped = fakeBitmap('cropped')
+    vi.mocked(cropMod.cropToBitmap).mockReturnValueOnce(gate.promise)
+    const done = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '完成') as HTMLButtonElement
+    await act(async () => { done.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    // 裁到一半：切到修图屏（切屏会收起裁剪现场），跳到**原图**那一版
+    await goNav('修图')
+    const nodes = () => [...container.querySelectorAll<HTMLElement>('.strip-node')]
+    await act(async () => { nodes()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    // 放行裁剪：它回来时人已经不在那一版上了 → 作废
+    await act(async () => {
+      gate.open(cropped)
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // ① 裁出来那张还回去了 ② 说了一句 ③ 画面是**跳过去的那一版**（没被盖上）
+    expect(cropped.close, '作废的那张要 close()').toHaveBeenCalled()
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('画面已经变了')
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
+    // ④ 两版都还在、都没被换过底图（作废 ≠ 顺手把谁切了/关了）
+    expect(nodes()).toHaveLength(2)
+    expect(generated.close).not.toHaveBeenCalled()
+  })
+
+  it('★（终审 I3）挂着「要切掉后面吗」时裁一刀 → 条子收了（点「继续改」不许切掉后面那一版）', async () => {
     // 裁剪是**第四个换底图的地方**（前三个：`onPick` / `loadSession` / `resetEditor`
     // 各有一批"上一条照片的临时状态一起清"），而那条确认条在底图换掉之后就不成立了
-    // —— 不清的话：条子停在屏上，点「继续改」的切点还落在原图上，把**刚裁出来的
-    // 那一步**切掉，条子自己还会改口说"后面还有 0 步"（自相矛盾的胡话）。
+    // —— 不清的话：条子停在屏上，点「继续改」的切点还落在原图上，把后面那一版
+    // 切掉，条子自己还会改口说"后面还有 0 步"（自相矛盾的胡话）。
     // 变异：`commitCrop` 不清 `pendingReplace` → 这一条红（条子还在）。
     await renderApp()
     await uploadPhoto()
@@ -2076,19 +2166,25 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     await openCrop()
     await clickByText('完成')
 
-    // 回修图屏：条子必须已经收了，而且刚裁出来的那一步还在（转盘两格：原图 + 裁剪）
+    // 回修图屏：条子必须已经收了，而且**后面那一版还在**（★ 10-08：裁剪不切未来
+    // —— 所以这里数到的第二格是「生成式编辑」，不是「裁剪」）
     await goNav('修图')
     expect(container.textContent).not.toContain('后面还有')
-    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
+    const nodes = () => [...container.querySelectorAll<HTMLElement>('.strip-node')]
+    expect(nodes()).toHaveLength(2)
+    // 它真的还在：点它画面回得去（没被裁这一刀连带收走）
+    await act(async () => { nodes()[1]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: decodedBitmaps[0] })
     expect(api.postEdit).toHaveBeenCalledTimes(1)   // 就那次生成 —— 「继续改」没被点过
   })
 })
 
 /**
- * ★ 2026-10-07（点修）：涂抹层 + 第二行 + 「擦掉这里」= 本地生成新的一步。
+ * ★ 2026-10-07（点修）：涂抹层 + 第二行 + 「擦掉这里」= 给「当前这一版」记一笔账
+ * （★ 2026-10-08 账本：不再推新快照、不进转盘）。
  *
  * 这一层只验**接线**：现场有没有交下去（掩码是当前照片那张）、涂过之后按钮才亮、
- * 提交送的是当前底图、推的是「擦除」这一步、参数没丢、太大要拦。
+ * 提交送的是当前底图、改的是当前这一版、参数没丢、太大要拦。
  * 涂抹手势与坐标换算量在 `ui/RetouchOverlay.test.tsx`；像素与耗时是真照片探针
  * （`.superpowers/scratch/retouch-probe/`）的事 —— `src/image/erase` 整个假掉。
  */
@@ -2121,7 +2217,7 @@ describe('★ 点修：涂抹层 + 第二行 + 擦掉这里 = 本地生成新的
     })
   }
 
-  it('★ 擦完之后：是新的一步（没有 prompt）、参数没被重置、还能回到上一步', async () => {
+  it('★ 擦完之后：**不进转盘**（只改当前这一版）、参数没被重置、画面就是擦过的那张', async () => {
     await renderApp()
     await uploadPhoto()
     // ① 先把亮度改到 30（本文件里"改参数"的标准写法）
@@ -2154,24 +2250,26 @@ describe('★ 点修：涂抹层 + 第二行 + 擦掉这里 = 本地生成新的
     expect(sceneOf()).toBeNull()
     expect(container.querySelector('.tool-row-second')).toBeNull()
 
-    // ⑦ 历史真的多了一步「擦除」（落盘那趟是唯一看得见 steps 的地方）
+    // ⑦ 历史里**一个格子都不多**（落盘那趟是唯一看得见 steps 的地方）：
+    //   ★ 2026-10-08（账本）擦除和裁剪同构 —— 只改「当前这一版」（记一笔账、
+    //   不推新快照），所以 steps 里没有「擦除」这一步。
+    //   ⚠️ 原来这里还钉着"本地步骤不许有 prompt"（空串会让「再来一版」出现在
+    //   一颗按不动的按钮上）—— "本地步骤"这个概念随 `localStep` 一起退役了，
+    //   现在 steps 只由「原图 + 生成」产生，prompt 那条账归生成那条路管。
     await waitPersist()
     const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
-    const steps = body.steps as { label: string; prompt?: string }[]
-    expect(steps.map(s => s.label)).toEqual(['原图', '擦除'])
-    // ★ 本地步骤**没有可重跑的指令**：`prompt` 必须是 undefined（写成空串也不行 ——
-    //   空串会让「再来一版」出现在一颗按不动的按钮上）
-    expect(steps[1]!.prompt).toBeUndefined()
+    expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图'])
 
-    // ⑧ 回修图屏：**对话区一条都没多**（同裁剪那条，2026-10-08 定的关系）；
-    //   转盘两格，点回原图那格能回去
+    // ⑧ 回修图屏：**对话区一条都没多**、**转盘一格都没多**（同裁剪那条，2026-10-08
+    //   定的关系）；画面就是**擦过的那张**（擦这一下改的是"当前这一版"）
     await goNav('修图')
     expect(lastReply()).toBe('亮了一点。')
     expect(container.querySelectorAll('.bubble-text')).toHaveLength(3)   // 欢迎 + 你问 + 它答
-    const nodes = () => [...container.querySelectorAll('.strip-node')] as HTMLElement[]
-    expect(nodes()).toHaveLength(2)
-    await act(async () => { nodes()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
-    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
+    expect(container.querySelectorAll('.strip-node'), '擦除不进转盘 —— 还是只有原图那一格')
+      .toHaveLength(1)
+    // 站的位置也没挪：那一格还是"你在这里"（`<span>`，点不动）
+    expect(container.querySelector('.strip-node.current')?.tagName).toBe('SPAN')
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'erased' } })
   })
 
   it('★ 兜底那条路（周围没参考、补得糊）：说一句**顶上那条通报** —— 对话区一条不多', async () => {
