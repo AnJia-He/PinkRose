@@ -7548,6 +7548,90 @@ describe('「回到这一步」不再删后面的步骤', () => {
 })
 
 /**
+ * ★ 2026-10-08（用户原话：「给调色界面添加上一步下一步的箭头回溯按钮，但是这个
+ * 是不跟对话区联动的 —— 相当于一个宏观一个微观」）：调色屏左下角那组
+ * 「上一步 / 下一步」。
+ *
+ * 宏观 = 修图屏那圈历史转盘（一眼看全）；微观 = 这一屏的箭头（一次翻一版）。
+ * **"不跟对话区联动"**这条落在三件事上：翻版本走的是和转盘**同一个** `onJump`
+ * —— 一条消息都不产生、一步都不切、一分钱不花；而且两个屏共用同一个
+ * "现在看哪一版"（一条会话只有这一个真相，不另开第二条线）。
+ */
+describe('调色屏的「上一步 / 下一步」', () => {
+  const bubbleTexts = () =>
+    [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
+  const stepNav = () => container.querySelector('.step-nav')
+  const navBtns = () => [...container.querySelectorAll<HTMLButtonElement>('.step-nav-btn')]
+  /** 点一下 + 让 React 把状态刷完（这个文件里别处同款）。 */
+  const tap = (el: HTMLElement) =>
+    act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
+
+  /** 上传 + 生成两版：history = [原图(1), 第1版(3), 第2版(5)]，对话 5 条。 */
+  async function twoVersions() {
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '改一下' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')
+    await say('再改一次')
+  }
+
+  it('只在这一屏出现：修图屏没有它（那边是转盘）', async () => {
+    await twoVersions()
+    expect(stepNav()).toBeNull()          // 修图屏
+    await goNav('调色')
+    expect(stepNav()).toBeTruthy()
+  })
+
+  it('站在最新一步「下一步」按不动；一路翻回原图「上一版」按不动（两头都不空转）', async () => {
+    await twoVersions()
+    await goNav('调色')
+    // 三个版本：1/3 原图、2/3 第 1 版、3/3 第 2 版
+    expect(stepNav()!.textContent).toContain('3 / 3')
+    expect(navBtns()[0]!.disabled).toBe(false)
+    expect(navBtns()[1]!.disabled).toBe(true)      // 已经在最后一版
+
+    await tap(navBtns()[0]!)                       // 上一版
+    expect(stepNav()!.textContent).toContain('2 / 3')
+    await tap(navBtns()[0]!)                       // 再上一版 → 原图
+    expect(stepNav()!.textContent).toContain('1 / 3')
+    expect(navBtns()[0]!.disabled).toBe(true)      // 到头了
+    expect(navBtns()[1]!.disabled).toBe(false)
+  })
+
+  it('★ 翻一版 = 换画面 —— 而且**一条消息都不多、一步都不切**（不跟对话打交道）', async () => {
+    // 「不跟对话区联动」那条用户要求守在这儿：翻版本只动"现在看哪一版"，
+    // 对话和步骤一个字节都不碰（走的是和转盘同一个 `onJump`）。
+    await twoVersions()
+    const msgsBefore = bubbleTexts()
+    await goNav('调色')
+    await tap(navBtns()[0]!)                       // 翻到第 1 版
+    // ① 画面真的换了（回到第 1 版那张）
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: decodedBitmaps[0] })
+    // ② 对话一个字没动、③ 三步一个不少 —— 回修图屏看
+    //   （⚠️ 调色那一屏本来就不渲染对话栏，在那屏上数 `.bubble-text` 数到的是 0）
+    await goNav('修图')
+    expect(bubbleTexts()).toEqual(msgsBefore)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(3)
+  })
+
+  it('只有一版（刚上传）时整组不画 —— 不留一组按不动的按钮', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    expect(stepNav()).toBeNull()
+  })
+
+  it('正在裁剪 / 点修时收起来 —— 不然"翻一版"会把框和涂抹留在原地', async () => {
+    await twoVersions()
+    await goNav('调色')
+    await tap(container.querySelector('.tool-cell') as HTMLElement)   // 打开「裁剪」
+    expect(stepNav()).toBeNull()
+  })
+})
+
+/**
  * ★ 2026-10-07：对话列表的**页头与搜索**。
  *
  * 来路：一次"AI 会话管理"的市场调研（ChatGPT / Claude / Gemini / Copilot /

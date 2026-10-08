@@ -8,6 +8,7 @@ import AdjustmentPanel from './ui/AdjustmentPanel'
 import PresetRail from './ui/PresetRail'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import StepStrip from './ui/StepStrip'
+import StepNav from './ui/StepNav'
 import ToolBar, { type ToolId } from './ui/ToolBar'
 import { LoginPage } from './ui/LoginPage'
 import { GalleryPage } from './ui/GalleryPage'
@@ -3016,6 +3017,39 @@ export default function App() {
                   //   正好毁掉这个用法）。手势的停用由涂抹层自己盖住照片区完成。
                   retouch={retouchScene}
                 />
+                {/* ★ 2026-10-08（用户原话：「给调色界面添加上一步下一步的箭头
+                    回溯按钮，但是这个是不跟对话区联动的 —— 相当于一个宏观
+                    一个微观」）：照片**左下角**那组「上一步 / 下一步」。
+
+                    宏观 = 修图屏那圈历史转盘（一眼看全）；微观 = 这一组
+                    （一次翻一版 + "第几版 / 共几版"）—— 同一份"现在看哪一版"
+                    （`cursorId`），两个屏各用一块地方，**不另开第二条线**。
+
+                    ⚠️ **和对话区没有关系**是用户点名的：翻版本走的是和转盘
+                    **同一个 `onJump`** —— 一条消息都不产生、一步都不切、
+                    一分钱不花（「跳转不删任何东西」那套契约原样继承）。
+                    `App.test.tsx` 有一组用例钉着这三件事。
+
+                    ⚠️ **只在调色屏**（和预设栏、工具行、微调面板同一条判据）：
+                    修图屏那块地方是转盘，两个同一屏里并排就是同一件事两个开关。
+                    ⚠️ 只有一版（刚上传）时整组不画 —— 不留一组按不动的按钮。
+                    ⚠️ **正在裁剪 / 点修时收起来**：那两个是"在这张图上干活"的
+                    模态工具（框 / 涂抹都按当前这版算），翻一版会把用户的活儿
+                    留在原地、换个底子接着算 —— 「对比」不算（那正是比版本的时候）。
+                    ⚠️ 位置是**镜像 `.zoom-bar`**（右下角那排缩放）：同样离照片
+                    那圈相纸边 `--sp-3`，所以 CSS 里那两个 offset 是
+                    `舞台内边距 + --sp-3` —— 动 `.stage` 的内边距要连着看。 */}
+                {view.kind === 'adjust' && image && history.length > 1
+                  && curIdx >= 0 && tool !== 'crop' && tool !== 'retouch' && (
+                  <StepNav
+                    index={curIdx + 1}
+                    total={history.length}
+                    // 两头到底时不渲染也不点（按钮自己 disabled），这里写紧一点：
+                    // `history[curIdx - 1]` 越界就是 undefined，害的是类型。
+                    onPrev={() => onJump(history[curIdx - 1]!.id)}
+                    onNext={() => onJump(history[curIdx + 1]!.id)}
+                  />
+                )}
               </div>
               {/* ★ 2026-10-04：**调色那一屏没有对话栏。**
 

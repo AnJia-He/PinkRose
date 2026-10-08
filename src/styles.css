@@ -987,6 +987,46 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .zoom-compare:hover { background: var(--hover); color: var(--text); }
 .zoom-compare.on { color: var(--accent-300); background: var(--accent-tint); }
+
+/* ── 调色屏左下角的「上一步 / 下一步」（★ 2026-10-08）────────────────────
+   用户原话：「给调色界面添加上一步下一步的箭头回溯按钮，但是这个是不跟对话区
+   联动的 —— 相当于一个宏观一个微观」（宏观 = 修图屏那圈转盘，微观 = 这一组，
+   见 `ui/StepNav` 文件头）。
+
+   长相**照抄 `.zoom-bar`**（同一个药丸、同一档按钮、同一个 `--shadow-1`）——
+   这一屏上它们是隔着照片对望的一对（右下缩放、左下翻版本），两边不一致
+   一眼就看得出来。
+
+   ⚠️ **位置是两个 offset 相加，别抄 `.zoom-bar` 那两个**：那一排贴的是
+   `.canvas-wrap`（照片区）的角，而这一组挂在 `.stage` 上、照片区又在舞台的
+   内边距**里面** —— 所以要 `--sp-5 + --sp-3` / `--stage-pad-y + --sp-3`
+   才和它对得齐（`--stage-pad-y` 是舞台自己的变量，见 `.stage` 那段）。
+   动舞台内边距时这两条要连着看。
+   ⚠️ 它排在 `<Canvas>` **后面**（App 里那段注释）——盖在照片区之上，
+   指针事件自然归它，不需要像 `.zoom-bar` 那样 swallow。 */
+.step-nav {
+  position: absolute;
+  left: calc(var(--sp-5) + var(--sp-3));
+  bottom: calc(var(--stage-pad-y) + var(--sp-3));
+  display: flex; align-items: center; gap: 2px; padding: 2px;
+  border-radius: var(--r-pill);
+  background: var(--panel); border: 1px solid var(--line);
+  box-shadow: var(--shadow-1);
+}
+.step-nav-btn {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; padding: 0;
+  background: none; border: 0; border-radius: var(--r-pill);
+  color: var(--muted); cursor: pointer;
+}
+.step-nav-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+/* 「2 / 3」——数字会变，`tabular-nums` 保住不左右抖（和 `.session-steps` 同一条）。
+   定宽是为了两颗箭头**不跟着数字位数挪**（将来十几版也一样稳）。 */
+.step-nav-count {
+  min-width: 40px; text-align: center;
+  font-size: 13px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 /* 放大之后鼠标变小手：那是在说"这里可以拖"（和上面那条回溯带子同一套语言）。 */
 .canvas-wrap.zoomed { cursor: grab; }
 .canvas-wrap.zoomed:active { cursor: grabbing; }
