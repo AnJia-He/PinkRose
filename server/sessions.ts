@@ -252,15 +252,22 @@ export async function handleSessionThumb(id: number, user: PublicUser, deps: Ses
  * 服务端**自己**给每一步分配图片文件。
  *
  * ⚠️ 为什么不让客户端送文件名：那是一条能引用别人图的洞（见 `requireOwnFile`）。
- * 规则三条，写清楚免得下一个读的人猜：
+ * 规则四条，写清楚免得下一个读的人猜：
  *   ① **第一个步骤永远是原图**；
- *   ② 库里**已有**的那几步：整个对象一律沿用库里的（历史不许被客户端改写）；
+ *   ② 库里**已有**的那几步：整个对象一律沿用库里的（**历史**不许被客户端改写）；
  *   ③ 新步骤默认接着上一步那张图 —— **只有"最后一个新步骤"拿这次上传的新文件**
  *      （一次 PUT 最多带来一个新文件：客户端是"改一步就存一次"）。
+ *      这是**没带 `stateStepId` 时**的旧行为（兼容路径，留着）；
+ *   ④ ★ 2026-10-08（账本）：带了 `stateStepId` 时 ③ 让位 —— 新文件落在**它指名的
+ *      那一步**的 `image` 上（**替换**：这一版的"现在"换了一张底图）。那一步必须
+ *      存在（合并后），否则 400（新的信任边界）。
+ *      ⚠️ 被换下来的旧文件**不删、也不从这里出名单位** —— 它可能还被别的步骤引
+ *      用着，而且就算没人用了，回收也只发生在"删整条会话"那一刻（`files` 只增
+ *      不减，见 MAX_STEPS 那段）。
  */
 function mergeSteps(
   prev: readonly StoredStep[], incoming: readonly unknown[],
-  newFile: string | null, original: string, at: number,
+  newFile: string | null, original: string, at: number, stateStepId: number | null,
 ): StoredStep[] {
   const byId = new Map(prev.map((s) => [s.id, s]))
   const out: StoredStep[] = []
@@ -283,11 +290,22 @@ function mergeSteps(
       lut: normalizeLutRef(o.lut),
     })
   }
-  // ③：新步骤里**最后那一个**拿新文件
-  if (newFile) {
+  // ③：新步骤里**最后那一个**拿新文件 —— **只在没指名"状态挂在哪一步"时**（旧行为）
+  if (newFile && stateStepId === null) {
     for (let i = out.length - 1; i >= 0; i--) {
       if (out[i]!.image === '') { out[i]!.image = newFile; break }
     }
+  }
+  // ④：**带了新图又指名了步骤** → 新文件落在**那一步**上（替换它的 image）。
+  //    ⚠️ 找不到当场抛，**不能静默跳过**：跳过的话新文件只是躺进下面的 `files` 名单里
+  //    没人引用（`base` 那一列指着它，但这一步读回来还是旧图）—— 一个 400 该说的事
+  //    会变成"用户改的东西一声不吭地没存下来"。
+  //    ⚠️ **换一个对象，别原地改**（理由同 `handleUpdateSession` 里 params 那段的 ②）：
+  //    `out.push(old)` 推的是库里那一条的**同一个引用**。
+  if (newFile && stateStepId !== null) {
+    const i = out.findIndex((s) => s.id === stateStepId)
+    if (i < 0) throw new HttpError('BAD_REQUEST', 'stateStepId 指的步骤不存在', 400)
+    out[i] = { ...out[i]!, image: newFile }
   }
   // ①③：空的接着上一步；第一个是原图
   for (let i = 0; i < out.length; i++) {
@@ -328,6 +346,21 @@ export async function handleUpdateSession(
   const o = asObject(body)
   const own = parseFiles(row)
   const prevSteps = JSON.parse(row.steps) as StoredStep[]
+
+  // ★ 2026-10-08（账本）：`stateStepId` —— **这趟的 `params`/`lut`/`base` 说的是哪一步的
+  //   "现在"**（`SessionPatch.stateStepId`，设计 §7.1）。它是新的信任边界，两条都判：
+  //   ① **形状**（这里）：得是正整数 —— 1.5 / "1" / 0 混进来要**当场报**，
+  //      不许落到下面变成"找不到那一步，然后什么都不做"（这个项目最恨的静默失败）。
+  //      摆在最前面（任何文件落盘之前）—— 坏输入不该换来一次"写进去再删掉"。
+  //   ② **存在**（下面 `steps` 算出来之后）：合并后必须真有这一步，否则 400。
+  let stateStepId: number | null = null
+  if (o.stateStepId !== undefined) {
+    const v = o.stateStepId
+    if (!Number.isInteger(v) || (v as number) <= 0) {
+      throw new HttpError('BAD_REQUEST', 'stateStepId 得是正整数', 400)
+    }
+    stateStepId = v as number
+  }
 
   // ── 新图（可选）───────────────────────────────────────────────────
   let newFile: string | null = null
@@ -403,9 +436,19 @@ export async function handleUpdateSession(
     //   事、拿不到 db，而这里一次 map 就够（库里已有的那几步也顺带再验一遍 ——
     //   被删的滤镜不该因为"历史写过"就活下来）。
     steps = Array.isArray(o.steps)
-      ? mergeSteps(prevSteps, o.steps.slice(-MAX_STEPS), newFile, row.original, t)
+      ? mergeSteps(prevSteps, o.steps.slice(-MAX_STEPS), newFile, row.original, t, stateStepId)
         .map((s) => ({ ...s, lut: resolveLutRef(deps.db, user.id, s.lut) }))
       : prevSteps
+    // ★ 2026-10-08（账本）：`stateStepId` 那条信任边界的**第二道**（形状那一道在函数最前面）。
+    //   判据是**合并后**的这串（spec §7.1）。为什么两条路都要有：
+    //   · `mergeSteps` 里那一道只在"这趟还带了新图"时才跑（它要在那儿换 image）；
+    //   · 这一道管剩下的所有形状 —— **没带新图**、甚至整串 `steps` 都没送（拖滑块
+    //     那种 UPDATE 的常见形状，这时"合并后"就是库里那串）。
+    //   少了它，一个指错的 id 会让 params/lut 被**一声不吭**地丢掉（下面是 `ti >= 0`
+    //   的守卫，找不到就跳过）—— 正是这个项目最恨的"错了不报错，只会静静地错"。
+    if (stateStepId !== null && !steps.some((s) => s.id === stateStepId)) {
+      throw new HttpError('BAD_REQUEST', 'stateStepId 指的步骤不存在', 400)
+    }
     // 名单：原来的 + 这次新写的。每一步引用的文件都必须在名单里
     //
     // ⚠️ **缩略图也在名单里**（2026-10-02 修的）：它虽然在 `thumb` 那一列上，但
@@ -422,29 +465,44 @@ export async function handleUpdateSession(
     ]
     for (const s of steps) requireOwnFile(s.image, files)
 
-    // ★ 「现在这一版参数」落在**最后一步**上。`SessionPatch.params` 那段注释讲了为什么
-    //   它必须单独走一个字段（客户端里 `params` 和 `history` 是两回事，拖滑块不动 history）。
+    // ★ 「现在这一版参数」落在 **`stateStepId` 指名的那一步**上；没带 = 还是"最后一步"
+    //   （旧行为，兼容路径）。`SessionPatch.params` 那段注释讲了为什么它必须单独走一个
+    //   字段（客户端里 `params` 和 `history` 是两回事，拖滑块不动 history）。
     //
-    //   两条刻意的窄：① **只动最后一步**，前面几步一个字节不碰 —— 客户端不能改写历史
-    //   （`mergeSteps` 规则 ②）这条规矩不能因为参数就被撬开一个口子；
+    // ★ 2026-10-08（账本）—— 窄口从"最后一步"挪到"指名的那一步"，这是这次协议改动的
+    //   **立身之本**：把两件事分开说。
+    //   · **历史**（`label`/`prompt`/`at`）="当时发生了什么"的记述，客户端**不许**改写
+    //     （`mergeSteps` 规则 ② 挡着，这条规矩不因为这次改动松动）；
+    //   · **状态**（`base`/`params`/`lut`）="这一版现在长什么样"，是客户端的、而且
+    //     **必须**能被它更新 —— 用户站在旧版本上拖滑块，那些值就该落进**那一版**，
+    //     而不是被硬塞给最后一步（那正是旧 `atTip` 规则在绕、又绕不干净的东西）。
+    //
+    //   两条刻意的窄（照旧）：① **只动指名的那一步**，别的步骤一个字节不碰；
     //   ② **换一个对象，别原地改** —— `mergeSteps` 里 `out.push(old)` 推的是库里那条的
     //   **同一个引用**，原地改会顺手动到 `prevSteps`。今天 `prevSteps` 是当场
     //   `JSON.parse` 出来的、动它没事，但那是"今天没事"，不是"不会出事"。
-    if (o.params !== undefined && steps.length > 0) {
-      const last = steps[steps.length - 1]!
-      steps[steps.length - 1] = {
-        ...last,
+    //
+    //   ⚠️ 旧行为那支的落点仍然按**最后一个槽位**算（`steps.length - 1`），不是
+    //   "按 id 找第一次出现" —— 客户端把同一个 id 送两遍时（`[step(1), step(1)]`，
+    //   见「更新 · 参数」里"别名"那条用例），"最后一步"指的是**数组尾巴那个槽**。
+    //   两支都不可能是 -1 以外的坏值：指名那支上面刚验过存在，空数组则本来就没得写。
+    const ti = stateStepId === null
+      ? steps.length - 1
+      : steps.findIndex((s) => s.id === stateStepId)
+    if (o.params !== undefined && ti >= 0) {
+      steps[ti] = {
+        ...steps[ti]!,
         params: applyDeltas(ZERO, asObject(o.params) as Partial<Adjustments>),
       }
     }
 
-    // ★ 2026-10-05（滤镜）：「现在这一版的滤镜」和 params 同一条路：**只动最后一步**、
-    //   **换一个对象**（两条窄的理由见上面 params 那段）。
+    // ★ 2026-10-05（滤镜）：「现在这一版的滤镜」和 params 同一条路：落在
+    //   **`stateStepId` 那一步**（没带还是最后一步）、**换一个对象**（两条窄的理由
+    //   见上面 params 那段）。
     //   ⚠️ `resolveLutRef` 是那道"不许悬空"的闸：客户端拿一个已经不存在的 id 来存，
     //   落库的是 null（不存在的、别人的，都算认不出来）。
-    if (o.lut !== undefined && steps.length > 0) {
-      const last = steps[steps.length - 1]!
-      steps[steps.length - 1] = { ...last, lut: resolveLutRef(deps.db, user.id, o.lut) }
+    if (o.lut !== undefined && ti >= 0) {
+      steps[ti] = { ...steps[ti]!, lut: resolveLutRef(deps.db, user.id, o.lut) }
     }
 
     title = o.title === null || o.title === undefined

@@ -6,11 +6,13 @@ import { openDb, type Db } from './db.ts'
 import { createStorage, type Storage } from './storage.ts'
 import {
   handleCreateSession, handleGetSession, handleUpdateSession, handleDeleteSession,
-  backfillSessionBytes,
+  handleSessionStepFile, backfillSessionBytes,
 } from './sessions.ts'
-// ⚠️ `handleListSessions` / `handleSessionFile` / `handleSessionStepFile` 这三条这里**故意不 import**：
+// ⚠️ `handleListSessions` / `handleSessionFile` 这两条这里**故意不 import**：
 // 它们的入口是 HTTP 那几条路由（Task 2），在本文件的用例里一条都用不上 ——
-// 按任务书原文 import 进来的话，`noUnusedLocals` 会把这三行直接判成 TS6133。
+// 按任务书原文 import 进来的话，`noUnusedLocals` 会把这两行直接判成 TS6133。
+// （`handleSessionStepFile` 2026-10-08 起要用了 —— 「stateStepId」那一组问的是
+//   "这一步盘上读回来的**是不是新图**"，而它读的就是这一步自己的 `image`。）
 import { HttpError } from './http.ts'
 // ⚠️ 「删了会话，作品还在」那一条要用到作品那一层 —— 它守的正是**两层互不牵连**
 import { handleCreateWork, handleGetWork, handleWorkFile } from './works.ts'
@@ -417,6 +419,122 @@ describe('★ 滤镜引用（会话）', () => {
       .run(JSON.stringify([{ id: 1, label: '调色', params: ZERO, at: 0, image: 'a.jpg' }]), id)
 
     expect(handleGetSession(id, user, deps()).steps[0]!.lut).toBeNull()
+  })
+})
+
+/**
+ * ★★ 2026-10-08（账本，设计 §7.1）：`stateStepId` —— "这趟的 `params`/`lut`/`base`
+ * 说的是**哪一步**的现在"。
+ *
+ * 为什么需要它：调色区里改的是**当前那一版**，而用户可能站在任何一版上。旧的落盘
+ * 协议把状态一律写在**最后一步**上（客户端拿 `atTip` 打补丁绕开误伤），于是"站在
+ * 旧版本上拖滑块"存下去会**污染最新那一版**。新的窄口：指名哪一步，状态就落哪一步。
+ *
+ * 这一组钉四件事：**落点**对 / 新图**替换**那一步的 image / 校验（400）/ 不带它时
+ * 旧行为照旧。
+ */
+describe('stateStepId：状态挂在指定的那一步上', () => {
+  const rawSteps = (id: number): string =>
+    (db.raw.prepare('SELECT steps FROM sessions WHERE id=?').get(id) as any).steps
+  const stepsOf = (id: number): any[] => JSON.parse(rawSteps(id)) as any[]
+  const filesOf = (id: number): string[] =>
+    JSON.parse((db.raw.prepare('SELECT files FROM sessions WHERE id=?').get(id) as any).files) as string[]
+  /**
+   * 5 字节的 JPEG。和上面那个 `JPEG`（4 字节）**不同字节** —— "这一步盘上读回来的
+   * 是不是新图"按**字节数**判：`handleSessionStepFile` 读的就是这一步自己的 `image`，
+   * 名字层面的断言骗得过"名字换了、盘上还是旧图"，字节数骗不过去。
+   */
+  const JPEG2 = jpegUrl(5)
+
+  it('★ params 写进 stateStepId 指的那一步（不是最后一步）', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1), step(2)] }, user, deps())
+    const before = stepsOf(id)
+
+    await handleUpdateSession(id, {
+      stateStepId: 1, params: { ...ZERO, exposure: 30 }, steps: [step(1), step(2)],
+    }, user, deps())
+
+    const after = stepsOf(id)
+    expect(after[0].params.exposure).toBe(30)   // 指名的那一步：改了
+    expect(after[1].params.exposure).toBe(0)    // 最后一步：一个字节不动
+    // 判据是**逐字节相同**（和「更新 · 参数」那组同一条）：没被指名的步骤谁都不许碰
+    expect(JSON.stringify(after[1])).toBe(JSON.stringify(before[1]))
+  })
+
+  it('★「现在这一版」的滤镜也落在 stateStepId 那一步上（和 params 同一条路）', async () => {
+    // 一个 2×2×2 恒等 cube（和「滤镜引用（会话）」那一组同一份文本）
+    const CUBE2 = ['LUT_3D_SIZE 2', '0 0 0', '1 0 0', '0 1 0', '1 1 0', '0 0 1', '1 0 1', '0 1 1', '1 1 1'].join('\n')
+    const { lut } = await createLut({ name: 'x', cube: CUBE2 }, user, deps())
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1), step(2)] }, user, deps())
+
+    // ⚠️ 这一趟**不送 steps**（拖滑块 / 套滤镜的真实形状：history 没变）——
+    //    落点全看 stateStepId
+    await handleUpdateSession(id, { stateStepId: 1, lut: { lutId: lut.id, amount: 55 } }, user, deps())
+
+    const steps = handleGetSession(id, user, deps()).steps
+    expect(steps[0]!.lut).toEqual({ lutId: lut.id, amount: 55 })
+    expect(steps[1]!.lut).toBeNull()   // 最后一步没被顺手补上
+  })
+
+  it('★★ 新文件落在 stateStepId 那一步的 image 上（替换掉旧图），不是"最后一个新步骤"', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { base: JPEG, steps: [step(1)] }, user, deps())
+    const first = stepsOf(id)[0].image           // 这一步原来用的那张
+
+    await handleUpdateSession(id, { base: JPEG2, stateStepId: 1, steps: [step(1)] }, user, deps())
+
+    const after = stepsOf(id)
+    const row = db.raw.prepare('SELECT * FROM sessions WHERE id=?').get(id) as any
+    expect(after).toHaveLength(1)                // 没凭空多出一步
+    expect(after[0].image).not.toBe(first)       // 换上了新文件
+    expect(after[0].image).toBe(row.base)        // 换上的**就是**这趟新写的那份
+    // 最强判据：按步读回来的**字节数**（4 → 5）
+    expect((await handleSessionStepFile(id, 1, user, deps())).bytes.byteLength).toBe(5)
+    // ⚠️ 旧文件**不删**（`files` 只增不减）：还在名单里 —— 删会话时收得走
+    expect(filesOf(id)).toContain(first)
+    expect(readdirSync(photos)).toContain(first)
+  })
+
+  it('★ stateStepId 指的步骤不存在 → 400（新信任边界），库一个字节不改', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1)] }, user, deps())
+    const before = rawSteps(id)
+
+    // ⚠️ 这一趟**没送 base**：校验不许只在"要换 image"那条支路上跑 —— 少了这一道，
+    //    params 会被**一声不吭**地丢掉（`findIndex` 找不到、那个 `if` 直接跳过），
+    //    正是这个项目最恨的"错了不报错，只会静静地错"。
+    await expect(
+      handleUpdateSession(id, { stateStepId: 999, params: ZERO, steps: [step(1)] }, user, deps()),
+    ).rejects.toMatchObject({ status: 400 })
+    expect(rawSteps(id)).toBe(before)
+  })
+
+  it('★ stateStepId 得是正整数（0 / 1.5 / "1" 一律 400，不是静默当没带）', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1)] }, user, deps())
+
+    for (const bad of [0, -1, 1.5, '1', true]) {
+      await expect(handleUpdateSession(id, { stateStepId: bad as any, params: ZERO }, user, deps()))
+        .rejects.toMatchObject({ status: 400 })
+    }
+    expect(stepsOf(id)[0].params.exposure).toBe(0)   // 一次都没落进去
+  })
+
+  it('★ 不带 stateStepId = 旧行为照旧（params 落最后一步、新文件落最后一个新步骤）', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1)] }, user, deps())
+
+    await handleUpdateSession(id, {
+      base: JPEG2, steps: [step(1), step(2)], params: { ...ZERO, exposure: 12 },
+    }, user, deps())
+
+    const after = stepsOf(id)
+    expect(after[0].params.exposure).toBe(0)             // 历史那一步没被碰
+    expect(after[1].params.exposure).toBe(12)            // 最后一步 = 现在屏幕上那一版
+    expect(after[1].image).not.toBe(after[0].image)      // 新文件落在最后一个**新**步骤上
+    expect((await handleSessionStepFile(id, 2, user, deps())).bytes.byteLength).toBe(5)
   })
 })
 
