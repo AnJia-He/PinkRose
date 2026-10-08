@@ -641,6 +641,11 @@ beforeEach(() => {
   vi.mocked(saveMod.canShareImage).mockReturnValue(false)
   vi.mocked(saveMod.buildExportBlob).mockResolvedValue(new Blob(['x'], { type: 'image/jpeg' }))
   vi.mocked(saveMod.shareImage).mockResolvedValue(undefined)
+  // ★ 2026-10-08（终审）：滤镜清单的**默认**也得在这里重立 —— `clearAllMocks()`
+  //   只清调用记录、**不恢复实现**，而「删 Lut 时没定稿的那一笔也扫」那条用例
+  //   在用例里把基础实现盖成了 `{luts: []}`（once + 基础两段式）。不重立的话，
+  //   排在它后面的用例从此拿到一张空清单 —— 今天不依赖所以绿，将来会莫名其妙红。
+  vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUANGHUN] })
   // 真的缩像素要 2D 画布；这里让假实现回一张**带新尺寸**的位图，
   // 好断言"到底缩到了多少"——App 认的是位图自报的尺寸，不是请求的尺寸。
   vi.mocked(resizeMod.resizeBitmap).mockImplementation(
@@ -1799,7 +1804,7 @@ describe('历史小图：每一步都看得见（照片上方那条时间轴上�
  * 所以 `src/image/crop` 整个假掉（见文件顶上的 `vi.mock`），
  * 真画布那半（转多少度、缩多少倍、框画在哪）量在 `Canvas.zoom.test.tsx`。
  */
-describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () => {
+describe('★ 裁剪：框 + 第二行 + 完成 = 给当前这一版记一笔账（不加转盘格）', () => {
   /** 打到某条会话上的更新请求（`steps` 是唯一看得见历史的地方）。 */
   const putCalls = (url: string) =>
     fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === 'PUT')
@@ -2229,7 +2234,7 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
  * 涂抹手势与坐标换算量在 `ui/RetouchOverlay.test.tsx`；像素与耗时是真照片探针
  * （`.superpowers/scratch/retouch-probe/`）的事 —— `src/image/erase` 整个假掉。
  */
-describe('★ 点修：涂抹层 + 第二行 + 擦掉这里 = 本地生成新的一步', () => {
+describe('★ 点修：涂抹层 + 第二行 + 擦掉这里 = 给当前这一版记一笔账（不加转盘格）', () => {
   const last = () => canvasProps.props.at(-1)!
   /** 交给画布的点修现场（App 算好那一整块）。 */
   const sceneOf = () => last().retouch as {
@@ -8452,12 +8457,11 @@ describe('★ 账本预算闸：记账统一收口（Task 5）', () => {
     // 不扫待办的话：定稿时把那个**已经不存在的 id** 压进 `past` —— 按一下「上一步」
     // 就把死滤镜又套回画面上（cube 取不到，那层颜色说没就没，一句错都不报）。
     // 变异：去掉 `dropGoneLut` 里扫待办那两行 → 最后那句 `body.lut` 红。
-    const HUT: LutMeta = { id: 1, name: '黄昏', size: 2, bytes: 100, createdAt: 0 }
     const s = makeSession(7, 3, '上次那句', 'S7')
     s.steps[s.steps.length - 1]!.lut = { lutId: 1, amount: 80 }
     withSessions([s])
     vi.mocked(lutsMod.listLuts)
-      .mockResolvedValueOnce({ luts: [HUT] })      // App 挂载那一次：还在
+      .mockResolvedValueOnce({ luts: [HUANGHUN] })  // App 挂载那一次：还在
       .mockResolvedValue({ luts: [] })             // 离开设置页那一次：已经删了
 
     await renderApp()

@@ -40,7 +40,8 @@ import {
 } from './core/crop'
 import { fitToLimit, probeLimit } from './render/limits'
 // ★ 2026-10-08（账本 Task 8）：恢复会话时**离屏重画**每一步的小图（spec §7.3）。
-//   这是全站第二处 `new TonePipeline`（另一处在 Canvas）—— 规模刻意压在这里：
+//   这是全站第三处 `new TonePipeline`（另两处：`src/ui/Canvas.tsx` 的主画面管线、
+//   `src/render/lutPreview.ts` 的滤镜预览小图管线）—— 规模刻意压在这里：
 //   **一条**临时管线 + **一张**临时画布，恢复完就 `dispose`（别再扩成第二条
 //   渲染管线，spec §10 点过名）。
 import { TonePipeline } from './render/pipeline'
