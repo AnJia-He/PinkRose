@@ -3,6 +3,9 @@ import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
 import { MoreHorizontal, Plus, RotateCw, SlidersHorizontal } from 'lucide-react'
 import LutPicker from './LutPicker.tsx'
+// ★ 2026-10-08：勾选的分量是"一问一答"（见 `togglePick`）—— 配对规则和 App
+//   那本删除账共用同一份（core/messages.ts），别在这儿另写一套。
+import { expandDeleteIds } from '../core/messages'
 
 export type ChatMessage = {
   id: number
@@ -166,14 +169,29 @@ export default function ChatPanel({
    *   发号的那条路（输入框、卡片）也整体不渲染了。
    */
   const [selecting, setSelecting] = useState(false)
-  /** 勾了哪几条（消息 id）。**出去就清空** —— 再进来是新一轮，不带着上次的勾。 */
+  /** 勾了哪几条（消息 id）。**出去就清空** —— 再进来是新一轮，不带着上次的勾。
+   *  ★ 2026-10-08：勾的分量是**一问一答**（见 `togglePick`）—— 所以这个数组里
+   *  正常是成对出现的；「已选 N 条」数出来的就是真会走的那几条。 */
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   /** 批量删除的**就地确认**开着没有（勾里有带图的步骤才会走到它）。 */
   const [batchAsk, setBatchAsk] = useState(false)
 
-  /** 勾 / 取消勾一条（勾选框、气泡两个入口都走它）。 */
+  /**
+   * 勾 / 取消勾一条（勾选框、气泡两个入口都走它）。
+   *
+   * ★ 2026-10-08（用户原话：「属于一段对话的记录被删除了，另一条对话记录还被
+   *   保留这肯定不对的」）：**勾的是它这一问一答** —— 配对规则在
+   *   `core/messages.ts`（App 那本删除账用的是同一条，两份不能各写各的）。
+   *   理由：删除既然按整轮走（App.onDeleteMessages），勾选就必须**先看得见**
+   *   那一轮 —— 勾一条、走两条才是"选了什么就删什么"；而且
+   *   `stepCount`（问不问那一句）数的是 `selectedIds`，不在这里补搭子的话，
+   *   只勾了"带图回复"的问句时，那张图会**一声不吭**地跟着走。
+   */
   function togglePick(id: number) {
-    setSelectedIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])
+    const pair = expandDeleteIds(messages, [id])
+    setSelectedIds(ids => ids.includes(id)
+      ? ids.filter(x => !pair.includes(x))
+      : [...ids, ...pair.filter(x => !ids.includes(x))])
   }
   /** 退出选择模式（「取消」和"删完"都走它）：勾清空、确认条收掉。 */
   function exitSelect() {

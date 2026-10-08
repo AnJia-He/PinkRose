@@ -7660,6 +7660,9 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     //   对话」）—— 所以这条用例演的"纯文字那条"从**用户的话**换成了**助手的
     //   纯文字回复**（`route: 'params'` 那种，身后没有一步）。用户自己那句话
     //   现在末尾没有「…」，单删它只剩批选那条路（见下面多选那一组）。
+    // ★ 2026-10-08（用户原话：「属于一段对话的记录被删除了，另一条对话记录
+    //   还被保留这肯定不对的」）：**删一条 = 删它这一问一答** —— 点回复上的
+    //   删除，问句一起走（不然屏幕上留一个没人回答的问题，在他眼里就是坏的）。
     vi.mocked(api.postRoute).mockResolvedValueOnce(
       decision({ route: 'params', paramDeltas: { exposure: 10 }, reply: '这句不用改图。' }))
     await renderApp()
@@ -7675,9 +7678,10 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(menuDelOf('这句不用改图。').textContent).toBe('删除')
     await clickEl(menuDelOf('这句不用改图。'))
 
-    // ② 那条话**立刻**没了（身后没有一步，不用确认）
+    // ② 那一问一答**立刻**一起没了（身后没有一步，不用确认）
     expect(bubbleTexts()).not.toContain('这句不用改图。')
-    expect(container.querySelectorAll('.msg')).toHaveLength(2)
+    expect(bubbleTexts()).not.toContain('你好')
+    expect(container.querySelectorAll('.msg')).toHaveLength(1)
     // ③ 没有确认条；菜单也跟着那条消息一起没了（别留一条悬着的菜单）
     expect(container.textContent).not.toContain('删了就找不回来了')
     expect(container.querySelector('.msg-menu')).toBeNull()
@@ -7814,6 +7818,8 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
   it('★「确认删除」→ 那条话和那一步一起没；站在哪一步删它，画面就挪到**剩下的最后一步**', async () => {
     // 两版：history = [原图(1), 第1版(3), 第2版(5)]。跳到**第 1 版**上把它删掉
     // —— 剩下的最后一步是**第 2 版**（不是原图，"挪到前一个"那种写法会对不上）。
+    // ★ 2026-10-08：删'第一版好了。' = 删它这一问一答 —— '先改一次'（它的问句）
+    //   跟着一起走（配对的规则在 `core/messages.ts`）。
     vi.mocked(api.postRoute)
       .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '改一下', reply: '第一版好了。' }))
       .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '再改一下', reply: '第二版好了。' }))
@@ -7831,10 +7837,11 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     await delVia('第一版好了。')
     await clickByText('确认删除')
 
-    // ① 那条话没了；② 时间轴上少一格；③ 消息少一条（剩下欢迎 + 两句用户话 + 第2版）
+    // ① 它这一问一答都没了；② 时间轴上少一格；③ 消息少两条（欢迎 + 再改一次 + 第2版）
     expect(bubbleTexts()).not.toContain('第一版好了。')
+    expect(bubbleTexts()).not.toContain('先改一次')
     expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
-    expect(container.querySelectorAll('.msg')).toHaveLength(4)
+    expect(container.querySelectorAll('.msg')).toHaveLength(3)
 
     // ④ 被删那一步的位图**还了回去**；剩下那一步的位图还活着（画面正用着它）
     expect(decodedBitmaps[0]!.close).toHaveBeenCalled()
@@ -7868,8 +7875,9 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     await delVia('第一版好了。')             // 删的是中间那一步
     await clickByText('确认删除')
 
-    // ① 那条话和那一步没了（时间轴 3 格 → 2 格），但**画面一动不动**（站的是第 2 版）
+    // ① 那一问一答和那一步没了（时间轴 3 格 → 2 格），但**画面一动不动**（站的是第 2 版）
     expect(bubbleTexts()).not.toContain('第一版好了。')
+    expect(bubbleTexts()).not.toContain('先改一次')   // ★ 2026-10-08：问句一起走
     expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
     expect(canvasProps.images.at(-1)).toBe(shown)
     // ② 位图账：被删那一步的还了；第 2 版的和原图那张**一张都没碰**
@@ -8029,21 +8037,26 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(container.querySelectorAll('.bubble-rerun')).toHaveLength(0)
   })
 
-  it('勾一条算一条：点勾选框、点那条消息都能勾；再点一下取消', async () => {
+  it('勾一条算一条：勾的是**它这一问一答** —— 点勾选框、点那条消息都能勾；再点一下整轮取消', async () => {
     await oneVersion()
     await enterSelect('好，改好了。')
     const countText = () => container.querySelector('.chat-select')?.textContent ?? ''
 
+    // ★ 2026-10-08（用户原话：「属于一段对话的记录被删除了，另一条对话记录
+    //   还被保留这肯定不对的」）：勾的分量和删除一样是**一问一答** ——
+    //   勾问句，它的回答跟着亮（"已选 N 条"数出来的就是真会走的那几条）。
     await clickEl(pickBoxOf('先改一次'))
     expect(pickBoxOf('先改一次').checked).toBe(true)
-    expect(countText()).toContain('已选 1 条')
+    expect(pickBoxOf('好，改好了。').checked).toBe(true)
+    expect(countText()).toContain('已选 2 条')
 
-    await clickEl(pickBoxOf('先改一次'))          // 再点一下 = 取消
+    await clickEl(pickBoxOf('先改一次'))          // 再点一下 = 整轮取消
     expect(pickBoxOf('先改一次').checked).toBe(false)
+    expect(pickBoxOf('好，改好了。').checked).toBe(false)
     expect(countText()).toContain('已选 0 条')
 
-    await clickEl(bubbleOf('先改一次'))           // 点那条消息本身也能勾
-    expect(countText()).toContain('已选 1 条')
+    await clickEl(bubbleOf('先改一次'))           // 点那条消息本身也能勾（同一条路）
+    expect(countText()).toContain('已选 2 条')
 
     // ★ 2026-10-06（晚）：小图搬出对话区之后，"点图 = 勾选（不跳）"那个双关
     //   没有了 —— 时间轴是**纯导航**（它不在被勾的那堆东西里），选择模式下
@@ -8051,7 +8064,7 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     const shown = canvasProps.images.at(-1)
     await clickEl(container.querySelectorAll<HTMLElement>('.strip-node')[0]!)  // 原图那格
     expect(canvasProps.images.at(-1)).not.toBe(shown)   // 画面真的换过去了
-    expect(countText()).toContain('已选 1 条')           // 勾照样在
+    expect(countText()).toContain('已选 2 条')           // 勾照样在
   })
 
   it('一条都没勾时【删除】是禁用的 —— 不留一个点了没用的按钮', async () => {
@@ -8063,16 +8076,24 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
   })
 
   it('勾的全是纯文字：点【删除】直接删 —— 不问、不花钱、删完退出选择模式', async () => {
-    await oneVersion()
-    await enterSelect('好，改好了。')
+    // ★ 2026-10-08：这一组改用 `route: 'params'` 那一轮演（身后没有一步的
+    //   一问一答）—— 勾"先改一次"那种带图的，它的搭子（带图的回复）会一起
+    //   被带进来，那就该走"先问一句"那条路了（下面那条用例钉着）。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 10 }, reply: '这句不用改图。' }))
+    await renderApp()
+    await uploadPhoto()
+    await say('你好')
+    await enterSelect('这句不用改图。')
     const posts = vi.mocked(api.postEdit).mock.calls.length
-    await clickEl(pickBoxOf('先改一次'))
+    await clickEl(pickBoxOf('你好'))
     await clickEl(selectDelBtn())
 
     expect(container.textContent).not.toContain('删了就找不回来了')
-    expect(bubbleTexts()).not.toContain('先改一次')
-    expect(container.querySelectorAll('.msg')).toHaveLength(2)
-    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)   // 一步没动
+    expect(bubbleTexts()).not.toContain('你好')
+    expect(bubbleTexts()).not.toContain('这句不用改图。')
+    expect(container.querySelectorAll('.msg')).toHaveLength(1)
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(1)   // 一步没动
     expect(api.postEdit).toHaveBeenCalledTimes(posts)
     // 退出选择模式：输入框回来了、勾选框没了
     expect(container.querySelector('.chat-select')).toBeNull()
@@ -8083,8 +8104,9 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
   it('选中的里带图：先问一句（说清几张）——「算了」什么都没变、勾还都在', async () => {
     await oneVersion()
     await enterSelect('好，改好了。')
+    // ★ 2026-10-08：只勾"先改一次" —— 它这一问一答会**一起亮**（配对规则），
+    //   带图的那条因此照样被数进那一句里。
     await clickEl(pickBoxOf('先改一次'))
-    await clickEl(pickBoxOf('好，改好了。'))
     const msgs = container.querySelectorAll('.msg').length
     const thumbs = container.querySelectorAll('.strip-node').length
 
@@ -8103,9 +8125,9 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
   })
 
   it('★「确认删除」→ 选中的一起没；站在被删的那步上 → 画面挪到剩下的最后一步', async () => {
-    // 两版：history = [原图(1), 第1版(3), 第2版(5)]。站在第 1 版上，把**它和一句
-    // 用户话**一起勾掉 —— 剩下的最后一步是第 2 版（不是原图，"挪到前一个"那种
-    // 写法会对不上）。
+    // 两版：history = [原图(1), 第1版(3), 第2版(5)]。站在第 1 版上，把它删掉
+    // —— 剩下的最后一步是第 2 版（不是原图，"挪到前一个"那种写法会对不上）。
+    // ★ 2026-10-08：勾'第一版好了。' = 它这一问一答一起勾（'先改一次'跟着亮）。
     vi.mocked(api.postRoute)
       .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '改一下', reply: '第一版好了。' }))
       .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '再改一下', reply: '第二版好了。' }))
@@ -8120,7 +8142,6 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
 
     await enterSelect('第一版好了。')
     await clickEl(pickBoxOf('第一版好了。'))
-    await clickEl(pickBoxOf('先改一次'))
     await clickEl(selectDelBtn())
     await clickByText('确认删除')
 
@@ -8157,8 +8178,7 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     await waitPersist()
 
     await enterSelect('第一版好了。')
-    await clickEl(pickBoxOf('第一版好了。'))
-    await clickEl(pickBoxOf('先改一次'))
+    await clickEl(pickBoxOf('第一版好了。'))    // ★ 2026-10-08：勾它 = 它的问句一起亮
     await clickEl(selectDelBtn())
     await clickByText('确认删除')
     await waitPersist()
@@ -8168,7 +8188,7 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     const msgIds = body.messages.map((m: { id: number }) => m.id)
     expect(stepIds).not.toContain(3)          // 被删那一步
     expect(msgIds).not.toContain(3)           // 那句话
-    expect(msgIds).not.toContain(2)           // 另一句被删的话
+    expect(msgIds).not.toContain(2)           // 它那个问句（一问一答一起走）
     expect(stepIds).toContain(1)              // 原图还在
     expect(stepIds).toContain(5)              // 第 2 版还在
     expect(JSON.stringify(body)).not.toContain('先改一次')

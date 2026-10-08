@@ -43,6 +43,10 @@ import { canShareImage, downloadImage } from './export/save'
 import { prepareForRouting } from './image/prepare'
 import { ApiError, isUnauthorized, postRoute } from './api/client'
 import { bitmapsToClose, attachThumb, type Snapshot } from './core/history'
+// ★ 2026-10-08：删除的单位是"一问一答"（用户报的"删了一条、另半条还留着"），
+//   `expandDeleteIds` 就在这儿把一条 id 补成整轮 —— 纯函数，和 ChatPanel 勾选
+//   那侧共用同一份（别在两处各写一遍配对逻辑）。
+import { expandDeleteIds } from './core/messages'
 import { localStep } from './app/useLocalStep'
 import { GALLERY_THUMB_MAX_SIDE, THUMB_MAX_SIDE, bitmapToDataUrl, makeThumbnail } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
@@ -2076,9 +2080,19 @@ export default function App() {
    *   **单条和批量是同一个函数** —— 菜单里那颗【删除】交一个 id，选择模式里
    *   交一串。光标、底图号、位图回收只有这一份实现。
    *
+   * ★★ 2026-10-08（用户原话：「属于一段对话的记录被删除了，另一条对话记录
+   *   还被保留这肯定不对的」+ 截图里两个没人回答的问句）：**删除的单位是
+   *   一问一答，不是一条消息** —— 传进来什么 id，先按 `core/messages.ts` 的
+   *   `expandDeleteIds` 补成整轮（每条带上它相邻的搭子）再动手。
+   *   他的"一段对话"就是指一问一答（2026-10-06 他自己定的，也是「…」一轮一颗
+   *   的依据）；只删半轮，屏幕上就剩一个孤零零的问句 —— 在他眼里就是坏掉了。
+   *   ⚠️ 补搭子用**这一刻的 `messages`**（所以它在依赖数组里）。
+   *
    * **带图那条连它身后那一步一起删**（图 / 参数 / 滤镜都挂在那一步上 ——
    * 只删消息的话，屏幕上一条话都没了、那个位置却还在，缩略图还会以"没有话的图"
-   * 的样子杵在那儿）；纯文字那条只动 `messages`。
+   * 的样子杵在那儿）；纯文字那条只动 `messages`。补进来的搭子是纯数据（用户话
+   * 永远不挂步骤，见"消息 id 就是步骤 id"那条老约定），所以"带不带图"的判据
+   * 不受它影响。
    *
    * 那一条「删了就找不回来了」的**就地确认由 ChatPanel 做**（它才看得见"这条
    * 后面有没有一步"/"勾的里面有几步带图"）—— 走到这里就是用户已经点了
@@ -2093,7 +2107,9 @@ export default function App() {
    */
   const onDeleteMessages = useCallback((ids: number[]) => {
     if (busy) return
-    const kill = new Set(ids)
+    // ★ 2026-10-08：先补成整问整答（菜单那条路只交一条；批选那条 ChatPanel
+    //   已经补过了，这里是同一条纯函数的第二次调用 —— 幂等）。
+    const kill = new Set(expandDeleteIds(messages, ids))
     if (kill.size === 0) return
     cancelPick()
     cancelReplace()
@@ -2132,7 +2148,7 @@ export default function App() {
         setLut(tip.lut)
       }
     }
-  }, [busy, history, cursorId, cancelPick, cancelReplace, moveCursor])
+  }, [busy, messages, history, cursorId, cancelPick, cancelReplace, moveCursor])
 
   /** 删一条 —— 上面那本账的**特例**（`onDeleteMessages([id])`），给菜单里那颗【删除】。 */
   const onDeleteMessage = useCallback((id: number) => onDeleteMessages([id]), [onDeleteMessages])
