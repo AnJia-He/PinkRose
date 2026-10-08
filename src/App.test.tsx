@@ -5551,6 +5551,31 @@ describe('会话落盘：上传建会话、每一步更新', () => {
   const sessionCalls = (url: string, method: 'POST' | 'PUT') =>
     fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === method)
 
+  /** 拨一条调色滑块（和「账本」那几组同款：点数字 → 打字 → 回车）。 */
+  async function setSlider(name: string, value: number) {
+    const row = [...container.querySelectorAll('.panel .slider')]
+      .find(el => el.querySelector('.slider-label')?.textContent === name)
+    expect(row, `调色面板里该有一条「${name}」`).toBeTruthy()
+    await act(async () => {
+      ;(row!.querySelector('.slider-value') as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const box = row!.querySelector('input.slider-edit') as HTMLInputElement
+    await typeIn(box, String(value))
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  /** 进裁剪 → 立刻「完成」= **换了底图**（账本上加一笔、落盘那趟 `baseChanged`）。 */
+  async function cropOnce() {
+    const cell = container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
+    expect(cell, '工具行里该有「裁剪」').toBeTruthy()
+    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
+    await clickByText('完成')
+  }
+
   it('★ 上传照片 → 会建一条会话；原图、缩略图、照片名一起送上去', async () => {
     await renderApp()
     await uploadPhoto()
@@ -5614,7 +5639,8 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     expect(puts).toHaveLength(2)
     const body = bodyOf(puts[1]!)
     expect(body.messages.map((m: { text: string }) => m.text)).toContain('亮一点')
-    // ★ 参数单独走的那条路：它落在**最后一步**上，不是靠 history 带过去的
+    // ★ 参数单独走的那条路：它落在 `stateStepId` 指名的那一步上（这里是唯一
+    //   那一步），不是靠 history 带过去的
     expect(body.params.exposure).toBe(20)
     // ★ 底图没换就不许传 `base`（也不许重做缩略图）—— 传了就是多存一个
     //   没人引用的文件，而服务端会把好好的缩略图删了重存（§4.3 那条的落点）
@@ -5637,10 +5663,15 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     //   要是再带一次 `base`，服务端 `handleUpdateSession` 会把它存成**新文件**
     //   —— 每条会话白白多背一张没人引用的全尺寸图 + 一张缩略图，外加一次
     //   白费的整图上传（2048 长边 JPEG 的 base64，一个来回）。
-    //   变异：建会话成功后不记 `lastPersistedBaseSeqRef`（或者记成 `++` 之前
-    //   的那一版）→ 这两句红。
+    // ★ 2026-10-08（账本 Task 7）：判据是**没有待办**（`dirtyRef.current === null`）
+    //   —— 上传这条路没人记过账，所以第一趟什么都不该带。
+    //   变异：`onPick` 里给那一版记一笔 `markDirty(id, true)`（"刚上传的底图
+    //   再传一遍"那种写法）→ 这两句红。
     expect(body.base).toBeUndefined()
     expect(body.thumb).toBeUndefined()
+    // 状态那三件也不带（没人脏 = 一个字节都不动）
+    expect(body.stateStepId).toBeUndefined()
+    expect(body.params).toBeUndefined()
   })
 
   it('★ 只动参数（不推快照、不说话）也要落盘 —— 参数有自己的那条依赖', async () => {
@@ -5736,6 +5767,8 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     // 画布直出（`el.toDataURL`）没有帽子。测试台里两条出路的假货长得不一样
     // （`original:` vs `canvas:`），所以分得清 —— 帽子本身在
     // `src/core/thumbnail.test.ts` 里对着**真函数**量（画了多大、什么画质）。
+    // ★ 2026-10-08（账本）：编码的**入参**从画布换成了**这一步的位图**（spec §3
+    //   那个"刷新后参数翻倍"的 bug）—— 下面第一句钉的就是"根本没碰画布"。
     vi.mocked(api.postRoute).mockResolvedValueOnce(
       decision({ route: 'generate', editPrompt: '去掉后面的路人' }))
     vi.mocked(api.postEdit).mockResolvedValue({
@@ -5752,10 +5785,99 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     const puts = sessionCalls('/api/sessions/1', 'PUT')
     expect(puts).toHaveLength(2)
     const body = bodyOf(puts[1]!)
-    // ★ 变异：改回 `el.toDataURL('image/jpeg', 0.9)` → 这里变成 `canvas:…`，红
-    expect(body.base).toBe('original:画布')
-    // 缩略图照旧跟着换（列表上要显示"最后那张"的样子）
+    // ★ 变异：把 `patch.base` 改回 `bitmapToDataUrl(el, 0.9)` → 这两句红
+    //   （入参变成画布那个 `<canvas>`；`body.base` 变成 `original:画布`）。
+    const generated = decodedBitmaps.at(-1)!
+    expect(vi.mocked(thumbMod.bitmapToDataUrl).mock.calls.at(-1)![0]).toBe(generated)
+    expect(body.base).toBe(`original:${(generated as unknown as { __tag: string }).__tag}`)
+    // 缩略图照旧跟着换（列表上要显示"最后那张"的样子），而且**还是从画布抓的**
+    // —— 它要的就是"现在的观感"，和底图那条路正好相反。
     expect(body.thumb).toContain('thumb:')
+    // 状态挂在这一趟新长出来的那一版上（id 3 = 欢迎语 1、你问的那句 2、
+    // 生成那一步 3 —— `applyDecision` 为这一步单独发一个号）
+    expect(body.stateStepId).toBe(3)
+  })
+
+  it('★★（10-08 探针的 bug）落盘的底图来自**干净位图**，不是画布 —— 刷新后参数不许翻倍', async () => {
+    // 根因（spec §3）：`patch.base` 原来是从**画布**编码的，而画布上跑过
+    // `render(params)` —— 存下去的像素**带着参数**。恢复时 `setImage(base)` +
+    // `setParams(同一套参数)`，参数就被作用了两次（真机实测：画布平均亮度
+    // 100.73 → 120.88，对照组 0.00）。触发要三件同时：非零参数 + 换底图 + 刷新。
+    // 修法：底图一律从**那一版的位图**编码（`S(V).base.bitmap`）、画布只留给封面；
+    // 顺带治好"画布不在就整份 patch 扔掉"那条老毛病（底图不再依赖画布）。
+    // 变异：把 `patch.base` 改回 `bitmapToDataUrl(el, 0.9)` → 下面①②当场红。
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await setSlider('亮度', 60)          // 画布上从此带着参数
+    await cropOnce()                     // 这一刀换了底图 → 这一版脏了、要重传
+    await waitPersist()
+
+    const body = bodyOf(sessionCalls('/api/sessions/1', 'PUT').at(-1)!)
+    const cropped = (canvasProps.images.at(-1) as unknown as { bitmap: ImageBitmap }).bitmap
+    // ① 编码的**入参**是那一步的位图对象本身（同一个对象，不是"看着差不多"）
+    expect(vi.mocked(thumbMod.bitmapToDataUrl).mock.calls.at(-1)![0]).toBe(cropped)
+    // ② 送上去的就是那张**没调过色**的位图（`cropped`），不是画布（`original:画布`）
+    expect(body.base).toBe('original:cropped')
+    // ③ 状态（参数）挂在**被裁的那一版**上 —— `stateStepId` 指它，不是含糊的"最后一步"
+    expect(body.stateStepId).toBe(1)
+    expect(body.params.exposure).toBe(60)
+  })
+
+  it('★ 站在**旧版本**上改 → 状态挂在旧版本上（`stateStepId` 指它，不是最后一步）', async () => {
+    // 旧的 `atTip` 规则是"只有站在最新一步才送 params" —— 它治的是"旧版本的参数
+    // 被塞进最后一步"那个病，代价却是**站在旧版本上调的色根本送不出去**
+    // （屏幕上照变，刷新就没了）。今天按 spec §7.2 换成"哪一版脏了送哪一版"。
+    // 变异：payload 里不写 `stateStepId` → 第一句红（服务端会写到最后一步）。
+    withSessions([makeSession(7, 3, '上次那句', 'S7')])
+    await renderApp()
+
+    // 站到**第一版**上（转盘第一格），在那儿拖一档亮度
+    await act(async () => {
+      (container.querySelectorAll('.strip-node')[0] as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await goNav('调色')
+    await setSlider('亮度', 40)
+    await waitPersist()
+
+    const body = bodyOf(sessionCalls('/api/sessions/7', 'PUT').at(-1)!)
+    expect(body.stateStepId, '状态挂在 id 1 那一版上').toBe(1)
+    expect(body.params.exposure).toBe(40)
+    expect(body.lut).toBeNull()
+    // 而这一版**没换过底图** → 不许带 base（参数步不产生新图，§4.3）
+    expect(body.base).toBeUndefined()
+  })
+
+  it('★ 跳版本之前先把**上一版欠的那趟**发出去（不等那 800ms）', async () => {
+    // 消灭"两版同时脏"（spec §7.2）：跳走 = 那一版离开视线，它欠的账先结掉。
+    // 落点：`onJump` 里 `flushEdit()` **之后**那一句 `flushPersist()`
+    // （先定稿那一笔，再把它连状态一起发出去）。
+    // 变异：去掉 `onJump` 里那句 `flushPersist()` → 第一句红（跳转会让落盘
+    // effect 重跑、把 800ms 的闹钟重排一遍，这一趟就没发出去）。
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '改一下', reply: '好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')                 // 转盘两格；生成那一版是 id 3
+    await waitPersist()
+
+    await goNav('调色')
+    await setSlider('亮度', 50)           // 第二版脏了 —— 800ms 还没到点
+    await goNav('修图')
+    const before = sessionCalls('/api/sessions/1', 'PUT').length
+    await act(async () => {
+      (container.querySelectorAll('.strip-node')[0] as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    const puts = sessionCalls('/api/sessions/1', 'PUT')
+    expect(puts.length, '跳走那一刻，上一版那趟已经上路').toBe(before + 1)
+    const body = bodyOf(puts.at(-1)!)
+    expect(body.stateStepId, '发出去的是**上一版**（id 3）的最新状态').toBe(3)
+    expect(body.params.exposure).toBe(50)
   })
 })
 
@@ -5850,12 +5972,14 @@ describe('恢复：打开就接着上次那条', () => {
     await waitPersist()
   })
 
-  it('★ 跳到旧步骤 → 不把"现在这一版参数"写到服务端的**最后一步**上', async () => {
-    // 服务端把 `patch.params`/`patch.lut` 写在**最后一步**上
-    // （`server/sessions.ts` 的 `handleUpdateSession`）。跳转会把 App 里的
-    // params 换成旧步骤的 —— 照旧送上去的话，服务端就把**旧步骤的参数**
-    // 写进了最新那一步：刷新之后画面是最新的、滑块是旧的，谁都不报错。
-    // 变异：patch 里无条件带上 params/lut → 下面两句红。
+  it('★ 纯跳转（谁都没改）不发带 `stateStepId` 的 PUT —— 跳转不改任何一版的"现在"', async () => {
+    // ★ 2026-10-08（账本）：这条原来是「跳到旧步骤 → 不把"现在这一版参数"写到
+    //   服务端的**最后一步**上」—— 当初靠 `atTip`（站在最新一步才送）挡住。
+    //   现在状态按 `stateStepId` 挂在**指名的那一版**上，"最后一步"那个坑从根上
+    //   没有了；规矩升级成更强的一条：**没改就不送**。
+    //   跳转只挪"站在哪一版"，`params`/`lut`/`base` 一个字节都没动 —— 这一趟要是
+    //   还送，服务端就会把某几个值写进某一版，而用户只是看了一眼别的版本。
+    // 变异：`run` 里无条件带上 `stateStepId`/`params`/`lut` → 下面三句红。
     withSessions([makeSession(7, 3, '上次那句', 'S7')])
     await renderApp()
 
@@ -5866,7 +5990,8 @@ describe('恢复：打开就接着上次那条', () => {
     const body = bodyOf(putCalls('/api/sessions/7').at(-1)!)
     // ① 步骤还是全部（跳转不删）—— id 是 1、3、5
     expect((body.steps as { id: number }[]).map(s => s.id)).toEqual([1, 3, 5])
-    // ② "现在这一版参数"没送（服务端那边 = 不动）
+    // ② 状态三件一个都没送（服务端那边 = 一个字节都不动）
+    expect(body.stateStepId).toBeUndefined()
     expect(body.params).toBeUndefined()
     expect(body.lut).toBeUndefined()
   })
@@ -6073,6 +6198,9 @@ describe('恢复：打开就接着上次那条', () => {
       imageDataUrl: 'data:image/png;base64,AAA', width: 1200, height: 800,
     })
     await say('把后面那个人去掉')      // ← 生成已经落地（底图换了）；**故意不等 waitPersist**
+    // ⚠️ 这个记号要**当场**记（生成刚回来那一刻 `decodedBitmaps` 的尾巴就是它）：
+    //    下面切到 B 还会解出 B 的步骤图和原图，尾巴就不再是它了。
+    const genBase = decodedBitmaps.at(-1)!
 
     // 800ms 没到就切走：左栏「对话」→ 点开另一条（这条路的第一句就是 `flushPersist`）
     await goNav('对话')
@@ -6088,24 +6216,40 @@ describe('恢复：打开就接着上次那条', () => {
     // ★ A 那一趟要**真的发出去**，而且**带着换了的那版底图** —— 两半缺一不可：
     //   只看"有没有 PUT"，一个把 base 悄悄丢掉（或者退回旧底图）的实现照样绿，
     //   而那一版底图是用户花钱生成的，丢了就是刷新回到生成之前。
+    // ★ 2026-10-08（账本 Task 7）：这条用例的**病根被连根拔掉了** —— 底图今天
+    //   从**那一步的位图**编码，画布在不在跟它没关系（这正是修 spec §3 那个
+    //   "刷新后参数翻倍"时白捡的好处）。所以断言从"画布直出的假货"换成
+    //   "**生成回来的那张位图**"：更严了，而且再也不依赖"画布元素被 ref 攥着"。
     const putsA = putCalls('/api/sessions/9')
     expect(putsA).toHaveLength(1)
     const bodyA = bodyOf(putsA[0]!)
-    expect(bodyA.base).toBeDefined()
-    // 走的是 `bitmapToDataUrl` 那条（画布直出的假货是 `canvas:…`，测试台上分得开）
-    expect(bodyA.base).toBe('original:画布')
+    expect(vi.mocked(thumbMod.bitmapToDataUrl).mock.calls.at(-1)![0]).toBe(genBase)
+    expect(bodyA.base).toBe(`original:${(genBase as unknown as { __tag: string }).__tag}`)
+    // 状态挂在**新长出来的那一版**上（id 写死没意义 —— 这条是从恢复来的会话，
+    // 号接着服务端上那些走），不是含糊的"最后一步"。
+    const stepsA = bodyA.steps as { id: number; label: string }[]
+    expect(stepsA.at(-1)!.label).toBe('生成式编辑')
+    expect(bodyA.stateStepId).toBe(stepsA.at(-1)!.id)
     // 顺带：切过去那条照旧接回来（切走本身没被这趟影响）
     expect(bubbleTexts()).toContain('S7-用户说的')
     expect(putCalls('/api/sessions/7')).toHaveLength(1)
   })
 
-  it('★★ 切走之后 A 那趟落盘才回来 —— 记号不许被拨回去（B 的下一次落盘不许重传底图）', async () => {
-    // 2026-10-01 评审抓到的 Minor：`if (changed) lastPersistedBaseSeqRef.current = sending`
-    // 这句原来没有"我回来时还是不是当时那条"的判据。而**切走前 flush**（同一轮加的）
-    // 让"A 的应答在切走之后才回来"从"几乎撞不上"变成常事：A 的应答把记号拨回 A 的
-    // 版本号 → B 的下一次落盘以为底图换了 → **重传一整张服务端手里已经有的底图**
-    // （外加一次缩略图重做 + 服务端把好好的缩略图删了重存，§4.3 那条的落点）。
+  it('★★ 切走之后 A 那趟落盘才回来 —— 那笔账不许被销到 B 头上（B 的下一次落盘不许重传底图）', async () => {
+    // 2026-10-01 评审抓到的 Minor：这条守卫原来长在
+    // `if (changed) lastPersistedBaseSeqRef.current = sending` 上，没有"我回来时
+    // 还是不是当时那条"的判据。而**切走前 flush**（同一轮加的）让"A 的应答在切走
+    // 之后才回来"从"几乎撞不上"变成常事：A 的应答把记号拨到 A 头上 → B 的下一次
+    // 落盘以为底图换了 → **重传一整张服务端手里已经有的底图**（外加一次缩略图重做
+    // + 服务端把好好的缩略图删了重存，§4.3 那条的落点）。
     // 不丢数据、不错内容 —— 纯粹白花流量、多存一份没人引用的文件。
+    // ★ 2026-10-08（账本 Task 7）：记号换成了"待办"（`dirtyRef`），销账那句的形状
+    // 一个字没变：`dirtyRef.current === sending && sessionIdRef.current === sessionId`
+    // （前半 = "这一趟在路上时你又动了手，那笔账不许被这趟销掉"；后半 = "我回来时
+    // 已经不是当时那条会话了"）。这条用例钉的是**行为**：B 的下一次落盘不许重传。
+    // ⚠️ 别在这儿写"把后半去掉就红"—— 今天它**不会红**：切会话时 `loadSession`
+    //   已经把待办清成 null 了，前半也拦得住；那半是保险（两层防线，缺一层都不报错，
+    //   正是这个项目最怕的形状）。
     const nine = { ...makeSession(9, 1, 'S9-用户说的', 'S9'), originalName: '九号.jpg' }
     const seven = { ...makeSession(7, 1, 'S7-用户说的', 'S7'), originalName: '七号.jpg' }
     withSessions([seven, nine])
@@ -7228,8 +7372,12 @@ describe('滤镜', () => {
     await openLutPanel()
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
     // ③ 历史里那几步也没被清（落盘的那份还是它）
+    //   ★ 2026-10-08（账本 Task 7）：读的是**快照那一份**（`steps[].lut`）——
+    //   今天顶层那个 `lut` 只在"这一版脏了"时才送（没人改就一个字节都不动，
+    //   见 `dirtyRef`），所以"没被清掉"这件事要看历史那一半才咬得住。
     await waitPersist()
-    expect(lastPutBody().lut).toEqual({ lutId: 1, amount: 80 })
+    expect((lastPutBody().steps.at(-1) as { lut?: unknown }).lut)
+      .toEqual({ lutId: 1, amount: 80 })
   })
 
   /**
@@ -8741,8 +8889,8 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
 
   it('★（评审 Important）删掉**最新那一步**：下一趟落盘要把封面一起送上去 —— 而且是新 tip 那张', async () => {
     // 服务端手里的封面必须跟着 steps 走：只删 steps 不换封面，重开就是
-    // "编辑器显示 v1、左栏列表封面是 v2"的静默不一致。根因是删除没有推
-    // `baseSeqRef`（落盘那趟判"底图换过没有"的 `changed` 用的就是它）。
+    // "编辑器显示 v1、左栏列表封面是 v2"的静默不一致。根因是删除没有记账
+    // （老代码推的是 `baseSeqRef`，落盘那时判"底图换过没有"用的就是它）。
     // 两版的曝光**故意不一样**：封面换没换、换成哪一版，这个数才分得出来。
     vi.mocked(api.postRoute)
       .mockResolvedValueOnce(decision({
@@ -8766,8 +8914,8 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(puts.length).toBeGreaterThan(before)
     const body = bodyOf(puts.at(-1)!)
     // ① 那一趟要**重新带上封面**（服务端才会把旧像素换掉）——
-    //    变异：删除处理器里不推 `baseSeqRef` → 这一句当场红（`changed` 为假，
-    //    patch 里没有 thumb）。
+    //    变异：删除处理器里不 `markDirty(新 tip 的 id, true)` → 这一句当场红
+    //    （没有待办 = 这一趟不带 thumb）。
     expect(body.thumb, '删掉最新这一步之后，落盘没把新封面送上去').toBeTruthy()
     // ② 而且它来自**新 tip 的画面**：画布现在画的是第 1 版（曝光 40）、
     //    缩略图就是从这块画布上抓的 —— 锚在"屏幕上真正看到的"上，不写死字符串

@@ -234,6 +234,25 @@ describe('更新', () => {
     expect(row.updated_at).toBe(3000)
     expect(row.title).toBe('换个名字')
   })
+
+  it('★ 名字跟着 `stateStepId` / `lut` 走也一样照动（判据里每一个字段都点名了）', async () => {
+    // ★ 2026-10-08（账本 Task 7 顺手件）：`titleOnly` 那句话是"**只有 title 这一个
+    //   字段**"，所以协议里**每一个**新字段都要在判据里点一次名 —— 漏一个就是
+    //   "哪天有人拿它补一趟只改名的话，这条会话白白跳到今天最前"。
+    //   变异：把 `o.stateStepId === undefined` / `o.lut === undefined` 任一条删掉
+    //   → 下面两句红（`updated_at` 没被 3000 顶掉）。
+    const { id } = await handleCreateSession({ image: JPEG }, user, { db, storage, now: () => 1000 })
+    await handleUpdateSession(id, { steps: [step(1)] }, user, { db, storage, now: () => 2000 })
+    const at = () => (db.raw.prepare('SELECT updated_at FROM sessions WHERE id = ?').get(id) as any).updated_at
+
+    await handleUpdateSession(id, { title: '带状态步号', stateStepId: 1 }, user,
+      { db, storage, now: () => 3000 })
+    expect(at()).toBe(3000)
+
+    await handleUpdateSession(id, { title: '带滤镜', lut: null }, user,
+      { db, storage, now: () => 4000 })
+    expect(at()).toBe(4000)
+  })
 })
 
 /**

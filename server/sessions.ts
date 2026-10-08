@@ -409,9 +409,14 @@ export async function handleUpdateSession(
   //   ⚠️ 并发守卫（下面的 `AND updated_at = ?`）不受影响：没改它就没变，
   //      "读到的还是写时的那个"照样成立；缩略图的缓存钥匙同理（图本来也没变）。
   //   ⚠️ 客户端落盘（App 改照片）永远带 params —— 那条路照旧 bump，别把判据放宽。
+  // ★ 2026-10-08（账本 Task 7 顺手件）：判据是"**只有 title 这一个字段**"，
+  //   那 `stateStepId` / `lut` 也得点名列进来（少一个就是"哪天有人拿它补一趟
+  //   只改名的话，这条会话会白白跳到今天"）。今天没有这种调用点
+  //   （客户端的改名只送 `{title}`，落盘永远带 `params`）—— 这是给形状兜底。
   const titleOnly = typeof o.title === 'string'
     && o.base === undefined && o.thumb === undefined
     && o.messages === undefined && o.steps === undefined && o.params === undefined
+    && o.lut === undefined && o.stateStepId === undefined
   const t = titleOnly ? row.updated_at : nowMs(deps)
   // ★ 2026-10-04：被换掉的那个旧缩略图会**从盘上删掉**（下面那两处 remove）——
   //   所以它的字节要**从账里减掉**，不然每换一次缩略图就多算一份（越攒越虚）。

@@ -494,7 +494,7 @@ export default function App() {
    * **异步**的，它回来时要问"我**现在**还是不是当时那条会话"。state 在异步
    * 闭包里读到的是**发出去时**的值（永远是"是"），而这件事要的是"**回来时**"
    * 的答案（2026-10-01 评审抓到的：切会话之后上一条的应答才回来，会把
-   * `lastPersistedBaseSeqRef` 拨回去 —— 见落盘里那一行）。
+   * 上一条那个待办记号销在**新会话**头上 —— 见落盘里销账那一句）。
    *
    * ⚠️ 它**不是** state 的替代：上面那段说的"必须是 state"照旧成立。它只是
    *   一个只读给异步代码看的影子。
@@ -510,6 +510,54 @@ export default function App() {
   const setCurrentSession = useCallback((id: number | null) => {
     sessionIdRef.current = id
     setSessionId(id)
+  }, [])
+
+  /**
+   * ★ 2026-10-08（调色区账本 Task 7，spec §7.2）：**哪一版的"现在"变了** ——
+   * 落盘按它决定这一趟"存谁"、要不要连底图一起重传。
+   *
+   * 两个字段就两件事：`stepId` = 这一趟的 `stateStepId`（状态挂在**那一版**上，
+   * 不是含糊的"最后一步"）；`baseChanged` = 那一版**换了底图**（裁剪 / 点修 /
+   * 翻账本退到换过像素的一笔 / 新版本出生 / 删掉 tip —— 这些才要重传像素，
+   * 拖滑块不要）。`null` = 没有待办的账。
+   *
+   * ⚠️ **合并语义：同一步的 `baseChanged` 只增不减**（`markDirty` 里那句 `||`）。
+   *   先裁了一刀还没发出去、紧接着又拖了滑块 —— 后一笔标 `false`（调色不换底图），
+   *   要是把它当"新的一笔"覆盖掉，那一刀就**永远送不出去**了（屏幕上照变，
+   *   刷新回到没裁的样子，一句错都不报）。
+   * ⚠️ **成功写回之后才清**（在落盘那个 `run` 的应答里）—— 先清的话，一次失败
+   *   会把那一版永久跳过（后面再也不会重送它）。失败时留着，下一次改动会自动
+   *   再送一遍（屏幕上那句"接着改会自动补上"说的就是它）。
+   * ⚠️ 它**不触发重渲染**（ref）—— 所以每次 `markDirty` 都必须是"同一批里还有
+   *   别的 setState"的那些时刻（记账 / 裁剪 / 生成落地 / 镜像），落盘那个 effect
+   *   才会跟着重跑、重排那个 800ms 的闹钟。今天每一个调用点都满足（见各处注释）。
+   * ⚠️ 它**在换照片 / 换会话 / 归零三处被清成 null**（和 `editPendingRef` 同一批）。
+   * ⚠️ **只有一格**（同时只记一版，改完 A 再改 B 就是 B 覆盖 A）。今天这够用：
+   *   所有"改到另一版去"的路（`onJump` / 切会话 / 换照片）都**先 flush** 把 A 那趟
+   *   发出去。**已知边界**：A 那趟**失败**了、人又跑到 B 上动手 —— A 的底图这一轮
+   *   不会再自己送（要等 A 下一次被改动；`messages` / `steps` 照旧每趟都送）。
+   *   要补的话得把这一格换成"按版本排队"，那是另一件事（设计只要求一格）。
+   *
+   * ⚠️ 为什么这对声明摆在**这一簇的最上面**（离"会话"比离"落盘"近）：读它的
+   *   `useCallback` 有好几只，其中 `dropGoneLut` / `refreshLuts` 在文件里出现得
+   *   比落盘那一大段**早得多** —— 晚一步声明，光是把 `markDirty` 写进它们的
+   *   依赖数组就是 TDZ、整个 App 白屏（这个文件为这件事写过好几处注释：
+   *   "摆在 send 前面…落在后面就是 TDZ"）。声明在这儿，所有调用点都能照
+   *   "读到的就写进依赖"那条规矩老实写。
+   */
+  const dirtyRef = useRef<{ stepId: number; baseChanged: boolean } | null>(null)
+  /**
+   * 记一笔"这一版的现在变了"。**一步一行**，调用点就那几处（写回 effect /
+   * `commitCrop` / `commitRetouch` / `ledgerStep` / 生成落地 / 删 tip /
+   * 删滤镜时扫到的那一版）。
+   */
+  const markDirty = useCallback((stepId: number, baseChanged: boolean) => {
+    const prev = dirtyRef.current
+    dirtyRef.current = {
+      stepId,
+      // 同一步的 `baseChanged` 只增不减（理由见 `dirtyRef` 那段 ⚠️）。
+      baseChanged: baseChanged || (prev?.stepId === stepId ? prev.baseChanged : false),
+    }
   }, [])
 
   /**
@@ -547,8 +595,18 @@ export default function App() {
       past: s.past.map((p) => (p.lut?.lutId === id ? { ...p, lut: null } : p)),
       future: s.future.map((f) => (f.lut?.lutId === id ? { ...f, lut: null } : f)),
     })))
+    // ★ 2026-10-08（账本 Task 7）：**这一版的"现在"变了** —— 那层颜色是从快照上
+    //   摘掉的，落盘得认这笔账。不记的话服务端那份还挂着这个已经不存在的 id：
+    //   客户端这边靠"每次挂载照一次镜子"自愈，服务端那边则一直没发生 —— 正是
+    //   "错了不报错"那一类（老代码是靠无条件送 params/lut 顺带盖住的）。
+    //   ⚠️ 挂**当前这一版**（`cursorIdRef`）：`stateStepId` 一趟只能指一步，而
+    //   "现在这一版"才是用户眼前这套颜色。上面那个 `map` 顺手扫过的 `past` /
+    //   `future` 不落盘（账本不落盘，设计 §8）。
+    //   ⚠️ `cursorIdRef.current === null`（没有照片）= 这一趟没有会话可写。
+    const cur = cursorIdRef.current
+    if (cur !== null) markDirty(cur, false)
     noticeBad('那个 Lut 刚被你删掉了，这张照片上的也去掉了。')
-  }, [noticeBad])
+  }, [noticeBad, markDirty])
 
   /**
    * 重新拉一遍清单，然后照镜子（离开 `/app/luts` 时叫一次）。
@@ -701,8 +759,6 @@ export default function App() {
   }, [])
   /** 落盘的次序号。后一次回来时前一次可能还在路上 —— 只认最新的那一次 */
   const persistSeqRef = useRef(0)
-  /** 上一次**成功写进服务端**的底图是第几版。只在写成功之后才更新 —— 见下面那句注释 */
-  const lastPersistedBaseSeqRef = useRef(-1)
   /**
    * **还没到点**的那一趟落盘：它的活儿（`run`）和那个 800ms 的闹钟。
    *
@@ -851,8 +907,9 @@ export default function App() {
    *      而他明明点了另一条，那是句假话。
    *
    * ⚠️⚠️ **四件事一件都不能丢**（全是 Task 5 评审一轮一轮抠出来的，都**静默出错**）：
-   *   ① `idRef` 跳过接回来的所有 id（下面标了 ★★）；② `lastPersistedBaseSeqRef`
-   *   跟着走；③ `pickStartedRef` 那道闸门；④ 作废时 `releaseDecoded()` 把位图还回去。
+   *   ① `idRef` 跳过接回来的所有 id（下面标了 ★★）；② `dirtyRef`（落盘的待办
+   *   记号）清掉 —— 接回来的这几版就是服务端上那几版；③ `pickStartedRef` 那道
+   *   闸门；④ 作废时 `releaseDecoded()` 把位图还回去。
    *
    * ⚠️ **写状态那一批里一次 `await` 都不许有**：中途让出的话，落盘那个 effect 会
    *   带着**旧 history + 新 sessionId** 跑一次 —— 那等于**把 A 的活儿写进 B**。
@@ -1124,17 +1181,22 @@ export default function App() {
         ...detail.messages.map(m => m.id),
         ...detail.steps.map(s => s.id),
       )
-      // ★ 底图**换过一版了**（从 A 的换成 B 的）—— 记号往前挪一格，顺手把
-      //   "这一版已经存过了"也记上：刚接回来的这一版**就是服务端上那一版**，
-      //   别一进来就把它重传一次（不记的话：下一次落盘会带着 `base` 上路，而服务端
-      //   每收一次 `base` 就存成一个新文件 —— 每条会话白白多背一张没人引用的
-      //   全尺寸图，还白传一趟）。
-      //   ⚠️ 这个 `++` 还顺手管住两件"迟到的活儿"：上传时那批**建议卡片**和
+      // ★ 底图**换过一版了**（从 A 的换成 B 的）—— 记号往前挪一格。
+      //   ⚠️ 这个 `++` 随手管住两件"迟到的活儿"：上传时那批**建议卡片**和
       //      十几秒前那次**生成**。它们回来时发现底图版本变了，就会自己作废 ——
       //      不作废的话，A 的卡片 / A 生成的那张图会**落进 B**（`loadCards` 那道闸门
       //      看的正是这个版本号）。
+      // ★ 2026-10-08（账本）：**上一条的待办记号一起作废** —— 刚接回来的这几版
+      //   **就是服务端上那几版**，别一进来就把它重传一次（不记的话：下一次落盘
+      //   会带着 `base` 上路，而服务端每收一次 `base` 就存成一个新文件 ——
+      //   每条会话白白多背一张没人引用的全尺寸图，还白传一趟）。
+      //   这里替代了原来那句 `lastPersistedBaseSeqRef.current = baseSeqRef.current`
+      //   （那个记号已随 Task 7 退役：今天"服务端已经有了"这件事由**没有待办**
+      //   来表达，见 `dirtyRef`）。
+      //   ⚠️ 和上面 `editPendingRef.current = null` 是同一批（LIFO：两样都是
+      //      "上一条会话的、没结完的账"，跟着 history 一起换掉）。
       baseSeqRef.current++
-      lastPersistedBaseSeqRef.current = baseSeqRef.current
+      dirtyRef.current = null
       // ⚠️ 两条通报**只有一格**（`notice` 是一个对象）：上面 catch 里那句
       //   "原图没取回来"先设、这里再无条件设一句，同一个批次里**后设的赢** ——
       //   用户只会看到"接着改就行"，而那一刻「保存」「分享」「下载」其实是坏的。
@@ -1235,6 +1297,9 @@ export default function App() {
       //   为什么读的是 ref 而不是 state，见 `cursorIdRef` 的注释。
       tipId, setCursorId: moveCursor,
       cursorIdRef,
+      // ★ 2026-10-08（账本，Task 7）：新版本出生 = 这一版的现在变了（换了底图）
+      //   —— 记给落盘那边，下一趟 PUT 才把这一步的 `image` 送上去。
+      markDirty,
     })
 
   // ── 裁剪（★ 2026-10-06，工具行第一颗）────────────────────────────────
@@ -1405,12 +1470,18 @@ export default function App() {
         //   还被 `past` 引用着（关了 = 退回去时闪黑）。
         return settleLedger(prev, next)
       })
-      // ★（评审 Critical）**底图换了一版，记号要往前挪** —— 落盘那趟判
-      //   "要不要重传 base / 封面"用的就是它（`changed`）。不推的话服务端手里
-      //   还是**没裁过**的那张，重开之后画面是原图 —— 一句错都不报。
-      //   （Task 7 起落盘改为按"哪一版脏了"（`stateStepId`）送，这个记号在那之前
-      //   仍是唯一判据；"删掉最新一步"那条路推的是同一个记号，那边钉的是封面。）
+      // ★（评审 Critical）**底图换了一版，落盘的账要记上** —— 这一版现在
+      //   脏了，而且脏的是**像素**（`baseChanged`）：下一趟 PUT 才会把这张
+      //   裁出来的底图送上去。不记的话服务端手里还是**没裁过**的那张，
+      //   重开之后画面是原图 —— 一句错都不报。
+      //   （★ Task 7 之前这儿推的是 `baseSeqRef`；那个号今天只管竞态闸门，
+      //    落盘改认 `dirtyRef`，见它那段。`patch.thumb` 也跟着它一起重传。）
       baseSeqRef.current++
+      // ⚠️ `at` 类型上是 `number | null`（读的是影子 ref），但走到这儿它一定非空
+      //   —— "有照片 ⇒ 位置非空"那条不变量管着（上面也有 `!image` 那道早返回）。
+      //   这里只是让类型过得去；真为 null 的话上面那个 updater 已经报过
+      //   「账本没记上」，轮不到这一行。
+      if (at !== null) markDirty(at, true)
       setImage(base)
       // ★ 终审 I3：**底图换了 = 那批"上一条照片的临时状态"一起清** —— `onPick` /
       //   `loadSession` / `resetEditor` 三处都写着这条规矩，裁剪是**第四个**
@@ -1555,6 +1626,11 @@ export default function App() {
         return settleLedger(prev, next)
       })
       baseSeqRef.current++
+      // ★ 2026-10-08（Task 7）：同上（`commitCrop` 那段）—— 擦出来的是新像素，
+      //   这一版脏了、而且要重传底图（`baseChanged`）。
+      //   ⚠️ `at` 非空同 `commitCrop` 那条（"有照片 ⇒ 位置非空"），这一句只是
+      //   让类型过得去。
+      if (at !== null) markDirty(at, true)
       setImage(base)
       setPending(null)
       setPendingReplace(null)
@@ -1683,7 +1759,9 @@ export default function App() {
       // ★ 2026-10-08（账本）：上一张照片那个"没定稿的半截笔"跟着一起作废 ——
       //   下面紧接着就把 history 整段换成新的一张了（不清的话它会一直堵着
       //   下一次"起一笔"，直到某一拍 `flushEdit` 发现找不到那个 id 才自己散掉）。
+      //   ★ 落盘那本账（`dirtyRef`）同一批清：它记的是**上一张照片的那几版**。
       editPendingRef.current = null
+      dirtyRef.current = null
 
       originalFileRef.current = file
       setImage(img)
@@ -1749,10 +1827,16 @@ export default function App() {
       //   等它等于把用户挡在门外（上传那一步已经有一句"正在打开照片…"了）。
       //   建失败也**不影响本地修图**，但要说一声（见下面 catch）。
       //
-      // ⚠️ 摆在这儿（`baseSeqRef.current++` **之后**）是有意的，不是随手挪的：
-      //   建会话送上去的那张图 == 此刻这一版底图，下面要照着这个版本号记
-      //   `lastPersistedBaseSeqRef`（否则第一趟落盘会重传一遍全尺寸底图）。
-      //   摆在 `++` 前面的话捕到的是**上一版**，记进去等于没记。
+      // ⚠️ ★ 2026-10-08（Task 7）：建会话送上去的那张图**不需要在这儿记一笔**
+      //   了 —— 老代码在这里写过 `lastPersistedBaseSeqRef`（"这一版底图服务端
+      //   已经有了，别再传一遍"），那个记号随 Task 7 退役。今天"服务端已经有了"
+      //   由**没有待办**（`dirtyRef.current === null`）来表达，而上传这条路上
+      //   本来就不会有待办（`onPick` 刚刚把整个 history 换掉）。
+      //   ⚠️ **别顺手改成 `dirtyRef.current = null`**：这趟 `await` 的几十~几百
+      //   毫秒里用户完全可能已经动了手（拖了个滑块、甚至裁了一刀）—— 那些待办
+      //   是**这一张新照片**的，清掉就是"那一下永远不落盘，而屏幕上照变"。
+      //   老代码在这儿记的是**发号之前**的那个版本号（`baseSeqAtCreate`），
+      //   所以那个形状恰好没这个坑；换成"清待办"就有。什么都不做才是对的。
       //
       // ⚠️ `setCurrentSession(null)` 这一行是**给同一趟里再换一张照片**留的保险：
       //   上一张的 id 还留着的话，落盘副作用会把**这一张**的步骤和消息写进
@@ -1761,26 +1845,12 @@ export default function App() {
       setCurrentSession(null)
       void (async () => {
         try {
-          // ⚠️ **在 await 之前**捕这一版底图：服务端手里那份 `base` 就是它
-          //   （建会话送的就是这一版）。**不能**等 `createSession` 回来再读
-          //   `baseSeqRef.current` —— 等的那会儿用户要是做了一次生成式编辑，
-          //   `baseSeqRef` 已经往前走了，读"现在"的值会把这个记号设成新版本：
-          //   服务端手里还是旧图，而那次编辑的底图会被**静默吞掉**（比多传
-          //   一版坏得多）。
-          const baseSeqAtCreate = baseSeqRef.current
           // `makeThumbnail` 是**同步**的（返回 data URL 字符串），别手滑写 await。
           const thumb = makeThumbnail(img.bitmap, GALLERY_THUMB_MAX_SIDE)
           const { id } = await createSession(bitmapToDataUrl(img.bitmap), thumb, file.name)
           // ⚠️ 只在**这张照片还是当前那张**时才认这个 id：
           //   用户可能在等的时候又换了一张（那会让这个 id 变成上一条会话的）
-          if (originalFileRef.current === file) {
-            setCurrentSession(id)
-            // ★ 建会话送上去的那张图，服务端已经当 `original` + `base` 存了一份
-            //   —— 记一笔，第一趟落盘就不用**再传一遍全尺寸底图**（连缩略图）。
-            //   不记的话：服务端每收一个 `base` 都存成**新文件**，每条会话会白白
-            //   多背一张没人引用的原图和一张缩略图，外加一次白费的整图上传。
-            lastPersistedBaseSeqRef.current = baseSeqAtCreate
-          }
+          if (originalFileRef.current === file) setCurrentSession(id)
         } catch (e) {
           console.error('会话没建起来', e)
           noticeBad('这次的改动暂时存不下来（刷新就没了），修图照常。')
@@ -1813,8 +1883,11 @@ export default function App() {
     closeBitmaps(bitmapsToClose(history, []))
     // ★ 2026-10-08（账本）：照片都放下了，那个"没定稿的半截笔"也没有意义了 ——
     //   下面就是 `setHistory([])`。⚠️ `onSessionDeleted` 走的就是这条路，
-    //   所以四处"整段换掉 / 清空 history"的地方在这一行上齐了。
+    //   所以"整段换掉 / 清空 history"的每一处（`loadSession` / `onPick` / 这里）
+    //   在这一行上齐了。
+    //   ★ 落盘那本账（`dirtyRef`）同一批清 —— 没有照片了，就没有"哪一版脏了"。
     editPendingRef.current = null
+    dirtyRef.current = null
     setImage(null)
     setHistory([])
     // ⚠️ 走 `moveCursor`：归零也要连影子 ref 一起清（不清的话，下一条会话里
@@ -2231,6 +2304,15 @@ export default function App() {
     //   版本之间不许出现"半截笔"。用户"调完马上跳到下一版"时，那一笔要是
     //   没定稿，之后回来它就没了（而屏幕上明明看得见颜色变了）。
     flushEdit()
+    // ★ 2026-10-08（账本，Task 7）：再把它**欠的那趟落盘**也发出去（spec §7.2
+    //   的"版本跳转前 flush"）—— 跳走 = 那一版离开视线，它欠的账先结掉，
+    //   也就**消灭了"两版同时脏"**（不结的话：第二版那趟还排在 800ms 的队里，
+    //   而人已经站在第一版上拖滑块了 —— 两版的待办在同一个 `dirtyRef` 上打架，
+    //   先排的那趟会被后一笔盖掉）。
+    //   ⚠️ 顺序：**先定稿、再 flush**（`flushEdit` 刚记的那一笔在落盘 payload 里
+    //   是账本的那半，而状态那半（params/lut）本来就已经镜像进快照了）。
+    //   ⚠️ 和 `loadSession` 进门第一句那对是同一个形状（那边也是两个 flush 一起打）。
+    flushPersist()
     // ★ 「回到这一步」也是"改主意了"：上一条歧义就此翻篇 —— 和 send / onCard
     //   里那几行同一个道理，所以用同一个 cancelPick。
     //   （原来的那两条竞态理由照旧成立，见 git 历史。）
@@ -2260,7 +2342,8 @@ export default function App() {
     //       那已经不是原图了。
     //   ⚠️ 依赖数组不用动：`target` 来自 `history`，它本来就在里面。
     setLut(target.lut)
-  }, [history, cancelPick, cancelReplace, moveCursor, flushEdit])
+    // ⚠️ `flushPersist` 进了依赖数组（上面读到了它）—— `flushEdit` 本来就在里面。
+  }, [history, cancelPick, cancelReplace, moveCursor, flushEdit, flushPersist])
 
   /**
    * ★ 2026-10-08（调色区账本，Task 4）：调色屏左下角那组箭头 —— 翻的是
@@ -2312,8 +2395,13 @@ export default function App() {
     setImage(target.base)
     setParams(target.params)
     setLut(target.lut)
-    // ⚠️ 落盘要认这一版（Task 7 接上 `markDirty`：退回/前进都可能换了底图）
-  }, [history, cursorId, params, lut])
+    // ★ 2026-10-08（Task 7）：**翻账本也是改"这一版的现在"** —— 退一步 / 进一步
+    //   都可能换掉底图（翻到"裁之前/裁之后"那一笔）和调色。判据就是底图的
+    //   **对象身份**：同一条链上的调色笔共用同一个位图对象（账本的不变量 ②），
+    //   只有真换过像素的那几笔才不是 —— 换过就得把这张位图重传给服务端
+    //   （`baseChanged`），没换过只送参数。
+    markDirty(cur.id, target.base !== base.base)
+  }, [history, cursorId, params, lut, markDirty])
 
   /**
    * ★ 2026-10-08（调色区账本，Task 4）：调色区的**现场**与「当前这一版」之间
@@ -2349,12 +2437,21 @@ export default function App() {
         }
       }
       setHistory(h => h.map(s => (s.id === cur.id ? { ...s, params, lut } : s)))
+      // ★ 2026-10-08（Task 7）：**这一版的"现在"变了** —— 落盘该认识它。
+      //   `false`：调色/滤镜不换底图（`baseChanged` 只留给裁剪/点修/翻账本
+      //   那几处真换像素的地方）。不记的话：拖完滑块刷新一下，颜色回到拖之前
+      //   —— 而屏幕上当时什么都没说（正是这条 effect 与落盘之间那道缝）。
+      //   ⚠️ 写在 `setHistory` **后面**、同一批里：`markDirty` 只动 ref、不触发
+      //   渲染，所以它必须搭着上面那次 `setHistory` 一起让落盘 effect 重跑
+      //   （重排那个 800ms 的闹钟），顺序反了也一样成立，但读起来是"先改快照、
+      //   再记账"。
+      markDirty(cur.id, false)
     }
     // ③ 定稿闹钟（没有待办 = 不立表）
     if (!editPendingRef.current) return
     const t = setTimeout(() => flushEdit(), 800)
     return () => clearTimeout(t)
-  }, [params, lut, cursorId, history, flushEdit])
+  }, [params, lut, cursorId, history, flushEdit, markDirty])
 
   /**
    * ★ 2026-10-06（用户原话：「在会话里的单条记录我怎么还是没有删除的按钮」，
@@ -2408,17 +2505,28 @@ export default function App() {
     setMessages(m => m.filter(x => !kill.has(x.id)))
     // 这里面有没有"一步"？没有（纯文字那几条）→ 到此为止。
     if (!history.some(s => kill.has(s.id))) return
-    // ★（评审 Important，2026-10-06）被删的里面有**最后一步**时，**推一版底图号**。
-    //   落盘那趟拿它判"底图换过没有"（`changed`）—— 不推的话那一趟不带
-    //   base/thumb：服务端手里的封面还是**被删那版**的像素，而 `steps` 里已经
-    //   没有它了。重开就是"编辑器显示 v1、左栏列表封面是 v2"，一句报错都没有。
+    // ★（评审 Important，2026-10-06）被删的里面有**最后一步**时，这一版底图
+    //   **换人了** —— 两个记号各干各的，一行一个：
+    //   · `baseSeqRef++` = **竞态闸门**（这个号今天只管"迟到的活儿还算不算数"，
+    //     见 `baseSeqRef` 那段）；
+    //   · `markDirty(新 tip 的 id, true)` = **落盘**：让下一趟 PUT 重新带上
+    //     `base` + `thumb`（`baseChanged`）。不带的话服务端手里的封面还是
+    //     **被删那版**的像素，而 `steps` 里已经没有它了 —— 重开就是"编辑器显示
+    //     v1、左栏列表封面是 v2"，一句报错都没有。
     //   （用户最常见的路径正是"站在最新那步上把它删掉"——那时画布已经被下面
-    //   那三行换成了新 tip 的样子，重传上去的 base/thumb 就是对的。）
-    //   删**中间**那些步不推：封面画的就是最后一步，那一步没动，封面本来还对。
+    //   那三行换成了新 tip 的样子，重传上去的封面就是对的。）
+    //   删**中间**那些步不记：封面画的就是最后一步，那一步没动，封面本来还对。
     //   ⚠️ 已知角落（评审接受的取舍）：人站在**别的**步骤上删尾步时，重传的封面
     //   是他当时看的那一版（不是新 tip）—— 比"留着已删的那版"强，下一次生成自愈。
+    //   ⚠️ `base` 那一半会送**新 tip 自己的位图**（`stateStepId` 指着它）—— 服务端
+    //   会存成一份内容相同的文件。这份浪费是有意的：宁可多存一份，也不要让
+    //   "底图"和"挂在哪一步"两半走岔（岔了就是刷新后某一版变回旧图）。
     const tipBefore = history[history.length - 1]
-    if (tipBefore && kill.has(tipBefore.id)) baseSeqRef.current++
+    if (tipBefore && kill.has(tipBefore.id)) {
+      baseSeqRef.current++
+      const newTip = history.filter(s => !kill.has(s.id)).at(-1)
+      if (newTip) markDirty(newTip.id, true)
+    }
     setHistory(prev => {
       const next = prev.filter(s => !kill.has(s.id))
       // 被删那几步的位图要还回去（原图不关 —— 它还要接着用）。副作用写在 updater
@@ -2528,22 +2636,40 @@ export default function App() {
    *      （设计文档 §4.3 那条"参数步不产生新图"，落点就在这儿）。
    *   ③ **不许在调用点上 await** —— 用户拖滑块是连续的，等一次网络往返就等于拖不动。
    *   ④ **不许把失败吞掉** —— 静默失败是这个项目最恨的：用户会以为存上了。
-   *   ⑤ **`lastPersistedBaseSeqRef` 只在写成功之后才更新** —— 先更新的话，
-   *      一次失败会把那一版底图**永久跳过**（后面再也不会重传它）。
+   *   ⑤ **底图一律从"那一版的干净位图"编码**（★ 2026-10-08 账本，spec §3）——
+   *      老代码是从**画布**编码的，那是"刷新后参数应用两次"的根，见下面那段。
    */
   useEffect(() => {
     const last = history[history.length - 1]
     if (sessionId === null || !last) return
-    // ★ 2026-10-05：「现在这一版参数 / 滤镜」在服务端是落在**最后一步**上的
-    //   （`handleUpdateSession`）—— 所以只有**站在最后一步**时它才等于
-    //   "现在这一版"。跳回旧步骤之后照旧送的话，服务端会把旧步骤的参数写进
-    //   最新那一步：刷新后画面是最新的、滑块是旧的，谁都不报错。
-    //   ⚠️ 跳过这一趟不是"少存了"：站在旧步骤上根本没有"现在这一版参数"这回事，
-    //   跳转也不该**改动**存下来的 steps（设计 §5）。
-    const atTip = cursorId === last.id
-    // 底图这一版存过没有？`lastPersistedBaseSeqRef` 只在**写成功**之后才跟进
-    // （见 ⑤）——它的初值 -1 表示"一版都还没存过"。
-    const changed = baseSeqRef.current !== lastPersistedBaseSeqRef.current
+    // ★★ 2026-10-08（账本，Task 7，spec §7.2）：**哪一版脏了送哪一版**。
+    //   `dirtyRef` 指名了一版（用户最后动过的那一版），这一趟的
+    //   `params` / `lut` / `base` 说的都是**它的"现在"**，服务端按 `stateStepId`
+    //   落在**那一版**上（§7.1）—— 于是"站在旧版本上拖的那一档"存得进旧版本。
+    //   ⚠️ 旧的 `atTip`（"只有站在最后一步才送 params"）就此退役：它治的是
+    //   "旧版本的参数被写进最新那一步"那个病，但那是**治症状**、而且只治一半 ——
+    //   站在旧版本上的改动本来就该存进旧版本。`stateStepId` 才是那把对的刀。
+    //   ⚠️ 没人脏（`null`）= 这一趟只说"对话和步骤长什么样"，状态一个字节不动。
+    const dirtyAt = dirtyRef.current
+    const dirtyVersion = dirtyAt ? history.find((s) => s.id === dirtyAt.stepId) : undefined
+    // 那一版已经不在历史里了（被删掉 / 换了会话）→ 这一趟**不当它是脏的**：
+    // `stateStepId` 指的必须**合并后存在**，否则服务端 400（那是新协议的信任
+    // 边界，别拿一个死号去撞）。
+    const stateStepId = dirtyAt && dirtyVersion ? dirtyVersion.id : undefined
+    // 状态那两样**从快照上取**，不读闭包里的 `params` / `lut`：站在 A 版上改、
+    // 跳走之后再落盘时，闭包里那两个永远是"人**现在**站的那一版"的 —— 送错了版本
+    // 就是"刷新之后 B 的样子被写进 A 的账上"。写回那条 effect 一直在把现场镜像进
+    // 快照，所以快照上那一份就是"改之后"。
+    const stateParams = dirtyVersion?.params
+    const stateLut = dirtyVersion?.lut
+    // ★★ 底图从**位图**编码，**不是画布**（spec §3 那个 bug 的修法）。
+    //   画布上跑过 `render(params)`：拿它当底图 = 把参数**烤进像素**，恢复时
+    //   `setImage(base)` + `setParams(同一套参数)` 就把参数作用了两次（真机实测：
+    //   画布平均亮度 100.73 → 120.88，对照组 0.00）。位图天然干净（铁律：**参数
+    //   永远不烘焙进 base**），而且它**不依赖屏幕上有没有画布**。
+    //   ⚠️ 只在 `baseChanged` 那一支里编码 —— 编码一张 2048 长边的 JPEG 不便宜，
+    //   拖滑块那几十趟不该为它买单。
+    const baseBitmap = dirtyAt?.baseChanged && dirtyVersion ? dirtyVersion.base.bitmap : null
     const snapshot = history.map((s) => ({
       id: s.id, label: s.label, params: s.params, prompt: s.prompt, at: 0,
       // ★ 2026-10-05（滤镜）：每一步各自的 `lut` 也按 `SessionStep` 的形状带上。
@@ -2564,28 +2690,26 @@ export default function App() {
     //   "此刻"，比没有更糟。将来真要在气泡上显示时间，该改的是 `ChatMessage`
     //   （加一个字段、在 `say`/`send` 那几处写进去），不是在这里补一个数。
     const messagesNow = messages.map((m) => ({ ...m, at: 0 }))
-    // ★ `params` **必须一起送**，而且**必须在依赖里**。
-    //   ⚠️ 这个客户端里"改参数"（拖滑块 / 套预设 / 按重置）**不会**让 `history` 变
-    //   —— 那是既有的裁定 ⑤（见 `WorkDetailPage` 那个 `onApply` 的注释）。
-    //   所以只盯 `[history, messages]` 的话，用户拖完滑块**一次都不会落盘**，
-    //   刷新一下回到拖之前的样子 —— 而验收线第 1 条写着"参数全在"。
-    const paramsNow = params
-    // ★ 2026-10-05（滤镜）：**和 `params` 同一条路子、同一条理由** ——
-    //   套滤镜 / 拖强度也不推快照（裁定 ⑤），所以它必须自己走这一趟；
-    //   不送的话用户选完滤镜刷新一下，那一层颜色就没了（屏幕上什么都不说）。
-    //   ⚠️ 也一样**必须进依赖数组**：只盯 history / messages 的话，选滤镜
-    //   这一下没有任何东西会再触发这个副作用，那个 PUT 根本不会发。
-    const lutNow = lut
+    // ★★ `params` / `lut` **留在依赖数组里**（最后那一行），但它们**不再进 payload**
+    //   —— payload 的状态那半读的是快照（`stateParams` / `stateLut`）。
+    //   为什么留着这两个依赖：这一趟落盘**必须跟着它们重跑**。今天"改了参数"还会
+    //   顺带触发上面写回 effect 的那次 `setHistory`（`history` 也在依赖里），所以
+    //   单看今天，删掉这两项**测不出来** —— 但那是"今天"、而且是靠另一条 effect
+    //   顺带兜住的：它们是"**改了参数 / 滤镜 ⇒ 要重排一趟落盘**"这件事直说的那一半。
+    //   2026-10-01 那次评审查出来"拖完滑块一次都不落盘、而屏幕上什么都不说"，
+    //   病根就是依赖漏项。**别删。**
     // ★★ 画布**在这一刻**拿到手，不在发的时候现读（2026-10-01 终审 C1）。
     //
     //   为什么不能在 `run` 里现读 `canvasElRef.current`：画布只在「修图」那一屏
     //   存在（`{view.kind === 'edit' && …}` 一卸载，`Canvas` 那个回调 ref 就把它
     //   置回 null），而**切导航不会让这个 effect 重跑**（依赖里没有 `view`）——
-    //   800ms 后闹钟响时用户可能已经在「对话」/「作品」上，现读就是 null，
-    //   于是 `run` 里那句 `if (!el)` 把**整份 patch**（messages / steps / params /
-    //   base / thumb）一声不吭地全扔掉：用户花了钱生成的那一步永远到不了服务端，
-    //   刷新回到生成之前，而且不是"请求失败了"，是**压根没发**。
-    //   连 `flushPersist` 也救不回来 —— 它调的是同一个 `run`，被同一句吞掉。
+    //   800ms 后闹钟响时用户可能已经在「对话」/「作品」上，现读就是 null。
+    //   ★ 2026-10-08（Task 7）：它今天**只管封面**（`thumb`）—— 底图走位图那条路、
+    //   与画布在不在无关。画布不在就跳过封面，**patch 照发**。
+    //   （老代码在这儿 `return`：那一句把**整份 patch**（messages / steps / params /
+    //   base / thumb）一声不吭地全扔掉 —— 用户花了钱生成的那一步永远到不了服务端，
+    //   刷新回到生成之前，而且不是"请求失败了"，是**压根没发**。连 `flushPersist`
+    //   也救不回来（它调的是同一个 `run`）。那条病根正是"底图非要从画布来"。）
     //
     //   为什么现在拿不会拿到陈的：这个 effect 每次 `history` / `params` 变化都会
     //   重跑，所以这一份记号永远是"最后一次改动那一刻那张画布"。
@@ -2602,49 +2726,56 @@ export default function App() {
     //   它清掉了，上一条最后那几秒的改动永远丢了，且一句话不说。
     const run = (keepalive = false) => {
       const seq = ++persistSeqRef.current
-      // ★ "这一趟送出去的是哪一版底图" —— 在这儿（**发出去之前**）就定死。
-      //   ⚠️ 别等请求回来再读 `baseSeqRef.current`（见下面 ⑤ 那一行）：
-      //   请求在路上时用户完全可能又生成了一版；回来时读到的是**新版本号**，
-      //   而服务端手里刚收到的还是**旧底图** —— 那一版新底图紧接着要是失败，
-      //   这个记号已经把新版标成"存过了"，它就**永远不会再送**。
-      const sending = baseSeqRef.current
+      // ★ "这一趟要销的是**哪一笔账**" —— 在这儿（**发出去之前**）就定死。
+      //   ⚠️ 别等请求回来再读 `dirtyRef.current`：请求在路上时用户完全可能又拖了一档
+      //   （那是一笔**新的**待办）；回来时读到它、拿它去销，那一笔就**永远不会再送**
+      //   —— 屏幕上那句"接着改会自动补上"当场变成假话。
+      //   （老代码这里是 `baseSeqRef` 那个底图版本号，形状一样、道理一样：
+      //    发之前定死，回来只销自己那一趟。）
+      const sending = dirtyRef.current
       void (async () => {
         try {
-          const patch: SessionPatch = {
-            messages: messagesNow, steps: snapshot,
-            // ★ 只有站在最新一步才送这两样（见上面 `atTip` 那段）——
-            //   不送 = 服务端一个字节都不动（判据是 `!== undefined`）。
-            ...(atTip ? { params: paramsNow, lut: lutNow } : {}),
+          const patch: SessionPatch = { messages: messagesNow, steps: snapshot }
+          // ★ 状态三件**同生共死**：服务端按 `stateStepId` 把 `params` / `lut` 写在
+          //   **那一版**上，而"指名的步骤必须存在"是它的信任边界（§7.1）—— 三样
+          //   缺一样都不该送。少了 `stateStepId` 那一样尤其致命：那是**静默退回**
+          //   "写最后一步"的旧行为，站在旧版本上拖的那一下会被塞进最新那一步。
+          //   ⚠️ 而"没人脏"这一趟（`stateStepId === undefined`）**根本不进这个分支**
+          //   —— 服务端那边判据是 `!== undefined`，不带键 = 一个字节都不动。
+          if (stateStepId !== undefined && stateParams !== undefined) {
+            patch.stateStepId = stateStepId
+            patch.params = stateParams
+            patch.lut = stateLut ?? null
           }
-          if (changed) {
-            if (!el) {
-              // ⚠️ 这一句**到得了**（2026-10-01 终审更正：旧注释说它到不了，是错的）。
-              //   两种走法都真的会发生，共同点是**这一笔状态变更落在没有画布的那一刻**：
-              //   ① 建会话的 id 是在**别的屏**上到位的，而那段窗口里又落过一次生成
-              //      （`changed` 因此为真）—— 上传之后马上切走就是这个形状；
-              //   ② 一次生成在用户切走**之后**才回来 —— 那一笔 `setHistory` 让 effect
-              //   在没有画布的那一刻重跑，`el` 就是 null（这份记号是当场拿的，
-              //   不会去复用上一张画布：那张上面画的还是生成**之前**的样子，
-              //   拿它顶上去等于把用户花钱生成的这一版**标成已存**，比丢掉更坏）。
-              //   **不许静默**：真到了，这一版底图就这么丢了，一句话都不说
-              //   正是这个项目最恨的那种失败。
-              console.error('落盘时画布不在，这一版底图没存下来')
-              return
-            }
-            // ★ 走 `bitmapToDataUrl(el, 0.9)`（编码前压到 `MAX_DIMENSION`），
-            //   **不是** `el.toDataURL` —— 画布按图的大小开，而生成那条路上有个
-            //   "**提供方回的图比它声明的更大**"的偏差分支（见上面"以实际为准，
-            //   不拉伸"那一段）：4096² 的 JPEG 0.9 能顶到服务端 8MB 那条线
-            //   → 413 → 「刚才那一步没存下来」**指错原因**，而且会反复发生。
-            //   ⚠️ 压的**只是上路这一份**：画布本身**不许缩** —— 它是工作台，
-            //   预览、导出、下一次生成都按它的分辨率走（缩画布 = 每次导出降级）。
-            patch.base = bitmapToDataUrl(el, 0.9)
+          // ② 底图没换（拖滑块那几十趟）就**不许带** —— 带了就是多存一个没人引用的
+          //   文件，而且服务端会把好好的缩略图删了重存（§4.3）。
+          if (baseBitmap) {
+            // ★ 走 `bitmapToDataUrl(baseBitmap, 0.9)`（编码前压到 `MAX_DIMENSION`），
+            //   **不是** `el.toDataURL` —— 底图可能是张几千像素的原图/回图，而生成
+            //   那条路上有个"**提供方回的图比它声明的更大**"的偏差分支（见上面
+            //   "以实际为准，不拉伸"那一段）：4096² 的 JPEG 0.9 能顶到服务端 8MB
+            //   那条线 → 413 → 「刚才那一步没存下来」**指错原因**，而且会反复发生。
+            //   ⚠️ 压的**只是上路这一份**：那张位图本身**不许缩、也不许关** ——
+            //   它还是画布上正在看的那一版（缩了 = 每次导出降级）。
+            patch.base = bitmapToDataUrl(baseBitmap, 0.9)
             // ★ 缩略图**跟着 base 一起换**，spec §6.3 要求列表上是「最后那张」的样子。
             //   不换的话，列表永远显示刚上传那张原图 —— 用户改了半天，左栏「对话」里
             //   还是那张没改过的照片，而且**不报错**。
-            //   只在 `changed` 那一支里做：图没变的时候重做一张是白费（而且会让
+            //   只在 `baseBitmap` 那一支里做：图没变的时候重做一张是白费（而且会让
             //   服务端把好好的缩略图删了重存）。
-            patch.thumb = makeThumbnail(el, GALLERY_THUMB_MAX_SIDE)
+            //   ⚠️ **封面照旧从画布抓**（它 = 现在**看到**的观感，正好和底图那条路
+            //   相反 —— 底图要干净、封面要好看）；画布不在（切屏之后到点）就**只跳过
+            //   封面这一样**，别的照发。
+            if (el) {
+              try {
+                patch.thumb = makeThumbnail(el, GALLERY_THUMB_MAX_SIDE)
+              } catch (e) {
+                // 封面是锦上添花（就是列表上那张小图），抓不到不该影响这一版底图
+                // —— 而且这**不是可选项**：异常路径正是没人盯着的那条，
+                // 不许静默（这个项目每一处"没做成"都要留痕）。
+                console.error('封面没做出来（不影响底图落盘）', e)
+              }
+            }
           }
           // ★ `keepalive` 只在"页面正在消失"那两条路上传进来（`pagehide` /
           //   切到后台，见下面那个 effect）。但**不能无条件用**：浏览器对 keepalive
@@ -2658,21 +2789,22 @@ export default function App() {
           const keepaliveOk = keepalive
             && new TextEncoder().encode(JSON.stringify(patch)).byteLength <= KEEPALIVE_MAX_BYTES
           await updateSession(sessionId, patch, keepaliveOk)
-          // ⑤：**写成功之后**才记下"这一版底图存过了" —— 记的是**这一趟送出去的
-          //   那版**（`sending`），不是"回来时的当前版"（理由见上面 `sending`）。
+          // ⑤：**写成功之后**才把这一笔账销掉（失败就留着，下一次改动再送一遍 ——
+          //   屏幕上那句"接着改会自动补上"说的就是它）。销的是**这一趟送出去的那份
+          //   待办**（`sending`，发之前定死的），不是"回来时的当前待办"。
           //
-          // ★ 但这句只在"**我回来时还是当时那条会话**"时才算数（`sessionId` 是
-          //   这一趟闭包里那条，`sessionIdRef` 是**回来时**人站的那条）：
-          //   切走之后才回来的应答，`loadSession` 已经替新会话把记号对齐过了
-          //   （见它那批状态写里的 `lastPersistedBaseSeqRef`）—— 这时候再按
-          //   上一条的版本号拨回去，新会话的下一次落盘就会**重传一整张服务端
-          //   手里已经有的底图**（外加一次缩略图重做、还让服务端把好好的缩略图
-          //   删了重存）。切走那趟的 `flushPersist` 让这条时序从"几乎撞不上"
-          //   变成常事（2026-10-01 评审抓到的）。
-          //   ⚠️ 用 `sessionIdRef`（回来时的）不是 `sessionId`（发出去时的）——
-          //   后者永远等于自己，这个判据就没了。
-          if (changed && sessionIdRef.current === sessionId) {
-            lastPersistedBaseSeqRef.current = sending
+          // ★ 两个判据都要，各挡一种"销错账"：
+          //   · `dirtyRef.current === sending`：这一趟在路上时用户又动了手（拖了滑块
+          //     / 又裁了一刀）—— 那是**新的一笔待办**，不许被这趟连带销掉；
+          //   · `sessionIdRef.current === sessionId`：**我回来时还是不是当时那条会话**。
+          //     切走之后才回来的应答，`loadSession` 已经替新会话把记号对齐过了
+          //     （它进门就清 `dirtyRef`）—— 这时候还按上一条那份去销，销掉的会是
+          //     **新会话上那一笔**（用户在新会话里刚拖的那一下就这么没了，不报错）。
+          //     ⚠️ 用 `sessionIdRef`（回来时的）不是 `sessionId`（发出去时的）——
+          //     后者永远等于自己，这个判据就没了。切走那趟的 `flushPersist` 让这条
+          //     时序从"几乎撞不上"变成常事（2026-10-01 评审抓到的）。
+          if (dirtyRef.current === sending && sessionIdRef.current === sessionId) {
+            dirtyRef.current = null
           }
         } catch (e) {
           // 只认**最新**那一次失败 —— 早先那几次可能已经被后一次覆盖掉了，
@@ -2702,9 +2834,11 @@ export default function App() {
     return () => clearTimeout(timer)
     // ⚠️ `sessionId` **必须在依赖里** —— 它一到，这个副作用得再跑一遍，
     //   否则"上传之后立刻动的那一下"落不了盘（见 `sessionId` 那段长注释）。
-    // ⚠️ `params` 同一条（见 `paramsNow` 那段）；★ 2026-10-05 起 `lut` 也一样。
-    // ⚠️ `cursorId` 也在依赖里：它变了（跳转）而 effect 没重跑的话，
-    //   下一趟落盘会拿着旧的"在不在最新一步"去判 —— 又是静默那种错。
+    // ⚠️ `params` / `lut` 同一条（见上面那段"为什么留着它们"）；★ 2026-10-05 起
+    //   `lut` 也在。
+    // ⚠️ `cursorId` 也在依赖里：跳转之后这一趟得再跑一遍（而且 `onJump` 里那句
+    //   `flushPersist` 只结掉**跳走之前**那份 payload，跳过来之后这一版的账
+    //   还得有人看着）。
   }, [history, messages, params, lut, sessionId, cursorId])
 
   /**

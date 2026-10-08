@@ -110,13 +110,24 @@ export type GenerationDeps = {
    *  ★ 2026-10-05（终审 I1）：App 传进来的是 `moveCursor`（state 和影子 ref
    *  一起写）—— 名字没变，这个文件不用为此表态。 */
   setCursorId: (id: number) => void
+  /**
+   * ★ 2026-10-08（账本 Task 7）：把"**这一版的现在变了**"记给落盘那边看
+   * （App 的 `markDirty`）—— 这里只有一处调用：新版本出生。
+   *
+   * 为什么非它不可：新版本带的是**刚花钱生成回来的像素**（`nextBase`），而落盘
+   * 只认待办（`dirtyRef`）—— 不记的话服务端手里那一版还是**生成之前**的图，
+   * 刷新就回到生成前，而屏幕上一切正常（这个项目最恨的那种失败）。
+   * ⚠️ 传 `baseChanged: true`：这一版**换了底图**，`base`（那一步的 `image`）
+   * 得跟着重传 —— 只送 `params` 是不够的。
+   */
+  markDirty: (stepId: number, baseChanged: boolean) => void
 }
 
 export function useGeneration(deps: GenerationDeps) {
   const {
     image, setImage, params, setParams, lut, setLut, luts, baseSeqRef, idRef, setBusy, setUser,
     noticeBad, setCards, setPending, setPendingReplace, pendingRef, setMessages, setHistory,
-    flushEdit, tipId, setCursorId, cursorIdRef,
+    flushEdit, tipId, setCursorId, cursorIdRef, markDirty,
   } = deps
 
   /**
@@ -299,6 +310,12 @@ export function useGeneration(deps: GenerationDeps) {
       //   但"先切干净、再落新的一句"读起来才是这件事本身。
       setMessages(m => [...m, { id: messageId, role: 'assistant', text: reply }])
       setImage(nextBase)
+      // ★ 2026-10-08（账本 Task 7）：**新版本出生 = 这一版的现在变了**，而且变的
+      //   是**像素**（`nextBase` 是刚花钱生成回来的那张）—— 记给落盘那边，
+      //   下一趟 PUT 才会把这一步的 `image` 重传上去（`stateStepId` 指着它）。
+      //   ⚠️ 记在这一批的最后（`setImage` / 下面 `setCursorId` 旁边）：和它们
+      //   同一个"新版本已经落地"的时刻，读的人一眼看得出这三行是一件事。
+      markDirty(messageId, true)
       // ★ 位置挪到新那一步（它是新的"最新"）。
       setCursorId(messageId)
       // ↑ 只换 base。params 原封不动继续生效 —— 整个数据模型的基石。
@@ -329,7 +346,9 @@ export function useGeneration(deps: GenerationDeps) {
     //   站在新 tip 上生成会被当成"从旧步骤出发"—— 用户没同意过的一段话就没了。
     // ★ 2026-10-08（账本）：`flushEdit` 也进来（成功路径那个定稿点用的就是它）。
     //   它是 App 那边 `useCallback(..., [])` 的稳定引用，进来只是守住这条规矩。
-  }, [noticeBad, say, tipId, flushEdit])
+    // ★ 2026-10-08（Task 7）：`markDirty` 同理（新版本出生那一笔账）—— 也是
+    //   App 那边 `useCallback(..., [])` 的稳定引用。
+  }, [noticeBad, say, tipId, flushEdit, markDirty])
 
   /**
    * 「停止」—— 把这一次生成掐掉。
