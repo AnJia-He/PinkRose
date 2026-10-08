@@ -28,5 +28,9 @@ export function localStep(prev: readonly Snapshot[], opts: {
   return pushSnapshot(cutAfter(prev, opts.cursorId), {
     id: opts.id, label: opts.label, base: opts.base,
     params: opts.params, lut: opts.lut, isOriginal: false, thumb: '',
+    // 账本（2026-10-08）：新版本出生 = 只有当前位置一笔。
+    // ⚠️ 本函数 Task 3 才退役（裁剪/点修改走记账）—— 这里先让它编译过，
+    //    形状对，只是暂时还没人往账本里记账。
+    past: [], future: [],
   })
 }

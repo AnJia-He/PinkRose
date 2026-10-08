@@ -1,6 +1,7 @@
 import type { Adjustments } from '../../shared/adjustments.ts'
 import type { LutRef } from '../../shared/lut.ts'
 import type { DecodedImage } from '../image/decode'
+import type { EditState } from './ledger'
 
 export type Snapshot = {
   /** 与聊天记录里那条助手消息同 id —— 「回到这一步」按钮靠它对上号。 */
@@ -48,6 +49,20 @@ export type Snapshot = {
   lut: LutRef | null
   /** 原图。这一条永远不会被挤出去。 */
   isOriginal: boolean
+  /**
+   * 当前位置**之前**的历史。`past[0]`（非空时）= 这一版的出生状态，永不驱逐。
+   *
+   * ★ 2026-10-08（调色区账本）：老字段 `base` / `params` / `lut` = 这一版账本的
+   *   **当前位置**（语义没变，读它们的老代码一行不用改），`past` / `future`
+   *   围着它转。本任务只搭数据形状 —— 所有构造点给的都是空数组，记账从 Task 2 起。
+   *
+   * ⚠️ **必填，不是可选**：定成可选的话，多一个构造点忘了写它就是"这一版的账本
+   *   静默从缺"（和 `lut` 同一条理由）。定成必填，每个构造点都被编译期逼着表态
+   *   —— 新快照就是 `past: [], future: []`。
+   */
+  past: EditState[]
+  /** 退过之后的位置（「下一步」走这里）。新记账会清空它。 */
+  future: EditState[]
   /**
    * 这一步长什么样的缩略图（data URL）。**空串 = 还没生成**。
    *
@@ -109,20 +124,42 @@ export function attachThumb(
   return list.map(s => (s.id === id ? { ...s, thumb } : s))
 }
 
+/** 一个快照名下活着的全部底图（当前位置 + 账本）。按对象去重。 */
+export function snapshotBitmaps(s: Snapshot): DecodedImage[] {
+  const out: DecodedImage[] = []
+  const seen = new Set<DecodedImage>()
+  for (const b of [s.base, ...s.past.map(p => p.base), ...s.future.map(f => f.base)]) {
+    if (!seen.has(b)) { seen.add(b); out.push(b) }
+  }
+  return out
+}
+
 /**
  * 算出哪些位图可以从内存里放掉了。
  *
  * 位图占 GPU 内存，不 close 会一直攒着，几次生成就能把标签页拖垮。
  * 但**还在用的一张都不能关**——关了画布直接空白。
+ *
+ * ★ 2026-10-08（调色区账本）：「还在用」的集合从"每一步的 `base`"扩成
+ *   "每一个快照名下活着的全部底图（`base` + 账本里的每一笔）"（见
+ *   `snapshotBitmaps`）—— 账本里的位图漏一个就是泄漏，关早一个就是闪黑。
+ *   两处去重都是必须的：`keep` 认"还被别处引用着"，`seen` 认"同一张在
+ *   `before` 里被两条路引用着"（调色笔与相邻笔共享底图对象，只许关一次）。
  */
 export function bitmapsToClose(
   before: readonly Snapshot[],
   after: readonly Snapshot[],
   opts: { protectOriginal?: boolean } = {},
 ): DecodedImage[] {
-  const keep = new Set(after.map(s => s.base))
-  return before
-    .filter(s => !keep.has(s.base))
-    .filter(s => !(opts.protectOriginal && s.isOriginal))
-    .map(s => s.base)
+  const keep = new Set(after.flatMap(snapshotBitmaps))
+  const out: DecodedImage[] = []
+  const seen = new Set<DecodedImage>()
+  for (const s of before) {
+    if (opts.protectOriginal && s.isOriginal) continue   // 原图整个账本都不关
+    for (const b of snapshotBitmaps(s)) {
+      if (keep.has(b) || seen.has(b)) continue
+      seen.add(b); out.push(b)
+    }
+  }
+  return out
 }

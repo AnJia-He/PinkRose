@@ -848,6 +848,8 @@ export default function App() {
       //   `undefined`。归一化是唯一入口，别让 `undefined` 进状态 —— 进了就是面板
       //   七根滑块落不到 0、色轮算成 `NaN`、落盘照旧缺着七个键（全都不报错）。
       //   两条 `push` 是同一批数据的两个入口（`reusesPrev` 那条也一样），都要走。
+      // ★ 2026-10-08（账本）：恢复出来的每一版**账本清空** —— 每版只剩当前位置
+      //   一笔（设计 §5.6：账本和位置一样不落盘）。下面两处 `push` 都给空数组。
       for (const s of detail.steps) {
         const prev = steps.at(-1)
         if (s.reusesPrev && prev) {
@@ -857,7 +859,8 @@ export default function App() {
           //   和 params 过 `clampAdjustments` 同一条规矩 —— 归一化是唯一入口。
           steps.push({ id: s.id, label: s.label, base: prev.base,
                        params: clampAdjustments(s.params), lut: normalizeLutRef(s.lut),
-                       isOriginal: false, thumb: prev.thumb, prompt: s.prompt })
+                       isOriginal: false, thumb: prev.thumb, prompt: s.prompt,
+                       past: [], future: [] })
           continue
         }
         const blob = await (await fetch(sessionStepUrl(detail.id, s.id))).blob()
@@ -866,7 +869,8 @@ export default function App() {
         steps.push({ id: s.id, label: s.label, params: clampAdjustments(s.params),
                      lut: normalizeLutRef(s.lut),
                      base: { bitmap, width: bitmap.width, height: bitmap.height },
-                     isOriginal: steps.length === 0, thumb: thumbOf(bitmap), prompt: s.prompt })
+                     isOriginal: steps.length === 0, thumb: thumbOf(bitmap), prompt: s.prompt,
+                     past: [], future: [] })
       }
       const lastStep = steps[steps.length - 1]!
 
@@ -1555,7 +1559,8 @@ export default function App() {
       // 缩过就得说。紧跟欢迎语，用户往下看第一眼就撞上，不会滑过去。
       if (note) say(note)
       setHistory([
-        { id: welcomeId, label: '原图', base: img, params: ZERO, lut: null, isOriginal: true, thumb: '' },
+        // 账本（2026-10-08）：出生 = 只有当前位置一笔。
+        { id: welcomeId, label: '原图', base: img, params: ZERO, lut: null, isOriginal: true, thumb: '', past: [], future: [] },
       ])
       // ★ 2026-10-05：位置从"原图那一步"开始 —— 原图挂在欢迎语那条消息上。
       //   ⚠️ 走 `moveCursor`（state + 影子 ref 一起写，见 `cursorIdRef`）。

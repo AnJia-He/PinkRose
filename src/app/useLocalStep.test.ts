@@ -22,7 +22,8 @@ const img = (n: number) =>
  *    这里改成直白的字面量（`onPick` 建原图那一步也是这么写的）。
  */
 const snap = (id: number, label: string, isOriginal: boolean): Snapshot =>
-  ({ id, label, base: img(10), params: ZERO, lut: null, isOriginal, thumb: '' })
+  ({ id, label, base: img(10), params: ZERO, lut: null, isOriginal, thumb: '',
+     past: [], future: [] })
 
 describe('本地新步骤（裁剪 / 擦除共用）', () => {
   it('★ 推一步、没有 prompt、底图换成新的、参数一个不丢', () => {

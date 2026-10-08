@@ -247,6 +247,8 @@ export function useGeneration(deps: GenerationDeps) {
           // ★ 2026-10-05（滤镜）：这一步的滤镜**用传进来的那个**（`lutAtStep`），
           //   不是闭包里"此刻手上"的那个 —— 理由见函数头（`onRerun` 先跳再重掷）。
           lut: lutAtStep,
+          // 账本（2026-10-08）：新版本出生 = 只有当前位置一笔。
+          past: [], future: [],
         })
         // 被切掉的 + 被挤出去的位图都要释放；原图永远不关。close() 幂等，
         // StrictMode 双调用 updater 也安全。
