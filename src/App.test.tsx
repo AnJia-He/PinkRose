@@ -6761,7 +6761,82 @@ describe('滤镜', () => {
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
   })
 
-  it('★ 「回到这一步」跟着那一步把滤镜也还原（和参数对称）', async () => {
+  /**
+   * ★ 2026-10-08（用户原话：「套上滤镜后在对话区回溯到第一版再回到刚才的，
+   *   滤镜没套上 —— 这是对的吗？就是这样设计的吗？」）：**不是设计，是丢了**。
+   *
+   * 一步的快照记的是**它出生那一刻**的 params / lut（拖滑块、套滤镜不推快照，
+   * 裁定 ⑤），而 `onJump` 还原照的是快照 —— 不把现场改动写回最新那一步，
+   * "跳走再跳回来"就把它丢掉（而**刷新一下它却在**：落盘那条路把"现在这一版"
+   * 挂在最后一步上）。App 里那条写回 effect 就是补这个洞，下面两条各守一半。
+   *
+   * ⚠️ 跳转手法有个坑（这两条测试第一版就踩了，记下来）：转盘上**站着那格是
+   *    `<span>`（点不动）**，跳一次之后原来那两格的 button/span 会**互换** ——
+   *    拿第一次查到的旧引用点第二下等于没点（测试"红"得毫无道理）。每跳一次
+   *    都**重新查**一遍 `.strip-node`。
+   */
+  it('★ 在最新一步套上的滤镜，跳走再跳回来还在（现场改动写回那一步）', async () => {
+    // 变异：把 App 里那条写回 effect 拿掉 → 最后那句红（基线跑过：false）。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '改一下', reply: '好，改好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')
+    await goNav('调色')
+    await openLutPanel()
+    await click(tileNamed('黄昏'))
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+
+    const nodeAt = (i: number) => [...container.querySelectorAll<HTMLElement>('.strip-node')][i]!
+    const lastNode = () => nodeAt(container.querySelectorAll('.strip-node').length - 1)
+
+    // 跳回第一版：原图本来就没有滤镜（那一步永远是 lut: null）
+    await goNav('修图')
+    await click(nodeAt(0))
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
+
+    // 再跳回来 —— 刚才套上的那层颜色**得在**（用户报的那一下）
+    await goNav('修图')
+    await click(lastNode())
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('★ 在最新一步调好的参数，跳走再跳回来也在（和滤镜同一条写回）', async () => {
+    // 和上一条**同一个洞的另一半**：拖滑块 / 说「亮一点」也不推快照，
+    // 跳回来的还原同样照快照 —— 写回 effect 一次管两样（params 和 lut 是并列的
+    // 两件事，走同一条路）。
+    vi.mocked(api.postRoute)
+      .mockResolvedValueOnce(decision({ route: 'generate', editPrompt: '改一下', reply: '好，改好了。' }))
+      .mockResolvedValueOnce(decision({ route: 'params', paramDeltas: { exposure: 25 }, reply: '亮了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')
+    await say('亮一点')
+
+    // 画布上真渲染出来的参数（不是内部 state）—— 锚在用户看得见的东西上
+    const rendered = () =>
+      JSON.parse((container.querySelector('canvas') as HTMLCanvasElement).dataset.rendered!)
+    expect(rendered().exposure).toBe(25)
+
+    const nodeAt = (i: number) => [...container.querySelectorAll<HTMLElement>('.strip-node')][i]!
+
+    await click(nodeAt(0))                                     // 回原图：参数本来就该是 0
+    expect(rendered().exposure).toBe(0)
+
+    await click(nodeAt(container.querySelectorAll('.strip-node').length - 1))   // 再跳回来
+    expect(rendered().exposure).toBe(25)                       // ← 丢参数那一半
+  })
+
+  it('★「回到这一步」跟着那一步把滤镜也还原（和参数对称）', async () => {
     // 2026-10-05 审查 Important-2：`params` 在 `onJump` 里是还原的，滤镜一开始没有 ——
     // 用户看得见两处对不上：① 每个气泡上的小图是**从带滤镜的画面上**抓的，跳回去
     // 之后主画面和那张小图不一致；② 「原图」那一步永远是 `lut: null`，而「回到原图」
