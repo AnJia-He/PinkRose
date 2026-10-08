@@ -69,3 +69,17 @@ loadSeqRef / dirtyRef 清空)一个都不许动。
 - 全部做完:真机探针(`scripts/probe-adjust-ledger.mjs` 17 条 + 走一遍
   说一句话 → 生成 → 转盘 → 裁剪 → 撤销 → 刷新恢复)。
 - 终点预期:`App.tsx` ≈ 1500 行上下,剩下的就是状态 + 接线。
+
+## 结果(已落地)
+
+**App.tsx 3768 → 2282**(-1486,六批全做完)。落到哪:
+`app/baseEdit` / `useNotice` / `useNav` / `useLutFlow` / `usePersist` / `useCrop` /
+`useRetouch` / `useLoadSession` + `ui/TopActions` / `Banners` / `CropControls` /
+`RetouchControls`;`core/` 里收进 `closeBitmaps` / `settleLedger` /
+`ORIGINAL_PREVIEW_MAX_SIDE`。
+
+★ 拆件期踩到并已记录的坑:props 传进来**已经是布尔**时,组件里再写一次
+`busy !== null` 会恒真(「新的一张」永远禁用,四条用例当场红)。
+
+⚠️ 剩下的(状态 + 接线 + JSX 的舞台/右栏两坨)**有意不拆** —— 再拆就是把复杂度
+换个地方放(接口宽到 20+ 入参)。测试文件 `App.test.tsx`(9409 行)本轮未动。
