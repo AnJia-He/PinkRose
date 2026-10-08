@@ -1462,6 +1462,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .panel-group-head.on { color: var(--text); }
 .panel-group-head .chev { transition: transform var(--dur-1) var(--ease); }
 .panel-group-head .chev.folded { transform: rotate(-90deg); }
+/* ★ 2026-10-08（用户：「给这些也找到合适的图标组件」）：组头变成「图标 + 组名」一行。
+   缝 6 = 左栏 `.nav-item` 那条同款；图标 14 = 面板里既有的口径（`Images` /
+   `LayoutGrid` / 收起箭头全是 14）。⚠️ 图标（14px）比 12px 那行字的行盒矮 ——
+   撑高组头的还是文字，吸顶那条的高度账不用重算（`Nav.tsx` 顶部同一句话）。 */
+.panel-group-title { display: inline-flex; align-items: center; gap: 6px; }
 .panel-group-body {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0 var(--sp-5); align-items: start;

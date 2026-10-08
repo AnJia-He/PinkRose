@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Images, LayoutGrid, Monitor } from 'lucide-react'
+import {
+  Aperture, Blend, ChevronDown, Droplet, Images, LayoutGrid, Monitor,
+  SlidersHorizontal, Sun, SunMoon,
+} from 'lucide-react'
 import { fileUrl, listWorks } from '../api/works.ts'
 import {
   PARAM_GROUPS, PARAM_LABELS, PARAM_RANGE, isChanged,
@@ -10,6 +13,34 @@ import type { LutMeta, LutRef } from '../../shared/lut.ts'
 import { Slider } from './kit/Slider.tsx'
 import { ColorWheel } from './ColorWheel.tsx'
 import LutPicker from './LutPicker.tsx'
+
+/**
+ * ★ 2026-10-08（用户原话：「给这些也找到合适的图标组件」—— 对着调色面板那几组说的）：
+ * 六个组头（Lut + 五组参数）各配一个图标。选型照左栏那条规矩（见 `Nav.tsx` 顶部）：
+ *   · **同一个概念全站同一个图标** —— Lut 用的滑杆就是左栏那格 / 对话加号里
+ *     那一项用的 `SlidersHorizontal`，不在面板里另起一个；
+ *   · **一个图标认一件事**，六颗摆在一列里一眼分得开：光效 = 太阳（明暗）、
+ *     色彩 = 水滴（色）、色彩平衡 = 混合、分离色调 = 日月（高光=日 / 阴影=夜）、
+ *     效果 = 光圈（清晰度 / 暗角这一类镜头感的东西）；
+ *   · 尺寸跟这一屏的既有口径走（面板里 `Images`/`LayoutGrid`/箭头全是 14），
+ *     线宽**显式** 1.5 —— 尺子守卫钉着"每个 lucide 图标都必须显式写"
+ *     （不写就是 lucide 默认的 2，悄悄变粗）。
+ * ⚠️ 图标是**装饰**：`aria-hidden` 必写 —— 名字是旁边那几个字，
+ *   读屏和"按文字找元素"的测试都不该被 svg 搅到。
+ */
+const GROUP_ICONS = {
+  light: Sun,
+  color: Droplet,
+  balance: Blend,
+  split: SunMoon,
+  effects: Aperture,
+} as const
+
+/** 组头那颗图标。单独一层只为一件事：把"从 id 取组件"收在一处（上面那张表）。 */
+function GroupIcon({ id }: { id: (typeof PARAM_GROUPS)[number]['id'] }) {
+  const Icon = GROUP_ICONS[id]
+  return <Icon size={14} strokeWidth={1.5} aria-hidden="true" />
+}
 
 type Props = {
   value: Adjustments
@@ -285,7 +316,10 @@ export default function AdjustmentPanel({
           {/* ⚠️ 缩略图不在这颗按钮的 onClick 里要了 —— 那件事现在是上面那条
               effect 的活（"开着 + 清单非空"就是全部条件）。两处都叫的话，打开
               那一下会连画两趟（第二趟把第一趟作废，纯白烧）。 */}
-          <span className="panel-group-title">Lut</span>
+          <span className="panel-group-title">
+            <SlidersHorizontal size={14} strokeWidth={1.5} aria-hidden="true" />
+            Lut
+          </span>
           <ChevronDown size={14} strokeWidth={1.5} className={lutOpen ? 'chev' : 'chev folded'} aria-hidden="true" />
         </button>
         {lutOpen && (
@@ -323,7 +357,10 @@ export default function AdjustmentPanel({
                 return next
               })}
             >
-              <span className="panel-group-title">{g.title}</span>
+              <span className="panel-group-title">
+                <GroupIcon id={g.id} />
+                {g.title}
+              </span>
               <ChevronDown
                 size={14}
                 className={collapsed.has(g.id) ? 'chev folded' : 'chev'}
