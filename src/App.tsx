@@ -1267,8 +1267,11 @@ export default function App() {
       setPendingReplace(null)
       // state + 影子 ref 一起写（`cursorIdRef` 的注释说了为什么）
       moveCursor(id)
-      // 助手那句话和图片同批落（"裁好了。"—— 短、准，和「停了。」同一副语气）。
-      setMessages(m => [...m, { id, role: 'assistant', text: '裁好了。' }])
+      // ★★ 2026-10-08（用户定死的关系）：「裁剪」是**调色区里的操作** —— 它的"账"
+      //   是照片自己的版本序列（修图屏那圈转盘 / 调色屏左下角那组箭头），
+      //   **不是对话区的一条记录**。用户原话：「而不是调色区调整一份我对话区记录
+      //   一份，那用户调整细节点多了不得几十个回溯点」——细调多了的话，对话区
+      //   会堆出几十条操作记录。原来这里落过一句「裁好了。」，撤了。
       setCrop(null)
       setTool(null)
     } catch (e) {
@@ -1389,11 +1392,12 @@ export default function App() {
       setPending(null)
       setPendingReplace(null)
       moveCursor(id)
-      // 兜底那条路（周围没参考）补出来是糊的 —— 说一句实话，别让人以为工具坏了。
-      setMessages(m => [...m, {
-        id, role: 'assistant',
-        text: usedSource ? '擦干净了。' : '擦掉了（这块周围没什么好参考的，补得有点糊）。',
-      }])
+      // ★★ 2026-10-08（同 `commitCrop` 那段）：**不往对话区写记录** —— 擦除也是
+      //   调色区里的操作，版本序列是它唯一的"账"（原来这里落过「擦干净了。」）。
+      // ⚠️ 但**兜底那条路（周围没参考）补出来是糊的**这件事得说出来 —— 不说
+      //   用户会以为工具坏了。走**顶上那条通报**（"这件事得跟你说一声"那条，
+      //   说完可以收走），一句话都不进对话区。
+      if (!usedSource) noticeBad('擦掉了（这块周围没什么好参考的，补得有点糊）。')
       closeRetouch()
       setTool(null)
     } catch (e) {

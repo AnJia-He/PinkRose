@@ -1830,10 +1830,14 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
     const body = bodyOf(putCalls('/api/sessions/1').at(-1)!)
     expect((body.steps as { label: string }[]).map(s => s.label)).toEqual(['原图', '裁剪'])
 
-    // ⑦ 回修图屏：助手说了一句「裁好了。」；转盘上两格，点回原图那格能回去
-    //   （调色那一屏**没有对话栏**，所以那句回话得到这一屏才看得见）
+    // ⑦ 回修图屏：**对话区一条都没多** —— ★ 2026-10-08 用户定死的关系：
+    //   「而不是调色区调整一份我对话区记录一份，那用户调整细节点多了不得几十个
+    //   回溯点」。裁剪是调色区里的操作，它的"账"是照片自己的版本序列
+    //   （转盘 / 调色屏那组箭头），不落对话记录 —— 原来这里会多一句「裁好了。」。
+    //   变异：把 `commitCrop` 里那句 `setMessages` 加回去 → 下面两行当场红。
     await goNav('修图')
-    expect(lastReply()).toBe('裁好了。')
+    expect(lastReply()).toBe('亮了一点。')
+    expect(container.querySelectorAll('.bubble-text')).toHaveLength(3)   // 欢迎 + 你问 + 它答
     const nodes = () => [...container.querySelectorAll('.strip-node')] as HTMLElement[]
     expect(nodes()).toHaveLength(2)
     await act(async () => { nodes()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
@@ -2159,13 +2163,37 @@ describe('★ 点修：涂抹层 + 第二行 + 擦掉这里 = 本地生成新的
     //   空串会让「再来一版」出现在一颗按不动的按钮上）
     expect(steps[1]!.prompt).toBeUndefined()
 
-    // ⑧ 回修图屏：助手说「擦干净了。」；转盘两格，点回原图那格能回去
+    // ⑧ 回修图屏：**对话区一条都没多**（同裁剪那条，2026-10-08 定的关系）；
+    //   转盘两格，点回原图那格能回去
     await goNav('修图')
-    expect(lastReply()).toBe('擦干净了。')
+    expect(lastReply()).toBe('亮了一点。')
+    expect(container.querySelectorAll('.bubble-text')).toHaveLength(3)   // 欢迎 + 你问 + 它答
     const nodes = () => [...container.querySelectorAll('.strip-node')] as HTMLElement[]
     expect(nodes()).toHaveLength(2)
     await act(async () => { nodes()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
     expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
+  })
+
+  it('★ 兜底那条路（周围没参考、补得糊）：说一句**顶上那条通报** —— 对话区一条不多', async () => {
+    // ★ 2026-10-08：擦除是调色区里的操作，不落对话记录（理由见 `commitCrop`
+    //   那段注释）。但"补糊了"这件事得说出来 —— 不说用户会以为工具坏了。
+    //   变异：删掉那句 `if (!usedSource) noticeBad(...)` → 第一条红；
+    //   把 `setMessages` 那句加回来 → 第二条红。
+    await renderApp()
+    await uploadPhoto()
+    vi.mocked(eraseMod.eraseToBitmap).mockResolvedValueOnce({
+      bitmap: fakeBitmap('erased'), coverage: 1200, usedSource: false,
+    })
+    await openRetouch()
+    await paint(600, 400, 40)
+    await act(async () => { eraseButton().click(); await new Promise(r => setTimeout(r, 0)) })
+
+    // ① 顶上那条通报把"糊"这件事说了
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('补得有点糊')
+    // ② 对话区一条不多 —— 回修图屏数（⚠️ 调色那一屏本来就不渲染对话栏，
+    //    在那屏上数 `.bubble-text` 数到的是 0）
+    await goNav('修图')
+    expect(container.querySelectorAll('.bubble-text')).toHaveLength(1)   // 只有欢迎语
   })
 
   it('★ 太大就拦：引擎一次都不跑、给一句人话、现场留着（换个小的再来）', async () => {
