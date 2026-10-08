@@ -59,6 +59,12 @@ export const THUMB_MAX_SIDE = 480
  */
 export const GALLERY_THUMB_MAX_SIDE = 480
 
+/** 「按住看原图」那张预览的边长上限（★ 2026-10-08 从 `App.tsx` 搬进这儿 ——
+ *  恢复会话的 hook 和 `onPick` 两处都要用）。
+ *  不直接拿原图：3000 万像素重新上传一次纹理很贵，而"看原图"永远是在
+ *  屏幕大小上比的，1280 已经看不出和原图的差别。 */
+export const ORIGINAL_PREVIEW_MAX_SIDE = 1280
+
 /**
  * 把一张图/画布缩成一张小图，返回 data URL。
  *
