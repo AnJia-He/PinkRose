@@ -39,6 +39,11 @@ import {
   rotatedBounds, type CropRect, type CropSpec,
 } from './core/crop'
 import { fitToLimit, probeLimit } from './render/limits'
+// ★ 2026-10-08（账本 Task 8）：恢复会话时**离屏重画**每一步的小图（spec §7.3）。
+//   这是全站第二处 `new TonePipeline`（另一处在 Canvas）—— 规模刻意压在这里：
+//   **一条**临时管线 + **一张**临时画布，恢复完就 `dispose`（别再扩成第二条
+//   渲染管线，spec §10 点过名）。
+import { TonePipeline } from './render/pipeline'
 import { applyDeltas, clampAdjustments, ZERO, type Adjustments } from '../shared/adjustments.ts'
 import { canShareImage, downloadImage } from './export/save'
 import { prepareForRouting } from './image/prepare'
@@ -999,6 +1004,21 @@ export default function App() {
       if (why === 'open') noticeBad('这条对话没打开，再试一次？')
     }
 
+    /**
+     * ★ 2026-10-08（账本 Task 8）：恢复这一趟“**离屏重画**”用的那张临时画布 +
+     * 一条管线（spec §7.3）。**整趟共用**（≤6 步，几十毫秒级），收尾
+     * （成功 / 失败 / 作废**三条路**）在 `finally` 里 `dispose` 还回去。
+     *
+     * ⚠️ 声明在**本函数的正文里**、建在下面（拿到详情、"至少有一步"那道闸之后）
+     *   —— 两处都是。只在闭包里赋值的写法（把 `new TonePipeline` 塞进 `thumbOf`
+     *   里懒加载）会撞上 TS 的一条流分析规则：外层看不到闭包里的赋值，
+     *   `finally` 里 `if (offscreen)` 会被收成 `never`。
+     * ⚠️ 建不起来（真机上不该发生：浏览器没有 WebGL2）时**不许静默** ——
+     *   下面留一行 `console.error`，然后每一步退到"底图直出"
+     *   （和"原图预览没取回来"同一档：锦上添花的东西可以没有，但一定要留痕）。
+     */
+    let offscreen: { canvas: HTMLCanvasElement; pipe: TonePipeline } | null = null
+
     try {
       const detail = await getSession(id)
       if (stale()) return discard('这条会话没接回来（作废了）：不是页面换了，就是用户自己动手了')
@@ -1008,23 +1028,54 @@ export default function App() {
       //   项目最恨的那种失败。留个痕。
       if (detail.steps.length === 0) return discard('这条会话一步都没有，不接（建会话时原图就该算一步）')
 
+      // ★ 2026-10-08（账本 Task 8）：离屏管线在这儿就建（不是等 `thumbOf` 第一次
+      //   被叫到才建）—— 循环里**第一张（出生那一步）必然**要画：`reusesPrev`
+      //   要"上一步"才成立，而第一步没有上一步。结果一样，少一层懒加载。
+      //   建不起来时保持 null（`thumbOf` 逐张退到"底图直出"），**这里要留痕**。
+      try {
+        const c = document.createElement('canvas')
+        offscreen = { canvas: c, pipe: new TonePipeline(c) }
+      } catch (e) {
+        console.error('恢复时小图的离屏管线没建起来（这几格退回底图直出）', e)
+      }
+
       /**
        * 恢复时**现做**这一步的小图（spec §5 明说服务端不存每一步的缩略图：
        * 「客户端本来就会给每一步生成缩略图，恢复的时候现生成就行」）。
        *
-       * ⚠️ 不做的话**同一条对话刷新前后长得不一样**：活着的时候每一条助手气泡下面
-       *   都挂着小图（`ChatPanel` 的 `thumbs[m.id] &&`），恢复出来只有最后一步有
+       * ⚠️ 不做的话**同一条对话刷新前后长得不一样**：活着的时候每一格都挂着小图
+       *   （`ChatPanel` 的 `thumbs[m.id] &&`），恢复出来只有最后一步有
        *   —— 而且**不报错**，`''` 只是"不渲染"。
        * ⚠️ 它是**锦上添花**那一类（和 `onPick` 里 `setOriginalPreview` 同一个道理）：
        *   做不出来只是这一步的气泡上没有小图，**绝不能让整条会话接不回来**
        *   （那会把可选项升级成必须项）。失败走 console.error，不许静默。
+       *
+       * ★ 2026-10-08（账本 Task 8）：从"拿**底图**直接缩一张"改成"**底图 +
+       *   那一步的参数**离屏重画一遍再缩"。不做的话两条路各说各话：活着时那一格
+       *   小图是从**带参数的画面**上抓的，刷新之后每一格都变成"没调过色"的样子
+       *   （而且同样不报错）。
+       *   ⚠️ **滤镜那层不进这张小图**（spec §7.3 的已知边界）：cube 是异步到手的
+       *   （取文件 → 解析），恢复这条路上没有它 —— 所以带滤镜的步骤刷新之后，
+       *   小图会少那层颜色（主画面照旧是对的）。
+       *   ⚠️ 失败（管线没建起来 / 这一步画不出来）就退到"底图直出"—— **比没有强**
+       *   （这一步的气泡上至少还有张图），而且上面已经留过痕。
        */
-      const thumbOf = (b: ImageBitmap): string => {
-        try { return makeThumbnail(b, THUMB_MAX_SIDE) }
-        catch (e) {
-          console.error('恢复时缩略图没做出来（这一步的气泡上没有小图）', e)
-          return ''
+      const thumbOf = (b: ImageBitmap, p: Adjustments): string => {
+        if (offscreen) {
+          try {
+            offscreen.pipe.setImage({ bitmap: b, width: b.width, height: b.height })
+            offscreen.pipe.resizeToImage()
+            // ⚠️ 只传 params、不传 lutAmount：滤镜那层不在这一趟里（见上面那段）。
+            offscreen.pipe.render(p)
+            return makeThumbnail(offscreen.canvas, THUMB_MAX_SIDE)
+          } catch (e) {
+            console.error('恢复时小图没做出来（退回底图直出）', e)
+          }
         }
+        // "底图直出"本身也可能做不出来（连 2D 上下文都拿不到）—— 那一步的小图
+        // 就是 `''`（不渲染）。**这一层的失败不能再抛出去**：它会把整条会话的
+        // 恢复带塌（上面那段 ⚠️ 说的就是这件事）。
+        try { return makeThumbnail(b, THUMB_MAX_SIDE) } catch { return '' }
       }
       // 每一步都要解码回位图。⚠️ `reusesPrev` 是真的能省一次下载 + 一次解码：
       // 拖十次滑块就是十步，一步步全下就是十个一模一样的文件。
@@ -1052,10 +1103,15 @@ export default function App() {
         const blob = await (await fetch(sessionStepUrl(detail.id, s.id))).blob()
         const bitmap = await createImageBitmap(blob)
         if (stale()) { bitmap.close(); return discard('恢复：这次接回来的已经不作数了（页面换了，或者用户自己动手了）') }
-        steps.push({ id: s.id, label: s.label, params: clampAdjustments(s.params),
-                     lut: normalizeLutRef(s.lut),
+        // ⚠️ 归一化**只做一次**、存进局部量：`params` 既进快照、又是小图离屏
+        //   重画的入参（★ Task 8）—— 两处各 `clampAdjustments` 一遍的话，
+        //   明明该是同一份东西，却是两个对象（以后谁把 `sameEdit` / 引用比较
+        //   用在这一版上，就会被这种"值一样、身份不一样"咬到）。
+        const params = clampAdjustments(s.params)
+        const lut = normalizeLutRef(s.lut)
+        steps.push({ id: s.id, label: s.label, params, lut,
                      base: { bitmap, width: bitmap.width, height: bitmap.height },
-                     isOriginal: steps.length === 0, thumb: thumbOf(bitmap), prompt: s.prompt,
+                     isOriginal: steps.length === 0, thumb: thumbOf(bitmap, params), prompt: s.prompt,
                      past: [], future: [] })
       }
       const lastStep = steps[steps.length - 1]!
@@ -1224,6 +1280,11 @@ export default function App() {
       //   这句"没打开"说的是他已经不在乎的那一条，而且它没有失败（见 `discard`）。
       if (why === 'open' && gen === loadSeqRef.current) noticeBad('这条对话没打开，再试一次？')
     } finally {
+      // ★ 2026-10-08（账本 Task 8）：恢复这一趟的**离屏小图管线**在这里还回去 ——
+      //   `finally` 一次管住**三条路**（成功回来 / 中途抛 / 作废早返回时的 discard）。
+      //   不收的代价是每次恢复漏一张画布 + 一条管线 + 一个 WebGL 上下文，
+      //   而且一句错都不报（这条 path 上一堆早返回，写在某一处就是漏别的某处）。
+      if (offscreen) { offscreen.pipe.dispose(); offscreen = null }
       if (why === 'open') setBusy(null)
     }
   }, [flushEdit, flushPersist, noticeBad, setCurrentSession, moveCursor])
@@ -2605,7 +2666,7 @@ export default function App() {
 
 
   /**
-   * 给刚推入的那一步补缩略图。
+   * 给"**当前这一版**"抓/重抓小图（★ 2026-10-08 账本 Task 8 重写）。
    *
    * **为什么不在推快照的地方直接抓**：快照是和 `setParams` / `setImage`
    * 同一个批次推入的，那一刻画布还没重画 —— 抓到的会是**上一步的颜色**，
@@ -2613,19 +2674,51 @@ export default function App() {
    *
    * 这个 effect 跑在 Canvas 的渲染 effect **之后**（React 的被动 effect
    * 是子先父后），所以它看到的画布已经是这一步的样子了。
+   *
+   * ★ 2026-10-08（账本）：老形状是"**只给队尾那一步补一张**（`thumb` 空了才抓）"
+   *   —— 账本落地之后它坏在两头：
+   *     · 裁剪 / 点修 / 调色改的都是"**当前这一版**"，**id 不变、也不推新快照**，
+   *       那一格的 `thumb` 非空 → 画面明明变了，转盘上还停在改之前的样子；
+   *     · 站在旧版本上（不在队尾）时，队尾那一步根本不缺小图 → 什么都不做。
+   *   所以判据从"这一格画过没有"换成"**这一版现在的样子变了没有**"：
+   *   位置 / 底图 / 参数 / 滤镜四样里任何一样跟上次抓的时候不一样，就重抓。
+   *   四样齐全才行：只认 id 会漏掉"同一版上又裁了一刀"，只认 params 会漏掉
+   *   裁剪和点修（它们只换底图、不动调色）。
+   *   ⚠️ 判据是**引用比较**（`===`）—— `base` 是位图，"宽高一样"不等于"同一张"
+   *   （同一张图裁两次就是两个对象）；`params` / `lut` 每次改动都会换一个新对象
+   *   （写回那条 effect 和记账那条路都是这个形状）—— 身份一变就说明改过，重抓。
    */
+  const thumbStateRef = useRef<{
+    id: number; base: DecodedImage; params: Adjustments; lut: LutRef | null
+  } | null>(null)
   useEffect(() => {
     const canvas = canvasElRef.current
-    if (!canvas || history.length === 0) return
-    const last = history[history.length - 1]
-    if (last.thumb) return           // 已经有了，别重复抓（也防止这个 effect 打转）
+    if (!canvas || cursorId === null) return
+    const cur = history.find(s => s.id === cursorId)
+    if (!cur) return
+    // ⚠️ **没定稿的拖动期间不抓**：拖一次滑块每一帧都会镜像进快照（`history`
+    //   跟着换新），照抓就是**一秒 60 张缩略图**（每张都要开 2D 画布 + 编码
+    //   JPEG）。等定稿（`flushEdit`，0.8 秒）那一拍再抓 —— 那时候
+    //   `editPendingRef` 已经清掉，这一版的样子也定下来了（spec §7.3
+    //   "与定稿同拍防抖"说的就是它）。
+    //   ⚠️ 这个 ref 由**写回那条 effect**（"调色区的现场与「当前这一版」"，
+    //   在它上面）在同一批里先设上 —— 两条 effect 的先后就是声明顺序，那条
+    //   排在前头，所以拖动的第一帧这里就拦得住。
+    if (editPendingRef.current) return
+    const t = thumbStateRef.current
+    if (t && t.id === cur.id && t.base === cur.base
+        && t.params === cur.params && t.lut === cur.lut) return
     try {
-      setHistory(h => attachThumb(h, last.id, makeThumbnail(canvas)))
+      // ⚠️ 先把记号写上、再抓：`makeThumbnail` 抛的时候（拿不到 2D 上下文）
+      //   记号已经落定 → 下一次不会为同一个状态再抓一遍（不然一次失败会让
+      //   这个 effect 每次渲染都重试一次，报错刷屏）。
+      thumbStateRef.current = { id: cur.id, base: cur.base, params: cur.params, lut: cur.lut }
+      setHistory(h => attachThumb(h, cur.id, makeThumbnail(canvas)))
     } catch (e) {
       // 缩略图是锦上添花的东西，抓不到不该影响用户修图
       console.error('缩略图生成失败（不影响修图）', e)
     }
-  }, [history])
+  }, [history, cursorId])
 
   /**
    * 把"现在这一趟"存回服务端。

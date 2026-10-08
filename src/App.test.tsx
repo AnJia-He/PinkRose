@@ -199,6 +199,41 @@ vi.mock('./render/lutPreview', () => ({
     dispose: vi.fn(),
   }),
 }))
+
+/**
+ * ★ 2026-10-08（账本 Task 8）：**离屏管线**（恢复会话时按"底图 + 参数"重画小图）。
+ *
+ * 真的 `TonePipeline` 要 WebGL2（jsdom 给不出来），假法照 `Canvas.test.tsx` 那份：
+ * 记下 `setImage` / `render` 的实参、`dispose` 有没有被叫到。
+ * ⚠️ 假 `render` 顺手把参数写进**它那张画布**的 `dataset.rendered` —— 这就是
+ * "这张画布现在长这样"（真管线画完像素说的就是这件事），而假 `makeThumbnail`
+ * 读的正是它（和假 Canvas 那半边同源）—— 于是"恢复出来的小图带不带参数"
+ * 变成一条看得见的断言。
+ */
+type FakePipe = {
+  canvas: HTMLCanvasElement
+  images: unknown[]
+  renders: [unknown, number][]
+  disposed: boolean
+}
+/** ⚠️ 走 `vi.hoisted`（`vi.mock` 的工厂被提到所有 import 之前跑，同 `canvasProps`）。 */
+const pipes = vi.hoisted(() => [] as FakePipe[])
+vi.mock('./render/pipeline', () => ({
+  TonePipeline: class {
+    rec: FakePipe
+    constructor(canvas: HTMLCanvasElement) {
+      this.rec = { canvas, images: [], renders: [], disposed: false }
+      pipes.push(this.rec)
+    }
+    setImage(img: unknown) { this.rec.images.push(img) }
+    resizeToImage() {}
+    render(params: unknown, amount = 0) {
+      this.rec.renders.push([params, amount])
+      this.rec.canvas.dataset.rendered = JSON.stringify(params)
+    }
+    dispose() { this.rec.disposed = true }
+  },
+}))
 /** 滤镜那两条网络。**默认**给一条「黄昏」+ 一份能解析的 cube 文本 ——
  *  各用例要"清单里没有它"的样子，自己在用例里盖 `mockResolvedValue`。
  *  ⚠️ 这两条**必须**接住：掉进那个兜底的 blob 形状的话，`listLuts` 每挂一次
@@ -578,6 +613,7 @@ beforeEach(() => {
   decodedBitmaps.length = 0
   canvasProps.images.length = 0
   canvasProps.props.length = 0
+  pipes.length = 0
   ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
   // ★ 假的缩略图 = **画布上此刻记着的那个参数**。
@@ -1957,14 +1993,16 @@ describe('★ 裁剪：框 + 第二行 + 完成 = 本地生成新的一步', () 
   })
 
   it('★（评审 Critical）裁完之后那一趟落盘必须**重新带底图** —— 不带就等于没裁', async () => {
-    // 根因：`commitCrop` 只推了 history，没推 `baseSeqRef` —— 而落盘那趟判
-    // "底图换过没有"（`changed`）用的就是它，`patch.base` / `patch.thumb` 全在
-    // 那个 `if (changed)` 里。不推的后果**一句错都不报**：
+    // 根因（10-08 之前的形状）：`commitCrop` 只推了 history，没推 `baseSeqRef`
+    // —— 而落盘那趟当时判"底图换过没有"（`changed`）用的就是它，`patch.base` /
+    // `patch.thumb` 全在 `if (changed)` 里。不推的后果**一句错都不报**：
     //   服务端手里还是没裁过的那张，重开之后画面是原图（宽高比 1.5）。
-    // ★ 2026-10-08（账本）：裁剪不再产生新步骤了（steps 里只有「原图」）——
-    //   "新文件落在哪个新步骤上"这条旧落点随之消失；但**换了底图就要重传**
-    //   这条规矩一个字没变（Task 7 会把它接到 `stateStepId` 那个窄口上，
-    //   在那之前这一趟照旧带 base/thumb）。
+    // ★ 2026-10-08（账本，Task 7 已落地）：判据换成了**待办**
+    //   （`commitCrop` 里那句 `markDirty(at, true)` = `baseChanged`，spec §7.2），
+    //   底图从**那一版的干净位图**（`S(V).base.bitmap`）编码、跟着 `stateStepId`
+    //   落在**那一版**上；裁剪不再产生新步骤（steps 里只有「原图」）——
+    //   "新文件落在哪个新步骤上"这条旧落点随之消失，但**换了底图就要重传**
+    //   这条规矩一个字没变。
     // 同一条规矩在"删掉最新一步"那边也有（那条用例钉的是封面）。
     await renderApp()
     await uploadPhoto()
@@ -6018,8 +6056,10 @@ describe('恢复：打开就接着上次那条', () => {
     expect(srcs[1]).toBe(srcs[0])
     expect(new Set(srcs).size).toBe(2)
 
-    // 而且补缩略图那个 effect **不会**再往上叠：它只认 `history` 最后一步，
-    // `last.thumb` 非空就该收手（不收手的话每次落盘都会重算一遍）。
+    // 而且补缩略图那个 effect **不会**一遍遍地重算：它的记号（`thumbStateRef`）
+    // 认的是"**当前这一版的样子**"（id + 底图 + 参数 + 滤镜，四样引用一个不变
+    // 就收手）—— ★ Task 8 之前这里写的是"只认 `history` 最后一步、`last.thumb`
+    // 非空就收手"，那个形状已经退役（它让裁剪之后的小图永远停在改之前）。
     await waitPersist()
     expect(container.querySelectorAll('img.strip-thumb')).toHaveLength(3)
   })
@@ -6190,8 +6230,9 @@ describe('恢复：打开就接着上次那条', () => {
     await renderApp()
     expect(bubbleTexts()).toContain('S9-用户说的')      // A = 9（最近动过的那条）
 
-    // 在 A 里**换一次底图**（生成式编辑）—— 只有 `changed === true` 的那趟
-    // 才走画布这条腿，光说话那种（changed=false）钉不到这个洞。
+    // 在 A 里**换一次底图**（生成式编辑）—— 只有 `baseChanged` 的那趟才带得上
+    // `base`（生成落地时 `markDirty(新版本的 id, true)`）；光说话那种连待办都不标
+    // （`dirtyRef` 一直是空的），钉不到这个洞。
     vi.mocked(api.postRoute).mockResolvedValueOnce(
       decision({ route: 'generate', editPrompt: '去掉路人' }))
     vi.mocked(api.postEdit).mockResolvedValue({
@@ -6266,8 +6307,9 @@ describe('恢复：打开就接着上次那条', () => {
     await renderApp()
     expect(bubbleTexts()).toContain('S9-用户说的')
 
-    // 在 A 里**换一次底图**（生成式编辑）—— 只有 `changed === true` 的那一趟
-    // 才写得到那个记号；"改一句话"那种（changed=false）根本写不到它，钉不住这个洞。
+    // 在 A 里**换一次底图**（生成式编辑）—— 只有它还欠着"像素"那一笔账
+    // （`markDirty(新版本的 id, true)`，= `dirtyRef.baseChanged`）才写得到那个记号；
+    // "改一句话"那种根本写不到它（那一趟连待办都没有），钉不住这个洞。
     vi.mocked(api.postRoute).mockResolvedValueOnce(
       decision({ route: 'generate', editPrompt: '去掉路人' }))
     vi.mocked(api.postEdit).mockResolvedValue({
@@ -6304,8 +6346,12 @@ describe('恢复：打开就接着上次那条', () => {
     expect(putsB.length).toBeGreaterThan(0)
     for (const c of putsB) {
       const body = bodyOf(c)
-      // ★ 变异：把守卫拿掉（回到 `if (changed) ...`）→ 这里红
-      //   （body.base 是一整张 data URL，body.thumb 也跟着在）。
+      // ★ 这一趟的账**从头到尾是干净的**：B 没换过底图、也没人在 B 上动过手，
+      //   所以上路只有"话和步骤"。谁把 A 那笔待办（或者"底图换过"那个判据）
+      //   漏进这一趟，`body.base` 就是一整张 data URL、`body.thumb` 也跟着在
+      //   —— 这两句当场红。
+      //   （⚠️ "拆哪一句判据才会红"见函数头那条 ⚠️：今天两层防线都在，单独拿掉
+      //   一层不会让这条红，所以别在这儿写"拿掉 X 就红"。）
       expect(body.base).toBeUndefined()
       expect(body.thumb).toBeUndefined()
     }
@@ -8468,6 +8514,82 @@ describe('★ 账本预算闸：记账统一收口（Task 5）', () => {
     await waitPersist()                   // 停手 → 该定稿了
     expect(stepNav(), '记上了那一笔，才画得出这组箭头').toBeTruthy()
     expect(stepNav()!.textContent).toContain('2 / 2')
+  })
+})
+
+/**
+ * ★ 2026-10-08（账本 Task 8，spec §7.3）：**步骤小图跟得上"那一步现在的样子"**。
+ *
+ * 两条路各坏了一半，而且坏得都不出声：
+ *   · **活着时**：抓小图的判据原来是"这一格的 thumb 还空着"—— 账本落地之后，
+ *     裁剪 / 点修 / 调色改的都是**当前这一版的 id 不变**，那一格的 thumb 非空，
+ *     于是画面明明变了、转盘上还停在改之前的样子；
+ *   · **恢复时**：小图原来是拿**底图**直接缩一张，参数一层都不进去 ——
+ *     同一条对话，刷新之后每一格都变成"没调过色"的样子，和活着时看到的
+ *     对不上（spec §7.3 的原话：两条路各说各话）。
+ *     现在按"底图 + 那一步的参数"用一张**临时离屏画布**重画（≤6 步共用一条管线，
+ *     走完就 `dispose`）。
+ * ⚠️ 滤镜那层**不进恢复后的小图**（cube 是异步到手的）—— spec §7.3 的已知边界。
+ */
+describe('★ 步骤小图：活着时重抓 + 恢复时离屏重画（Task 8）', () => {
+  it('★ 裁完一刀：当前那一版的转盘小图被重抓（而不是停在改前的样子）', async () => {
+    // 变异（**验证过**）：那条 effect 加回"这一格已经有小图就收手"的早返回
+    // （老形状的判据，`last.thumb` / `cur.thumb` 非空就 return）→ 这一条红
+    // （实测 `expected 3 to be 4`：裁完之后一次都不重抓，那一格永远停在改之前）。
+    await renderApp()
+    await uploadPhoto()
+    const grabbed = () => vi.mocked(thumbMod.makeThumbnail).mock.calls.length
+    const before = grabbed()
+
+    // 裁一刀：调色屏 → 工具行「裁剪」→「完成」（和「裁剪」那一组同一个入口）。
+    await goNav('调色')
+    const cell = container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
+    expect(cell, '工具行里该有「裁剪」').toBeTruthy()
+    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
+    await clickByText('完成')
+
+    // 这一刀之后只会发生**一件**让画面变样的事：这一版的底图换成了裁过的那张
+    // （id 没变、也没有新版本）—— 小图必须跟着重抓，而且只重抓这一张。
+    expect(grabbed(), '裁完之后当前这一版的小图要重抓一张').toBe(before + 1)
+    // 抓的是**画布**（= 这一版现在的样子），不是别的什么。
+    expect(vi.mocked(thumbMod.makeThumbnail).mock.calls.at(-1)![0])
+      .toBe(container.querySelector('canvas'))
+  })
+
+  it('★ 恢复会话时：每步小图按"底图 + 那一步的参数"重画（离屏管线；带 params 调 render）', async () => {
+    // 3 步：exposure 0 / 1 / 2，其中第 2 步（id 3）是 `reusesPrev` —— 它和上一步
+    // 是同一张图、小图直接接着用，不重画（重画只会得到肉眼一样的第二张）。
+    // 变异（**验证过**两条，各自红在不同的一句上）：
+    //   · 恢复那条路整个改回老形状（不建离屏管线、`thumbOf` 直接 `makeThumbnail(b)`）
+    //     → ① 红（一条管线都没建）；
+    //   · 只把"画"那一步摘掉（管线照建、不 `render`）→ ② 红（底图一张都没交上去）。
+    //   两种情况下小图也都变样（`thumb:还没画` / `thumb:decoded-N` = "没调过色"），
+    //   ③ 跟着红。
+    withSessions([makeSession(7, 3, '把天调蓝一点', 'S7')])
+    await renderApp()
+
+    // ① 一整趟恢复只用**一条**临时管线 + 一张画布（≤6 步共用；spec §10 的规模控制）
+    expect(pipes, '恢复这一趟建了一条（而且只有一条）离屏管线').toHaveLength(1)
+    const pipe = pipes[0]!
+    expect(pipe.images, '每张要重画的底图都交给了它（reusesPrev 那步不重画）')
+      .toHaveLength(2)
+    // ② 画的必须是**那一步的参数** —— 这正是"刷新前后长得一样"里参数那一半：
+    //    拿 ZERO 画（= 老形状的底图直出）就退回"没调过色"，拿当前这一版的参数画
+    //    就画错了别的步。两半都靠这一句钉住。
+    expect(pipe.renders.map(r => r[0]))
+      .toEqual([{ ...ZERO, exposure: 0 }, { ...ZERO, exposure: 2 }])
+    // ③ 转盘上那几格的小图 = 画完参数的样子（假管线把参数写在画布上，
+    //    假 `makeThumbnail` 读的就是它）—— 第 2 格接着第 1 格的，仍是同一个串。
+    const srcs = [...container.querySelectorAll('img.strip-thumb')]
+      .map(t => t.getAttribute('src') ?? '')
+    expect(srcs).toEqual([
+      'thumb:' + JSON.stringify({ ...ZERO, exposure: 0 }),
+      'thumb:' + JSON.stringify({ ...ZERO, exposure: 0 }),
+      'thumb:' + JSON.stringify({ ...ZERO, exposure: 2 }),
+    ])
+    // ④ 走完就还回去：不 `dispose` 的话每恢复一次漏一条管线 + 一张画布
+    //    （而且这条路的收尾是 finally —— 失败/作废那两条也一样）。
+    expect(pipe.disposed).toBe(true)
   })
 })
 
