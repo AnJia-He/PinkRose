@@ -49,8 +49,11 @@ import { bitmapsToClose, attachThumb, type Snapshot } from './core/history'
 //   `flushEdit`（调色那一笔的定稿）用 `sameEdit` 判净零、用 `pushEdit` 记账；
 //   调色屏左下角那组箭头（`ledgerStep`）走 `undoEdit` / `redoEdit`，
 //   画几笔看 `ledgerTotal`。
+//   ★ Task 5：**记账统一收口**——四处记账点记完都过一遍 `settleLedger`
+//   （预算闸 `enforceLedgerBudget` + 位图回收），见它的注释。
 import {
-  ledgerIndex, ledgerTotal, pushEdit, redoEdit, sameEdit, undoEdit, type EditState,
+  enforceLedgerBudget, ledgerIndex, ledgerTotal, LEDGER_PIXEL_BUDGET,
+  pushEdit, redoEdit, sameEdit, undoEdit, type EditState,
 } from './core/ledger'
 // ★ 2026-10-08：删除的单位是"一问一答"（用户报的"删了一条、另半条还留着"），
 //   `expandDeleteIds` 就在这儿把一条 id 补成整轮 —— 纯函数，和 ChatPanel 勾选
@@ -151,6 +154,35 @@ async function fitToDevice(
  */
 function closeBitmaps(imgs: readonly DecodedImage[]): void {
   for (const img of imgs) img.bitmap.close()
+}
+
+/**
+ * ★ 2026-10-08（调色区账本 Task 5，spec §6）：**记账之后的统一收口** ——
+ * 四处记账点（`flushEdit` / `commitCrop` / `commitRetouch` / `ledgerStep`）
+ * 每记完一笔都走它，别在各处各写一遍。
+ *
+ * 两件事**一起**做，缺一件都是"错了不报错"：
+ *   · **预算闸**（`enforceLedgerBudget`）：所有版本账本里额外留着的底图超了
+ *     `LEDGER_PIXEL_BUDGET`（3200 万像素，初值）就**整笔**丢掉最早的那些
+ *     （Photoshop 那三道：上限封顶 / 出生保留 / 满了丢最老）——出生笔和当前笔
+ *     永不丢，丢了用户就回不到"这一版从哪来"；
+ *   · **位图回收**：被驱逐的那些 + 这一趟离开 `history` 的那些，一起 `close()`。
+ *     `close()` 幂等，所以写在 `setHistory` 的 updater 里也安全（StrictMode
+ *     重放 updater 时不会关两遍出事）。
+ *
+ * ⚠️ **两份 `toClose` 都要**，不是二选一：驱逐是"预算"这条线，`bitmapsToClose`
+ *   是"位图离开了历史"那条线（原来四个记账点各自都有的那一句）。只取前者的
+ *   话，`cutAfter` / 删除那几条路上漏下的位图就没人关了 —— 那是纯泄漏、而且
+ *   一句错都不报。
+ * ⚠️ 传进来的 `withEdit` 必须**已经记完那一笔**（`pushEdit` 的结果）：闸看到
+ *   的就是那份账本。`prev` 是记账之前的那份（回收要跟它比）。
+ * ⚠️ 预算内它不改元素的引用（`enforceLedgerBudget` 只浅拷数组）—— React 靠
+ *   引用相等跳过白渲染，别在这儿顺手 `map` 一遍。
+ */
+function settleLedger(prev: readonly Snapshot[], withEdit: readonly Snapshot[]): Snapshot[] {
+  const { list, toClose } = enforceLedgerBudget(withEdit, LEDGER_PIXEL_BUDGET)
+  closeBitmaps([...toClose, ...bitmapsToClose(prev, list, { protectOriginal: true })])
+  return list
 }
 
 /** 裁剪的比例档（★ 2026-10-06）。`value` 是**像素**宽高比，`null` = 自由。 */
@@ -499,6 +531,16 @@ export default function App() {
     //   笔是"当初套着这个滤镜"的画面状态，留着的话退回去会套一个**已经被用户
     //   删掉**的滤镜：cube 取不到、画面上那层颜色说没就没（而且不报错）。
     //   三处（当前位置 + past + future）是同一件事的三份拷贝，改一处就得三处一起。
+    //   ★ 2026-10-08（Task 5 顺手件）：**排队中等定稿的那一笔也要扫** ——
+    //   `editPendingRef` 里那份"改之前"还没进 `history`，上面那三处扫不到它；
+    //   等 0.8 秒后定稿，那个死 id 会被压进 `past`，退回去照样套回死滤镜（同一个
+    //   病，只是走的是"账本还没收的那一笔"这条路）。这里把那一份的 `lut` 也置空
+    //   —— ⚠️ 只置空 **lut**、不丢整笔待办：那一笔里的 params 是用户刚调的东西，
+    //   丢了就是"这一下退不回去"（`settleLedger` 那套回收也没了依据）。
+    const pend = editPendingRef.current
+    if (pend && pend.before.lut?.lutId === id) {
+      editPendingRef.current = { ...pend, before: { ...pend.before, lut: null } }
+    }
     setHistory((prev) => prev.map((s) => ({
       ...s,
       lut: s.lut?.lutId === id ? null : s.lut,
@@ -630,7 +672,9 @@ export default function App() {
    *   （模型给的增量是空的）→ 切会话` 那条 App 用例当场红 —— 多出来的那趟打的
    *   还是**上一条会话**的 id）。
    * ⚠️ deps 是**空的**：它只读 ref、只用 `setHistory`（身份稳定）。
-   * ⚠️ Task 5 会在这条路后面接上预算驱逐（`enforceLedgerBudget`）。
+   * ★ Task 5：这条路的后面接上了预算闸（`settleLedger`）—— ⚠️ **但要接在
+   *   "确实记了一笔"之后**：上面那两个早返回（净零 / 那一版不在了）之后
+   *   一步都不许走，连数组都不许换新的（见上面那条 ⚠️⚠️）。
    */
   const flushEdit = useCallback(() => {
     const p = editPendingRef.current
@@ -650,7 +694,9 @@ export default function App() {
       // ⚠️ 这里**不能**用闭包里的 `params`：定时器到点时那是过去那一轮的值。
       const next = { base: s.base, params: s.params, lut: s.lut }
       if (sameEdit(p.before, next)) return h         // 净零：不记（也不惊动渲染）
-      return h.map(x => (x.id === p.stepId ? pushEdit(x, { ...p.before, seq }, next, seq) : x))
+      const withEdit = h.map(x => (x.id === p.stepId ? pushEdit(x, { ...p.before, seq }, next, seq) : x))
+      // ★ Task 5：记完这一笔 → 过预算闸 + 回收位图（调色笔零成本，闸多半什么都不动）
+      return settleLedger(h, withEdit)
     })
   }, [])
   /** 落盘的次序号。后一次回来时前一次可能还在路上 —— 只认最新的那一次 */
@@ -1329,6 +1375,17 @@ export default function App() {
       //   反了的话这一刀会压到"调色那笔"前面 —— 用户按一下「上一步」，退掉的是
       //   **两件事**（调色 + 裁剪），而他只按了一下。
       flushEdit()
+      // ★ 2026-10-08（Task 5 顺手件）：**这一刀到底记上了没有，不许静默**。
+      //   `at` 是出发那一刻"人在哪一版"（await 之前读的），而下面那个 updater
+      //   里找不到它就**原样返回** —— 那种情况下这一刀只改了画面、账本上什么都没
+      //   留下，退都退不回来，而屏幕上一切正常。理论上到不了（人站的那一版必然
+      //   在历史里），真到了就是一件必须留证的事。
+      //   ⚠️ 查的是**闭包里的 `history`**（`at` 也是那一刻读的，两者同一拍）；
+      //   它**不替 updater 做决定** —— 那半边（`if (s.id !== at) return s`）
+      //   一个字都不动，这里只是把静默变成一行日志。
+      if (!history.some(s => s.id === at)) {
+        console.error('账本没记上：那一版不在了（id ' + String(at) + '）—— 这一刀只改了画面，退不回去')
+      }
       // ⚠️ 发号器是顶上那个 `editSeqRef`（**账本专用**，和 `idRef` 分开）——
       //   账本序号只管预算驱逐的先后，发它**不产生新版本**。
       const seq = ++editSeqRef.current
@@ -1343,12 +1400,10 @@ export default function App() {
           // （写回那条 effect 一直在把它们镜像成最新）；裁剪只换底图，不动调色。
           return pushEdit(s, before, { base, params: s.params, lut: s.lut }, seq)
         })
-        // 位图回收照 `useGeneration` 那一段（原图永远不关）。`close()` 幂等，
-        // StrictMode 重放也安全。
-        // ⚠️ 记账**不切未来**，所以这里通常一张都不关："裁之前"那张进了账本、
+        // ★ Task 5：记完这一笔 → 预算闸 + 位图回收（`settleLedger` 里两件事一起做）。
+        //   记账**不切未来**，所以回收那一半通常一张都不关："裁之前"那张进了账本、
         //   还被 `past` 引用着（关了 = 退回去时闪黑）。
-        closeBitmaps(bitmapsToClose(prev, next, { protectOriginal: true }))
-        return next
+        return settleLedger(prev, next)
       })
       // ★（评审 Critical）**底图换了一版，记号要往前挪** —— 落盘那趟判
       //   "要不要重传 base / 封面"用的就是它（`changed`）。不推的话服务端手里
@@ -1381,7 +1436,9 @@ export default function App() {
       // 开不出够大的画布（`cropToBitmap` 那两条失败路径）。
       noticeBad('这张照片没裁成。再试一次；还不行就换一张小一点的。')
     }
-  }, [crop, image, noticeBad, flushEdit])
+    // ⚠️ `history` 在依赖里：上面那句"那一版还在不在"的检查读的就是它
+    //   （读到的才写进依赖）。
+  }, [crop, image, history, noticeBad, flushEdit])
 
   /**
    * 交给 `Canvas` 的裁剪现场 —— 每次渲染现算。
@@ -1482,6 +1539,11 @@ export default function App() {
       const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
       // ★ 先定稿没落定的调色、再记擦除这一笔（顺序不能反 —— 同 `commitCrop`）。
       flushEdit()
+      // ★ 2026-10-08（Task 5 顺手件）：同 `commitCrop` 那句 —— 这一擦到底记上了
+      //   没有，不许静默（找不到 `at` 的话 updater 会原样返回，画面变了、账本没动）。
+      if (!history.some(s => s.id === at)) {
+        console.error('账本没记上：那一版不在了（id ' + String(at) + '）—— 这一擦只改了画面，退不回去')
+      }
       const seq = ++editSeqRef.current
       setHistory(prev => {
         const next = prev.map(s => {
@@ -1489,8 +1551,8 @@ export default function App() {
           const before: EditState = { base: s.base, params: s.params, lut: s.lut, seq }
           return pushEdit(s, before, { base, params: s.params, lut: s.lut }, seq)
         })
-        closeBitmaps(bitmapsToClose(prev, next, { protectOriginal: true }))
-        return next
+        // ★ Task 5：记完这一笔 → 预算闸 + 位图回收（同 `commitCrop`）
+        return settleLedger(prev, next)
       })
       baseSeqRef.current++
       setImage(base)
@@ -1510,7 +1572,8 @@ export default function App() {
     } finally {
       setErasing(false)
     }
-  }, [retouch, image, noticeBad, closeRetouch, flushEdit])
+    // ⚠️ `history` 在依赖里：同 `commitCrop`（那句检查读的就是它）。
+  }, [retouch, image, history, noticeBad, closeRetouch, flushEdit])
 
   /**
    * 交给 `Canvas` 的点修现场 —— 每次渲染现算。
@@ -2238,7 +2301,14 @@ export default function App() {
     //   反方向（`dir < 0`）不受影响：内联记账只往 `past` 里加，而 `undoEdit` 只在
     //   `past` 空时返回原引用 —— 那时候「上一步」本来就按不动。
     if (target === base && base === cur) return
-    setHistory(h => h.map(s => (s.id === cur.id ? target : s)))
+    // ★ 2026-10-08（Task 5）：上面那一拍**真的记了一笔**（`base` 换成了新快照）
+    //   就顺手过一遍预算闸 —— 那一笔多半没新位图（调色笔零成本），但账本形状
+    //   和别处一样，**别搞特例**。没记那一笔（纯翻账本）就不用过。
+    const flushed = base !== cur
+    setHistory(h => {
+      const next = h.map(s => (s.id === cur.id ? target : s))
+      return flushed ? settleLedger(h, next) : next
+    })
     setImage(target.base)
     setParams(target.params)
     setLut(target.lut)
@@ -2323,6 +2393,16 @@ export default function App() {
     //   已经补过了，这里是同一条纯函数的第二次调用 —— 幂等）。
     const kill = new Set(expandDeleteIds(messages, ids))
     if (kill.size === 0) return
+    // ★ 2026-10-08（Task 5 顺手件）：**被删的那一版上挂着"没定稿的那一笔"的话，
+    //   待办跟着它一起走**。不清的话：`editPendingRef` 还攥着一个**已经不存在的**
+    //   stepId，而"起一笔"的判据是**待办为空**（同时只许有一个）—— 站在新那一版
+    //   上怎么调都记不上一笔（颜色照变、箭头一动不动，一句错都不报），一直到某
+    //   一拍 `flushEdit` 找不着那一版、自己把它散掉为止（而它永远等不到那一拍：
+    //   定时器只在"有改动"时重立）。
+    //   ⚠️ 判据是 `kill`（补成整问整答之后的集合）：待办挂的是一步的 id，
+    //   而这一步正是被删的那些之一 —— 和下面 `history.some(…)` 那条判据同一份。
+    const pend = editPendingRef.current
+    if (pend && kill.has(pend.stepId)) editPendingRef.current = null
     cancelPick()
     cancelReplace()
     setMessages(m => m.filter(x => !kill.has(x.id)))

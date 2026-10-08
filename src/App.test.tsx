@@ -231,6 +231,9 @@ import * as eraseMod from './image/erase'
 import { stampBrush } from './core/retouch'
 import * as sampleMod from './image/sample'
 import * as lutsMod from './api/luts'
+// ★ 2026-10-08（账本 Task 5）：预算闸那一条要**抓住它被叫到** —— 纯逻辑在
+// `core/ledger.test.ts` 里单测兜着，这一层钉的是"四处记账有没有接上"。
+import * as ledgerMod from './core/ledger'
 
 // ── 每张"底"带一个记号，好认出送上去的到底是哪一张 ──────────────────
 let bitmapSeq = 0
@@ -8060,6 +8063,263 @@ describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本',
     expect(stepNav()!.textContent).toContain('1 / 2')
     expect(canvasProps.props.at(-1)!.params.exposure).toBe(0)
     expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
+  })
+})
+
+/**
+ * ★ 2026-10-08（调色区账本 Task 5，设计 §6）：**记账统一过预算闸**。
+ *
+ * 两层分工（写明在注释里 —— 免得下一个人看见"这里没测驱逐"以为没做）：
+ *   · **纯逻辑**（丢**最早的非出生笔**、出生与当前永不丢、被驱逐的位图只关一次、
+ *     还被引用着的绝不关）在 `core/ledger.test.ts` 里单测兜底 —— 那一层能直接
+ *     造大尺寸夹具；
+ *   · **这一组只钉"接上了"**：四处记账（裁剪 / 点修 / 调色定稿 / 翻箭头那一拍的
+ *     内联定稿）每一处都要**真的把 `enforceLedgerBudget` 叫到**，而且叫到它的时候
+ *     那笔账已经记完了（拿到的 list 里看得见）。漏一处的下场是内存慢慢涨 /
+ *     退到某一笔时闪黑 —— 两种都不报错，也都不花一分钱。
+ *   ⚠️ **"驱逐真的触发、位图真的被 `close`"在这个文件里造不出来**：预算按像素算，
+ *     而 jsdom 里的假位图全是 1200×800（一张 96 万像素，要三十多张才够 3200 万）。
+ *     那半归 `core/ledger.test.ts`。
+ */
+describe('★ 账本预算闸：记账统一收口（Task 5）', () => {
+  const last = () => canvasProps.props.at(-1)!
+  const stepNav = () => container.querySelector('.step-nav')
+  const navBtns = () => [...container.querySelectorAll<HTMLButtonElement>('.step-nav-btn')]
+  const tap = (el: HTMLElement) =>
+    act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
+
+  /** 过闸那一刻它看到的账本 = `enforceLedgerBudget` 最后一次的入参。 */
+  const gated = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.at(-1)![0] as unknown as
+    { past: { seq: number }[]; future: { seq: number }[]; params: Record<string, number> }[]
+
+  /** 进裁剪 → 立刻「完成」= 账本上多一笔（和上面两组的同款帮手）。 */
+  async function cropOnce() {
+    const cell = container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
+    expect(cell, '工具行里该有「裁剪」').toBeTruthy()
+    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
+    await clickByText('完成')
+  }
+
+  /** 拨一条调色滑块（点数字 → 打字 → 回车，同上）。 */
+  async function setSlider(name: string, value: number) {
+    const row = [...container.querySelectorAll('.panel .slider')]
+      .find(el => el.querySelector('.slider-label')?.textContent === name)
+    expect(row, `调色面板里该有一条「${name}」`).toBeTruthy()
+    await act(async () => {
+      ;(row!.querySelector('.slider-value') as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const box = row!.querySelector('input.slider-edit') as HTMLInputElement
+    await typeIn(box, String(value))
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  /** 进点修、涂一笔，返回「擦掉这里」那颗按钮（和「点修」那一组同款：真掩码 + 真回调）。 */
+  async function retouchPainted() {
+    await goNav('调色')
+    const cell = container.querySelector('[aria-label="点修"]') as HTMLButtonElement
+    await tap(cell)
+    const scene = last().retouch as { mask: Uint8Array; onMaskChange: () => void }
+    await act(async () => {
+      stampBrush(scene.mask, 1200, 800, 600, 400, 40, 'paint')
+      scene.onMaskChange()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    return [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '擦掉这里') as HTMLButtonElement
+  }
+
+  /** 这一趟落盘那笔 PUT 的请求体（和「滤镜」那一组同款）。 */
+  const lastPutBody = () => {
+    const puts = fetchMock.mock.calls.filter(([u, init]) =>
+      String(u).includes('/api/sessions/') && (init as RequestInit | undefined)?.method === 'PUT')
+    expect(puts.length).toBeGreaterThan(0)
+    return bodyOf(puts[puts.length - 1]!)
+  }
+
+  it('★ 裁剪那一处：记完这一刀再过闸（顺手件①：记上了就不许刷那句假报错）', async () => {
+    const spy = vi.spyOn(ledgerMod, 'enforceLedgerBudget')
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await renderApp()
+      await uploadPhoto()
+      await goNav('调色')
+
+      await cropOnce()
+
+      expect(spy, '裁剪记完那一笔之后必须过一遍预算闸').toHaveBeenCalled()
+      expect(gated(spy)[0]!.past, '过闸时看到的是**记完**的账本（出生 + 裁之前那一笔）')
+        .toHaveLength(1)
+      expect(spy.mock.calls.at(-1)![1], '预算就是那个常量（32 MP）')
+        .toBe(ledgerMod.LEDGER_PIXEL_BUDGET)
+
+      // 顺手件①：这一刀明明记上了 —— 「那一版不在了」是**异常**才该说的话，
+      // 正常路径上刷出来就是一句没人信的假警报（以后真出问题时谁也不看它）。
+      const said = errSpy.mock.calls.flat().map(String).join(' ')
+      expect(said, '正常裁一刀不许说"账本没记上"').not.toContain('账本没记上')
+    } finally {
+      spy.mockRestore()
+      errSpy.mockRestore()
+    }
+  })
+
+  it('★ 调色定稿那一处：真的记完才过闸；**净零那一下一个字节都不碰**', async () => {
+    // ★ 后半句是 Task 4 特意做出来的行为（净零 / 那一版找不到时**返回原来的引用**）
+    //   —— 有一条既有用例靠它（多返回一份新数组会让落盘 effect 白跑、多发一趟 PUT）。
+    //   所以过闸必须落在"确实记了一笔"之后：**没有新笔就别碰**。
+    //   变异：把 `settleLedger` 那句提到两个早返回**前面** → 前半句红。
+    const spy = vi.spyOn(ledgerMod, 'enforceLedgerBudget')
+    try {
+      await renderApp()
+      await uploadPhoto()
+      await goNav('调色')
+      await cropOnce()
+      spy.mockClear()
+
+      await setSlider('亮度', 60)      // 拖走
+      await setSlider('亮度', 0)       // 又拖回原值 → 净零
+      await waitPersist()              // 停手 → 该定稿了
+      expect(spy, '净零不记一笔 → 不该惊动预算闸').not.toHaveBeenCalled()
+
+      await setSlider('亮度', 40)      // 真的改一下
+      await waitPersist()
+      expect(spy, '真的记了一笔 → 过闸').toHaveBeenCalled()
+      const seen = gated(spy)
+      expect(seen[0]!.past, '出生 + 裁剪 + 刚才那一笔').toHaveLength(2)
+      expect(seen[0]!.params.exposure, '过闸时当前位置已经是"改之后"').toBe(40)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('★ 点修那一处 + 翻箭头那一拍的内联定稿：也不许搞特例', async () => {
+    const spy = vi.spyOn(ledgerMod, 'enforceLedgerBudget')
+    try {
+      await renderApp()
+      await uploadPhoto()
+
+      // ① 点修：涂 → 擦（记账就发生在「擦掉这里」那一下）
+      const eraseBtn = await retouchPainted()
+      spy.mockClear()
+      await act(async () => { eraseBtn.click(); await new Promise(r => setTimeout(r, 0)) })
+      expect(vi.mocked(eraseMod.eraseToBitmap), '前提：这一擦真的跑了').toHaveBeenCalled()
+      expect(spy, '点修记完那一笔之后必须过闸').toHaveBeenCalled()
+      expect(gated(spy)[0]!.past, '出生 + 擦之前那一笔').toHaveLength(1)
+
+      // ② 翻箭头那一拍：账本在中间时拖一下滑块、**不等定稿**就按「上一步」——
+      //    `ledgerStep` 里的内联 `pushEdit` 也要过闸（那一笔多半没新位图，
+      //    但账本形状一样，别搞特例）。
+      spy.mockClear()
+      await setSlider('亮度', 40)      // 起一笔，不定稿
+      await tap(navBtns()[0]!)         // 先内联定稿、再退
+      expect(spy, 'ledgerStep 里那一笔也要过闸').toHaveBeenCalled()
+      const seen = gated(spy)
+      expect(seen[0]!.past.length + seen[0]!.future.length, '两笔都在账本里（退掉的那笔进了 future）')
+        .toBe(2)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('★ seq 按发生次序发（调色那笔 < 裁剪那笔）—— 驱逐挑"最老的一笔"靠它', async () => {
+    // ★ 2026-10-08（Task 5 那颗"尽力项"）：预算驱逐按 `seq` 挑**最老的一笔**丢
+    //   （spec §6），所以号必须是"先发生的那一笔先领" —— 领反了就等于"内存吃紧
+    //   时丢新的、留着老的"（用户最近做的那些全没了、最早那些留着）。
+    //   变异（**验证过**）：把 `commitCrop` 里那句发号挪到 `flushEdit()` **前面**
+    //   → 先发生的"调色"反而拿到更大的号，下面 `toBeLessThan` 当场红
+    //   （实测报 `expected 2 to be less than 1`）。
+    // ⚠️ 也写清楚**它测不出什么**：把 `flushEdit` 的号挪进 updater 那种写法在这条
+    //   路上测不出来 —— React 对"队列为空"的那一次 `setHistory` 会**当场**调一遍
+    //   updater（eager 求值），号还是按调用次序领的。这条钉的是"端到端的先后"，
+    //   不是"号写在哪一行"（那件事由 `flushEdit` 顶上那段注释管）。
+    const spy = vi.spyOn(ledgerMod, 'enforceLedgerBudget')
+    try {
+      await renderApp()
+      await uploadPhoto()
+      await goNav('调色')
+
+      await setSlider('亮度', 40)      // ① 调色（这一笔**不定稿**）
+      await cropOnce()                 // ② 裁剪（它的定稿点：先调色、后裁剪）
+
+      const past = gated(spy)[0]!.past
+      expect(past, '两笔：调色、裁剪').toHaveLength(2)
+      expect(past[0]!.seq, '先发生的那一笔号更小').toBeLessThan(past[1]!.seq)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('顺手件②：删 Lut 时**没定稿的那一笔**也扫 —— 退回去不许套回死滤镜', async () => {
+    // 场景：手上这张正用着「黄昏」（落在接回来的最后一步上），他调了一下（还没定稿，
+    // 那一笔的"改之前"里攥着这个 id），然后跑到 `/app/luts` 把它删了再回来。
+    // 不扫待办的话：定稿时把那个**已经不存在的 id** 压进 `past` —— 按一下「上一步」
+    // 就把死滤镜又套回画面上（cube 取不到，那层颜色说没就没，一句错都不报）。
+    // 变异：去掉 `dropGoneLut` 里扫待办那两行 → 最后那句 `body.lut` 红。
+    const HUT: LutMeta = { id: 1, name: '黄昏', size: 2, bytes: 100, createdAt: 0 }
+    const s = makeSession(7, 3, '上次那句', 'S7')
+    s.steps[s.steps.length - 1]!.lut = { lutId: 1, amount: 80 }
+    withSessions([s])
+    vi.mocked(lutsMod.listLuts)
+      .mockResolvedValueOnce({ luts: [HUT] })      // App 挂载那一次：还在
+      .mockResolvedValue({ luts: [] })             // 离开设置页那一次：已经删了
+
+    await renderApp()
+    await goNav('调色')
+    await setSlider('亮度', 40)                    // 起一笔，**不定稿**
+    await act(async () => {                        // 走到那一页上（同「滤镜」那组的 `gotoPath`）
+      window.history.pushState(null, '', '/app/luts')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await goNav('调色')                            // 离开那一页 → 照镜子（`dropGoneLut`）
+    await waitPersist()                            // 停手 → 定稿
+    expect(stepNav(), '记上了那一笔才画得出这组箭头').toBeTruthy()
+    expect(stepNav()!.textContent, '账本 = 出生 + 刚调的那一笔').toContain('2 / 2')
+
+    await tap(navBtns()[0]!)                       // 上一步 = 退掉刚调的那一笔
+    expect(last().params.exposure, '参数退回了"改之前"（拖滑块之前是 2）').toBe(2)
+    await waitPersist()                            // 落盘
+    expect(lastPutBody().lut, '退回去不许把死滤镜带回来').toBeNull()
+  })
+
+  it('顺手件③：待办挂在被删的那一版上时，删它就把待办一起清', async () => {
+    // 定稿闹钟还挂着（拖了滑块、没到 0.8 秒）时把那一版删掉：待办还攥着**旧**
+    // stepId，而"起一笔"的判据是**待办为空**（同时只许有一个）—— 不清的话，
+    // 站在新那一版上怎么调都记不上一笔（颜色照变、箭头一动不动、一句错都不报）。
+    // 变异：去掉 `onDeleteMessages` 里清待办那两行 → 最后那句 `2 / 2` 红
+    // （那一版一笔都没有 → 那组箭头整组不画）。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '改一下', reply: '好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')                 // 转盘两格（原图 + 这一版）
+    await goNav('调色')
+    await setSlider('亮度', 40)           // ① 起一笔、不定稿 —— 它挂在第二版上
+    await goNav('修图')
+
+    // ② 把那一版删掉（「…」→【删除】→ 确认）—— 待办该跟着它一起走
+    const msgOf = (text: string) => {
+      const m = [...container.querySelectorAll<HTMLElement>('.msg')].find(
+        x => (x.querySelector('.bubble-text')?.textContent ?? '') === text)
+      expect(m, `屏幕上没有「${text}」这条消息`).toBeTruthy()
+      return m!
+    }
+    await tap(msgOf('好了。').querySelector('.msg-more') as HTMLButtonElement)
+    await tap(msgOf('好了。').querySelector('.msg-menu-del') as HTMLButtonElement)
+    await clickByText('确认删除')
+    expect(container.querySelectorAll('.strip-node'), '前提：那一版真的删了').toHaveLength(1)
+
+    // ③ 站在原图那一版上再调一下 —— 记不记得上，就看这一下
+    await goNav('调色')
+    await setSlider('亮度', 30)
+    await waitPersist()                   // 停手 → 该定稿了
+    expect(stepNav(), '记上了那一笔，才画得出这组箭头').toBeTruthy()
+    expect(stepNav()!.textContent).toContain('2 / 2')
   })
 })
 
