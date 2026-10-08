@@ -46,7 +46,10 @@ import { ApiError, isUnauthorized, postRoute } from './api/client'
 import { bitmapsToClose, attachThumb, type Snapshot } from './core/history'
 // ★ 2026-10-08（调色区账本）：裁剪/点修不再推新快照 —— 它们给「当前这一版」
 //   记一笔账（`pushEdit` 把"改之前"压进 `past`），退这一步走账本的 `undoEdit`。
-import { pushEdit, type EditState } from './core/ledger'
+//   `flushEdit`（调色那一笔的定稿）用 `sameEdit` 判净零、用 `pushEdit` 记账；
+//   调色屏左下角那组箭头（`ledgerStep`）走 `undoEdit` / `redoEdit`，
+//   画几笔看 `ledgerTotal`。
+import { ledgerTotal, pushEdit, redoEdit, sameEdit, undoEdit, type EditState } from './core/ledger'
 // ★ 2026-10-08：删除的单位是"一问一答"（用户报的"删了一条、另半条还留着"），
 //   `expandDeleteIds` 就在这儿把一条 id 补成整轮 —— 纯函数，和 ChatPanel 勾选
 //   那侧共用同一份（别在两处各写一遍配对逻辑）。
@@ -490,7 +493,16 @@ export default function App() {
    */
   const dropGoneLut = useCallback((id: number) => {
     setLut((cur) => (cur?.lutId === id ? null : cur))
-    setHistory((prev) => prev.map((s) => (s.lut?.lutId === id ? { ...s, lut: null } : s)))
+    // ★ 2026-10-08（账本）：**账本里的笔也要扫一遍** —— `past` / `future` 里那些
+    //   笔是"当初套着这个滤镜"的画面状态，留着的话退回去会套一个**已经被用户
+    //   删掉**的滤镜：cube 取不到、画面上那层颜色说没就没（而且不报错）。
+    //   三处（当前位置 + past + future）是同一件事的三份拷贝，改一处就得三处一起。
+    setHistory((prev) => prev.map((s) => ({
+      ...s,
+      lut: s.lut?.lutId === id ? null : s.lut,
+      past: s.past.map((p) => (p.lut?.lutId === id ? { ...p, lut: null } : p)),
+      future: s.future.map((f) => (f.lut?.lutId === id ? { ...f, lut: null } : f)),
+    })))
     noticeBad('那个 Lut 刚被你删掉了，这张照片上的也去掉了。')
   }, [noticeBad])
 
@@ -581,10 +593,58 @@ export default function App() {
    * ⚠️ 和 `idRef` **是两本账**，别合并：那个发的是消息 / 版本 id（"消息 id 就是
    *   步骤 id"那条老约定靠它对齐），这个只给账本排先后 —— 裁剪/点修现在
    *   **不产生新版本**、只登记一笔账，拿 `idRef` 顶会让版本 id 凭空跳号。
-   *   （Task 4 的 `editPendingRef` / `flushEdit` 是它的另一半：那边管"没定稿的
-   *   一笔"，号也从这儿发。）
+   *   （`editPendingRef` / `flushEdit` 是它的另一半：那边管"没定稿的一笔"，
+   *   号也从这儿发 —— 见顶上那段。）
    */
   const editSeqRef = useRef(0)
+  /**
+   * **没定稿的那一笔**（★ 2026-10-08，调色区账本 Task 4）：一次**连续**调色的
+   * "**改之前**"从这儿起 —— 停手约 0.8 秒、或者撞上任何一个定稿点（点箭头 /
+   * 落刀裁剪 / 生成落地 / 切会话），它才真的记进账本（`flushEdit`）。
+   *
+   * `stepId` = 这一笔挂在**哪一版**上：现场改动写回的是"当前这一版"，所以站在
+   * 旧版本上拖滑块，记的也是旧版本的账。
+   *
+   * 「改之前」为什么要把 `before` 整份拍下来（而不是只记一个"起点号"）：
+   * 账本上的一笔必须是**两个完整画面状态**（`pushEdit` 的入参形状）——
+   * 中间那几次拖动不留痕，用户看到的只有一头一尾。
+   */
+  const editPendingRef = useRef<{ stepId: number; before: EditState } | null>(null)
+
+  /**
+   * 把没定稿的那一笔记进账本。**没有待办 = 空操作**（重复调用无害）。
+   *
+   * "之后"取**快照里的现场值**（`s.params` / `s.lut`）——写回那条 effect 一直在
+   * 把它们镜像成最新，所以快照上那一份就是"改之后"。⚠️ 也**只能**这么取：
+   * 闭包里的 `params` / `lut` 是"这个回调被创建时"的值，而它经常跑在定时器里
+   * （那一刻闭包早就是过去某一轮的了）。
+   *
+   * ⚠️ **净零不记**（spec §5.1）：拖走又拖回原值，账本上不留一条空笔（留了的话
+   *   用户要按两下箭头才回到他真正想去的地方）。
+   * ⚠️⚠️ 净零和"找不到那一版"两条**都返回原来那份 `h`**，不是 `h.map(...)` 出来的
+   *   新数组 —— 引用相等，React 才会跳过重渲染。返回新数组的代价是**真的**：
+   *   落盘那个 effect 的依赖里有 `history`，它会跟着重跑一遍、重新立一个 800ms
+   *   的闹钟，于是**白白多发一趟一模一样的 PUT**（2026-10-08 实测：`说一句话
+   *   （模型给的增量是空的）→ 切会话` 那条 App 用例当场红 —— 多出来的那趟打的
+   *   还是**上一条会话**的 id）。
+   * ⚠️ deps 是**空的**：它只读 ref、只用 `setHistory`（身份稳定）。
+   * ⚠️ Task 5 会在这条路后面接上预算驱逐（`enforceLedgerBudget`）。
+   */
+  const flushEdit = useCallback(() => {
+    const p = editPendingRef.current
+    if (!p) return
+    editPendingRef.current = null
+    setHistory(h => {
+      const s = h.find(x => x.id === p.stepId)
+      // 那一版已经不在了（被删了 / 换了会话）：原样返回，一个字节都不动。
+      if (!s) return h
+      // ⚠️ 这里**不能**用闭包里的 `params`：定时器到点时那是过去那一轮的值。
+      const next = { base: s.base, params: s.params, lut: s.lut }
+      if (sameEdit(p.before, next)) return h         // 净零：不记（也不惊动渲染）
+      const seq = ++editSeqRef.current
+      return h.map(x => (x.id === p.stepId ? pushEdit(x, { ...p.before, seq }, next, seq) : x))
+    })
+  }, [])
   /** 落盘的次序号。后一次回来时前一次可能还在路上 —— 只认最新的那一次 */
   const persistSeqRef = useRef(0)
   /** 上一次**成功写进服务端**的底图是第几版。只在写成功之后才更新 —— 见下面那句注释 */
@@ -750,7 +810,9 @@ export default function App() {
    */
   const loadSession = useCallback(async (id: number, why: 'restore' | 'open'): Promise<void> => {
     // ★ 第一句，在动任何状态之前（理由见上面那段）
-    if (why === 'open') flushPersist()
+    // ★ 2026-10-08（账本）：**先定稿、再落盘** —— 发出去的那一份（参数 / 滤镜）
+    //   得是定稿后的，不然"调完马上切会话"会把最后一笔留成半截。
+    if (why === 'open') { flushEdit(); flushPersist() }
     const gen = ++loadSeqRef.current
     /** ★ 选照片的**序号**（不只是"选过没有"的布尔）。见 `pickSeqRef` 那段 */
     const pickSeqAtStart = pickSeqRef.current
@@ -943,6 +1005,10 @@ export default function App() {
       // ★★ 下面这一批**必须一次写完**（中间一次 await 都没有）——
       //    中途让出的话，落盘那个 effect 会带着**旧 history + 新 sessionId** 跑一次：
       //    那等于把 A 的活儿写进 B。App.test.tsx 里有一条测试钉着它。
+      // ★ 2026-10-08（账本）：上一条会话那个"没定稿的半截笔"跟着一起作废 ——
+      //   history 马上整份换掉，留着它只会堵住下一次"起一笔"（`flushEdit` 找不到
+      //   那个 id、白跑一拍）。和下面那次 `closeBitmaps` 是同一批。
+      editPendingRef.current = null
       setHistory(prev => {
         // 切走的这条会话的位图要还回去（含它的原图）。不还就是"切几次把标签页拖垮"
         // —— 每张原图按 32 MP 算是 129 MB 的 GPU 内存。
@@ -1044,7 +1110,7 @@ export default function App() {
     } finally {
       if (why === 'open') setBusy(null)
     }
-  }, [flushPersist, noticeBad, setCurrentSession, moveCursor])
+  }, [flushEdit, flushPersist, noticeBad, setCurrentSession, moveCursor])
 
   /**
    * 打开页面之后，把"上次那条会话"接回来（spec §6.2）。
@@ -1104,6 +1170,9 @@ export default function App() {
       setLut, luts: lutsApi.luts,
       baseSeqRef, idRef, setBusy, setUser, noticeBad,
       setCards, setPending, pendingRef, setMessages, setHistory,
+      // ★ 2026-10-08（账本，Task 4）：生成的**定稿点** —— 结果落地之前先把
+      //   没定稿的那一笔调色记进账本（spec §5.5）。
+      flushEdit,
       // ★ 2026-10-05（设计 §4.5）：从旧步骤生成时挂确认条（`applyDecision` 用）。
       setPendingReplace,
       // ★ 2026-10-05（终审 I1）：`cursorId` 换成了它的**同步影子**（`cursorIdRef`）。
@@ -1249,7 +1318,9 @@ export default function App() {
       }
       const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
       // ★ 先定稿没落定的调色、再记裁剪这一笔（顺序不能反）。
-      // TODO(Task 4): 先定稿没落定的调色（flushEdit() 接在这里，顺序不能反）
+      //   反了的话这一刀会压到"调色那笔"前面 —— 用户按一下「上一步」，退掉的是
+      //   **两件事**（调色 + 裁剪），而他只按了一下。
+      flushEdit()
       // ⚠️ 发号器是顶上那个 `editSeqRef`（**账本专用**，和 `idRef` 分开）——
       //   账本序号只管预算驱逐的先后，发它**不产生新版本**。
       const seq = ++editSeqRef.current
@@ -1302,7 +1373,7 @@ export default function App() {
       // 开不出够大的画布（`cropToBitmap` 那两条失败路径）。
       noticeBad('这张照片没裁成。再试一次；还不行就换一张小一点的。')
     }
-  }, [crop, image, noticeBad])
+  }, [crop, image, noticeBad, flushEdit])
 
   /**
    * 交给 `Canvas` 的裁剪现场 —— 每次渲染现算。
@@ -1401,8 +1472,8 @@ export default function App() {
         return
       }
       const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
-      // ★ 先定稿没落定的调色、再记擦除这一笔（顺序不能反）。
-      // TODO(Task 4): 先定稿没落定的调色（flushEdit() 接在这里，顺序不能反）
+      // ★ 先定稿没落定的调色、再记擦除这一笔（顺序不能反 —— 同 `commitCrop`）。
+      flushEdit()
       const seq = ++editSeqRef.current
       setHistory(prev => {
         const next = prev.map(s => {
@@ -1431,7 +1502,7 @@ export default function App() {
     } finally {
       setErasing(false)
     }
-  }, [retouch, image, noticeBad, closeRetouch])
+  }, [retouch, image, noticeBad, closeRetouch, flushEdit])
 
   /**
    * 交给 `Canvas` 的点修现场 —— 每次渲染现算。
@@ -1538,6 +1609,10 @@ export default function App() {
       // （2048 长边，最多 6 条）。只关原图会漏掉它们，换几次图就能把标签页拖垮。
       // 副作用留在状态更新外面，别塞进 updater（updater 可能被重放）。
       closeBitmaps(bitmapsToClose(history, []))
+      // ★ 2026-10-08（账本）：上一张照片那个"没定稿的半截笔"跟着一起作废 ——
+      //   下面紧接着就把 history 整段换成新的一张了（不清的话它会一直堵着
+      //   下一次"起一笔"，直到某一拍 `flushEdit` 发现找不到那个 id 才自己散掉）。
+      editPendingRef.current = null
 
       originalFileRef.current = file
       setImage(img)
@@ -1665,6 +1740,10 @@ export default function App() {
    */
   const resetEditor = useCallback(() => {
     closeBitmaps(bitmapsToClose(history, []))
+    // ★ 2026-10-08（账本）：照片都放下了，那个"没定稿的半截笔"也没有意义了 ——
+    //   下面就是 `setHistory([])`。⚠️ `onSessionDeleted` 走的就是这条路，
+    //   所以四处"整段换掉 / 清空 history"的地方在这一行上齐了。
+    editPendingRef.current = null
     setImage(null)
     setHistory([])
     // ⚠️ 走 `moveCursor`：归零也要连影子 ref 一起清（不清的话，下一条会话里
@@ -1808,9 +1887,12 @@ export default function App() {
     //   连根清掉了，用户最后改的那几下会永远丢了（见 `flushPersist`）。
     //   摆在 `busy` 那道守卫**下面**：被挡回去的那一次什么都没发生，
     //   更不该去动落盘。
+    // ★ 2026-10-08（账本）：和落盘一样，**先定稿再走** —— 照片马上要放下了，
+    //   那一笔不记就永远没了（`resetEditor` 会把整个 history 清掉）。
+    flushEdit()
     flushPersist()
     resetEditor()
-  }, [busy, flushPersist, resetEditor])
+  }, [busy, flushEdit, flushPersist, resetEditor])
 
   /**
    * 用户把**正在改的那一条**从「对话」列表里删掉了（2026-10-02 用户报的那条：
@@ -2074,6 +2156,10 @@ export default function App() {
   const onJump = useCallback((id: number) => {
     const target = history.find(s => s.id === id)
     if (!target) return
+    // ★ 2026-10-08（账本，Task 4）：跳走之前**先把没定稿的那一笔定下来** ——
+    //   版本之间不许出现"半截笔"。用户"调完马上跳到下一版"时，那一笔要是
+    //   没定稿，之后回来它就没了（而屏幕上明明看得见颜色变了）。
+    flushEdit()
     // ★ 「回到这一步」也是"改主意了"：上一条歧义就此翻篇 —— 和 send / onCard
     //   里那几行同一个道理，所以用同一个 cancelPick。
     //   （原来的那两条竞态理由照旧成立，见 git 历史。）
@@ -2103,35 +2189,83 @@ export default function App() {
     //       那已经不是原图了。
     //   ⚠️ 依赖数组不用动：`target` 来自 `history`，它本来就在里面。
     setLut(target.lut)
-  }, [history, cancelPick, cancelReplace, moveCursor])
+  }, [history, cancelPick, cancelReplace, moveCursor, flushEdit])
 
   /**
-   * ★ 2026-10-08（用户报的：「套上滤镜后在对话区回溯到第一版再回到刚才的，
-   *   滤镜没套上 —— 这是对的吗？就是这样设计的吗？」）：**站在最新一步时，
-   *   参数 / 滤镜的现场改动要写回那一步的快照** —— 不写回，跳走再跳回来就丢。
+   * ★ 2026-10-08（调色区账本，Task 4）：调色屏左下角那组箭头 —— 翻的是
+   * **当前这一版的账本**，不是版本（版本归修图屏的转盘管；宏观 = 转盘、
+   * 微观 = 这一组，是用户点名的分工，spec §5.3）。
    *
-   * 为什么会丢：一步的快照记的是**它出生那一刻**的 `params` / `lut`，而拖滑块、
-   * 套滤镜是"改现在这一版"、**不推新快照**（裁定 ⑤）—— 快照那份于是越来越旧；
-   * 而 `onJump` 还原恰恰是照快照来的。所以"在最新一步上套了滤镜 → 跳去看看
-   * 旧版本 → 再跳回来"，那层颜色就没了。
-   * ⚠️ 同一件事**刷新一下却在**（落盘那条路把"现在这一版"的 params / lut 挂在
-   *    最后一步上、服务端存了）—— 两条路各说各话，这条 effect 就是把它对齐。
+   * ⚠️ **动之前先把没定稿的调色定稿**（"调完马上退"退的必须是**他刚调的那下**）。
+   *   这里不能写成"`flushEdit()` 然后等一下渲染再读" —— `setHistory` 是异步的，
+   *   这一拍读到的 `cur` 还是旧的。所以就地算一份"定稿后的它"（`base`），
+   *   在**同一拍**里 undo / redo 它。
+   * ⚠️ 不碰对话、不切步骤、不花钱 —— 和"翻版本"同一族契约（`39fb4d0`）。
+   * ⚠️ 位置（`cursorId`）**不动**：翻账本翻的是"这一版现在的样子"，不是跳到别的版本。
+   */
+  const ledgerStep = useCallback((dir: -1 | 1) => {
+    const cur = history.find(s => s.id === cursorId)
+    if (!cur) return
+    // 先把待办定稿，在同一拍里拿到"定稿后的它"（不能只 setHistory 等渲染）
+    let base = cur
+    const p = editPendingRef.current
+    if (p && p.stepId === cur.id) {
+      editPendingRef.current = null
+      const next = { base: cur.base, params, lut }
+      if (!sameEdit(p.before, next)) {
+        const seq = ++editSeqRef.current
+        base = pushEdit(cur, { ...p.before, seq }, next, seq)
+      }
+    }
+    const target = dir < 0 ? undoEdit(base) : redoEdit(base)
+    if (target === base) return              // 到头（按钮本来就 disabled，这是保险）
+    setHistory(h => h.map(s => (s.id === cur.id ? target : s)))
+    setImage(target.base)
+    setParams(target.params)
+    setLut(target.lut)
+    // ⚠️ 落盘要认这一版（Task 7 接上 `markDirty`：退回/前进都可能换了底图）
+  }, [history, cursorId, params, lut])
+
+  /**
+   * ★ 2026-10-08（调色区账本，Task 4）：调色区的**现场**与「当前这一版」之间
+   *   那条链 —— 三件事（原 `549836b` 那条"只在最新一步写回"的**放宽版**）：
    *
-   * 规矩和落盘那条**一模一样**：**只有站在最新一步才写回**（`cursorId === last.id`）。
-   * 跳回旧步骤"随手调的颜色"**不留** —— 那是设计 §5 写明白的代价（跳转不改写
-   * 历史）；在这里补一份"本地有、刷新就没"的半吊子，比不留更糟。
+   *   ① **现场镜像**：把 live `params` / `lut` 立刻写回**当前这一版**。
+   *      原来是"只在最新一步"（`cursorId === last.id`）；账本落地后放宽到
+   *      "**当前这一版**"—— 站在旧版本上改的，该写回**旧版本**（账本、落盘、
+   *      跳转读的都是快照上这一份，不改的话这一次改动是"本地有、跳走就没"）。
+   *      来路（2026-10-08 用户报的）：套上滤镜 → 跳到第一版 → 跳回来，滤镜没了。
+   *   ② **起一笔**：第一次跟快照不一样时，把"**改之前**"拍进 `editPendingRef`
+   *      —— 一次**连续**调整只拍一次，连着拖几个来回合并成同一笔（spec §5.1）。
+   *   ③ **定稿闹钟**：停手约 800ms 把它记进账本（`flushEdit`，和落盘同一档防抖）。
    *
-   * ⚠️ **原地改那一条，不是 push**（裁定 ⑤ 照旧：改 params / lut 不推快照）。
-   * ⚠️ 引用相等就收工：`onJump` / 恢复会话 / 删记录那几处还原时传进来的就是快照里
-   *    **同一个对象** —— 不挡的话每次跳转都白 map 一遍、还多一轮渲染，把"这条
-   *    effect 到底干了什么"搅成一锅粥。变异：把它拿掉 → 「跳走再跳回来」那条红。
+   * ⚠️⚠️ **别把这段重写成 `early return` 的形状**（原来那条正是那样写的）：
+   *   这条 effect 自己会改 `history`，而 `history` 在依赖里 —— 于是它**每次都要
+   *   重跑一遍**。早返回的话，第一次跑起来立的那个闹钟会被自己的清理取消掉，
+   *   而重跑又因为"第一句就 return"再也不重立 —— 那一笔**永远不会定稿**，
+   *   而且一句错都不报。所以"立闹钟"那句要落在**两条路都会走过**的位置。
+   *
+   * ⚠️ 引用相等就什么都不做（`cur.params === params`）：`onJump` / 恢复会话 /
+   *   删记录那几处还原时传进来的就是快照里**同一个对象** —— 不挡的话每次跳转
+   *   都白 map 一遍、还多一轮渲染。
    */
   useEffect(() => {
-    const last = history[history.length - 1]
-    if (!last || cursorId !== last.id) return
-    if (last.params === params && last.lut === lut) return
-    setHistory(h => h.map(s => (s.id === last.id ? { ...s, params, lut } : s)))
-  }, [params, lut, cursorId, history])
+    const cur = history.find(s => s.id === cursorId)
+    // ① 现场镜像 + ② 起一笔（"改之前"取快照里那一份；只在没有待办时拍）
+    if (cur && (cur.params !== params || cur.lut !== lut)) {
+      if (!editPendingRef.current) {
+        editPendingRef.current = {
+          stepId: cur.id,
+          before: { base: cur.base, params: cur.params, lut: cur.lut, seq: 0 },
+        }
+      }
+      setHistory(h => h.map(s => (s.id === cur.id ? { ...s, params, lut } : s)))
+    }
+    // ③ 定稿闹钟（没有待办 = 不立表）
+    if (!editPendingRef.current) return
+    const t = setTimeout(() => flushEdit(), 800)
+    return () => clearTimeout(t)
+  }, [params, lut, cursorId, history, flushEdit])
 
   /**
    * ★ 2026-10-06（用户原话：「在会话里的单条记录我怎么还是没有删除的按钮」，
@@ -3051,35 +3185,40 @@ export default function App() {
                     回溯按钮，但是这个是不跟对话区联动的 —— 相当于一个宏观
                     一个微观」）：照片**左下角**那组「上一步 / 下一步」。
 
-                    宏观 = 修图屏那圈历史转盘（一眼看全）；微观 = 这一组
-                    （一次翻一版 + "第几版 / 共几版"）—— 同一份"现在看哪一版"
-                    （`cursorId`），两个屏各用一块地方，**不另开第二条线**。
+                    宏观 = 修图屏那圈历史转盘（一眼看全**版本**）；微观 = 这一组
+                    —— ★ 2026-10-08（账本落地后分工定死）：它翻的是**当前这一版
+                    自己的账本**（这一版上改过的每一笔：调色 / 滤镜 / 裁剪 / 点修），
+                    "第几笔 / 共几笔"。位置显示走 `ledgerTotal` / `past.length`
+                    —— 和 `core/ledger.ts` 的口径**必须**是同一个（那边是唯一的账本）。
 
-                    ⚠️ **和对话区没有关系**是用户点名的：翻版本走的是和转盘
-                    **同一个 `onJump`** —— 一条消息都不产生、一步都不切、
-                    一分钱不花（「跳转不删任何东西」那套契约原样继承）。
-                    `App.test.tsx` 有一组用例钉着这三件事。
+                    ⚠️ **和对话区没有关系**是用户点名的：翻账本走的是 `ledgerStep`
+                    —— 一条消息都不产生、一步都不切、一分钱不花，连"站的位置"
+                    （`cursorId`）都不动。`App.test.tsx` 有一组用例钉着这些。
 
                     ⚠️ **只在调色屏**（和预设栏、工具行、微调面板同一条判据）：
                     修图屏那块地方是转盘，两个同一屏里并排就是同一件事两个开关。
-                    ⚠️ 只有一版（刚上传）时整组不画 —— 不留一组按不动的按钮。
+                    ⚠️ **账本只有一笔时不画**（刚上传 / 没动过）—— 不留一组按不动的按钮。
                     ⚠️ **正在裁剪 / 点修时收起来**：那两个是"在这张图上干活"的
-                    模态工具（框 / 涂抹都按当前这版算），翻一版会把用户的活儿
+                    模态工具（框 / 涂抹都按当前这版算），翻一笔会把用户的活儿
                     留在原地、换个底子接着算 —— 「对比」不算（那正是比版本的时候）。
                     ⚠️ 位置是**镜像 `.zoom-bar`**（右下角那排缩放）：同样离照片
                     那圈相纸边 `--sp-3`，所以 CSS 里那两个 offset 是
                     `舞台内边距 + --sp-3` —— 动 `.stage` 的内边距要连着看。 */}
-                {view.kind === 'adjust' && image && history.length > 1
-                  && curIdx >= 0 && tool !== 'crop' && tool !== 'retouch' && (
-                  <StepNav
-                    index={curIdx + 1}
-                    total={history.length}
-                    // 两头到底时不渲染也不点（按钮自己 disabled），这里写紧一点：
-                    // `history[curIdx - 1]` 越界就是 undefined，害的是类型。
-                    onPrev={() => onJump(history[curIdx - 1]!.id)}
-                    onNext={() => onJump(history[curIdx + 1]!.id)}
-                  />
-                )}
+                {(() => {
+                  const cur = history.find(s => s.id === cursorId)
+                  const total = cur ? ledgerTotal(cur) : 1
+                  if (view.kind !== 'adjust' || !image || !cur || total <= 1) return null
+                  if (tool === 'crop' || tool === 'retouch') return null
+                  // 位置是**数出来的**（`past.length + 1`，1 起数）—— 别另存一个计数器。
+                  return (
+                    <StepNav
+                      index={cur.past.length + 1}
+                      total={total}
+                      onPrev={() => ledgerStep(-1)}
+                      onNext={() => ledgerStep(1)}
+                    />
+                  )
+                })()}
               </div>
               {/* ★ 2026-10-04：**调色那一屏没有对话栏。**
 

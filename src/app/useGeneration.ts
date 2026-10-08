@@ -83,6 +83,17 @@ export type GenerationDeps = {
   /** 推一步快照（生成那一步要挂上去，「回到这一步」靠它）。 */
   setHistory: (fn: (h: Snapshot[]) => Snapshot[]) => void
   /**
+   * ★ 2026-10-08（调色区账本，Task 4）：把**没定稿的那一笔调色**立刻记进账本
+   * （App 的 `flushEdit`；没有待办时是空操作）。
+   *
+   * 为什么生成这条路也要定稿点：生成成功要**推一个新版本**，而"没定稿的调色"
+   * 属于**出发那一版** —— 不定稿的话它会一直挂在 `editPendingRef` 上，等 800ms
+   * 的闹钟到点时，用户站的位置可能已经换了（那一笔要么记到别的版本上、要么
+   * 干脆丢掉）—— 用户"调完马上说话改"时，他调的那下就白调了。
+   * 和"落刀裁剪 / 点箭头 / 切会话"是同一类定稿点（spec §5.5）。
+   */
+  flushEdit: () => void
+  /**
    * ★ 2026-10-05：最新一步的 id（`tipId`）—— 判"要不要先问一句"（Task 4）。
    * **必须进依赖数组**：它变了（又推了一步）而回调还在用旧值时，站在新 tip 上
    * 生成会被当成"从旧步骤出发"，白白多问一次。
@@ -105,7 +116,7 @@ export function useGeneration(deps: GenerationDeps) {
   const {
     image, setImage, params, setParams, lut, setLut, luts, baseSeqRef, idRef, setBusy, setUser,
     noticeBad, setCards, setPending, setPendingReplace, pendingRef, setMessages, setHistory,
-    tipId, setCursorId, cursorIdRef,
+    flushEdit, tipId, setCursorId, cursorIdRef,
   } = deps
 
   /**
@@ -231,6 +242,12 @@ export function useGeneration(deps: GenerationDeps) {
       // 底图换了一版 —— 上传时那批建议卡片从这一刻起作废（见 loadCards）。
       baseSeqRef.current++
 
+      // ★ 2026-10-08（账本，Task 4）：**先定稿没落定的那一笔调色，再推新版本**
+      //   （spec §5.5 的定稿点之一）。定稿点在"结果确实要落地"之后是有意的：
+      //   上面那道闸门作废了这一趟的话，什么都不该动（连账本也不动）。
+      //   ⚠️ 顺序不能反 —— 反了的话"出发那一版"的调色会记到**新版本**头上。
+      flushEdit()
+
       setHistory(prev => {
         // ★ 2026-10-05（切口）：从 `origin.stepId` **之后**的步骤全部切掉（含）。
         //   放在这里（= 生成**成功之后**、和推新步同一个 updater）不是随手的：
@@ -310,7 +327,9 @@ export function useGeneration(deps: GenerationDeps) {
     // ★ 2026-10-05：`tipId` **要进** —— 切对话那道闸门拿它判"出发的那一步是不是
     //   最新"（见上面那行 `if`）。它变了（又推了一步）而回调还在用旧值时，
     //   站在新 tip 上生成会被当成"从旧步骤出发"—— 用户没同意过的一段话就没了。
-  }, [noticeBad, say, tipId])
+    // ★ 2026-10-08（账本）：`flushEdit` 也进来（成功路径那个定稿点用的就是它）。
+    //   它是 App 那边 `useCallback(..., [])` 的稳定引用，进来只是守住这条规矩。
+  }, [noticeBad, say, tipId, flushEdit])
 
   /**
    * 「停止」—— 把这一次生成掐掉。

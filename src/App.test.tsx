@@ -7674,16 +7674,212 @@ describe('「回到这一步」不再删后面的步骤', () => {
 })
 
 /**
+ * ★ 2026-10-08（调色区账本）：**调色的「一笔」怎么定稿**（spec §5.1 / §5.2）。
+ *
+ * 一次**连续**的调整 = 账本上的一笔：拖一下滑块，停手约 0.8 秒才定稿；连着拖
+ * 几个来回不歇 = 同一笔；拖走又拖回原值 = 净零，**不记**（不留一条空笔）。
+ * "定稿点"是那些"再不定稿就会出现半截笔"的地方（点箭头 / 落刀裁剪 / 生成落地 /
+ * 切会话）—— 用户"调完马上退"时，退的必须是他**刚调的那下**。
+ *
+ * ⚠️ **唯一看得见账本的窗口就是调色屏左下角那组箭头**（`2 / 2` = 出生一笔 +
+ *   调色一笔）：jsdom 里没有别的地方数得出"账本里有几笔"。
+ * ⚠️ 这里**真的等** 900ms。`vi.useFakeTimers()` 在这个文件里用不得：它会把
+ *   `act` 里的微任务、那些"挂住不回"的 gate、React 自己的调度一起冻上
+ *   （理由写在 `waitPersist` 那段）。900 只是余量 —— `setTimeout` 保证"至少"。
+ */
+describe('调色的「一笔」：停手 0.8 秒定稿', () => {
+  const stepNav = () => container.querySelector('.step-nav')
+  const navBtns = () => [...container.querySelectorAll<HTMLButtonElement>('.step-nav-btn')]
+  /** 点一下 + 让 React 把状态刷完（这个文件里别处同款）。 */
+  const tap = (el: HTMLElement) =>
+    act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
+
+  /**
+   * 拨一条调色滑块：点数字 → 打字 → 回车（面板那个零件现成的用法，
+   * 和「裁剪」那组里的 `setStraighten` 同一套动作）。
+   *
+   * ⚠️ 不走"说一句话"那条路：那条是**花钱**的路由，而且它给的是"模型算出来的
+   *   增量" —— 这里要的是"用户手上那一下"，一次 `onChange` 就是一次现场改动。
+   */
+  async function setSlider(name: string, value: number) {
+    const row = [...container.querySelectorAll('.panel .slider')]
+      .find(el => el.querySelector('.slider-label')?.textContent === name)
+    expect(row, `调色面板里该有一条「${name}」`).toBeTruthy()
+    await act(async () => {
+      ;(row!.querySelector('.slider-value') as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const box = row!.querySelector('input.slider-edit') as HTMLInputElement
+    await typeIn(box, String(value))
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  /** 进裁剪 → 立刻「完成」（框是默认那一个 = 整张照片，所以这一刀只换了底图）。
+   *  ★ 账本上它是一笔"换了底图的笔"，而**箭头那组**正是靠它才有东西可翻。 */
+  async function cropOnce() {
+    const cell = container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
+    expect(cell, '工具行里该有「裁剪」').toBeTruthy()
+    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
+    await clickByText('完成')
+  }
+
+  it('★ 连着调（不歇）= 同一笔；停手 0.8 秒才定稿', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+
+    await setSlider('亮度', 40)
+    await setSlider('亮度', 60)                  // 两次改、中间没歇
+    // 还没停手：账本只有出生那一笔 —— 那组箭头**整组不画**（total ≤ 1，spec §5.3）
+    expect(stepNav()).toBeNull()
+
+    await waitPersist()                          // 停手 → 定稿
+    // 两次改**合并成一笔**：账本 = 出生 + 1 笔（要是不合并，这里会是 3 / 3）
+    expect(stepNav()!.textContent).toContain('2 / 2')
+    expect(canvasProps.props.at(-1)!.params.exposure).toBe(60)
+  })
+
+  it('★ 定稿后马上退 = 退掉刚才那一笔（先定稿、再退）', async () => {
+    // ⚠️ 先裁一刀：**只有一笔（刚上传）时箭头整组不画**（spec §5.3），
+    //   所以"调完马上按箭头"这件事只有在账本已经不止一笔时才真发生 ——
+    //   也正是这一段：裁完（2 / 2）再调、不等定稿就按。
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await cropOnce()
+    expect(stepNav()!.textContent).toContain('2 / 2')
+
+    await setSlider('亮度', 60)                  // 这一笔**故意不定稿**
+    await tap(navBtns()[0]!)                     // 不到 800ms 就按
+
+    // 退的是**刚才调的那下**：参数回 0，而底图还是裁完那张（那一刀没被退掉）
+    expect(canvasProps.props.at(-1)!.params.exposure).toBe(0)
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'cropped' } })
+    // 而且那一笔**被记上了**：账本 = 出生 + 裁剪 + 调色，人此刻站在中间那一笔
+    expect(stepNav()!.textContent).toContain('2 / 3')
+  })
+
+  it('净零（拖走又拖回原值）不记 —— 账本上不留空笔', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await cropOnce()
+    expect(stepNav()!.textContent).toContain('2 / 2')
+
+    await setSlider('亮度', 60)                  // 拖走
+    await setSlider('亮度', 0)                   // 又拖回原值
+    await waitPersist()                          // 停手 → 该定稿了
+    // 净变化为零：**不记**（不是"记了一笔又退掉"，是压根没有第三笔）
+    expect(stepNav()!.textContent).toContain('2 / 2')
+  })
+
+  it('★ 剪一刀之前，先把没定稿的调色单独记一笔（顺序：先调色、后裁剪）', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    const beforeCrop = canvasProps.images.at(-1)
+
+    await setSlider('亮度', 40)                  // 不等定稿
+    await cropOnce()                             // 立刻落刀
+
+    // 三笔，顺序是**先调色、后裁剪**（反了的话退一步会一次退掉两件事）
+    expect(stepNav()!.textContent).toContain('3 / 3')
+    // 退一步 = "没裁、但调过色" —— 两半各归各位
+    await tap(navBtns()[0]!)
+    expect(stepNav()!.textContent).toContain('2 / 3')
+    expect(canvasProps.props.at(-1)!.params.exposure).toBe(40)   // 调色还在
+    expect(canvasProps.images.at(-1)).toBe(beforeCrop)           // 那一刀退了
+  })
+
+  it('★ 调一下 → 说句话去改 → 又调一下：新版本上那一下也记得上（生成的定稿点）', async () => {
+    // 定稿点里最不显眼的一处（spec §5.5「生成落地」）：生成成功要**推一个新版本**，
+    // 而"没定稿的那一笔调色"属于**出发那一版** —— 不在推新版本之前把它定下来，
+    // 那个待办会一直挂着（待办**同时只许有一个**）：新版本上的第一下调整会被它
+    // 挡住，**一笔都记不上**（而屏幕上颜色照变、一句错都不报）。
+    // 变异：把 `useGeneration` 成功路径里那句 `flushEdit()` 删掉 → 最后那句
+    // `2 / 2` 当场红（新版本只有出生那一笔，那组箭头干脆整组不画）。
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '改一下', reply: '好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await setSlider('亮度', 50)                  // ① 旧版本上的那一笔，不定稿
+    // ⚠️ 说话得回修图屏：调色那一屏**没有对话栏**（用户点名的"那两个区"）
+    await goNav('修图')
+    await say('按这个亮度再改一下')               // ② 生成落地（新版本出生）
+    await goNav('调色')
+    await setSlider('亮度', 30)                  // ③ 新版本上的第一下调整
+
+    await waitPersist()                          // 停手 → 该定稿了
+    // 新版本的账本 = 出生 + 刚才那一下（旧版本那一笔**不许**跑到这儿来）
+    expect(stepNav()!.textContent).toContain('2 / 2')
+    expect(canvasProps.props.at(-1)!.params.exposure).toBe(30)
+
+    // 而旧版本上那一笔也各归各位：回原图那一版看，它是 2 / 2、画面是 +50
+    await goNav('修图')
+    const nodes = () => [...container.querySelectorAll<HTMLElement>('.strip-node')]
+    expect(nodes()).toHaveLength(2)
+    await act(async () => { nodes()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    await goNav('调色')
+    expect(stepNav()!.textContent).toContain('2 / 2')
+    expect(canvasProps.props.at(-1)!.params.exposure).toBe(50)
+  })
+
+  it('★ 调一下 → 点转盘跳到另一版 → 在那儿再调一下：两版各记各的（跳转的定稿点）', async () => {
+    // 和上一条**同一个形状**的另一处定稿点（spec §5.5「点转盘跳版本」）：
+    // 待办同时只许有一个 —— 跳走时不定稿的话，那一笔会一直挂在**旧版本**头上，
+    // 挡住新站的那一版"起一笔"（它的改动照旧镜像进快照，却**一笔都记不上**）。
+    // 变异：把 `onJump` 头一句 `flushEdit()` 删掉 → 最后那句 `2 / 2` 当场红
+    // （第二版只有出生那一笔）。
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '改一下', reply: '好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')                        // 转盘两格（原图 + 这一版）
+    await goNav('调色')
+    await setSlider('亮度', 50)                  // ① 第二版上的那一笔，不定稿
+
+    // ② 点转盘跳回第一版（走 `onJump`）
+    await goNav('修图')
+    const nodes = () => [...container.querySelectorAll<HTMLElement>('.strip-node')]
+    await act(async () => { nodes()[0]!.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    await goNav('调色')
+    await setSlider('亮度', 30)                  // ③ 第一版上的第一下调整
+    await waitPersist()
+    expect(stepNav()!.textContent).toContain('2 / 2')            // 出生 + ③
+    expect(canvasProps.props.at(-1)!.params.exposure).toBe(30)
+
+    // 而第二版上那一笔也**没被丢掉**：跳回去看，它是 2 / 2、画面是 +50
+    await goNav('修图')
+    await act(async () => { nodes()[1]!.click(); await new Promise(r => setTimeout(r, 0)) })
+    await goNav('调色')
+    expect(stepNav()!.textContent).toContain('2 / 2')
+    expect(canvasProps.props.at(-1)!.params.exposure).toBe(50)
+  })
+})
+
+/**
  * ★ 2026-10-08（用户原话：「给调色界面添加上一步下一步的箭头回溯按钮，但是这个
  * 是不跟对话区联动的 —— 相当于一个宏观一个微观」）：调色屏左下角那组
  * 「上一步 / 下一步」。
  *
- * 宏观 = 修图屏那圈历史转盘（一眼看全）；微观 = 这一屏的箭头（一次翻一版）。
- * **"不跟对话区联动"**这条落在三件事上：翻版本走的是和转盘**同一个** `onJump`
- * —— 一条消息都不产生、一步都不切、一分钱不花；而且两个屏共用同一个
- * "现在看哪一版"（一条会话只有这一个真相，不另开第二条线）。
+ * 宏观 = 修图屏那圈历史转盘（一眼看全**版本**）；微观 = 这一组（一次翻一版
+ * **账本里的账**）。★ 10-08 账本落地后分工定死：**转盘只记对话聊出来的版本**
+ * （裁剪 / 点修 / 调色都不加格），这一组翻的是**当前这一版自己的账本**
+ * （spec §5.3：旧语义"翻版本"作废）。
+ *
+ * **"不跟对话区联动"**这条落成两件事：翻账本走的是 `ledgerStep` —— 一条消息都
+ * 不产生、一步都不切、一分钱不花；也不碰"现在看哪一版"（`cursorId`）。
  */
-describe('调色屏的「上一步 / 下一步」', () => {
+describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本', () => {
   const bubbleTexts = () =>
     [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
   const stepNav = () => container.querySelector('.step-nav')
@@ -7692,68 +7888,143 @@ describe('调色屏的「上一步 / 下一步」', () => {
   const tap = (el: HTMLElement) =>
     act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
 
-  /** 上传 + 生成两版：history = [原图(1), 第1版(3), 第2版(5)]，对话 5 条。 */
-  async function twoVersions() {
-    vi.mocked(api.postRoute).mockResolvedValue(
-      decision({ route: 'generate', editPrompt: '改一下' }))
-    vi.mocked(api.postEdit).mockResolvedValue(OK)
-    await renderApp()
-    await uploadPhoto()
-    await say('先改一次')
-    await say('再改一次')
+  /** 进裁剪 → 立刻「完成」= 账本上多一笔（出生 + 这一刀）。 */
+  async function cropOnce() {
+    const cell = container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
+    expect(cell, '工具行里该有「裁剪」').toBeTruthy()
+    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
+    await clickByText('完成')
   }
 
-  it('只在这一屏出现：修图屏没有它（那边是转盘）', async () => {
-    await twoVersions()
-    expect(stepNav()).toBeNull()          // 修图屏
+  /** 拨一条调色滑块（和上一组同款：点数字 → 打字 → 回车）。 */
+  async function setSlider(name: string, value: number) {
+    const row = [...container.querySelectorAll('.panel .slider')]
+      .find(el => el.querySelector('.slider-label')?.textContent === name)
+    expect(row, `调色面板里该有一条「${name}」`).toBeTruthy()
+    await act(async () => {
+      ;(row!.querySelector('.slider-value') as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const box = row!.querySelector('input.slider-edit') as HTMLInputElement
+    await typeIn(box, String(value))
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  it('只在这一屏出现：修图屏没有它（那一屏的照片上方是转盘）', async () => {
+    await renderApp()
+    await uploadPhoto()
     await goNav('调色')
+    await cropOnce()
+    expect(stepNav()).toBeTruthy()          // 调色屏：账本有两笔
+    await goNav('修图')
+    expect(stepNav()).toBeNull()            // 修图屏：这块地方是转盘
+  })
+
+  it('★ 裁一刀 → 2 / 2；上一步回到裁之前、下一步回裁之后（画面真的换）', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    expect(stepNav()).toBeNull()            // 刚上传：账本只有一笔，整组不画
+    const beforeCrop = canvasProps.images.at(-1)
+
+    await cropOnce()
+    expect(stepNav()!.textContent).toContain('2 / 2')
+    expect(navBtns()[0]!.disabled).toBe(false)     // 后面还有一笔可以退
+    expect(navBtns()[1]!.disabled).toBe(true)      // 已经在最新的那一笔
+    const afterCrop = canvasProps.images.at(-1)
+    expect(afterCrop).toMatchObject({ bitmap: { __tag: 'cropped' } })
+
+    await tap(navBtns()[0]!)                       // 上一步 = 退掉这一刀
+    expect(stepNav()!.textContent).toContain('1 / 2')
+    // 画面真的换回来了：宽高对调那张、**同一个位图对象**（不是"看着差不多"）
+    expect(canvasProps.images.at(-1)).toBe(beforeCrop)
+    expect(navBtns()[0]!.disabled).toBe(true)      // 出生那一笔：到头
+    expect(navBtns()[1]!.disabled).toBe(false)
+
+    await tap(navBtns()[1]!)                       // 下一步 = 再走回来
+    expect(stepNav()!.textContent).toContain('2 / 2')
+    expect(canvasProps.images.at(-1)).toBe(afterCrop)
+  })
+
+  it('★ 两头都不空转：出生那一笔按不动「上一步」、最新那一笔按不动「下一步」', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await cropOnce()
+    await setSlider('亮度', 30)
+    await waitPersist()                            // 定稿 → 账本三笔
+    expect(stepNav()!.textContent).toContain('3 / 3')
+    expect(navBtns()[1]!.disabled).toBe(true)      // 最新那一笔：按不动
+
+    await tap(navBtns()[0]!)
+    expect(stepNav()!.textContent).toContain('2 / 3')
+    await tap(navBtns()[0]!)
+    expect(stepNav()!.textContent).toContain('1 / 3')
+    expect(navBtns()[0]!.disabled).toBe(true)      // 出生那一笔：按不动
+    expect(navBtns()[1]!.disabled).toBe(false)     // 反方向还有得走
+
+    // 真按下去也不动（"两头禁用"不只是画个灰样子）
+    await tap(navBtns()[0]!)
+    expect(stepNav()!.textContent).toContain('1 / 3')
+    expect(canvasProps.props.at(-1)!.params.exposure).toBe(0)   // 还是出生那一笔的样子
+  })
+
+  it('★ 翻账本不跟对话打交道：一条消息不多、转盘一格不多、一分钱不花', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await cropOnce()
+
+    // 先量一份"翻之前"的样子（对话栏只在修图屏渲染，所以量完再回调色屏）
+    await goNav('修图')
+    const msgsBefore = bubbleTexts()
+    const nodesBefore = container.querySelectorAll('.strip-node').length
+
+    await goNav('调色')
+    vi.mocked(api.postEdit).mockClear()
+    await tap(navBtns()[0]!)                       // 翻一笔
+    await tap(navBtns()[1]!)                       // 再翻回来
+    expect(api.postEdit).not.toHaveBeenCalled()    // 一分钱没花
+
+    await goNav('修图')
+    expect(bubbleTexts()).toEqual(msgsBefore)                            // 一条消息不多
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(nodesBefore)  // 转盘一格不多
+    expect(nodesBefore).toBe(1)                    // 而且它本来就只有原图那一格
+  })
+
+  it('正在裁剪 / 点修时收起来 —— 不然"翻一笔"会把框和涂抹留在原地', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await cropOnce()
+    const cell = () => container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
+
+    await tap(cell())                              // 打开「裁剪」
+    expect(stepNav()).toBeNull()
+    await tap(cell())                              // 再点一下 = 收起（判据 unchanged）
     expect(stepNav()).toBeTruthy()
   })
 
-  it('站在最新一步「下一步」按不动；一路翻回原图「上一版」按不动（两头都不空转）', async () => {
-    await twoVersions()
-    await goNav('调色')
-    // 三个版本：1/3 原图、2/3 第 1 版、3/3 第 2 版
-    expect(stepNav()!.textContent).toContain('3 / 3')
-    expect(navBtns()[0]!.disabled).toBe(false)
-    expect(navBtns()[1]!.disabled).toBe(true)      // 已经在最后一版
-
-    await tap(navBtns()[0]!)                       // 上一版
-    expect(stepNav()!.textContent).toContain('2 / 3')
-    await tap(navBtns()[0]!)                       // 再上一版 → 原图
-    expect(stepNav()!.textContent).toContain('1 / 3')
-    expect(navBtns()[0]!.disabled).toBe(true)      // 到头了
-    expect(navBtns()[1]!.disabled).toBe(false)
-  })
-
-  it('★ 翻一版 = 换画面 —— 而且**一条消息都不多、一步都不切**（不跟对话打交道）', async () => {
-    // 「不跟对话区联动」那条用户要求守在这儿：翻版本只动"现在看哪一版"，
-    // 对话和步骤一个字节都不碰（走的是和转盘同一个 `onJump`）。
-    await twoVersions()
-    const msgsBefore = bubbleTexts()
-    await goNav('调色')
-    await tap(navBtns()[0]!)                       // 翻到第 1 版
-    // ① 画面真的换了（回到第 1 版那张）
-    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: decodedBitmaps[0] })
-    // ② 对话一个字没动、③ 三步一个不少 —— 回修图屏看
-    //   （⚠️ 调色那一屏本来就不渲染对话栏，在那屏上数 `.bubble-text` 数到的是 0）
-    await goNav('修图')
-    expect(bubbleTexts()).toEqual(msgsBefore)
-    expect(container.querySelectorAll('.strip-node')).toHaveLength(3)
-  })
-
-  it('只有一版（刚上传）时整组不画 —— 不留一组按不动的按钮', async () => {
+  it('★ 退到中间再动手：后面的笔作废（新的一笔清掉 future）', async () => {
     await renderApp()
     await uploadPhoto()
     await goNav('调色')
-    expect(stepNav()).toBeNull()
-  })
 
-  it('正在裁剪 / 点修时收起来 —— 不然"翻一版"会把框和涂抹留在原地', async () => {
-    await twoVersions()
-    await goNav('调色')
-    await tap(container.querySelector('.tool-cell') as HTMLElement)   // 打开「裁剪」
-    expect(stepNav()).toBeNull()
+    await cropOnce()
+    await tap(navBtns()[0]!)                       // 退到"没裁"那一笔
+    expect(stepNav()!.textContent).toContain('1 / 2')
+    expect(navBtns()[1]!.disabled).toBe(false)     // 后面还留着一笔可以往前走
+
+    await setSlider('亮度', 40)                    // 站在中间继续动手
+    await waitPersist()                            // 定稿 → 这一笔把后面清掉
+    expect(stepNav()!.textContent).toContain('2 / 2')
+    expect(navBtns()[1]!.disabled).toBe(true)      // 后面那一笔没有了（标准撤销语义）
+    // 画面 = 调过色、**没裁**的那张 —— 那一刀真的作废了
+    expect(canvasProps.props.at(-1)!.params.exposure).toBe(40)
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'upload' } })
   })
 })
 
