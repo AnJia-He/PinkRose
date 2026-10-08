@@ -533,32 +533,6 @@ export default function ChatPanel({
         </div>
       )}
 
-      {/* ★ 2026-10-05：加号底下的**工具行**（用户：「点击加号里面有滤镜以及以后
-          添加的功能」）。目前只有「滤镜」一项 —— 以后加工具就往这一行排，
-          输入框那一行不用再动。
-
-          就地展开、不弹浮层：这一屏没有弹窗文化（和调色面板同一条规矩）。
-          它和下面的格子是**两级**：这一行是"有哪些工具"，下面才是工具本身。 */}
-      {!selecting && toolsOpen && (
-        <div className="chat-tools">
-          <button className={lut ? 'chat-tool on' : 'chat-tool'} aria-expanded={lutOpen}
-            onClick={() => setLutOpen((o) => !o)}>
-            <SlidersHorizontal size={14} strokeWidth={1.5} aria-hidden="true" />
-            Lut
-          </button>
-        </div>
-      )}
-      {/* 点开是**和微调区同一套格子**（同一个组件，两处长得一样 —— 用户当场
-          拍板"两个都要"）。说话那条路走 §7（模型认得名字），这一颗是**不用说话**
-          那条路。 */}
-      {!selecting && lutOpen && (
-        <div className="chat-lut">
-          <LutPicker luts={luts} lutsKnown={lutsKnown} value={lut} thumbs={lutThumbs.byId}
-            noneThumb={lutThumbs.none} onPick={onPickLut} onAmount={onLutAmount}
-            onGoImport={onGoImport} onRetryLuts={onRetryLuts} />
-        </div>
-      )}
-
       {/* ★ 2026-10-06 下午：**选择模式底下那条操作条**（输入框在这一档让位 ——
           发不了话：想聊先退出，这比"发出去了但心里没底"清楚，卡片那条花钱的
           路也一起收了，见上面）。
@@ -656,6 +630,40 @@ export default function ChatPanel({
           ? <button type="button" className="stop" onClick={onStop}>停止</button>
           : <button type="submit">发送</button>}
       </form>
+      )}
+
+      {/* ★ 2026-10-05：加号底下的**工具行**（用户：「点击加号里面有滤镜以及以后
+          添加的功能」）。目前只有「Lut」一项 —— 以后加工具就往这一行排，
+          输入框那一行不用再动。
+
+          ★★ 2026-10-08（用户截图 + 原话：「这个点击加号应该是在下方显示而不是
+          显示在上方」）：**整块挂在输入框下面** —— 加号就在输入框那一行里，
+          展开的东西从它**下面**长出来（抽屉从输入框底下拉开），而不是顶在
+          输入框上面（那样会把对话区挤掉一截）。
+          ⚠️ 这一栏是 flex 竖排，DOM 顺序 = 屏幕顺序 —— 所以它排在 `<form>`
+          **后面**，别再挪回上面（挪回去就是用户截图里那张"展开的东西压在
+          输入框上头"）。
+
+          就地展开、不弹浮层：这一屏没有弹窗文化（和调色面板同一条规矩）。
+          它和下面的格子是**两级**：这一行是"有哪些工具"，下面才是工具本身。 */}
+      {!selecting && toolsOpen && (
+        <div className="chat-tools">
+          <button className={lut ? 'chat-tool on' : 'chat-tool'} aria-expanded={lutOpen}
+            onClick={() => setLutOpen((o) => !o)}>
+            <SlidersHorizontal size={14} strokeWidth={1.5} aria-hidden="true" />
+            Lut
+          </button>
+        </div>
+      )}
+      {/* 点开是**和微调区同一套格子**（同一个组件，两处长得一样 —— 用户当场
+          拍板"两个都要"）。说话那条路走 §7（模型认得名字），这一颗是**不用说话**
+          那条路。 */}
+      {!selecting && lutOpen && (
+        <div className="chat-lut">
+          <LutPicker luts={luts} lutsKnown={lutsKnown} value={lut} thumbs={lutThumbs.byId}
+            noneThumb={lutThumbs.none} onPick={onPickLut} onAmount={onLutAmount}
+            onGoImport={onGoImport} onRetryLuts={onRetryLuts} />
+        </div>
       )}
     </aside>
   )

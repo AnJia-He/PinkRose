@@ -1909,8 +1909,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* ── 加号 + 它底下那行工具（★ 2026-10-05）───────────────────────────────
    用户：「我觉得在对话框那边设一个加号，然后点击加号里面有滤镜以及以后添加的
    功能」。两级：**加号**开关这一行工具；每一颗工具自己再开关它的面板。
-   工具行目前只有「滤镜」一项 —— 以后加新的，往这一行排就行。 */
-.chat-tools { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: 14px 18px 0; }
+   工具行目前只有「Lut」一项 —— 以后加新的，往这一行排就行。
+   ★★ 2026-10-08：**整块在输入框下面**（用户截图：「这个点击加号应该是在下方
+   显示而不是显示在上方」）—— DOM 里排在 `<form>` 后面，所以这里的内边距是
+   "上 0 / 下 14"（上面那条 14px 的间隔由输入框自己的下内边距给；下边留 14
+  到面板底边，不然药丸贴着屏幕边）。⚠️ 别写回 `14px 18px 0`（那是"在输入框
+   上面"那一版的写法，写回去药丸会顶到面板下沿、和输入框挤在一起）。 */
+.chat-tools { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: 0 18px 14px; }
 /* 一项工具 = 一颗药丸（就是原来那颗「滤镜」的长相，只是从"常驻在输入框上面"
    搬进了加号里）。⚠️ 它是**真 `<button>`**：键盘走得到，`aria-expanded` 报得出
    它自己那块面板开着没有。 */
@@ -1921,7 +1926,16 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .chat-tool:hover { color: var(--text); }
 .chat-tool.on { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
 
-.chat-lut { display: flex; flex-direction: column; gap: var(--sp-2); padding: 14px 18px 0; }
+/* ★ 2026-10-08：和 `.chat-tools` 同一档（它也在输入框下面）—— 上 0 / 下 14，
+   上面那条 14px 间隔由工具行自己的下内边距给。
+   ⚠️ `min-height: 0` + `overflow-y: auto` 是**故意的**：这一块是整栏里唯一
+   允许被压缩的那一格 —— 竖向空间不够时（窄屏 38vh + 卡片也在 + 加号开着），
+   让**格子**自己滚，而不是把输入框或照片顶出去。真机量过：390×844 上差 12px，
+   改这条之前被切的是输入框（更糟 —— 那格是必须整个在屏里的）。 */
+.chat-lut {
+  display: flex; flex-direction: column; gap: var(--sp-2); padding: 0 18px 14px;
+  min-height: 0; overflow-y: auto;
+}
 
 /* 输入框那一行最左边那颗**加号**。
    ⚠️ 它是**图标键**：没有可见文字，名字只在 `aria-label`（"更多工具"）上 ——
