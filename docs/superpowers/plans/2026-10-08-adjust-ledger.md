@@ -21,7 +21,7 @@
 - **刷新后**：账本清空（每版只剩当前位置一笔）、照片样子（底图+参数+滤镜）不丢、**不翻倍**。
 - 提交前 `npm test` + `npm run typecheck` **两个都要绿**；改完 UI 跑一次 `npm run check:layout`。
 - ⚠️ **后端不热重载**：改了 `server/` 要重启才能被真机探针看到。
-- ⚠️ **中间态说明**：Task 3 之后、Task 8 之前，"裁剪的落盘"还走旧路（刷新会丢裁剪）——这是计划内的中间态，Task 8 修好；**这两段之间别切分支给别人用**。
+- ⚠️ **中间态说明**：Task 3 之后、Task 7 之前，"裁剪的落盘"还走旧路（刷新会丢裁剪）——这是计划内的中间态，Task 7 修好；**这两段之间别切分支给别人用**。
 
 ---
 
@@ -392,7 +392,7 @@ git commit -m "feat(账本): 纯函数 —— 记账/撤销/重做/净零判断/
 
 **Interfaces:**
 - Consumes: `pushEdit`（Task 2）、`Snapshot.past/future`（Task 1）
-- Produces: `editSeqRef = useRef(0)`（App 里新发号器，与 `idRef` 分开）；`markDirtyRef` 还不存在——本任务先用一个占位：**把"底图换版"仍照旧 `baseSeqRef.current++`**（落盘 Task 8 才改成 dirty）。
+- Produces: `editSeqRef = useRef(0)`（App 里新发号器，与 `idRef` 分开）；`markDirtyRef` 还不存在——本任务先用一个占位：**把"底图换版"仍照旧 `baseSeqRef.current++`**（落盘 Task 7 才改成 dirty）。
 
 - [ ] **Step 1: 先翻测试预期（这一批"红"是计划的红）**
 
@@ -401,7 +401,7 @@ git commit -m "feat(账本): 纯函数 —— 记账/撤销/重做/净零判断/
 - `★（评审 Important ②）同一批次里还有别的 setState 时，站中间裁照样把未来那几步切掉`（:1952）——**行为没了**：站中间裁**不再切**未来版本。改写成"站中间裁：后面几版原样留着，账本加在**当前这一版**上"。
 - `★ 站在中间那一步裁：被切掉的步骤，它们的位图要还回去`（:1909）——同样翻：裁完后面那版**还在**、位图**不关**（还在用）。
 - `★（终审 I1）生成在裁剪那几百毫秒里落地 → 这一刀作废`（:1999）——闸门还在（`baseSeqRef` + 新增 `cursorIdRef` 比对），但"推步/切步"的说法改成"账本一个字不动、位图还回去"。
-- `★（评审 Critical）裁完之后那一趟落盘必须重新带底图`（:1933）——**落盘那条 Task 8 才改**，这一轮里它照样绿（`baseSeqRef` 还在推）；只把 `labels` 那行从 `['原图', '裁剪']` 改成 `['原图']`（不再新步骤）。
+- `★（评审 Critical）裁完之后那一趟落盘必须重新带底图`（:1933）——**落盘那条 Task 7 才改**，这一轮里它照样绿（`baseSeqRef` 还在推）；只把 `labels` 那行从 `['原图', '裁剪']` 改成 `['原图']`（不再新步骤）。
 - 任何数 `.strip-node` 且期望"裁剪后 +1"的地方（`grep -n "strip-node" src/App.test.tsx`）翻成**不变**。
 - `localStep` 的专测（`src/app/useLocalStep.test.ts`）整份删。
 
@@ -468,19 +468,23 @@ git commit -m "feat(账本): 裁剪/点修改记账 —— 转盘不再加格、
 
 ---
 
-### Task 4: 「一笔」的定稿机制（现场镜像 + 起笔 + 定稿闹钟 + flush 点）
+### Task 4: 「一笔」的定稿机制 + 箭头翻账本（账本的"写入"与"可见面"，一个任务）
 
 **Files:**
-- Modify: `src/App.tsx`（改 `549836b` 那条写回 effect :2103；新增 `editPendingRef`/`flushEdit`；接线各 flush 点）
+- Modify: `src/App.tsx`（改 `549836b` 那条写回 effect :2103；新增 `editPendingRef`/`editSeqRef`/`flushEdit`；接线各 flush 点；`dropGoneLut` :489 扫账本；新增 `ledgerStep`；StepNav 渲染块 :3046-3056）
 - Modify: `src/app/useGeneration.ts`（deps 加 `flushEdit`，成功路径调用）
-- Test: `src/App.test.tsx`（新一组）+ `src/app/useLocalStep.test.ts` 已删
+- Modify: `src/ui/StepNav.tsx`（`aria-label="切换版本"` → `"调整记录"`）
+- Test: `src/App.test.tsx`（新增「调色的「一笔」」一组 + 重写 :7588「上一步 / 下一步」整组）
 
 **Interfaces:**
 - Produces: `flushEdit(): void`（App 内 `useCallback`，deps `[]`）——把没定稿的一笔记入账本；没有待办时是**空操作**。
-- Produces（给 Task 8）：`editPendingRef`、`markDirty` 的**插入点**已在代码里留好（见 Task 8 的说明）。
-- Consumes: `pushEdit`、`sameEdit`（Task 2）
+- Produces: `ledgerStep(dir: -1 | 1): void`（App 内 `useCallback`）
+- Produces（给 Task 7）：`editPendingRef`/`editSeqRef` 的位置已定好；`markDirty` 的接线点见 Task 7。
+- Consumes: `pushEdit`/`sameEdit`/`undoEdit`/`redoEdit`/`ledgerTotal`（Task 2）
 
-- [ ] **Step 1: 写失败的测试**（`src/App.test.tsx` 新 describe）
+> ⚠️ 为什么这两半是一个任务：**箭头是账本唯一的观察窗口**（jsdom 里没有别的地方能看见"账本里有几笔"）。先做机制不做箭头，测试收不了尾（红灯过夜）；两半同一条命、同一个绿灯。
+
+- [ ] **Step 1: 写/翻测试**（两组合一）
 
 ```ts
 describe('调色的「一笔」', () => {
@@ -488,8 +492,7 @@ describe('调色的「一笔」', () => {
     await renderApp(); await uploadPhoto(); await goNav('调色')
     await setSlider('亮度', 40); await setSlider('亮度', 60)   // 两次改、没等定稿
     await vi.advanceTimersByTimeAsync(900)                      // 停手 → 定稿
-    // 账本 = 出生 + 1 笔
-    await goNav('调色'); expect(stepNav()!.textContent).toContain('2 / 2')
+    expect(stepNav()!.textContent).toContain('2 / 2')           // 账本 = 出生 + 1 笔
   })
 
   it('★ 定稿后马上退 = 退掉刚才那一笔（先定稿、再退）', async () => {
@@ -507,14 +510,30 @@ describe('调色的「一笔」', () => {
     // 账本 = [出生, 调色笔, 裁剪笔]（3 笔）；退一步回到"没裁但调过色"
   })
 })
+
+// 重写 :7588 那组（宏观 = 转盘 / 微观 = 账本）：
+describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本', () => {
+  it('刚上传、没动过：整组不画（账本只有一笔）', ...)
+  it('★ 裁一刀 → 出现 2 / 2；上一步回到裁之前、下一步回裁之后（画面真的换）', ...)
+  it('★ 两头都不空转：出生笔按不动"上一步"、最新笔按不动"下一步"', ...)
+  it('★ 翻账本不跟对话打交道：一条消息不多、转盘一格不多（走账本，不走 onJump）', ...)
+  it('正在裁剪 / 点修时收起来（判据不变）', ...)
+  it('★ 退到中间再动手：后面的笔作废（clear future）', ...)
+})
 ```
 
-（`setSlider` / `tap` / `stepNav` / `navBtns` 用文件里现成的写法；`vi.useFakeTimers()` 若与既有 fake-timer 用例冲突，就改用 `await new Promise(r => setTimeout(r, 900))` 的真等待——看这个文件里等防抖的现成姿势。）
+关键断言（按真机行为写）：
+- 裁剪后账本 `2 / 2`；`navBtns()[0]` 可点、`navBtns()[1]` 禁用；
+- 点「上一步」→ 画布宽高**对调回来**（`canvasProps.images.at(-1)` 对上裁前那张位图）；
+- 再点一次 → `1 / 2`、两头翻转禁用；
+- 转盘 `.strip-node` 数**不变**。
+
+（`setSlider` / `tap` / `stepNav` / `navBtns` 用文件里现成的写法；`vi.useFakeTimers()` 若与既有 fake-timer 用例冲突，就改用真等待 `await new Promise(r => setTimeout(r, 900))`——看这个文件里等防抖的现成姿势。）
 
 - [ ] **Step 2: 跑测试看它红**
 
-Run: `npx vitest run src/App.test.tsx -t "一笔"`
-Expected: FAIL（还没有定稿机制，箭头也没有——这一组里用到箭头的断言到 Task 5 才全绿；**先把不依赖箭头的断言跑红**，箭头相关的三条留在 Task 5 后补跑）
+Run: `npx vitest run src/App.test.tsx -t "一笔"` 和 `npx vitest run src/App.test.tsx -t "上一步"`
+Expected: FAIL（定稿机制、账本箭头都还没有）
 
 - [ ] **Step 3: 实现**
 
@@ -588,58 +607,7 @@ setHistory((prev) => prev.map((s) => ({
 })))
 ```
 
-- [ ] **Step 4: 跑测试**
-
-Run: `npx vitest run src/App.test.tsx -t "一笔"` + `npm test` + `npm run typecheck`
-Expected: 不依赖箭头的断言全绿（Task 5 后补跑全组）
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add -A src/ docs/superpowers/specs/2026-10-08-adjust-ledger-design.md
-git commit -m "feat(账本): 调色的「一笔」—— 现场镜像写回当前这一版、停手 800ms 定稿、各跳转点先定稿"
-```
-
----
-
-### Task 5: 箭头改成翻账本（`ledgerStep`）
-
-**Files:**
-- Modify: `src/App.tsx`（StepNav 渲染块 :3046-3056 + 新增 `ledgerStep`）
-- Modify: `src/ui/StepNav.tsx`（只改 `aria-label="切换版本"` 的组名）
-- Test: `src/App.test.tsx`（重写 :7588 那一组 + Task 4 组里依赖箭头的三条）
-
-**Interfaces:**
-- Consumes: `undoEdit`/`redoEdit`/`ledgerIndex`/`ledgerTotal`/`sameEdit`/`pushEdit`（Task 2）、`flushEdit`（Task 4）
-- Produces: `ledgerStep(dir: -1 | 1): void`（App 内 `useCallback`）
-
-- [ ] **Step 1: 重写测试**（`describe('调色屏的「上一步 / 下一步」')` 整组换成账本语义）
-
-```ts
-describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本', () => {
-  it('刚上传、没动过：整组不画（账本只有一笔）', ...)
-  it('★ 裁一刀 → 出现 2 / 2；上一步回到裁之前、下一步回裁之后（画面真的换）', ...)
-  it('★ 两头都不空转：出生笔按不动"上一步"、最新笔按不动"下一步"', ...)
-  it('★ 翻账本不跟对话打交道：一条消息不多、转盘一格不多（走账本，不走 onJump）', ...)
-  it('正在裁剪 / 点修时收起来（判据不变）', ...)
-  it('★ 退到中间再动手：后面的笔作废（clear future）', ...)
-})
-```
-
-关键断言（按真机行为写）：
-- 裁剪后账本 `2 / 2`；`navBtns()[0]` 可点、`navBtns()[1]` 禁用；
-- 点「上一步」→ 画布宽高**对调回来**（`canvasProps.images.at(-1)` 对上裁前那张位图）；
-- 点「上一步」两次 → `1 / 2`、两头翻转禁用；
-- 转盘 `.strip-node` 数**不变**。
-
-- [ ] **Step 2: 跑测试看它红**
-
-Run: `npx vitest run src/App.test.tsx -t "上一步"`
-Expected: FAIL
-
-- [ ] **Step 3: 实现**
-
-（a）`ledgerStep`（放在 `onJump` 附近）：
+（e）`ledgerStep`（放在 `onJump` 附近）：
 
 ```ts
 /**
@@ -668,11 +636,11 @@ const ledgerStep = useCallback((dir: -1 | 1) => {
   setImage(target.base)
   setParams(target.params)
   setLut(target.lut)
-  // ⚠️ 落盘要认这一版（Task 8 接上 `markDirty`：退回/前进都可能换了底图）
+  // ⚠️ 落盘要认这一版（Task 7 接上 `markDirty`：退回/前进都可能换了底图）
 }, [history, cursorId, params, lut])
 ```
 
-（b）渲染块（:3046）换成：
+（f）渲染块（:3046）换成：
 
 ```tsx
 {(() => {
@@ -688,23 +656,23 @@ const ledgerStep = useCallback((dir: -1 | 1) => {
 
 （写法照这个意思；`curIdx >= 0` 那条旧条件随之删掉。）
 
-（c）`StepNav.tsx`：`aria-label="切换版本"` → `aria-label="调整记录"`（组件注释同步改一句话——"微观=翻当前这一版的账本"）。
+（g）`StepNav.tsx`：`aria-label="切换版本"` → `aria-label="调整记录"`（组件注释同步改一句话——"微观=翻当前这一版的账本"）。
 
 - [ ] **Step 4: 跑测试**
 
-Run: `npx vitest run src/App.test.tsx -t "上一步"` + `npm test` + `npm run typecheck`
-Expected: 全绿（含 Task 4 那组依赖箭头的三条）
+Run: `npm test` + `npm run typecheck`
+Expected: 全绿（「一笔」组和「上一步」组都在里面）
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add -A src/
-git commit -m "feat(账本): 左下角箭头改翻账本 —— 退到中间再动手后面的笔作废；不跟对话打交道"
+git commit -m "feat(账本): 「一笔」定稿 + 箭头翻账本 —— 现场镜像/停手 800ms 定稿/各跳转点先定稿；退到中间再动手后面的笔作废"
 ```
 
 ---
 
-### Task 6: 预算驱逐接线
+### Task 5: 预算驱逐接线
 
 **Files:**
 - Modify: `src/App.tsx`（`commitCrop`/`commitRetouch`/`flushEdit`/`ledgerStep` 的记账处）
@@ -755,7 +723,7 @@ git commit -m "feat(账本): 记账统一过预算闸（32MP 起；出生与当�
 
 ---
 
-### Task 7: 服务端 `stateStepId` 协议
+### Task 6: 服务端 `stateStepId` 协议
 
 **Files:**
 - Modify: `src/api/sessions.ts`（`SessionPatch` 加字段 + 注释）
@@ -763,7 +731,7 @@ git commit -m "feat(账本): 记账统一过预算闸（32MP 起；出生与当�
 - Test: `server/sessions.test.ts`
 
 **Interfaces:**
-- Produces（Task 8 依赖）：`PATCH /api/sessions/:id` 接受 `stateStepId?: number`——"这趟的 `params`/`lut`/`base` 说的是**哪一步**的现在"。不带它 = 旧行为（兼容路径）。
+- Produces（Task 7 依赖）：`PATCH /api/sessions/:id` 接受 `stateStepId?: number`——"这趟的 `params`/`lut`/`base` 说的是**哪一步**的现在"。不带它 = 旧行为（兼容路径）。
 
 - [ ] **Step 1: 写失败的服务端测试**（`server/sessions.test.ts` 加一组）
 
@@ -866,14 +834,14 @@ git commit -m "feat(落盘): stateStepId 协议 —— 状态挂在对话框指�
 
 ---
 
-### Task 8: 客户端落盘重写（dirty + 干净底图 ← 修 bug + stateStepId）
+### Task 7: 客户端落盘重写（dirty + 干净底图 ← 修 bug + stateStepId）
 
 **Files:**
 - Modify: `src/App.tsx`（落盘 effect :2263-2449 重写；`lastPersistedBaseSeqRef` 退役）
 - Test: `src/App.test.tsx`（翻一批 + 加"干净底图"新用例）
 
 **Interfaces:**
-- Consumes: `stateStepId`（Task 7）、`Snapshot.past/future`（Task 1）
+- Consumes: `stateStepId`（Task 6）、`Snapshot.past/future`（Task 1）
 - Produces: `dirtyRef = useRef<{ stepId: number; baseChanged: boolean } | null>(null)`、`markDirty(stepId, baseChanged): void`（合并语义：同一步的 `baseChanged` 只增不减，直到成功写回才清）
 
 - [ ] **Step 1: 写失败的测试**
@@ -920,6 +888,7 @@ const markDirty = useCallback((stepId: number, baseChanged: boolean) => {
 - 写回 effect 的"写回"分支里：`markDirty(cur.id, false)`；
 - `commitCrop`/`commitRetouch`：`markDirty(at, true)`；
 - `ledgerStep`：`markDirty(cur.id, target.base !== base.base)`（换没换底图）；
+- `onJump`：在 Task 4 已经接好的 `flushEdit()` **后面**再跟一句 `flushPersist()` —— 跳走 = 那一版离开视线，把它欠的账先发出去（消灭"两版同时脏"）；
 - `useGeneration` 成功路径（推新版本处）：`markDirty(新步骤 id, true)`——`messageId` 就是那个 id；
 - 删消息（:2162 那句 `baseSeqRef.current++` 旁边）：`markDirty(新 tip 的 id, true)`；
 - 四处整段换掉 history 的地方：`dirtyRef.current = null`（和 `editPendingRef` 同一批）。
@@ -976,7 +945,7 @@ git commit -m "fix(落盘): 底图一律从干净位图编码（修'刷新后参
 
 ---
 
-### Task 9: 步骤小图（活着时重抓 + 恢复时离屏重画）
+### Task 8: 步骤小图（活着时重抓 + 恢复时离屏重画）
 
 **Files:**
 - Modify: `src/App.tsx`（缩略图 effect :2250 重写；`loadSession` 的 `thumbOf` :836 重写）
@@ -1059,7 +1028,7 @@ git commit -m "feat(账本): 步骤小图两条路 —— 活着时记账后重�
 
 ---
 
-### Task 10: 真机探针 + 全量验收 + 文档收尾
+### Task 9: 真机探针 + 全量验收 + 文档收尾
 
 **Files:**
 - Create: `.superpowers/probe-adjust-ledger.mjs`（不进库）
@@ -1102,7 +1071,7 @@ git commit -m "docs(账本): 文案规范与旧更正块收尾；探针两条全
 
 ## Self-Review（写计划的人自己过的一遍）
 
-- **Spec 覆盖**：§4 数据模型→T1/T2；§5.1 什么算一笔→T4；§5.2 记账→T2/T3；§5.3 箭头→T5；§5.4 转盘/生成→T3（不占格）+T4（flush）；§5.5 定稿点→T4；§5.6 已知口径→T3（删除/生成照旧）+T8（刷新）；§6 内存→T1（回收）+T6（预算）；§7.1 协议→T7；§7.2 客户端→T8；§7.3 恢复→T9；§9 测试与探针→各任务内 + T10；§10 文档→T10。**无缺口。**
+- **Spec 覆盖**：§4 数据模型→T1/T2；§5.1 什么算一笔→T4；§5.2 记账→T2/T3；§5.3 箭头→T4；§5.4 转盘/生成→T3（不占格）+T4（flush）；§5.5 定稿点→T4；§5.6 已知口径→T3（删除/生成照旧）+T8（刷新）；§6 内存→T1（回收）+T5（预算）；§7.1 协议→T6；§7.2 客户端→T7；§7.3 恢复→T8；§9 测试与探针→各任务内 + T9；§10 文档→T9。**无缺口。**
 - **占位符扫描**：Task 2 的 `pushEdit` 有一处"写着示意、别照抄"的坑——执行时按紧跟其后的正确版本写；其余无 TBD/TODO。
 - **类型一致**：`EditState`（含 `seq`）T1 定义、T2 全用；`pushEdit(s, before, next, seq)` 四参在 T2/T3/T4/T5 一致；`markDirty(stepId, baseChanged)` 在 T8 定义、接线点列全；`flushEdit` 无参。
-- **已知中间态**（Global Constraints 里已写明）：T3 之后、T8 之前裁剪不落盘——两段之间别切分支。
+- **已知中间态**（Global Constraints 里已写明）：T3 之后、T7 之前裁剪不落盘——两段之间别切分支。
