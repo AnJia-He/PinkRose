@@ -268,6 +268,11 @@ import * as sampleMod from './image/sample'
 import * as lutsMod from './api/luts'
 // ★ 2026-10-08（账本 Task 5）：预算闸那一条要**抓住它被叫到** —— 纯逻辑在
 // `core/ledger.test.ts` 里单测兜着，这一层钉的是"四处记账有没有接上"。
+// ⚠️ 打桩打在**收口**（`settleLedger`）上、不是 `enforceLedgerBudget` 上：
+//   2026-10-08 App 拆分时 `settleLedger` 从 `App.tsx` 搬进了 `core/ledger.ts`，
+//   从那儿起它是**模块内部**调用 `enforceLedgerBudget` —— 模块内部的调用任何
+//   桩都拦不到（`vi.spyOn` 换的是导出对象上那个属性）。钉"接没接上"这一层
+//   本来就该盯**记账点和收口之间**那一跳，拦截点跟着收口走。
 import * as ledgerMod from './core/ledger'
 
 // ── 每张"底"带一个记号，好认出送上去的到底是哪一张 ──────────────────
@@ -8273,9 +8278,13 @@ describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本',
  *     还被引用着的绝不关）在 `core/ledger.test.ts` 里单测兜底 —— 那一层能直接
  *     造大尺寸夹具；
  *   · **这一组只钉"接上了"**：四处记账（裁剪 / 点修 / 调色定稿 / 翻箭头那一拍的
- *     内联定稿）每一处都要**真的把 `enforceLedgerBudget` 叫到**，而且叫到它的时候
+ *     内联定稿）每一处都要**真的把收口 `settleLedger` 叫到**，而且叫到它的时候
  *     那笔账已经记完了（拿到的 list 里看得见）。漏一处的下场是内存慢慢涨 /
  *     退到某一笔时闪黑 —— 两种都不报错，也都不花一分钱。
+ *   ⚠️ 桩打在 `settleLedger` 上（★ 2026-10-08 拆分后它从 `App.tsx` 搬进
+ *     `core/ledger.ts`，模块内部再调 `enforceLedgerBudget` 桩就拦不到了）；
+ *     "`settleLedger` 真的把预算常量交给了闸"这件事现在是 `core/ledger.ts`
+ *     里相邻的两行、没有可拦的缝 —— 预算值本身仍在 `core/ledger.test.ts` 里锁着。
  *   ⚠️ **"驱逐真的触发、位图真的被 `close`"在这个文件里造不出来**：预算按像素算，
  *     而 jsdom 里的假位图全是 1200×800（一张 96 万像素，要三十多张才够 3200 万）。
  *     那半归 `core/ledger.test.ts`。
@@ -8287,8 +8296,9 @@ describe('★ 账本预算闸：记账统一收口（Task 5）', () => {
   const tap = (el: HTMLElement) =>
     act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
 
-  /** 过闸那一刻它看到的账本 = `enforceLedgerBudget` 最后一次的入参。 */
-  const gated = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.at(-1)![0] as unknown as
+  /** 过闸那一刻它看到的账本 = 收口 `settleLedger` 最后一次的**第二个**入参
+   *  （`withEdit`：已经记完那一笔的那份；第一个是记账之前的 `prev`）。 */
+  const gated = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.at(-1)![1] as unknown as
     { past: { seq: number }[]; future: { seq: number }[]; params: Record<string, number> }[]
 
   /** 进裁剪 → 立刻「完成」= 账本上多一笔（和上面两组的同款帮手）。 */
@@ -8340,7 +8350,7 @@ describe('★ 账本预算闸：记账统一收口（Task 5）', () => {
   }
 
   it('★ 裁剪那一处：记完这一刀再过闸（顺手件①：记上了就不许刷那句假报错）', async () => {
-    const spy = vi.spyOn(ledgerMod, 'enforceLedgerBudget')
+    const spy = vi.spyOn(ledgerMod, 'settleLedger')
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       await renderApp()
@@ -8352,8 +8362,6 @@ describe('★ 账本预算闸：记账统一收口（Task 5）', () => {
       expect(spy, '裁剪记完那一笔之后必须过一遍预算闸').toHaveBeenCalled()
       expect(gated(spy)[0]!.past, '过闸时看到的是**记完**的账本（出生 + 裁之前那一笔）')
         .toHaveLength(1)
-      expect(spy.mock.calls.at(-1)![1], '预算就是那个常量（32 MP）')
-        .toBe(ledgerMod.LEDGER_PIXEL_BUDGET)
 
       // 顺手件①：这一刀明明记上了 —— 「那一版不在了」是**异常**才该说的话，
       // 正常路径上刷出来就是一句没人信的假警报（以后真出问题时谁也不看它）。
@@ -8370,7 +8378,7 @@ describe('★ 账本预算闸：记账统一收口（Task 5）', () => {
     //   —— 有一条既有用例靠它（多返回一份新数组会让落盘 effect 白跑、多发一趟 PUT）。
     //   所以过闸必须落在"确实记了一笔"之后：**没有新笔就别碰**。
     //   变异：把 `settleLedger` 那句提到两个早返回**前面** → 前半句红。
-    const spy = vi.spyOn(ledgerMod, 'enforceLedgerBudget')
+    const spy = vi.spyOn(ledgerMod, 'settleLedger')
     try {
       await renderApp()
       await uploadPhoto()
@@ -8395,7 +8403,7 @@ describe('★ 账本预算闸：记账统一收口（Task 5）', () => {
   })
 
   it('★ 点修那一处 + 翻箭头那一拍的内联定稿：也不许搞特例', async () => {
-    const spy = vi.spyOn(ledgerMod, 'enforceLedgerBudget')
+    const spy = vi.spyOn(ledgerMod, 'settleLedger')
     try {
       await renderApp()
       await uploadPhoto()
@@ -8434,7 +8442,7 @@ describe('★ 账本预算闸：记账统一收口（Task 5）', () => {
     //   路上测不出来 —— React 对"队列为空"的那一次 `setHistory` 会**当场**调一遍
     //   updater（eager 求值），号还是按调用次序领的。这条钉的是"端到端的先后"，
     //   不是"号写在哪一行"（那件事由 `flushEdit` 顶上那段注释管）。
-    const spy = vi.spyOn(ledgerMod, 'enforceLedgerBudget')
+    const spy = vi.spyOn(ledgerMod, 'settleLedger')
     try {
       await renderApp()
       await uploadPhoto()

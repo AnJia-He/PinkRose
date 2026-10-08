@@ -49,17 +49,17 @@ import { applyDeltas, clampAdjustments, ZERO, type Adjustments } from '../shared
 import { canShareImage, downloadImage } from './export/save'
 import { prepareForRouting } from './image/prepare'
 import { ApiError, isUnauthorized, postRoute } from './api/client'
-import { bitmapsToClose, attachThumb, type Snapshot } from './core/history'
+import { bitmapsToClose, attachThumb, closeBitmaps, type Snapshot } from './core/history'
 // ★ 2026-10-08（调色区账本）：裁剪/点修不再推新快照 —— 它们给「当前这一版」
 //   记一笔账（`pushEdit` 把"改之前"压进 `past`），退这一步走账本的 `undoEdit`。
 //   `flushEdit`（调色那一笔的定稿）用 `sameEdit` 判净零、用 `pushEdit` 记账；
 //   调色屏左下角那组箭头（`ledgerStep`）走 `undoEdit` / `redoEdit`，
 //   画几笔看 `ledgerTotal`。
 //   ★ Task 5：**记账统一收口**——四处记账点记完都过一遍 `settleLedger`
-//   （预算闸 `enforceLedgerBudget` + 位图回收），见它的注释。
+//   （预算闸 `enforceLedgerBudget` + 位图回收）。★ 2026-10-08：`settleLedger`
+//   和 `closeBitmaps` 一起搬进了 `core`（`app/baseEdit.ts` 那份共享骨架要用）。
 import {
-  enforceLedgerBudget, ledgerIndex, ledgerTotal, LEDGER_PIXEL_BUDGET,
-  pushEdit, redoEdit, sameEdit, undoEdit, type EditState,
+  ledgerIndex, ledgerTotal, pushEdit, redoEdit, sameEdit, settleLedger, undoEdit, type EditState,
 } from './core/ledger'
 // ★ 2026-10-08：删除的单位是"一问一答"（用户报的"删了一条、另半条还留着"），
 //   `expandDeleteIds` 就在这儿把一条 id 补成整轮 —— 纯函数，和 ChatPanel 勾选
@@ -70,6 +70,9 @@ import { markImage, type NormPoint } from './image/mark'
 import { useDelivery } from './app/useDelivery'
 import { BUSY_GENERATING, useGeneration } from './app/useGeneration'
 import { useLuts } from './app/useLuts'
+// ★ 2026-10-08：裁剪 / 点修「在当前这一版底图上动一刀」的**共享骨架**
+//   （两个记号、双对账作废、记账、清临时态）—— 原来那两段抄了两遍。
+import { applyBaseEdit, beginBaseEdit, discardStaleBaseEdit } from './app/baseEdit'
 import { normalizeLutRef, sameLutName, type LutRef } from '../shared/lut.ts'
 import type { SuggestCard } from '../shared/protocol.ts'
 import type { WorkMeta } from '../shared/works.ts'
@@ -148,47 +151,6 @@ async function fitToDevice(
       `我按 ${bitmap.width}×${bitmap.height} 来修 —— 调色照常，` +
       `只是导出的图会比原图小一点。`,
   }
-}
-
-/**
- * 关掉一批位图（`bitmapsToClose` 的产物）。
- *
- * ★ 2026-10-04：这句 `for…close()` 原来在四处各写了一遍（切换会话、换图、
- *   归零、「回到这一步」）—— 收成一句，理由只有一份：**不关就是"切几次把
- *   标签页拖垮"**（ImageBitmap 占 GPU 内存，32 MP 一张约 129 MB）。
- *   `close()` 幂等 —— StrictMode 重放 updater 也安全（见 open 那段的注释）。
- */
-function closeBitmaps(imgs: readonly DecodedImage[]): void {
-  for (const img of imgs) img.bitmap.close()
-}
-
-/**
- * ★ 2026-10-08（调色区账本 Task 5，spec §6）：**记账之后的统一收口** ——
- * 四处记账点（`flushEdit` / `commitCrop` / `commitRetouch` / `ledgerStep`）
- * 每记完一笔都走它，别在各处各写一遍。
- *
- * 两件事**一起**做，缺一件都是"错了不报错"：
- *   · **预算闸**（`enforceLedgerBudget`）：所有版本账本里额外留着的底图超了
- *     `LEDGER_PIXEL_BUDGET`（3200 万像素，初值）就**整笔**丢掉最早的那些
- *     （Photoshop 那三道：上限封顶 / 出生保留 / 满了丢最老）——出生笔和当前笔
- *     永不丢，丢了用户就回不到"这一版从哪来"；
- *   · **位图回收**：被驱逐的那些 + 这一趟离开 `history` 的那些，一起 `close()`。
- *     `close()` 幂等，所以写在 `setHistory` 的 updater 里也安全（StrictMode
- *     重放 updater 时不会关两遍出事）。
- *
- * ⚠️ **两份 `toClose` 都要**，不是二选一：驱逐是"预算"这条线，`bitmapsToClose`
- *   是"位图离开了历史"那条线（原来四个记账点各自都有的那一句）。只取前者的
- *   话，`cutAfter` / 删除那几条路上漏下的位图就没人关了 —— 那是纯泄漏、而且
- *   一句错都不报。
- * ⚠️ 传进来的 `withEdit` 必须**已经记完那一笔**（`pushEdit` 的结果）：闸看到
- *   的就是那份账本。`prev` 是记账之前的那份（回收要跟它比）。
- * ⚠️ 预算内它不改元素的引用（`enforceLedgerBudget` 只浅拷数组）—— React 靠
- *   引用相等跳过白渲染，别在这儿顺手 `map` 一遍。
- */
-function settleLedger(prev: readonly Snapshot[], withEdit: readonly Snapshot[]): Snapshot[] {
-  const { list, toClose } = enforceLedgerBudget(withEdit, LEDGER_PIXEL_BUDGET)
-  closeBitmaps([...toClose, ...bitmapsToClose(prev, list, { protectOriginal: true })])
-  return list
 }
 
 /** 裁剪的比例档（★ 2026-10-06）。`value` 是**像素**宽高比，`null` = 自由。 */
@@ -464,6 +426,26 @@ export default function App() {
     setCursorId(id)
   }, [])
 
+  /**
+   * 把画面 / 参数 / 滤镜**一起**还原成某一步的样子（★ 2026-10-08 收口）。
+   *
+   * 三样**必须一起**（原来在 `onJump` / 删记录 / 翻账本三处各写了一遍）：
+   *   · 只还原 base 会让画面和滑块对不上 —— 用户看到的和面板里显示的是两回事；
+   *   · ★ 2026-10-05（滤镜，审查 Important-2）：**滤镜也得跟着回**，和参数**对称**。
+   *     `Snapshot.lut` 是**按步**记的，不做的话用户看得见两处：
+   *       · 每一步的小图是从**带滤镜的画面**上抓的（`makeThumbnail(canvas)`）——
+   *         跳回去之后主画面和那条气泡上的小图对不上；
+   *       · 「原图」那一步永远是 `lut: null`，而「回到原图」却留着那层颜色 ——
+   *         那已经不是原图了。
+   * ⚠️ 它**不动"站的位置"**（`moveCursor`）—— 跳转是"挪光标 + 还原画面"两件事，
+   *   翻账本（`ledgerStep`）只要后者。
+   */
+  const applySnapshot = useCallback((s: Snapshot) => {
+    setImage(s.base)
+    setParams(s.params)
+    setLut(s.lut)
+  }, [])
+
   /** 从旧步骤继续改之前那条确认（`PendingReplace`，见它的定义）。null = 没在问。 */
   const [pendingReplace, setPendingReplace] = useState<PendingReplace | null>(null)
 
@@ -473,6 +455,23 @@ export default function App() {
   const marker = pending?.marker ?? null
   const pendingText = pending?.text ?? null
   const pendingKeepFrom = pending?.keepFrom ?? null   // ★ 见 PendingMark
+
+  /**
+   * **换底图 / 换照片那几处都要清的那一批"上一条照片的临时状态"**（★ 2026-10-08 收口）。
+   *
+   * 两条后果各有一半是"错了不报错"（终审 I3 抓过一条，两处各漏过一半）：
+   *   · 点选那半：红圈存的是**旧底图**的归一化坐标（还在屏上、还能点
+   *     「就改这里」）—— 那是**花钱**的一次生成，改的位置是错的；
+   *   · 确认条那半：挂着"要切掉后面吗"时裁一刀 / 切会话，回修图屏点「继续改」，
+   *     它的切点还落在原图上，会把**后面那一版**切掉（条子自己还会改口说
+   *     "后面还有 0 步"）；切会话那条更直白 —— 它会停在**别人那条**会话上。
+   * 原来这一对零散写在五个调用点（`onPick` / `loadSession` / `resetEditor` /
+   * 裁剪 / 点修）—— 收成一处，漏一处就是上面那两种静默事故。
+   */
+  const clearTransient = useCallback(() => {
+    setPending(null)
+    setPendingReplace(null)
+  }, [])
 
   /** 这一趟修图（同一张上传的照片）里，上一次存进去的是哪个。
    *  **换图时清零** —— 它记的是"这张照片"，换一张就该重新问（§3.4）。 */
@@ -1204,13 +1203,10 @@ export default function App() {
       // 回来时要拿那个影子比对。
       setCurrentSession(detail.id)
       // 上一条照片那些**临时**状态跟着一起清（和 `onPick` 里换图时清的是同一批，
-      // 同一个道理）：点选流程、"替换上次那张"的问句。不清的话，红圈会钉在
-      // **另一张照片**上，而「就改这里」会拿旧标记 + 旧那句话花掉一次生成的钱。
-      setPending(null)
-      // ★ 2026-10-05（设计 §4.5，Task 4）：那条"要切掉后面吗"也是同一批 ——
-      //   切会话 = 屏幕上换了一张照片。不清的话它会停在**别人那条**会话上
+      // 同一个道理 —— 点选流程、"替换上次那张"的问句；两条后果见 `clearTransient`）。
+      // ⚠️ 切会话那半尤其要命：不清的话"要切掉后面吗"会停在**别人那条**会话上
       //   （N 还是按新的 history 算的，读数都不对），点「继续改」切的是别处。
-      setPendingReplace(null)
+      clearTransient()
       setSavedId(null)
       dismissAsk()
       // ★ 2026-10-06（对比）：同一批 —— 备的是**上一条会话**那张原图，
@@ -1288,7 +1284,7 @@ export default function App() {
       if (offscreen) { offscreen.pipe.dispose(); offscreen = null }
       if (why === 'open') setBusy(null)
     }
-  }, [flushEdit, flushPersist, noticeBad, setCurrentSession, moveCursor])
+  }, [flushEdit, flushPersist, noticeBad, setCurrentSession, moveCursor, clearTransient])
 
   /**
    * 打开页面之后，把"上次那条会话"接回来（spec §6.2）。
@@ -1473,15 +1469,9 @@ export default function App() {
     //   "结果回来时画面换了"，这边守"裁到一半画面换了"。
     //   ⚠️ 连点两下「完成」也被它挡住：第二下进函数时读到的还是第一次推之前的
     //   序号，它回来时一样对不上 —— 不用另写一个"正在裁"的 ref。
-    const seqAt = baseSeqRef.current
-    // ⚠️ **"这一刀冲着哪一版去的"必须在 `await` 之前读出来**（评审 Important ②）——
-    //    这不是洁癖，是 `setHistory` 的 updater **不保证当场跑**：同一批里只要
-    //    还有别的 setState（等待裁剪位图那几十~几百毫秒里，卡片的应答 / 某个
-    //    计时器 / 别处的一次 setState 任意一个落下来），updater 就推到**渲染时**
-    //    才跑 —— 那时候现读 `cursorIdRef.current` 可能已经不是出发时那一版了。
-    //    和 `useGeneration` 的 `origin` 显式入参是同一条规矩：隔着 await 的地方，
-    //    位置一律**当场读、传值**。
-    const at = cursorIdRef.current
+    //   「两个记号必须在 `await` 之前当场读」那条长注释搬进了
+    //   `app/baseEdit.ts` 的 `beginBaseEdit` —— 裁剪 / 点修共用那一份。
+    const gate = beginBaseEdit(baseSeqRef, cursorIdRef)
     try {
       const bitmap = await cropToBitmap(image.bitmap, crop.spec, crop.turns)
       // ★ 回来先对**两样**：底图版本 + 站的位置（`cursorIdRef` 是 10-08 加的
@@ -1489,78 +1479,23 @@ export default function App() {
       //   照片 / 人跳了版本）。这一刀要么是从一张**已经不在屏上的**底图上裁出来
       //   的，要么会被记到**别人那一版**上（光标指着 A、画面却是 B 裁出来的
       //   样子），写进去都是静默事故。
-      if (baseSeqRef.current !== seqAt || cursorIdRef.current !== at) {
-        bitmap.close()
-        console.error('裁剪回来时底图/位置已经变了（多半是生成落地或人跳了版本），这一刀不写进去')
-        noticeBad('裁的时候画面已经变了 —— 这一刀没算数。要的话，再裁一次。')
-        setCrop(null)
-        setTool(null)
-        return
+      if (!discardStaleBaseEdit(baseSeqRef, cursorIdRef, gate, bitmap, {
+        log: '裁剪回来时底图/位置已经变了（多半是生成落地或人跳了版本），这一刀不写进去',
+        notice: '裁的时候画面已经变了 —— 这一刀没算数。要的话，再裁一次。',
+      }, noticeBad)) {
+        applyBaseEdit({
+          at: gate.at, bitmap, history, setHistory, setImage,
+          baseSeqRef, editSeqRef, markDirty, flushEdit, clearTransient,
+        }, '这一刀')
       }
-      const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
-      // ★ 先定稿没落定的调色、再记裁剪这一笔（顺序不能反）。
-      //   反了的话这一刀会压到"调色那笔"前面 —— 用户按一下「上一步」，退掉的是
-      //   **两件事**（调色 + 裁剪），而他只按了一下。
-      flushEdit()
-      // ★ 2026-10-08（Task 5 顺手件）：**这一刀到底记上了没有，不许静默**。
-      //   `at` 是出发那一刻"人在哪一版"（await 之前读的），而下面那个 updater
-      //   里找不到它就**原样返回** —— 那种情况下这一刀只改了画面、账本上什么都没
-      //   留下，退都退不回来，而屏幕上一切正常。理论上到不了（人站的那一版必然
-      //   在历史里），真到了就是一件必须留证的事。
-      //   ⚠️ 查的是**闭包里的 `history`**（`at` 也是那一刻读的，两者同一拍）；
-      //   它**不替 updater 做决定** —— 那半边（`if (s.id !== at) return s`）
-      //   一个字都不动，这里只是把静默变成一行日志。
-      if (!history.some(s => s.id === at)) {
-        console.error('账本没记上：那一版不在了（id ' + String(at) + '）—— 这一刀只改了画面，退不回去')
-      }
-      // ⚠️ 发号器是顶上那个 `editSeqRef`（**账本专用**，和 `idRef` 分开）——
-      //   账本序号只管预算驱逐的先后，发它**不产生新版本**。
-      const seq = ++editSeqRef.current
-      setHistory(prev => {
-        const next = prev.map(s => {
-          // 找不到 `at` 就原样返回 —— 理论上到不了（有照片 ⇒ 位置非空），
-          // 但**别顺手拿"最接近的那一版"顶上**：记错版本 = 光标和画面对不上，
-          // 而且一句错都不报。
-          if (s.id !== at) return s
-          const before: EditState = { base: s.base, params: s.params, lut: s.lut, seq }
-          // "之后"取**这一版自己的** params/lut —— 它就是"当前这一版"的现场
-          // （写回那条 effect 一直在把它们镜像成最新）；裁剪只换底图，不动调色。
-          return pushEdit(s, before, { base, params: s.params, lut: s.lut }, seq)
-        })
-        // ★ Task 5：记完这一笔 → 预算闸 + 位图回收（`settleLedger` 里两件事一起做）。
-        //   记账**不切未来**，所以回收那一半通常一张都不关："裁之前"那张进了账本、
-        //   还被 `past` 引用着（关了 = 退回去时闪黑）。
-        return settleLedger(prev, next)
-      })
-      // ★（评审 Critical）**底图换了一版，落盘的账要记上** —— 这一版现在
-      //   脏了，而且脏的是**像素**（`baseChanged`）：下一趟 PUT 才会把这张
-      //   裁出来的底图送上去。不记的话服务端手里还是**没裁过**的那张，
-      //   重开之后画面是原图 —— 一句错都不报。
-      //   （★ Task 7 之前这儿推的是 `baseSeqRef`；那个号今天只管竞态闸门，
-      //    落盘改认 `dirtyRef`，见它那段。`patch.thumb` 也跟着它一起重传。）
-      baseSeqRef.current++
-      // ⚠️ `at` 类型上是 `number | null`（读的是影子 ref），但走到这儿它一定非空
-      //   —— "有照片 ⇒ 位置非空"那条不变量管着（上面也有 `!image` 那道早返回）。
-      //   这里只是让类型过得去；真为 null 的话上面那个 updater 已经报过
-      //   「账本没记上」，轮不到这一行。
-      if (at !== null) markDirty(at, true)
-      setImage(base)
-      // ★ 终审 I3：**底图换了 = 那批"上一条照片的临时状态"一起清** —— `onPick` /
-      //   `loadSession` / `resetEditor` 三处都写着这条规矩，裁剪是**第四个**
-      //   换底图的地方，原来漏了。两条后果各有一半是"错了不报错"：
-      //   ① 点选那半：红圈存的是**旧底图**的归一化坐标（还在屏上、还能点
-      //      「就改这里」）—— 那是**花钱**的一次生成，改的位置是错的；
-      //   ② 确认条那半：挂着"要切掉后面吗"时裁一刀，回修图屏点「继续改」，
-      //      它的切点还落在原图上，会把**后面那一版**切掉（条子自己还会
-      //      改口说"后面还有 0 步"）。两个 setState 放在同一批里，和上面那三处一样。
-      setPending(null)
-      setPendingReplace(null)
       // ★★ 2026-10-08（用户定死的关系）：「裁剪」是**调色区里的操作** —— 它的"账"
       //   是**当前这一版自己的账本**（`past` / `future`；调色屏左下角那组箭头
       //   翻的就是它），**不是对话区的一条记录、也不再是转盘上的一格**。
       //   用户原话：「而不是调色区调整一份我对话区记录一份，那用户调整细节
       //   点多了不得几十个回溯点」——细调多了的话，对话区会堆出几十条操作记录。
       //   原来这里落过一句「裁好了。」、也在转盘上加过一格，都撤了。
+      // ⚠️ 成功和**作废**都收现场（原来那两处各写了一遍 `setCrop(null); setTool(null)`）；
+      //    「裁不动」那条（下面 catch）**不收** —— 用户还要再试一次。
       setCrop(null)
       setTool(null)
     } catch (e) {
@@ -1569,9 +1504,10 @@ export default function App() {
       // 开不出够大的画布（`cropToBitmap` 那两条失败路径）。
       noticeBad('这张照片没裁成。再试一次；还不行就换一张小一点的。')
     }
-    // ⚠️ `history` 在依赖里：上面那句"那一版还在不在"的检查读的就是它
-    //   （读到的才写进依赖）。
-  }, [crop, image, history, noticeBad, flushEdit])
+    // ⚠️ `history` 在依赖里：`applyBaseEdit` 里那句"那一版还在不在"的检查读的
+    //   就是它（读到的才写进依赖）。`clearTransient` 是 `useCallback([])` 的
+    //   稳定身份 —— 照"读到的就写进依赖"一起列上。
+  }, [crop, image, history, noticeBad, flushEdit, clearTransient])
 
   /**
    * 交给 `Canvas` 的裁剪现场 —— 每次渲染现算。
@@ -1629,13 +1565,14 @@ export default function App() {
 
   /**
    * 「擦掉这里」——这个工具的全部意义：本地擦一张新底图，给「当前这一版」
-   * **记一笔账**。和 `commitCrop` **一字不差**的那几条（每一条都各有一笔账，别抄漏）：
-   *   · `baseSeqRef` / `cursorIdRef` 在 `await` **之前**当场读；
-   *   · 回来先对**两样**（底图版本 + 站的位置）—— 对不上就作废（那段等待里
-   *     生成落地 / 人跳了版本的话，这一擦是冲着已经不在屏上的画面去的）；
-   *   · `pushEdit`（把"擦之前"压进 `past`；params/lut 取**这一版自己的**——
-   *     擦除只换像素、不动调色）、`baseSeqRef++`、清那批"上一条照片的临时状态"、
-   *     位图回收。**不推新快照、不挪光标、不进转盘**（10-08 账本）。
+   * **记一笔账**。
+   *
+   * 和 `commitCrop` **一字不差**的那几条（每一条都各有一笔账，别抄漏）——
+   * ★ 2026-10-08：那几条已经是**同一份代码**了，全在 `app/baseEdit.ts`
+   * （两个记号当场读、双对账作废、`pushEdit` 把"擦之前"压进 `past`、
+   * `baseSeqRef++`、清"上一条照片的临时状态"、位图回收）；这里只剩点修
+   * **自己**的：掩码、太大就拦、慢的那档盖暗罩、补糊了要说一句。
+   * 两边都**不推新快照、不挪光标、不进转盘**（10-08 账本）。
    */
   const commitRetouch = useCallback(async () => {
     const scene = retouch
@@ -1651,57 +1588,30 @@ export default function App() {
       return
     }
     const slow = area > ERASE_VEIL_PIXELS
-    const seqAt = baseSeqRef.current
-    // ⚠️ 和 `commitCrop` 同一条规矩：**"这一下冲着哪一版去的"必须在 await 之前
-    //   当场读**（updater 不保证当场跑，理由见那边那段）。
-    const at = cursorIdRef.current
+    // 和 `commitCrop` 同一条规矩：「这一下冲着哪一版去的」必须在 await 之前当场读
+    //（updater 不保证当场跑，理由在 `app/baseEdit.ts` 的 `beginBaseEdit`）。
+    const gate = beginBaseEdit(baseSeqRef, cursorIdRef)
     setErasing(slow)
     try {
       // 慢的那一档：先让暗罩**真的画到屏幕上**再开算（计算是同步的、会冻住
       // 渲染 —— 不隔两帧的话暗罩要等算完才出现，恰好是最需要它的时候）。
       if (slow) await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
       const { bitmap, usedSource } = await eraseToBitmap(image.bitmap, mask)
-      if (baseSeqRef.current !== seqAt || cursorIdRef.current !== at) {
-        bitmap.close()
-        console.error('擦除回来时底图/位置已经变了（多半是生成落地或人跳了版本），这一下不写进去')
-        noticeBad('擦的时候画面已经变了 —— 这一下没算数。要的话，再擦一次。')
-        closeRetouch()
-        setTool(null)
-        return
+      if (!discardStaleBaseEdit(baseSeqRef, cursorIdRef, gate, bitmap, {
+        log: '擦除回来时底图/位置已经变了（多半是生成落地或人跳了版本），这一下不写进去',
+        notice: '擦的时候画面已经变了 —— 这一下没算数。要的话，再擦一次。',
+      }, noticeBad)) {
+        applyBaseEdit({
+          at: gate.at, bitmap, history, setHistory, setImage,
+          baseSeqRef, editSeqRef, markDirty, flushEdit, clearTransient,
+        }, '这一擦')
+        // ★★ 2026-10-08（同 `commitCrop`）：**不往对话区写记录** —— 擦除是
+        //   调色区里的操作，账本才是它唯一的"账"（原来这里落过「擦干净了。」）。
+        // ⚠️ 但**兜底那条路（周围没参考）补出来是糊的**这件事得说出来 —— 不说
+        //   用户会以为工具坏了。走**顶上那条通报**（"这件事得跟你说一声"那条，
+        //   说完可以收走），一句话都不进对话区。
+        if (!usedSource) noticeBad('擦掉了（这块周围没什么好参考的，补得有点糊）。')
       }
-      const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
-      // ★ 先定稿没落定的调色、再记擦除这一笔（顺序不能反 —— 同 `commitCrop`）。
-      flushEdit()
-      // ★ 2026-10-08（Task 5 顺手件）：同 `commitCrop` 那句 —— 这一擦到底记上了
-      //   没有，不许静默（找不到 `at` 的话 updater 会原样返回，画面变了、账本没动）。
-      if (!history.some(s => s.id === at)) {
-        console.error('账本没记上：那一版不在了（id ' + String(at) + '）—— 这一擦只改了画面，退不回去')
-      }
-      const seq = ++editSeqRef.current
-      setHistory(prev => {
-        const next = prev.map(s => {
-          if (s.id !== at) return s                 // 找不到 `at` 就原样返回（同 `commitCrop`）
-          const before: EditState = { base: s.base, params: s.params, lut: s.lut, seq }
-          return pushEdit(s, before, { base, params: s.params, lut: s.lut }, seq)
-        })
-        // ★ Task 5：记完这一笔 → 预算闸 + 位图回收（同 `commitCrop`）
-        return settleLedger(prev, next)
-      })
-      baseSeqRef.current++
-      // ★ 2026-10-08（Task 7）：同上（`commitCrop` 那段）—— 擦出来的是新像素，
-      //   这一版脏了、而且要重传底图（`baseChanged`）。
-      //   ⚠️ `at` 非空同 `commitCrop` 那条（"有照片 ⇒ 位置非空"），这一句只是
-      //   让类型过得去。
-      if (at !== null) markDirty(at, true)
-      setImage(base)
-      setPending(null)
-      setPendingReplace(null)
-      // ★★ 2026-10-08（同 `commitCrop` 那段）：**不往对话区写记录** —— 擦除也是
-      //   调色区里的操作，账本才是它唯一的"账"（原来这里落过「擦干净了。」）。
-      // ⚠️ 但**兜底那条路（周围没参考）补出来是糊的**这件事得说出来 —— 不说
-      //   用户会以为工具坏了。走**顶上那条通报**（"这件事得跟你说一声"那条，
-      //   说完可以收走），一句话都不进对话区。
-      if (!usedSource) noticeBad('擦掉了（这块周围没什么好参考的，补得有点糊）。')
       closeRetouch()
       setTool(null)
     } catch (e) {
@@ -1710,8 +1620,8 @@ export default function App() {
     } finally {
       setErasing(false)
     }
-    // ⚠️ `history` 在依赖里：同 `commitCrop`（那句检查读的就是它）。
-  }, [retouch, image, history, noticeBad, closeRetouch, flushEdit])
+    // ⚠️ `history` 在依赖里：同 `commitCrop`（`applyBaseEdit` 那句检查读的就是它）。
+  }, [retouch, image, history, noticeBad, closeRetouch, flushEdit, clearTransient])
 
   /**
    * 交给 `Canvas` 的点修现场 —— 每次渲染现算。
@@ -1848,14 +1758,12 @@ export default function App() {
       //   （`ChatPanel` 的 `draft`）。走的是"先说要改什么、再选照片"那条路；
       //   从修图页里换图（没有欢迎页）时它是空串，等于什么都不做。
       setDraft(wish)
-      // 点选那套状态跟对话是同一趟的东西：换张照片就该一起归零，
-      // 否则上一张照片的红圈和"原来那句话"会跟到新照片上。
-      setPending(null)
-      // ★ 2026-10-05（设计 §4.5，Task 4）：那条"要切掉后面吗"也是同一批 ——
-      //   切照片 = 屏幕上换了一张图，它说的那件事已经不存在。今天到不了
-      //   （换图 = 重开一次），一行保险，和 `resetEditor` / `loadSession` 里
-      //   那两处是同一条防线。（`setPendingReplace` 是稳定 setter，不进依赖。）
-      setPendingReplace(null)
+      // 点选那套状态跟对话是同一趟的东西：换张照片就该一起归零，否则上一张照片
+      // 的红圈和"原来那句话"会跟到新照片上。那条"要切掉后面吗"也是同一批 ——
+      // 切照片 = 屏幕上换了一张图，它说的那件事已经不存在。今天到不了（换图 =
+      // 重开一次），一行保险，和 `resetEditor` / `loadSession` 里那两处是同一条
+      // 防线（理由都在 `clearTransient`）。
+      clearTransient()
       // 「上次那张要替换掉吗」记的是**这张照片**那一趟 —— 换了一张，
       // 那个"上次那张"就不存在了，再问就是拿别人的图问（§3.4）。
       setSavedId(null)
@@ -1927,7 +1835,7 @@ export default function App() {
       //   `pickSeqRef > pickSettledSeqRef`（见 `pickSettledSeqRef` 那段）。
       pickSettledSeqRef.current++
     }
-  }, [history, say, loadCards, setCurrentSession, moveCursor])
+  }, [history, say, loadCards, setCurrentSession, moveCursor, clearTransient])
 
   /**
    * 把"手上这一张"整个放下：照片、对话、参数、快照、会话 id，一件不留。
@@ -1969,11 +1877,10 @@ export default function App() {
     //    那一段；这里从另一头把它做成了正经入口。）
     setCurrentSession(null)
     // 上一条照片那些**临时**状态：点选流程、"上次那张要替换掉吗"、原图预览。
-    // 留着的话红圈会钉在下一张照片上，而「替换」问的是上一张存过的那条作品。
-    setPending(null)
-    // ★ 2026-10-05（设计 §4.5）：那条"要切掉后面吗"同理 —— 照片都换了，
-    //   它说的那件事已经不存在（`setPendingReplace` 是稳定 setter，不进依赖）。
-    setPendingReplace(null)
+    // 留着的话红圈会钉在下一张照片上，而「替换」问的是上一张存过的那条作品；
+    // 那条"要切掉后面吗"同理 —— 照片都换了，它说的那件事已经不存在
+    // （一对 setState 的完整理由在 `clearTransient`）。
+    clearTransient()
     // ★ 2026-10-06（裁剪）：工具和裁剪现场也一起收 —— 它们是**照上一张照片**
     //   算的（框、内接区、比例里的"原始"全按它来），留着就是让下一张照片
     //   一进门就顶着一个别人的框。
@@ -1989,7 +1896,7 @@ export default function App() {
     //   留着的话下一张照片一进来按「对比」，左边是**上一张**。
     setCompareSrc(null)
     originalFileRef.current = null
-  }, [history, setCurrentSession, dismissAsk, moveCursor, closeRetouch])
+  }, [history, setCurrentSession, dismissAsk, moveCursor, closeRetouch, clearTransient])
 
   /**
    * 「照着这张调」—— 用户挑了一张参考图（spec §4.6 的"我想要这种色调"）。
@@ -2392,20 +2299,12 @@ export default function App() {
     //   ⚠️ 走 `moveCursor`：这一下**必须**连影子 ref 一起写 —— 路由那 1.3~1.6 秒
     //   里用户点的就是它，而 `applyDecision` 此刻可能还挂在旧闭包里（终审 I1）。
     moveCursor(id)
-    setImage(target.base)
-    // 参数也回到那一步。只还原 base 会让画面和滑块对不上，
-    // 用户看到的和面板里显示的是两回事。
-    setParams(target.params)
-    // ★ 2026-10-05（滤镜，审查 Important-2）：**滤镜也得跟着回**，和参数**对称**。
-    //   `Snapshot.lut` 是**按步**记的，而滤镜这一步做错了用户看得见两处：
-    //     · 每一步的小图是从**带滤镜的画面**上抓的（`makeThumbnail(canvas)`）——
-    //       不还原它，跳回去之后主画面和那条气泡上的小图对不上；
-    //     · 「原图」那一步永远是 `lut: null`，而「回到原图」却留着那层颜色 ——
-    //       那已经不是原图了。
-    //   ⚠️ 依赖数组不用动：`target` 来自 `history`，它本来就在里面。
-    setLut(target.lut)
+    // 画面 / 参数 / 滤镜一起还原（三样缺一不可，理由全在 `applySnapshot` 那段 ——
+    // ★ 2026-10-08 收口：这句三连原来在 `onJump` / 删记录 / 翻账本三处各写一遍）。
+    // ⚠️ `target` 来自 `history`，它本来就在依赖数组里。
+    applySnapshot(target)
     // ⚠️ `flushPersist` 进了依赖数组（上面读到了它）—— `flushEdit` 本来就在里面。
-  }, [history, cancelPick, cancelReplace, moveCursor, flushEdit, flushPersist])
+  }, [history, cancelPick, cancelReplace, moveCursor, applySnapshot, flushEdit, flushPersist])
 
   /**
    * ★ 2026-10-08（调色区账本，Task 4）：调色屏左下角那组箭头 —— 翻的是
@@ -2454,16 +2353,16 @@ export default function App() {
       const next = h.map(s => (s.id === cur.id ? target : s))
       return flushed ? settleLedger(h, next) : next
     })
-    setImage(target.base)
-    setParams(target.params)
-    setLut(target.lut)
+    // 画面 / 参数 / 滤镜一起还原（同 `onJump` 那句，★ 2026-10-08 收口）；
+    // 翻账本**不动"站的位置"**，所以只还原、不 `moveCursor`。
+    applySnapshot(target)
     // ★ 2026-10-08（Task 7）：**翻账本也是改"这一版的现在"** —— 退一步 / 进一步
     //   都可能换掉底图（翻到"裁之前/裁之后"那一笔）和调色。判据就是底图的
     //   **对象身份**：同一条链上的调色笔共用同一个位图对象（账本的不变量 ②），
     //   只有真换过像素的那几笔才不是 —— 换过就得把这张位图重传给服务端
     //   （`baseChanged`），没换过只送参数。
     markDirty(cur.id, target.base !== base.base)
-  }, [history, cursorId, params, lut, markDirty])
+  }, [history, cursorId, params, lut, markDirty, applySnapshot])
 
   /**
    * ★ 2026-10-08（调色区账本，Task 4）：调色区的**现场**与「当前这一版」之间
@@ -2597,7 +2496,7 @@ export default function App() {
       return next
     })
     // 站在被删的**某一步**上 → 挪到**剩下的最后一步**，画面 / 参数 / 滤镜照
-    // `onJump` 那三行一起还原（只挪光标不换画面的话，"你在这里"指着一步、屏幕上
+    // `onJump` 那套一起还原（只挪光标不换画面的话，"你在这里"指着一步、屏幕上
     // 却是已经不存在的那张图）。⚠️ 用闭包的 `history`（它在依赖数组里）：这里
     // 没有 await，它和上面 updater 拿到的 `prev` 是同一份。
     if (cursorId !== null && kill.has(cursorId)) {
@@ -2605,12 +2504,10 @@ export default function App() {
       const tip = rest[rest.length - 1]
       if (tip) {
         moveCursor(tip.id)
-        setImage(tip.base)
-        setParams(tip.params)
-        setLut(tip.lut)
+        applySnapshot(tip)
       }
     }
-  }, [busy, messages, history, cursorId, cancelPick, cancelReplace, moveCursor])
+  }, [busy, messages, history, cursorId, cancelPick, cancelReplace, moveCursor, applySnapshot])
 
   /** 删一条 —— 上面那本账的**特例**（`onDeleteMessages([id])`），给菜单里那颗【删除】。 */
   const onDeleteMessage = useCallback((id: number) => onDeleteMessages([id]), [onDeleteMessages])
@@ -3101,6 +2998,27 @@ export default function App() {
   // 「后面还有 N 步」—— 确认条和点选条都用它（设计 §4.5）
   const curIdx = cursorId === null ? -1 : history.findIndex(s => s.id === cursorId)
   const futureSteps = curIdx >= 0 ? history.length - 1 - curIdx : 0
+
+  /**
+   * 滤镜那一包 props（★ 2026-10-08 收口）—— `ChatPanel` 和 `AdjustmentPanel`
+   * 是**同一批东西、同一个来源**（`lutsApi` + `lut`），九个 props 原来一字不差
+   * 抄了两遍；现在一份、两处展开。
+   *   ⚠️ 两处的 props 名字和形状本来就一字不差（改一边就是改两边的契约）。
+   *   ⚠️ `onNeedLutThumbs` 传的是**当下的** image / params（不是在 hook 里存一份）：
+   *      缩略图要画的就是"用户此刻看到的这张照片、这套参数 + 那个滤镜"。
+   */
+  const lutPanelProps = {
+    luts: lutsApi.luts,
+    // ★ 2026-10-05 终审修复：清单到手没有（面板靠它区分"取不到"和"没有"）。
+    lutsKnown: lutsApi.lutsKnown,
+    lut,
+    lutThumbs: lutsApi.thumbs,
+    onPickLut: (id: number | null) => setLut(id === null ? null : { lutId: id, amount: 100 }),
+    onLutAmount: (amount: number) => setLut((cur) => (cur ? { ...cur, amount } : cur)),
+    onNeedLutThumbs: needLutThumbs,
+    onGoImport: () => go({ kind: 'luts' }),
+    onRetryLuts: () => void reloadLuts(),
+  }
 
   // 还没问出"我是谁"之前什么都别显示 —— 认出没登录的访客是**一次网络往返**，
   // 直接按 user === null 渲染的话，每个登录着的用户回访时都会先看到登录页闪一下。
@@ -3613,21 +3531,11 @@ export default function App() {
                   replacing={pendingReplace !== null}
                   onConfirmReplace={confirmReplace}
                   onCancelReplace={declineReplace}
-                  // ★ 2026-10-05（滤镜，Task 9）：对话区这颗按钮和微调区那一栏
+                  // ★ 2026-10-05（滤镜，Task 9）：对话区这几颗和微调区那一栏
                   //   是**同一批东西、同一个来源**（`lutsApi` + `lut`）——
-                  //   所以 props 名字和形状跟 `AdjustmentPanel` 那边一字不差。
-                  //   ⚠️ `onNeedLutThumbs` 同样传**当下的** image / params：
-                  //   缩略图要画的就是"用户此刻看到的这张照片 + 这套参数 + 那个滤镜"。
-                  luts={lutsApi.luts}
-                  // ★ 2026-10-05 终审修复：清单到手没有（面板靠它区分"取不到"和"没有"）。
-                  lutsKnown={lutsApi.lutsKnown}
-                  lut={lut}
-                  lutThumbs={lutsApi.thumbs}
-                  onPickLut={(id) => setLut(id === null ? null : { lutId: id, amount: 100 })}
-                  onLutAmount={(amount) => setLut((cur) => (cur ? { ...cur, amount } : cur))}
-                  onNeedLutThumbs={needLutThumbs}
-                  onGoImport={() => go({ kind: 'luts' })}
-                  onRetryLuts={() => void reloadLuts()}
+                  //   ★ 2026-10-08：九个 props 收成了一份 `lutPanelProps`
+                  //   （原来两处一字不差各抄一遍），展开即可。
+                  {...lutPanelProps}
                 />
               )}
 
@@ -3663,19 +3571,9 @@ export default function App() {
                   onMatchWork={w => void matchWork(w)}
                   // ★ 2026-10-05（滤镜，设计 §5.2）：面板只摆样子，状态和副作用
                   //   全在 App / `useLuts` 那边。
-                  //   ⚠️ `onNeedLutThumbs` 传的是**当下的** image / params（不是在
-                  //      hook 里存一份）：缩略图要画的就是"用户此刻看到的这张照片、
-                  //      这套参数 + 那个滤镜"。
-                  luts={lutsApi.luts}
-                  // ★ 2026-10-05 终审修复：和对话区那颗**同一份**（见 ChatPanel 那边）。
-                  lutsKnown={lutsApi.lutsKnown}
-                  lut={lut}
-                  lutThumbs={lutsApi.thumbs}
-                  onPickLut={(id) => setLut(id === null ? null : { lutId: id, amount: 100 })}
-                  onLutAmount={(amount) => setLut((cur) => (cur ? { ...cur, amount } : cur))}
-                  onNeedLutThumbs={needLutThumbs}
-                  onGoImport={() => go({ kind: 'luts' })}
-                  onRetryLuts={() => void reloadLuts()}
+                  //   ★ 2026-10-08：九个 props 和对话区那份是**同一份**
+                  //   （`lutPanelProps`，展开即可 —— 原来两处一字不差各抄一遍）。
+                  {...lutPanelProps}
                 />
               )}
             </main>

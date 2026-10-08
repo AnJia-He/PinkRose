@@ -1,9 +1,11 @@
 import { PARAM_KEYS, type Adjustments } from '../../shared/adjustments.ts'
 import type { LutRef } from '../../shared/lut.ts'
 import type { DecodedImage } from '../image/decode'
-// ⚠️ 和 `history.ts` 是**互相**引用（那边只 import 本文件的 `EditState` 类型）——
-//    两边都是 `import type`，编译后一行不剩，不存在运行时循环。
-import type { Snapshot } from './history'
+// ⚠️ 和 `history.ts` 是**互相**引用：那边只 import 本文件的 `EditState` 类型，
+//    编译后一行不剩；本文件要 `bitmapsToClose` / `closeBitmaps` 是**真的运行时**
+//    依赖（`settleLedger` 用）—— 方向是单向的（ledger → history），
+//    所以不存在运行时循环。
+import { bitmapsToClose, closeBitmaps, type Snapshot } from './history'
 
 /**
  * 账本上的一笔 = 一个可以退回去的画面状态。
@@ -160,4 +162,34 @@ export function enforceLedgerBudget(
   const alive = new Set(out.flatMap(s => [...s.past.map(p => p.base), ...s.future.map(f => f.base), s.base]))
   const toClose = [...new Set(dropped.filter(b => !alive.has(b)))]
   return { list: out, toClose }
+}
+
+/**
+ * ★ 2026-10-08（调色区账本 Task 5，spec §6）：**记账之后的统一收口** ——
+ * 四处记账点（`flushEdit` / `commitCrop` / `commitRetouch` / `ledgerStep`）
+ * 每记完一笔都走它，别在各处各写一遍（★ 2026-10-08 从 `App.tsx` 搬进 `core` ——
+ * 它是纯逻辑，且 `app/baseEdit.ts` 那份共享骨架也要用它）。
+ *
+ * 两件事**一起**做，缺一件都是"错了不报错"：
+ *   · **预算闸**（`enforceLedgerBudget`）：所有版本账本里额外留着的底图超了
+ *     `LEDGER_PIXEL_BUDGET`（3200 万像素，初值）就**整笔**丢掉最早的那些
+ *     （Photoshop 那三道：上限封顶 / 出生保留 / 满了丢最老）——出生笔和当前笔
+ *     永不丢，丢了用户就回不到"这一版从哪来"；
+ *   · **位图回收**：被驱逐的那些 + 这一趟离开 `history` 的那些，一起 `close()`。
+ *     `close()` 幂等，所以写在 `setHistory` 的 updater 里也安全（StrictMode
+ *     重放 updater 时不会关两遍出事）。
+ *
+ * ⚠️ **两份 `toClose` 都要**，不是二选一：驱逐是"预算"这条线，`bitmapsToClose`
+ *   是"位图离开了历史"那条线（原来四个记账点各自都有的那一句）。只取前者的
+ *   话，`cutAfter` / 删除那几条路上漏下的位图就没人关了 —— 那是纯泄漏、而且
+ *   一句错都不报。
+ * ⚠️ 传进来的 `withEdit` 必须**已经记完那一笔**（`pushEdit` 的结果）：闸看到
+ *   的就是那份账本。`prev` 是记账之前的那份（回收要跟它比）。
+ * ⚠️ 预算内它不改元素的引用（`enforceLedgerBudget` 只浅拷数组）—— React 靠
+ *   引用相等跳过白渲染，别在这儿顺手 `map` 一遍。
+ */
+export function settleLedger(prev: readonly Snapshot[], withEdit: readonly Snapshot[]): Snapshot[] {
+  const { list, toClose } = enforceLedgerBudget(withEdit, LEDGER_PIXEL_BUDGET)
+  closeBitmaps([...toClose, ...bitmapsToClose(prev, list, { protectOriginal: true })])
+  return list
 }

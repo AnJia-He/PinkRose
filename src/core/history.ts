@@ -163,3 +163,16 @@ export function bitmapsToClose(
   }
   return out
 }
+
+/**
+ * 关掉一批位图（`bitmapsToClose` 的产物）。
+ *
+ * ★ 2026-10-04：这句 `for…close()` 原来在四处各写了一遍（切换会话、换图、
+ *   归零、「回到这一步」）—— 收成一句，理由只有一份：**不关就是"切几次把
+ *   标签页拖垮"**（ImageBitmap 占 GPU 内存，32 MP 一张约 129 MB）。
+ *   `close()` 幂等 —— StrictMode 重放 updater 也安全（见 open 那段的注释）。
+ * ★ 2026-10-08：从 `App.tsx` 搬进这儿（`settleLedger` 也用它，两处都要）。
+ */
+export function closeBitmaps(imgs: readonly DecodedImage[]): void {
+  for (const img of imgs) img.bitmap.close()
+}
