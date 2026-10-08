@@ -21,7 +21,6 @@ import { ModelSettings } from './ui/ModelSettings'
 import { LutSettings } from './ui/LutSettings'
 import LandingPage from './ui/LandingPage'
 import { Nav } from './ui/Nav'
-import { FRONT_PAGE, askedForFrontPage, pathOf, viewFromPath, type View } from './ui/view'
 import { me, type AccountUser } from './api/account'
 import { fetchWorkImage } from './api/works'
 import {
@@ -72,6 +71,10 @@ import { markImage, type NormPoint } from './image/mark'
 import { useDelivery } from './app/useDelivery'
 import { BUSY_GENERATING, useGeneration } from './app/useGeneration'
 import { useLuts } from './app/useLuts'
+// ★ 2026-10-08（拆分 Batch 3）：三个小簇各自的 hook —— 通报 / 导航 / 滤镜流程。
+import { useNotice } from './app/useNotice'
+import { useNav } from './app/useNav'
+import { useLutFlow } from './app/useLutFlow'
 // ★ 2026-10-08：裁剪 / 点修「在当前这一版底图上动一刀」的**共享骨架**
 //   （两个记号、双对账作废、记账、清临时态）—— 原来那两段抄了两遍。
 import { applyBaseEdit, beginBaseEdit, discardStaleBaseEdit } from './app/baseEdit'
@@ -249,36 +252,15 @@ export default function App() {
   const [tool, setTool] = useState<ToolId | null>(null)
 
   /**
-   * 顶上那条**通报**：有件事要跟你说一声，说完可以收走（2026-09-30）。
+   * 顶上那条**通报**（有件事要说一声，说完可以收走）—— ★ 2026-10-08 整段搬进
+   * `app/useNotice`（它取代了三处 `window.alert`、"它和 `saveFail` 是两种东西、
+   * 别合并"那几条理由，都在那个文件头上）。
    *
-   *  它取代了原来三处 `window.alert`。系统弹窗有两个毛病：它把整页冻住，
-   *  而且长得**不像这个产品的一部分** —— 一个花了一整天做视觉的产品，
-   *  出错时突然跳出一个灰扑扑的系统框，那一下就把"做完了"的感觉打回去了。
-   *
-   *  `tone` 只有两种：`bad`（这件事没成，留着等用户看完自己点掉 ——
-   *  他可能要去别处看一眼再决定怎么办）和 `ok`（成了，几秒后自己走）。
-   *
-   *  ★ **「存好了」也走这里，不是因为它是个错误**：手机上打开调色面板时
-   *  **对话栏整个是隐藏的**（面板和对话在抢竖向空间，见 styles.css 那条 `:has`），
-   *  而那一刻正是用户拖完滑块、按「保存」的时候 —— 那句话会落进
-   *  **一个用户看不见的地方**。（2026-09-30 全链路回归在手机那趟抓到的：
-   *  桌面那一趟全绿，只有"打开面板再保存"这一串下来屏上什么都没有。）
-   *
-   *  ⚠️ 它和 `saveFail` 是**两种东西，别合并**：那条横幅是"图还在，先拿到手"，
-   *  自带一个下载按钮，而且**不许被关掉**（关掉用户就真的拿不到那张图了）；
-   *  这条只是通报，「知道了」就该收走。
-   *
-   *  ⚠️ ★ 2026-10-05：这三行原来住在下面（`setCurrentSession` 之后）——
-   *  挪到这儿是因为 `useLuts` 要接 `noticeBad`（"滤镜没取回来"那一句），
-   *  而**参数在调用点必须已经声明**（`const` 是 TDZ：写在后面就是运行时报错）。
+   * ⚠️ 它必须声明在**这个位置**：`useLuts` 要接 `noticeBad`（"滤镜没取回来"
+   *   那一句），而**参数在调用点必须已经声明**（`const` 是 TDZ：写在后面就是
+   *   运行时报错）。
    */
-  const [notice, setNotice] = useState<{ text: string; tone: 'ok' | 'bad' } | null>(null)
-  /** 通报一句"没成"。**身份必须是稳定的** —— 它直接传给 Canvas 的 `onFail`，
-   *  而那边进了 effect 的依赖数组（理由见 Canvas.tsx 那段）。 */
-  const noticeBad = useCallback((text: string) => setNotice({ text, tone: 'bad' }), [])
-  /** 通报一句"成了"。和 `noticeBad` 一样，身份必须稳定（两者都会进
-   *  `useDelivery` 的依赖数组）。 */
-  const noticeOk = useCallback((text: string) => setNotice({ text, tone: 'ok' }), [])
+  const { notice, setNotice, noticeBad, noticeOk } = useNotice()
 
   /**
    * ★ 2026-10-05（滤镜）：这张照片现在用着哪个滤镜、强度多少。null = 不用。
@@ -288,13 +270,6 @@ export default function App() {
    * 但走的是同一条路：拖强度 / 套滤镜**都不推快照**（裁定 ⑤），只落盘。
    */
   const [lut, setLut] = useState<LutRef | null>(null)
-  /**
-   * `lut` 的**影子**。只为 `refreshLuts` 照镜子时用：那个回调挂在"离开
-   * `/app/luts`"那个 effect 上，把 `lut` 放进它的依赖数组就等于**每选一次滤镜
-   * 都重建它**（连带那个 effect 跟着重跑）—— 而它要的只是"**跑的时候**当下是哪个"。
-   */
-  const lutRef = useRef<LutRef | null>(null)
-  useEffect(() => { lutRef.current = lut }, [lut])
   /**
    * ★ 2026-10-05：「下一趟进调色屏时，把面板里「滤镜」那一栏**展开**」。
    *
@@ -540,99 +515,9 @@ export default function App() {
     }
   }, [])
 
-  /**
-   * ★ 2026-10-05（滤镜）：「当前用的滤镜没了」—— **唯一**处理它的地方
-   * （离开设置里那一页、刷新完清单之后照一次镜子，设计 §6.4 客户端那半）。
-   *
-   * 三件事**一起**做，少一件都是"错了不报错"：
-   *   · 清状态 —— 不清的话画面上还照着那个 cube 调色，而 cube 是缓存里那份；
-   *   · **把历史里那几步也清掉** —— 历史是本地的真相（画布、小图、跳回去都看它），
-   *     留着一个**已经不存在的 id** 在里头，就是让本地这份数据自己不自洽；
-   *     （⚠️ 服务端那边有 `resolveLutRef` 兜着，悬空 id 进不了库 —— 所以这条
-   *      **不是**在防"把死 id 写回服务端"，而是在防"客户端自己的 state 走岔了"。
-   *      2026-10-05 审查更正过一次：之前的注释把服务端那半说重了。）
-   *   · 说一句 —— 用户眼前的照片少了一层颜色，不说就是悄悄改了他的图。
-   */
-  const dropGoneLut = useCallback((id: number) => {
-    setLut((cur) => (cur?.lutId === id ? null : cur))
-    // ★ 2026-10-08（账本）：**账本里的笔也要扫一遍** —— `past` / `future` 里那些
-    //   笔是"当初套着这个滤镜"的画面状态，留着的话退回去会套一个**已经被用户
-    //   删掉**的滤镜：cube 取不到、画面上那层颜色说没就没（而且不报错）。
-    //   三处（当前位置 + past + future）是同一件事的三份拷贝，改一处就得三处一起。
-    //   ★ 2026-10-08（Task 5 顺手件）：**排队中等定稿的那一笔也要扫** ——
-    //   `editPendingRef` 里那份"改之前"还没进 `history`，上面那三处扫不到它；
-    //   等 0.8 秒后定稿，那个死 id 会被压进 `past`，退回去照样套回死滤镜（同一个
-    //   病，只是走的是"账本还没收的那一笔"这条路）。这里把那一份的 `lut` 也置空
-    //   —— ⚠️ 只置空 **lut**、不丢整笔待办：那一笔里的 params 是用户刚调的东西，
-    //   丢了就是"这一下退不回去"（`settleLedger` 那套回收也没了依据）。
-    const pend = editPendingRef.current
-    if (pend && pend.before.lut?.lutId === id) {
-      editPendingRef.current = { ...pend, before: { ...pend.before, lut: null } }
-    }
-    setHistory((prev) => prev.map((s) => ({
-      ...s,
-      lut: s.lut?.lutId === id ? null : s.lut,
-      past: s.past.map((p) => (p.lut?.lutId === id ? { ...p, lut: null } : p)),
-      future: s.future.map((f) => (f.lut?.lutId === id ? { ...f, lut: null } : f)),
-    })))
-    // ★ 2026-10-08（账本 Task 7）：**这一版的"现在"变了** —— 那层颜色是从快照上
-    //   摘掉的，落盘得认这笔账。不记的话服务端那份还挂着这个已经不存在的 id：
-    //   客户端这边靠"每次挂载照一次镜子"自愈，服务端那边则一直没发生 —— 正是
-    //   "错了不报错"那一类（老代码是靠无条件送 params/lut 顺带盖住的）。
-    //   ⚠️ 挂**当前这一版**（`cursorIdRef`）：`stateStepId` 一趟只能指一步，而
-    //   "现在这一版"才是用户眼前这套颜色。上面那个 `map` 顺手扫过的 `past` /
-    //   `future` 不落盘（账本不落盘，设计 §8）。
-    //   ⚠️ `cursorIdRef.current === null`（没有照片）= 这一趟没有会话可写。
-    const cur = cursorIdRef.current
-    if (cur !== null) markDirty(cur, false)
-    noticeBad('那个 Lut 刚被你删掉了，这张照片上的也去掉了。')
-  }, [noticeBad, markDirty])
-
-  /**
-   * 重新拉一遍清单，然后照镜子（离开 `/app/luts` 时叫一次）。
-   *
-   * 为什么非得拉一次：那一页上刚导入的滤镜要**立刻能用**、刚删的要**立刻消失**，
-   * 而清单是 App 挂载时拉的那一份。
-   *
-   * ⚠️ 读当下的 `lut` 用的是**影子**（`lutRef`），不是把它写进依赖：写进去的话
-   * 这个回调和挂在它上面的那个 effect 会跟着**每一次选滤镜**重建/重跑一遍。
-   *
-   * ★ 2026-10-05 终审修复：`reloadLuts()` 回 **`null` = 这次没问出来**（离线 / 5xx /
-   *   后端刚重启）—— 那一刻**什么都不许照**。照空数组的下场很具体：用户在那
-   *   一页上什么都没删，只是点离开，却被他手上那层滤镜被清掉 + 听到一句
-   *   「那个滤镜刚被你删掉了」（而清单里那条明明还在）。"真的没有了"是
-   *   **拿到清单、里面确实没有它**，不是"没拿到清单"。
-   */
-  const refreshLuts = useCallback(async () => {
-    const list = await reloadLuts()
-    if (list === null) return                // 没问出来 → 照旧，什么都不动
-    const cur = lutRef.current               // 用一个 ref 读当下那个 id，别把它写进依赖
-    if (cur && !list.some((l) => l.id === cur.lutId)) dropGoneLut(cur.lutId)
-  }, [reloadLuts, dropGoneLut])
-
-  /**
-   * 「打开滤镜那一栏」那一刻叫一次（微调区和对话区两个宿主共用这一份行为）。
-   *
-   * 两件事：
-   *   · 缩略图 —— 很贵（每个滤镜各画一张当前照片），收着时白画是纯浪费；
-   *   · ★ 2026-10-05 终审修复：清单**还没到手过**就顺手重拉一次。App 挂载那一次
-   *     `listLuts()` 失败（离线 / 后端刚重启 / 页面里重新登录过）之后，不点这一下
-   *     用户手上就一直没有清单，而面板上挂着的是"还没有导入过滤镜"那句假话。
-   *     重拉再失败也没关系：面板那边有 `lutsKnown`，说的是中性的话 + 一颗重试。
-   */
-  const needLutThumbs = () => {
-    if (!lutsApi.lutsKnown) void reloadLuts()
-    lutsApi.ensureThumbs(image, params)
-  }
-
-  // "成了"的通报自己会走：它是**回执**，不是待办。
-  // 用函数式更新加一道守卫 —— 这几秒里用户可能已经触发了别的通报，
-  // 无条件 `setNotice(null)` 会把**新的那条**一起抹掉。
-  useEffect(() => {
-    if (notice?.tone !== 'ok') return
-    const t = setTimeout(() => setNotice(n => (n?.tone === 'ok' ? null : n)), 4000)
-    return () => clearTimeout(t)
-  }, [notice])
+  // ★ 2026-10-08：`dropGoneLut` / `refreshLuts` / `needLutThumbs` 三个函数
+  //   整段搬进了 `app/useLutFlow`（连同它们上面那几大段理由与 ⚠️）。
+  //   ⚠️ 调用点在**下面** `editPendingRef` 之后 —— 那边要拿"没定稿的那一笔"。
 
   const canvasElRef = useRef<HTMLCanvasElement | null>(null)
 
@@ -692,6 +577,20 @@ export default function App() {
    * 中间那几次拖动不留痕，用户看到的只有一头一尾。
    */
   const editPendingRef = useRef<{ stepId: number; before: EditState } | null>(null)
+
+  /**
+   * 滤镜那一摊里**跟着 App 状态走**的那半 —— ★ 2026-10-08 整段搬进
+   * `app/useLutFlow`：`dropGoneLut`（当前用的滤镜没了）/ `refreshLuts`（离开
+   * `/app/luts` 时重拉 + 照镜子）/ `needLutThumbs`（打开那一栏那一刻），
+   * 加上 `refreshLuts` 照镜子用的那个 `lutRef` 影子 —— 各条理由都在那边。
+   *
+   * ⚠️ 调用点必须在**这里**（`editPendingRef` 之后）：`dropGoneLut` 要连
+   *   "没定稿的那一笔"一起扫，那本账在上面这一行才立起来。
+   */
+  const { refreshLuts, needLutThumbs } = useLutFlow({
+    lut, setLut, lutsApi, image, params, noticeBad,
+    cursorIdRef, editPendingRef, setHistory, markDirty,
+  })
 
   /**
    * 把没定稿的那一笔记进账本。**没有待办 = 空操作**（重复调用无害）。
@@ -2840,14 +2739,10 @@ export default function App() {
 
   // ── 左栏导航 + 网址（Task 10） ──────────────────────────────────────
   //
-  // **不引路由库**：零依赖是硬约束，而我们要的只有两条路径 + 一条带参数的
-  // —— `history.pushState` 就够了。引一个路由库来管三条路径，是拿一个新依赖
-  // 换 20 行代码。路径怎么认、怎么拼，规则**只有一份**（ui/view.ts 那个纯函数），
-  // 不散在这里。
-
-  /** 现在在哪一屏。**它是切界面唯一会动的东西** —— 别的 state 一个都不碰，
-   *  于是"切导航不丢工作"是结构上的必然，不是"记得保存"（§3.2）。 */
-  const [view, setView] = useState<View>(() => viewFromPath(location.pathname))
+  // ★ 2026-10-08：这一摊（`view` / `go` / 后退前进 / 登录用户打开落地页的自动
+  // 跳转 / 标签页标题）整段搬进 `app/useNav` —— 连"**不引路由库**"那条硬约束和
+  // `go` 里两条 ⚠️（`window.history` 与 `replace`）也一起。这里只剩接线。
+  const { view, go } = useNav({ checking, user })
 
   /**
    * ★ 2026-10-05：`lutOpenNext` 的清场（那个 ref 声明在上面 `lut` 那一段旁边）。
@@ -2867,50 +2762,8 @@ export default function App() {
   useEffect(() => { setTool(null); setCrop(null); closeRetouch() }, [view.kind])
 
   /**
-   * 点导航：改状态，顺手把地址栏换成对应的那条。
-   *
-   *  这两条语句**谁先谁后无所谓**：`pushState` 不会触发 `popstate`（规范就这么定的），
-   *  `setView` 也不碰历史栈 —— 先写地址只是读起来顺，别在这儿找讲究。
-   *
-   *  ⚠️ 必须写 `window.history`（不能省成 `history`）：这个组件里有一份**同名**的
-   *  撤销历史 `const [history, setHistory] = useState<Snapshot[]>([])`，它把全局那个
-   *  `history` 遮住了 —— 省掉 `window.` 是个**编译期**的错
-   *  （`TS2339: Property 'pushState' does not exist on type 'Snapshot[]'`）。
-   *  写全是为了让下一个人一眼看见"要的是浏览器那个 history"，而不是先去读一遍
-   *  类型错误才知道。
-   *
-   *  ⚠️ `replace`：**不往历史栈里压新条目**，只把当前这条换掉。
-   *  只有一处用它 —— 登录着的人打开落地页时那个自动跳转。用 push 的话历史栈里
-   *  会留下一条 `/`，用户按后退 → 又跳回来 → **按几次都出不去**。
-   */
-  const go = useCallback((v: View, opts?: { replace?: boolean }) => {
-    // ★ 去**门面**那一页时走 `FRONT_PAGE`（= `/?home=1`），不是 `pathOf` 给的
-    //  `/`（2026-10-03）。差别只在"谁走过去"：`/` 是这一页的正身（直接输网址、
-    //  发链接都走它），而**从 App 里主动走过去**得带上那个参数 —— 不带的话
-    //  下面那条自动跳转立刻把人送回 `/app`，点「产品介绍」像是没反应。
-    //  ⚠️ 判断要写在**这一处**（写网址只有这一处），别在 Nav 里另开一条 pushState
-    //   —— 那样"哪一屏对应哪个网址"就有了两份，迟早对不上。
-    const p = v.kind === 'landing' ? FRONT_PAGE : pathOf(v)
-    // ⚠️ "是不是已经在这一页上了"比的是 **`pathOf`**（不带参数的那个网址），
-    // 不是上面那个 `p`：站在 `/?home=1` 上再点一次「产品介绍」，地址栏已经是它了，
-    // 不该再压一条 —— 压了的话后退要按好几下才出得去。
-    if (location.pathname !== pathOf(v)) {
-      if (opts?.replace) window.history.replaceState(null, '', p)
-      else window.history.pushState(null, '', p)
-    }
-    setView(v)
-  }, [])
-
-  // 浏览器的后退 / 前进：跟着地址走
-  useEffect(() => {
-    const onPop = () => setView(viewFromPath(location.pathname))
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  }, [])
-
-  /**
    * ★ 2026-10-05（滤镜，设计 §5 那三条入口里的第二条）：**离开「滤镜」那一页时**
-   * 重新拉一次清单，顺手照一次镜子（`refreshLuts`）。
+   * 重新拉一次清单，顺手照一次镜子（`refreshLuts`，见 `app/useLutFlow`）。
    *
    * 为什么非要这一下：那一页上刚导入的滤镜要**立刻能用**、刚删的要**立刻消失**，
    * 而清单是 App 挂载时拉的那一份（`useLuts` 里那个 effect）—— 不重拉的话，
@@ -2922,7 +2775,7 @@ export default function App() {
    * （那一页自己管自己的清单）。上一条路由的旧值只能记在 ref 里 —— 放进 state
    * 就是多一个会吵起来的真相来源。
    * ⚠️ 依赖里放的是 `refreshLuts`（它自己盯着稳定的 `reloadLuts`），不是
-   * `lutsApi` 那个每渲染新造的对象 —— 见那边那段注释。
+   * `lutsApi` 那个每渲染新造的对象 —— 见 `useLutFlow` 里那段注释。
    */
   const wasOnLutsPageRef = useRef(false)
   useEffect(() => {
@@ -2931,44 +2784,8 @@ export default function App() {
     wasOnLutsPageRef.current = here
   }, [view.kind, refreshLuts])
 
-  /**
-   * 已经登录的人打开 `/`（落地页）→ **直接送去 App**。
-   *
-   * ⚠️ 用 `replace`，不能 push：营销页是给访客看的，自己人每次打开都撞上它是
-   * 打扰；而 push 会在历史栈里留下一条 `/`，用户一按后退又跳回来 —— 出不去。
-   *
-   * ⚠️ 它**只认自己人**：没登录的访客停在落地页上（那正是这一页存在的意义）。
-   * `checking` 那一段要等 —— 还没问出"我是谁"就跳，会把每个登录着的人
-   * 先闪一下落地页再走。
-   *
-   * ★ 2026-10-03：**特意来的不算**（`?home=1`，见 `ui/view.ts` 的 `FRONT_PAGE`）。
-   * 左栏底下那颗「产品介绍」把人送到 `/?home=1`，这一条认出来就得让路 —— 不让的话
-   * 那颗按钮会"点了没反应"（推过去、立刻被撵回来），而且地址栏还会被改回 `/app`。
-   * 它守的仍然是原来那句话：**回访**的人不必每次打开都撞上营销页。
-   *
-   * ⚠️ 判据读的是 **`location.search`**，不是 `view` 上挂一个字段：按后退/前进
-   * 回来时 `view` 是 `viewFromPath(pathname)` 拼的（它看不见 `?` 后面那截），
-   * 挂在 view 上的话，从门面点「免费开始」进 App 再按后退 —— 人会被撵回来。
-   */
-  useEffect(() => {
-    if (!checking && user && view.kind === 'landing' && !askedForFrontPage(location.search))
-      go({ kind: 'edit' }, { replace: true })
-  }, [checking, user, view, go])
-
-  /**
-   * 标签页那个标题。★ 2026-10-01 加的。
-   *
-   * `index.html` 里写死的标题是**落地页**那句（「说句话，照片就修好了」），
-   * 而且必须写死在文件里 —— 社交抓取器和 AI 爬虫都不跑 JS，靠 JS 注入的标题
-   * 它们一个字都读不到。代价是**每一屏一进来都顶着那句营销文案**，所以
-   * App 这几屏要把它换回产品名。
-   *
-   * 落地页那一支不管：它自己的 effect 会设成同一句、离开时还原
-   * （`LandingPage.tsx` 里那个 prevTitle）。
-   */
-  useEffect(() => {
-    if (view.kind !== 'landing') document.title = 'PinkRose'
-  }, [view.kind])
+  // ★ 2026-10-08：原来下面还有两条 effect（登录用户打开落地页的自动跳转、
+  //   标签页标题）—— 跟着 `view` / `go` 一起搬进 `app/useNav` 了。
 
   // 「后面还有 N 步」—— 确认条和点选条都用它（设计 §4.5）
   const curIdx = cursorId === null ? -1 : history.findIndex(s => s.id === cursorId)
