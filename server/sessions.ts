@@ -253,7 +253,8 @@ export async function handleSessionThumb(id: number, user: PublicUser, deps: Ses
  *
  * ⚠️ 为什么不让客户端送文件名：那是一条能引用别人图的洞（见 `requireOwnFile`）。
  * 规则四条，写清楚免得下一个读的人猜：
- *   ① **第一个步骤永远是原图**；
+ *   ① **第一个步骤永远是原图**（⚠️ 例外：它被规则 ④ 指名替换时 —— 那一步的
+ *      `image` 换成新图，`steps[0].image` 就不再是原图了，这是有意的）；
  *   ② 库里**已有**的那几步：整个对象一律沿用库里的（**历史**不许被客户端改写）；
  *   ③ 新步骤默认接着上一步那张图 —— **只有"最后一个新步骤"拿这次上传的新文件**
  *      （一次 PUT 最多带来一个新文件：客户端是"改一步就存一次"）。
@@ -261,7 +262,9 @@ export async function handleSessionThumb(id: number, user: PublicUser, deps: Ses
  *   ④ ★ 2026-10-08（账本）：带了 `stateStepId` 时 ③ 让位 —— 新文件落在**它指名的
  *      那一步**的 `image` 上（**替换**：这一版的"现在"换了一张底图）。那一步必须
  *      存在（合并后），否则 400（新的信任边界）。
- *      ⚠️ 被换下来的旧文件**不删、也不从这里出名单位** —— 它可能还被别的步骤引
+ *      （⚠️ "没送 `steps`"那一趟不经过这里 —— `handleUpdateSession` 里有一块单独认它，
+ *      形状是 `{stateStepId, base}`，同样要换 image。）
+ *      ⚠️ 被换下来的旧文件**不删、也不从 `files` 名单里拿掉** —— 它可能还被别的步骤引
  *      用着，而且就算没人用了，回收也只发生在"删整条会话"那一刻（`files` 只增
  *      不减，见 MAX_STEPS 那段）。
  */
@@ -448,6 +451,18 @@ export async function handleUpdateSession(
     //   的守卫，找不到就跳过）—— 正是这个项目最恨的"错了不报错，只会静静地错"。
     if (stateStepId !== null && !steps.some((s) => s.id === stateStepId)) {
       throw new HttpError('BAD_REQUEST', 'stateStepId 指的步骤不存在', 400)
+    }
+    // ★ 2026-10-08（终审 Important）：**不带 `steps` 也得认账**。
+    //   上面那口子（`mergeSteps` 规则 ④）只在"送了 steps"时才跑，而
+    //   `{stateStepId, base}`（拖滑块之外、只换底的那趟）是**合法的协议输入**：
+    //   少这一块的话回 200、`base` 列和 `files` 都换了，**那一步的 `image` 一个字节
+    //   没动** —— 而恢复是按步取 `sessionStepUrl` 的，刷新后那一版还是旧图，**不报错**。
+    //   （这就是协议注释写的"`base` 说的是哪一步的现在"名不副实的那半截。）
+    //   ⚠️ 那一步不存在的情况上面刚判过 400（同一口径、同一个 try，catch 会把刚落的
+    //   文件收走）；⚠️ **换一个对象**，照下面 params 那段 ② 的规矩。
+    if (newFile && stateStepId !== null && !Array.isArray(o.steps)) {
+      const i = steps.findIndex((s) => s.id === stateStepId)
+      steps[i] = { ...steps[i]!, image: newFile }
     }
     // 名单：原来的 + 这次新写的。每一步引用的文件都必须在名单里
     //

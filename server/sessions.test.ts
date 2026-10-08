@@ -497,6 +497,30 @@ describe('stateStepId：状态挂在指定的那一步上', () => {
     expect(readdirSync(photos)).toContain(first)
   })
 
+  // ★★ 2026-10-08（终审 Important）：规则 ④ 那口子长在 `mergeSteps` 里，而它只在
+  //   **送了 `steps`** 时才跑 —— 于是 `{stateStepId, base}` 这种**不带 steps**的形状
+  //   （拖滑块 / 只换底的那趟，协议里完全合法）会静默落空：回 200、`base` 列与 `files`
+  //   都更新了，但**那一步的 `image` 一个字节没动**。而恢复是按步取 `sessionStepUrl`
+  //   的 → 刷新后这一版还是旧图、**不报错**。这条就是那个形状。
+  it('★★ `base` + stateStepId、**不带 steps**：那一步的 image 也要真的换掉（不是只换 `base` 列）', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { base: JPEG, steps: [step(1)] }, user, deps())
+    const first = stepsOf(id)[0].image
+
+    // ⚠️ 不带 steps（history 没变的那趟）；落点全看 stateStepId
+    await handleUpdateSession(id, { base: JPEG2, stateStepId: 1 }, user, deps())
+
+    const after = stepsOf(id)
+    const row = db.raw.prepare('SELECT * FROM sessions WHERE id=?').get(id) as any
+    expect(after).toHaveLength(1)                 // 没凭空多出一步
+    expect(after[0].image).not.toBe(first)        // 换了，不是"只换了 base 列"
+    expect(after[0].image).toBe(row.base)         // 换上的**就是**这趟新写的那份
+    // 判据口径同上面那条：按步读回来的**字节数**（4 → 5）
+    expect((await handleSessionStepFile(id, 1, user, deps())).bytes.byteLength).toBe(5)
+    // 旧文件不删、仍在名单里
+    expect(filesOf(id)).toContain(first)
+  })
+
   it('★ stateStepId 指的步骤不存在 → 400（新信任边界），库一个字节不改', async () => {
     const { id } = await handleCreateSession({ image: JPEG }, user, deps())
     await handleUpdateSession(id, { steps: [step(1)] }, user, deps())
@@ -508,6 +532,14 @@ describe('stateStepId：状态挂在指定的那一步上', () => {
     await expect(
       handleUpdateSession(id, { stateStepId: 999, params: ZERO, steps: [step(1)] }, user, deps()),
     ).rejects.toMatchObject({ status: 400 })
+
+    // 同一条边界的**另一种形状**：不带 `steps` 也一样（那时"合并后" = 库里那串）。
+    // ⚠️ 这一趟带了 base：新文件已经落了盘，400 之后必须被 catch 收走
+    //    （判据是目录前后一模一样，和「更新」那组两条同一个口径）。
+    const photosBefore = readdirSync(photos).sort()
+    await expect(handleUpdateSession(id, { stateStepId: 999, base: JPEG2 }, user, deps()))
+      .rejects.toMatchObject({ status: 400 })
+    expect(readdirSync(photos).sort()).toEqual(photosBefore)
     expect(rawSteps(id)).toBe(before)
   })
 
