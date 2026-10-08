@@ -1,4 +1,6 @@
-import { UserRound } from 'lucide-react'
+import {
+  Images, MessagesSquare, Palette, SlidersHorizontal, UserRound, WandSparkles,
+} from 'lucide-react'
 import type { View } from './view'
 
 /**
@@ -22,6 +24,25 @@ import type { View } from './view'
  *     连品牌名一起撤了，👤 落在这一列的最底下。搬过来还顺手治好一个旧毛病：
  *     👤 原来只住在顶栏，而顶栏**只有修图页有** —— 站在作品页/对话页的人
  *     根本进不去设置，得先绕回修图页。
+ *
+ * ★★ 2026-10-08（用户原话：「给导航栏设计相关的图标组件」）：**五支各配一个图标**
+ * —— 图标在左、文字在右（`.nav-item` 是 flex 行，见 `styles.css` 那条注释）。
+ * 选型的规矩三条，加新图标时照这个来：
+ *   · **一个图标认一件事**，五支摆在 92px 的一列里、必须一眼分得开：
+ *     修图 = `WandSparkles`（说话改图 = 魔法棒，和"手动拖滑块"的调色分开）、
+ *     调色 = `Palette`（调色盘）、Lut = `SlidersHorizontal`、对话 = `MessagesSquare`、
+ *     作品 = `Images`。
+ *   · ★ **同一个概念全站同一个图标**：Lut 用的滑杆就是对话区加号里那一项用的
+ *     那个（`ChatPanel` 的 `.chat-tool`）—— 同一样东西在两处长得一样，用户不用
+ *     重新认一遍。
+ *   · **尺寸 16、线宽 1.5**（尺子守卫钉着：每个 lucide 图标必须显式写
+ *     `strokeWidth={1.5}`，lucide 默认是 2，不写就是静默变粗）。
+ * ⚠️ 图标是**装饰**：`aria-hidden` 必写 —— 名字是旁边那两个字，读屏和
+ *   "按文字找按钮"的测试（`goNav` / 左栏那份清单）都不该被 svg 搅到。
+ * ⚠️ **窄屏那一行上图标全部藏起来**（`.nav-item:not(.nav-me) > svg`）——
+ *   390px 的一行放不下"图标 + 文字"七颗，撑出横向滚动条；理由在 CSS 那条里。
+ * ⚠️ 下面两颗**不配图标**：它们是"另一个层次"（出门 / 设置），这一列用
+ *   一整片空白把它们和五支隔开就是这个意思 —— 配上图标反而混成一列。
  */
 export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
   // ⚠️ 这一列**不随"手上有没有照片"变**，是用户 2026-10-04 亲口定的：
@@ -41,7 +62,10 @@ export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
   return (
     <nav className="nav">
       <button className={`nav-item${here === 'edit' ? ' on' : ''}`}
-              onClick={() => onGo({ kind: 'edit' })}>修图</button>
+              onClick={() => onGo({ kind: 'edit' })}>
+        <WandSparkles size={16} strokeWidth={1.5} aria-hidden="true" />
+        修图
+      </button>
       {/* ★ 2026-10-04：**「调色」从顶栏搬进来了**（用户原话：「那个微调照片的
           放在导航栏单列出来」——他叫的「微调」是 09-30 改名前的旧词，同一件事）。
 
@@ -58,7 +82,10 @@ export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
           被用户当场否掉：「微调的按钮要**一直在**」）。没有照片时该变的是**照片那块
           地方**（`ui/AdjustEmpty.tsx` 那句「还没有照片。」），不是这一格。*/}
       <button className={`nav-item${here === 'adjust' ? ' on' : ''}`}
-              onClick={() => onGo({ kind: 'adjust' })}>调色</button>
+              onClick={() => onGo({ kind: 'adjust' })}>
+        <Palette size={16} strokeWidth={1.5} aria-hidden="true" />
+        调色
+      </button>
       {/* ★ 2026-10-05：**「滤镜」也进了这一列**（用户：「把滤镜导入放到导航里吧，
           然后我没看到怎么去调用 lut 文件」）。
 
@@ -71,11 +98,20 @@ export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
           ⚠️ 它和「调色」不一样，**没有照片也能进** —— 那一页是管理自己的滤镜库，
           和手上有没有照片无关。 */}
       <button className={`nav-item${here === 'luts' ? ' on' : ''}`}
-              onClick={() => onGo({ kind: 'luts' })}>Lut</button>
+              onClick={() => onGo({ kind: 'luts' })}>
+        <SlidersHorizontal size={16} strokeWidth={1.5} aria-hidden="true" />
+        Lut
+      </button>
       <button className={`nav-item${here === 'sessions' ? ' on' : ''}`}
-              onClick={() => onGo({ kind: 'sessions' })}>对话</button>
+              onClick={() => onGo({ kind: 'sessions' })}>
+        <MessagesSquare size={16} strokeWidth={1.5} aria-hidden="true" />
+        对话
+      </button>
       <button className={`nav-item${here === 'gallery' ? ' on' : ''}`}
-              onClick={() => onGo({ kind: 'gallery' })}>作品</button>
+              onClick={() => onGo({ kind: 'gallery' })}>
+        <Images size={16} strokeWidth={1.5} aria-hidden="true" />
+        作品
+      </button>
       {/* ★ 2026-10-03：**回门面**（用户要的："能从操作页回到落地页"）。
           上一版里这件事**做不到** —— `/` 是落地页，而登录着的人一打开 `/` 就被
           送去 `/app`（见 App.tsx 那条自动跳转），自己人被关在 App 里出不去。
