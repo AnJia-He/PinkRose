@@ -3,7 +3,7 @@ import { ArrowUp } from 'lucide-react'
 // ⚠️ 样式表**不在这儿 import** —— 它在 `src/main.tsx` 里、排在 `styles.css` 后面。
 // 这一页有几条规则要盖掉全局的（body 底色、文档滚动条、color-scheme），
 // 而那份顺序是有讲究的，理由写在那边的导入语句上。
-import logo from '../assets/logo/profile.webp'
+import logo from '../assets/logo/emperor-badge.svg'
 import seaRoad from '../assets/landing/sea-road.jpg'
 import nightView from '../assets/landing/night-view.jpg'
 import oldTown from '../assets/landing/old-town.jpg'
@@ -38,7 +38,8 @@ import appPanel from '../assets/landing/app-panel.webp'
  * ⚠️ **这一页的配色和 App 是同一套**（2026-10-01 改）。原来这里写着"两套语言
  * 是有意的"（门面浅色黄点缀、工具深色粉点缀）—— 那句话在 App 翻成粉底之后
  * 就不成立了：打开网站是白+黄，点进去是粉，中间那一下像换了家公司。
- * 现在两边同源：粉底 + 白面 + 品牌玫瑰，深带是压深的粉而不是近黑。
+ * 现在两边同源：粉底 + 白面 + 品牌标（★ 2026-10-09 起品牌标是黑白的小皇帝，
+ * 见 `src/assets/logo/emperor.svg`），深带是压深的粉而不是近黑。
  * 令牌仍然是 `lp-` 前缀的独立一套（同名会打架），只是**取色规则**一样。
  *
  * 交互只有三处，都不引依赖：

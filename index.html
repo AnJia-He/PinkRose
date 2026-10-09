@@ -38,22 +38,24 @@
     <meta property="og:title" content="PinkRose —— 说句话，照片就修好了" />
     <meta property="og:description" content="上传一张照片，说句话就能改：「天空再蓝一点」「后面那个人去掉」。不用装软件，打开就能用。" />
 
-    <!-- 标签页上那枚小标志（★ 2026-10-03 换的：**黑底 + 粉圆 + 侧脸剪影 + 蓝蝴蝶结**，
-         用户挑的那版；原来那朵粉玫瑰他说不要了）。
-         ⚠️ 现在是**位图**，不是 svg —— Safari 不认 webp 图标，所以这一处必须是 png。
-         那一版是**裁到圆盘、四周只留 4% 的边**做的：图标这一档要把画占满才认得出
-         （老玫瑰那版就吃过这个亏 —— 花只占画布 70%，16px 上真正有画的只有 11px，
-         用户当时原话「标签页的图标太小了」）。
-         图是从 `create-image/落地页/logo候选/侧脸V4-黑底粉圆+蓝结（我推荐）.png`
-         裁出来的，脚本见 2026-10-03 日记。
+    <!-- 标签页上那枚小标志（★ 2026-10-09 换的：**黑底 + 白色小皇帝**，
+         用户拍板「背景用黑色，用白色凸显图标」）。
+         ⚠️ 是**位图**，不是 svg —— Safari 不认 webp 图标，所以这一处必须是 png。
+           · 32px 那张是**简化版**（去掉了光芒和小闪光）：小尺寸上那些碎线只会
+             糊成一团（老玫瑰那版就吃过这个亏 —— 用户原话「标签页的图标太小了」）；
+           · 两张都做成**黑底**：白图在浅色标签栏上看不见、黑图在深色上看不见，
+             **黑底白图两种底上都立得住**（深色底上盘子融进去，白图还在）。
+         出图脚本 `.superpowers/scratch/logo-cat/build-icon-pngs.mjs`
+         （源 = `src/assets/logo/emperor.svg`，改标志改那个再重跑）。
 
          · `apple-touch-icon`：iOS「加到主屏幕」用的是它，而且**苹果完全不读
            `rel="icon"`** —— 少了它，主屏图标会是页面的一张截图。
-           180×180 是不透明 PNG，这是苹果定的那一档。
+           180×180 是不透明 PNG，这是苹果定的那一档（这一版是完整图、满幅方，
+           圆角由 iOS 自己蒙）。
          · 单独那个 32px 的 PNG 是给**搜索引擎**的：Google 站点图标的支持格式清单里
            没有 SVG，只有它自家的 SVG favicon 不进搜索结果。 -->
-    <link rel="icon" type="image/png" sizes="32x32" href="/src/assets/logo/png/profile-32.png" />
-    <link rel="apple-touch-icon" href="/src/assets/logo/png/profile-180.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/src/assets/logo/png/emperor-32.png" />
+    <link rel="apple-touch-icon" href="/src/assets/logo/png/emperor-180.png" />
   </head>
   <body>
     <div id="root"></div>

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Btn } from './kit/Btn.tsx'
 import WelcomeGlobe from './WelcomeGlobe.tsx'
-import logoMark from '../assets/logo/profile.webp'
+import logoMark from '../assets/logo/emperor-badge.svg'
 
 type Props = {
   /** 选好照片了。`wish` 是用户**在对话区里先打的那句话**（没打就是空串）——
@@ -86,8 +86,8 @@ export default function Uploader({ onPick }: Props) {
         onDragLeave={() => setOver(false)}
         onDrop={e => { e.preventDefault(); setOver(false); take(e.dataTransfer?.files) }}
       >
-        {/* 56px：44 的时候这朵花只是一团粉色（花瓣的层次全糊掉了），
-            而它下面是这屏最大的一行字 —— 标志比标题还小会显得没底气。 */}
+        {/* 56px（★ 2026-10-09 换成小皇帝标志后沿用这个数）：44 的时候冕冠那排珠子
+            会糊成一片，而它下面是这屏最大的一行字 —— 标志比标题还小会显得没底气。 */}
         <img className="welcome-mark" src={logoMark} alt="" width={56} height={56} />
         <h1 className="welcome-title">欢迎使用 PinkRose</h1>
         <p className="welcome-lede">

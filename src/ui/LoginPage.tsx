@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 import { login, signup } from '../api/account'
-import logoMark from '../assets/logo/profile.webp'
+import logoMark from '../assets/logo/emperor-badge.svg'
 import { Field, TextInput } from './kit/Field.tsx'
 import { Btn } from './kit/Btn.tsx'
 import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../../shared/account.ts'
@@ -207,9 +207,14 @@ export function LoginPage({ onDone }: Props) {
             两处永远是同一个词。`App.test.tsx` 里「标题就说这一步是干什么的」那条
             钉着两个模式各该显示什么 —— 谁把这里写死成两选一（或写死回「随心」），
             它另一半当场红。 */}
-        {/* 玫瑰标志。**放在标题上面，不替掉标题** —— 标题是要说"现在在登录还是在注册"的
+        {/* 小皇帝标志（★ 2026-10-09 从粉圆盘换过来的，用户拿一张简笔画做的）。
+            **用的是"徽章版"**（黑圆盘 + 白图）不是那张白图：这一页跟随系统主题，
+            浅色模式下白图在白卡片上会**整个看不见**（换标当天真机抓到过）。
+            规矩：底不确定的地方用徽章版，底固定深色的地方（欢迎屏 / 落地页）用白图。
+
+            **放在标题上面，不替掉标题** —— 标题是要说"现在在登录还是在注册"的
             （上面那一大段讲的就是这件事），换成图片那句话就没了。
-            图片 `alt=""`：它旁边就是标题和按钮，读屏的人不需要再听一遍"玫瑰"。
+            图片 `alt=""`：它旁边就是标题和按钮，读屏的人不需要再听一遍它是什么。
 
             ⚠️ 2026-09-25 用户把标题下面那两行字都删了，所以这一屏现在很素。
             加个标志是把那块空白用掉，不是又塞一句话回来 —— **别顺手再加副标题。** */}
