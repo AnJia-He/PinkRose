@@ -744,6 +744,41 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    只有一张照片时竖排和横排的居中结果一模一样。 */
 .workspace .stage { flex: 1; display: flex; flex-direction: column; align-items: stretch; min-width: 0; min-height: 0; }
 
+/* ★ 2026-10-09（用户原话：「你要不就设置为跟会话区回溯背景一样的灰色，
+   现在还是没有看到变化」）：照片底下那圈留白的**下边那一半铺成灰的** ——
+   和上面那条回溯带同一种（`--raised`），一条在上、一条在下，中间夹着照片。
+
+   来路：用户指着照片底下那条 48px 的暗带说「这个位置是我们不用的」。
+   前两版都在改**影子**（先收窄、再修一次写错的 CSS），他两次都说
+   「没有看到变化」—— 影子那点差别在深色底上本来就看不出来。这一版是
+   **他自己点的方子**：铺成和回溯带一样的灰，肉眼一眼能看见。
+
+   ⚠️ 两条别动，动了都不报错、只是看着不对：
+     · 用 **`border-bottom`**，别改成另起一个 div 或者 `::after` ——
+       它们是**元素**，会盖住照片投下来的那道影子（影子正好落进这一带），
+       照片底边会被切出一条硬边。border 和 background 一样画在
+       所有孩子**下面**那一层，影子照常压在它上面。
+     · **`padding-bottom` 必须一起归零**：border 和 padding 加起来才是原来
+       那一档高度。只加 border 不减 padding 的话，照片会**矮掉一截**
+       （`--stage-pad-y` 那一截），而没有任何东西会红。 */
+.workspace .stage {
+  padding-bottom: 0;
+  border-bottom: var(--stage-pad-y) solid var(--raised);
+  /* 底带**顶上那道发丝线** —— 和上面回溯带那条一个语言（那条在带子的**下沿**，
+     这一条在**上沿**，两条线夹着照片区）。
+     ⚠️ 它贴的是 **padding 盒的下沿**（= 底带的上沿），所以是
+     `background-size: 100% 1px` + `background-position: left bottom`：
+     写成 `100% var(--stage-pad-y)` 那种"盖住整条带子"的尺寸，线会被放到
+     带子**上边 48px 处**（图片的顶边对齐的是图片自己的顶），一片都看不见 ——
+     这个错 2026-10-09 现场踩过一次，**一句报错都没有**，只有逐像素量才看得见。
+     ⚠️ 它同样必须是 **background**（不是元素）：照片的影子正好压在这一行上，
+     换成元素的话影子会被切出一道硬边。 */
+  background-image: linear-gradient(var(--line), var(--line));
+  background-size: 100% 1px;
+  background-position: left bottom;
+  background-repeat: no-repeat;
+}
+
 /* ── 预设栏（★ 2026-10-05，`PresetRail`）───────────────────────────────
    照片**左边**那条：一格一张用**当前这张照片**现画的效果小图，点一下整组套上
    （用户：「放在照片区域的左侧」+「像剪映一样」——他要的是"看着效果挑"）。
