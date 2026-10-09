@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 220" fill="none"
+     stroke="#111111" stroke-width="4.9" stroke-linecap="round" stroke-linejoin="round">
+<g transform="translate(110 112) scale(1.13) translate(-110 -92)">
+
+  <!-- 登场光芒 -->
+  <path d="M50 42 L29 21"/>
+  <path d="M40 78 L18 76"/>
+  <path d="M42 116 L20 118"/>
+  <path d="M50 150 L28 162"/>
+  <path d="M170 36 L194 16"/>
+  <path d="M176 72 L197 70"/>
+  <path d="M174 108 L196 110"/>
+  <path d="M166 146 L188 160"/>
+
+  <!-- 小闪光 -->
+  <path d="M32 49 L32 61 M26 55 L38 55"/>
+  <path d="M186 42 L186 54 M180 48 L192 48"/>
+  <path d="M184 130 L184 142 M178 136 L190 136"/>
+
+  <!-- 耳朵 -->
+  <path d="M58 22 L66 56 M58 22 L88 38"/>
+  <path d="M67 42 L78 36"/>
+  <path d="M162 22 L154 56 M162 22 L132 38"/>
+  <path d="M153 42 L142 36"/>
+
+  <!-- 头（越往下越圆的枕头形） -->
+  <path d="M80 52 L140 52 Q157 52 157 68 L157 82 Q157 104 134 107 Q110 110 86 107 Q63 104 63 82 L63 68 Q63 52 80 52 Z"/>
+
+  <!-- 眼睛（外张一点） -->
+  <rect x="89" y="64" width="15" height="30" rx="7.5" fill="#111111" stroke="none" transform="rotate(-4 96.5 79)"/>
+  <rect x="116" y="64" width="15" height="30" rx="7.5" fill="#111111" stroke="none" transform="rotate(4 123.5 79)"/>
+
+  <!-- 冕冠（整体微歪 3°，找回手绘感） -->
+  <g transform="rotate(3 110 52)">
+    <path d="M94 21 L126 21 Q130 21 131 25 L133 47 Q134 52 128 52 L92 52 Q86 52 87 47 L89 25 Q90 21 94 21 Z"/>
+    <!-- 顶排珠 -->
+    <circle cx="96" cy="27.5" r="2.1" fill="#111111" stroke="none"/>
+    <circle cx="105.5" cy="27.5" r="2.1" fill="#111111" stroke="none"/>
+    <circle cx="114.5" cy="27.5" r="2.1" fill="#111111" stroke="none"/>
+    <circle cx="124" cy="27.5" r="2.1" fill="#111111" stroke="none"/>
+    <!-- 中间 2x2 大珠 -->
+    <circle cx="102.5" cy="36" r="2.7" fill="#111111" stroke="none"/>
+    <circle cx="117.5" cy="36" r="2.7" fill="#111111" stroke="none"/>
+    <circle cx="102.5" cy="44" r="2.7" fill="#111111" stroke="none"/>
+    <circle cx="117.5" cy="44" r="2.7" fill="#111111" stroke="none"/>
+    <!-- 前帘珠（压在额头线上） -->
+    <circle cx="94" cy="49.5" r="2.3" fill="#111111" stroke="none"/>
+    <circle cx="104.7" cy="49.5" r="2.3" fill="#111111" stroke="none"/>
+    <circle cx="115.3" cy="49.5" r="2.3" fill="#111111" stroke="none"/>
+    <circle cx="126" cy="49.5" r="2.3" fill="#111111" stroke="none"/>
+  </g>
+
+  <!-- 身子（矮团、比头窄，肩膀快速展开） -->
+  <path d="M84 106 C77 110 72 118 72 126 L72 142 C72 154 88 162 110 162 C132 162 148 154 148 142 L148 126 C148 118 143 110 136 106"/>
+
+  <!-- 交领（Λ）+ 斜襟长带 -->
+  <path d="M84 106 L110 126"/>
+  <path d="M136 106 L110 126"/>
+  <path d="M138 112 L86 148"/>
+
+  <!-- 下摆两道弧（两端过冲一点） -->
+  <path d="M69 137 Q110 146 151 133"/>
+  <path d="M69 149 Q111 156 149 145"/>
+
+  <!-- 左飘带（小叉口） -->
+  <path d="M72 125 L77 131 L83 127 M77 131 L76 170"/>
+  <!-- 右飘带（小圈） -->
+  <circle cx="137" cy="128" r="4.5"/>
+  <path d="M136.5 132 L136 170"/>
+</g>
+</svg>

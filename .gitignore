@@ -42,6 +42,13 @@ test-photos/
 #    首屏会白多下 1.8MB。出图脚本：`.superpowers/scratch/landing-art/_globe_thumbs.py`。
 !src/assets/welcome/*.webp
 
+# 例外：小皇帝标志要入库（★ 2026-10-09 补的）—— 从一张简笔画提炼的
+# 黑底白图标，整套交付物在 `create-image/logo-小皇帝/`（svg ×2、样板页、
+# png 导出 6 个，单个 3~73KB）。放行理由和上面几批一样：**它就是交付物本身**，
+# 丢了隔一阵回头看只剩回忆。svg / html 本来不被过滤（`*.svg` 不在规则里），
+# 这条放行的是 png 那一套。
+!create-image/logo-小皇帝/**
+
 # Python
 __pycache__/
 *.py[cod]
