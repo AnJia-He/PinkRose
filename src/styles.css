@@ -115,6 +115,25 @@
      这个产品的常客（深色里 `#1e1e21` 压 `#151517` 只有 1.07:1，等于没有边）。
      ⚠️ 浅色那半原来写的是 `var(--panel)` —— 就在这里是同一个白，抄平了。 */
   --photo-edge: light-dark(#ffffff, rgba(255, 255, 255, .22));
+  /* ★ 2026-10-09：照片底下那道**影子**（`--photo-edge` 的搭档，成对用）。
+     用户指着一张竖图的截图（照片底边到窗口底那条 48px 的暗带）说：
+     「这个位置是我们不用的，可以设计一下看起来不突兀」。
+
+     量出来的毛病在**这道影子的形状**上：原来是 `--shadow-3`（`0 16px 44px`、
+     深色档 56% 黑），往下偏 16px、再散开 44px —— 而照片底下留给它的地方
+     （`--stage-pad-y`）最多只有 48px。影子没地方落，就在照片底下糊出**一大片
+     散开的灰**，一直飘到窗口边上，读起来像脏，而不是"留白"。
+
+     现在它**贴着照片的边收住**（14px 就散完，比原来的 44px 收掉七成）：
+     照片读起来是**压在卡纸上的相纸**，不是浮在半空的卡片 —— 这也正是
+     `.stage` 那段"照片外面那圈留白是相框的卡纸"要说的事，两处从此一个调子。
+
+     ⚠️ 和 `--photo-edge` 同一条规矩：`.canvas` 和 `.canvas-peek / .compare-img`
+     **必须同值** —— 它们是同一张位置上的两张图（「按住看原图」时上面那张
+     顶掉下面那张），差一点那一下照片的边会**跳一下**。
+     ⚠️ 别顺手换回 `--shadow-3`：那是"浮起来的卡片"的语言（登录卡、横幅在用），
+     照片不是卡片 —— 两个语言混用正是这一条要治的病。 */
+  --photo-shadow: light-dark(0 4px 14px rgba(18, 20, 28, .16), 0 4px 14px rgba(0, 0, 0, .5));
   /* 欢迎页那颗**图片球**中间那层柔光（★ 2026-10-03）。字要压在照片上，就得先
      把中段洗干净 —— 不然「欢迎使用 PinkRose」正好落在一张夜景上。
      用的是**底色的 rgba**：压在照片上相当于"把中间那一块擦淡"。 */
@@ -766,7 +785,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    "相纸边" —— 它同时替了原来那个"顶光"没做成的另一半活。
    ⚠️ 深色模式下**方向反过来**（暗照片会糊进深底），所以走的是令牌
    `--photo-edge` 而不是写死 `--panel` —— 理由写在令牌那两处。 */
-.canvas { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--photo-edge), var(--shadow-3); }
+.canvas { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--photo-edge), var(--photo-shadow); }
 
 /* 「按住看原图」的容器（spec §2.5）。
    它替 .stage 干"把画布居中"这件事：撑满 .stage 留给它的整个空间，
@@ -825,9 +844,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   max-height: 100%;
   object-fit: contain;
   border-radius: var(--r-sm);
-  /* 和 .canvas 那道白边同一套 —— 它们是同一张位置上的两张图（按住看原图时
+  /* 和 .canvas 那道白边**和影子**同一套 —— 它们是同一张位置上的两张图（按住看原图时
      上面那张顶掉下面那张），少一层的话"按住"的那一下照片的边会**跳一下**。 */
-  box-shadow: 0 0 0 1px var(--photo-edge), var(--shadow-3);
+  box-shadow: 0 0 0 1px var(--photo-edge), var(--photo-shadow);
   /* 它只是给人看的，不接收指针事件：事件全落到下面的 wrapper 上，
      系统也就没有"这张图"可存、可复制了（Android Chrome 长按 <img>
      会弹"下载图片"）。指针事件照旧冒泡到 wrapper，松手收得到。 */
