@@ -1887,22 +1887,6 @@ export default function App() {
           时它也会跟着挂载 —— 而它是按"这张照片"来的东西，那些页面上照片根本不在。*/}
       {(view.kind === 'edit' || view.kind === 'adjust') && (
         <div className="app">
-          {/* 「这张照片怎么办」——三颗按钮那条（★ 2026-10-08 拆进 `ui/TopActions`，
-              它当年为什么从"顶着品牌名的顶栏"瘦成"这张照片的操作条"，
-              那一段历史搬在组件的文件头上）。
-              ⚠️ 改那三颗按钮的**文字**要连带改探针/测试（理由在组件里那段）。 */}
-          {image && (
-            <TopActions
-              canShare={canShare}
-              delivering={delivering}
-              onShare={onShare}
-              onDownload={onDownload}
-              onSave={onSave}
-              onNew={startNew}
-              busy={busy !== null}
-            />
-          )}
-
           {/* 顶上那三条横幅（通报 / 替换询问 / 存失败）—— ★ 2026-10-08 拆进
               `ui/Banners`（为什么是**三种东西、别合并**，那一段在组件文件头上）。 */}
           <Banners
@@ -2144,6 +2128,24 @@ export default function App() {
                     />
                   )
                 })()}
+                {/* ★★ 2026-10-09：**「这张照片怎么办」那三颗搬到这儿了** ——
+                    舞台底下那条灰色的操作条（用户原话：「**这一行不要了，放在
+                    照片下面的灰色地带**」）。原来是修图页最顶上那一条，今天整条
+                    撤掉（见 `TopActions` 的文件头）。
+                    ⚠️ 它**必须住在 `.stage` 里面**：带子那三个负外边距的贴边
+                    （顶穿左右内边距、顶穿底下那圈 `--stage-gap`）全靠
+                    `.workspace .stage > .stage-bar` 那条选择器 —— 挪到外面它就
+                    变成一条浮在照片区中间、四周露着深边的灰条。
+                    ⚠️ 改那三颗按钮的**文字**要连带改探针/测试（理由在组件里那段）。 */}
+                <TopActions
+                  canShare={canShare}
+                  delivering={delivering}
+                  onShare={onShare}
+                  onDownload={onDownload}
+                  onSave={onSave}
+                  onNew={startNew}
+                  busy={busy !== null}
+                />
               </div>
               {/* ★ 2026-10-04：**调色那一屏没有对话栏。**
 
