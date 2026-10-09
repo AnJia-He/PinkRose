@@ -1270,6 +1270,46 @@ describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本',
     expect(canvasProps.props.at(-1)!.params.exposure).toBe(0)   // 还是出生那一笔的样子
   })
 
+  /**
+   * ★ 2026-10-10（用户原话：「调色界面的回溯应该是[不]重复记忆的状态，刚才我试了
+   *   一下两个滤镜重复切换记录了4个应该只算两个才对」）：**账本记的是"画面"，
+   *   不是"操作流水"** —— 切回一个已经记过的画面 = 把位置挪过去，不再记一笔。
+   *   来回切那两个 Lut，账本永远只有「出生 + 黄昏 + 青橙」三笔。
+   *
+   * 变异：`pushEdit` 里那两段"回到账本上已有的一笔"删掉 → 第 4 句起开始涨
+   *   （4/4、5/5…），下面每一条都红。
+   */
+  it('★ 来回切两个 Lut：账本只认画面，同一条不重复记（用户报的"切几次记几条"）', async () => {
+    const QINGCHENG: LutMeta = { id: 2, name: '青橙', size: 2, bytes: 100, createdAt: 0 }
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUANGHUN, QINGCHENG] })
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await openLutPanel()
+    /** 选一个 Lut + 停手（900ms → 那一笔定稿进账本）。 */
+    const pick = async (name: string) => {
+      await tap(tileNamed(name))
+      await waitPersist()
+    }
+
+    await pick('黄昏')
+    expect(stepNav()!.textContent).toContain('2 / 2')
+    await pick('青橙')
+    expect(stepNav()!.textContent).toContain('3 / 3')
+
+    // 关键那一下：切回**已经记过**的"黄昏" —— 位置退回去，**一条都不加**
+    await pick('黄昏')
+    expect(stepNav()!.textContent, '切回黄昏 = 退回已经记过的那一笔，不新增').toContain('2 / 3')
+    expect(tileNamed('黄昏').getAttribute('aria-pressed'), '挪过去的是真的那一笔').toBe('true')
+
+    // 让出来的"青橙"在 future 里 —— 「下一步」走得回去，什么都没丢
+    await tap(navBtns()[1]!)
+    expect(stepNav()!.textContent, '来回走一圈，总数还是三条').toContain('3 / 3')
+    await tap(navBtns()[0]!)
+    expect(stepNav()!.textContent).toContain('2 / 3')
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+  })
+
   it('★ 翻账本不跟对话打交道：一条消息不多、转盘一格不多、一分钱不花', async () => {
     await renderApp()
     await uploadPhoto()

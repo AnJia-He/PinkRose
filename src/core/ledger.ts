@@ -37,16 +37,56 @@ export const LEDGER_PIXEL_BUDGET = 32_000_000
 /**
  * 记一笔：把"改之前"压进 `past`、**清空 `future`**、当前位置换成 `next`。纯函数。
  *
- * ⚠️ **必须返回新数组**（`[...s.past, before]`）：快照到处都是 `{...s}` 浅展开，
- *   `past`/`future` 是**共享的数组引用** —— 一旦原地 `push`，改一版会让别的版本
- *   跟着变，而且一句错都不报。
+ * ★ 2026-10-10（用户原话：「调色界面的回溯应该是[不]重复记忆的状态，刚才我试了
+ *   一下两个滤镜重复切换记录了4个应该只算两个才对」）：**回到账本上已经有的那个
+ *   画面 = 把位置挪过去，不再记一笔** —— 账本记的是"画面"，不是"操作流水"。
+ *   来回切两个滤镜（A→B→A→B…）永远只有「出生 + A + B」三笔、人在两笔之间来回走；
+ *   不认这一条的话每切一次涨一笔，用户按十下「上一步」都退不出他自己刚才那两步。
+ *
+ * 三条边界（都是"错了不报错"那一类，动这里之前先看）：
+ *   · 判据是 `sameEdit` —— 它的 base **认对象身份**，所以这条**只可能在调色 /
+ *     滤镜那条路上发生**：裁剪 / 点修每一刀都是一张**新位图**（哪怕宽高恰好一样），
+ *     永远匹配不上，照旧老老实实记一笔。`ledger.test.ts` 有一条边界用例钉着。
+ *   · 让出来的那一笔进 `future`（和 `undoEdit` 同一个位置口径）——「下一步」
+ *     **还走得回去**，什么都不丢。所以这不是"撤销"，只是把位置挪一下。
+ *   · 匹配到的那一笔**保持原样**（连 `seq` 都不动）；被让出去的那一笔拿 `seq: 0`
+ *     （同 `undoEdit` 那条：`future` 是"还没决定要不要再回去"的位置，预算吃紧时
+ *     它先出局）。`past` 先于 `future` 找 —— 同一张画面两边都出现时（理论上账本
+ *     自己不该有重复，但这是纯函数、不替调用方担保）优先"往回走"。
+ *
+ * ⚠️ **每个分支都必须返回新数组**（`[...s.past, before]` / `slice`）：快照到处都是
+ *   `{...s}` 浅展开，`past`/`future` 是**共享的数组引用** —— 一旦原地 `push`，
+ *   改一版会让别的版本跟着变，而且一句错都不报。
  *
  * ⚠️ 入账用的是 **`before.seq`**（调用方在构造 `before` 时发号，发号器在 `App` 的
  *   `editSeqRef`）；第 4 个参数收下**不用** —— 签名里留着是为了让"每个记账点都被
  *   编译期逼着表态发过号"（少传一个就编译不过）。调用方（`App`）写的都是
- *   `before` 带同一个号、第 4 个参数再传一遍，两边恒等。
+ *   `before` 带同一个号、第 4 个参数再传一遍，两边恒等。挪位置那条路上连 `before`
+ *   都用不上（没记这一笔，号白跳一个 —— 无害，号允许有空洞，它只用来比先后）。
  */
 export function pushEdit(s: Snapshot, before: EditState, next: Omit<EditState, 'seq'>, _seq: number): Snapshot {
+  /** 当前位置 —— 挪位置时它顶上 `future` 的队首（`seq: 0`，同 `undoEdit` 的口径）。 */
+  const here: EditState = { base: s.base, params: s.params, lut: s.lut, seq: 0 }
+  const back = s.past.findIndex(e => sameEdit(e, next))
+  if (back >= 0) {
+    const hit = s.past[back]!
+    return {
+      ...s,
+      past: s.past.slice(0, back),
+      future: [...s.past.slice(back + 1), here, ...s.future],
+      base: hit.base, params: hit.params, lut: hit.lut,
+    }
+  }
+  const fwd = s.future.findIndex(e => sameEdit(e, next))
+  if (fwd >= 0) {
+    const hit = s.future[fwd]!
+    return {
+      ...s,
+      past: [...s.past, here, ...s.future.slice(0, fwd)],
+      future: s.future.slice(fwd + 1),
+      base: hit.base, params: hit.params, lut: hit.lut,
+    }
+  }
   return { ...s, past: [...s.past, before], future: [], base: next.base, params: next.params, lut: next.lut }
 }
 

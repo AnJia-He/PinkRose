@@ -79,6 +79,65 @@ describe('账本：记账 / 撤销 / 重做', () => {
     // base **认对象**：两个 1×1 长得一样，但不是同一张 —— 换过底图就是换过
     expect(sameEdit({ base: b, params: ZERO, lut: null }, { base: img(1, 1), params: ZERO, lut: null })).toBe(false)
   })
+
+  /**
+   * ★ 2026-10-10（用户原话：「调色界面的回溯应该是[不]重复记忆的状态，刚才我试了
+   *   一下两个滤镜重复切换记录了4个应该只算两个才对」）：**账本记的是"画面"，
+   *   不是"操作流水"** —— 回到账本上已经有的那个画面 = 把位置挪过去，不新增一笔。
+   *
+   * 变异：把下面那两段 `findIndex` 拿掉 → 每切一次涨一笔（3 → 4 → 5…），
+   *   也就是用户看到的那个"切几次记几条"；`App.adjust.test.tsx` 里那条同题
+   *   用例也一起红。
+   */
+  it('★ 回到账本上已经记过的一笔：位置挪过去，不再记一笔', () => {
+    const b = img(10, 10)
+    const H = { lutId: 1, amount: 100 }      // 黄昏
+    const Q = { lutId: 2, amount: 100 }      // 青橙
+    const s0 = snap({ base: b })                                       // 出生：不用滤镜
+    const s1 = pushEdit(s0, st(b), { base: b, params: ZERO, lut: H }, 1)
+    const s2 = pushEdit(s1, st(b, ZERO, H, 2), { base: b, params: ZERO, lut: Q }, 2)
+    expect(ledgerTotal(s2)).toBe(3)                                    // 出生 + 黄昏 + 青橙
+
+    // ① 切回**上一笔**（黄昏）：位置退回去，一条不加
+    const s3 = pushEdit(s2, st(b, ZERO, Q, 3), { base: b, params: ZERO, lut: H }, 3)
+    expect(ledgerTotal(s3), '同一条不许记第二遍').toBe(3)
+    expect(ledgerIndex(s3), '人站在"黄昏"那一笔上').toBe(2)
+    expect(s3.lut).toBe(H)
+    expect(s3.future.map(f => f.lut), '让出来的那一笔进 future —— 「下一步」还回得去').toEqual([Q])
+    expect(s2.past, '纯函数：入参一个字都不动').toHaveLength(2)
+    expect(s3).not.toBe(s2)
+
+    // ② 再切回青橙：它现在在 future 里 —— 同样只挪位置
+    const s4 = pushEdit(s3, st(b, ZERO, H, 4), { base: b, params: ZERO, lut: Q }, 4)
+    expect(ledgerTotal(s4)).toBe(3)
+    expect(ledgerIndex(s4)).toBe(3)
+    expect(s4.lut).toBe(Q)
+
+    // ③ 切回**出生那一笔**（「不用」，隔着两笔）：一路退到底，中间两笔都在 future 里
+    const s5 = pushEdit(s4, st(b, ZERO, Q, 5), { base: b, params: ZERO, lut: null }, 5)
+    expect(ledgerTotal(s5)).toBe(3)
+    expect(ledgerIndex(s5)).toBe(1)
+    expect(s5.lut).toBe(null)
+    expect(s5.future.map(f => f.lut)).toEqual([H, Q])
+
+    // ④ 参数回到老值也一样（不只滤镜）——同一个画面的另一个来源
+    const s6 = pushEdit(snap({ base: b }), st(b), { base: b, params: { ...ZERO, exposure: 30 }, lut: null }, 1)
+    const s7 = pushEdit(s6, st(b, { ...ZERO, exposure: 30 }, null, 2), { base: b, params: ZERO, lut: null }, 2)
+    expect(ledgerTotal(s7)).toBe(2)
+    expect(ledgerIndex(s7)).toBe(1)
+  })
+
+  it('认画面认的是**同一张底图**：换上来的新底图哪怕尺寸一样也各算各的（裁剪那条路永远不合并）', () => {
+    // ⚠️ 这条是上一条的**边界**：`sameEdit` 的 base **认对象身份** —— 裁第二刀得到的
+    //   是一张**新位图**，哪怕宽高和上一张一模一样，也不许被当成"回到某一笔"。
+    //   改成比值 / 比宽高的话，就是"裁第二刀不记账"（画面照换、账本不动，静默）。
+    const a = img(10, 10); const b = img(10, 10); const c = img(10, 10)
+    const s1 = pushEdit(snap({ base: a }), st(a), { base: b, params: ZERO, lut: null }, 1)
+    expect(ledgerTotal(s1)).toBe(2)
+    const s2 = pushEdit(s1, st(b, ZERO, null, 2), { base: c, params: ZERO, lut: null }, 2)
+    expect(ledgerTotal(s2), '新底图 = 新的一笔，不跟上一笔合并').toBe(3)
+    expect(ledgerIndex(s2)).toBe(3)
+  })
 })
 
 describe('预算驱逐', () => {
