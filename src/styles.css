@@ -1883,6 +1883,21 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   box-shadow: var(--ring);
 }
 .chat-title-input:focus { outline: none; }
+/* ★ 2026-10-09：改名框旁边那颗**「取消」**（组件在 `ui/kit/RenameInput`）——
+   **三处共用这一条**：作品详情页顶栏、对话列表那一行、对话栏顶上那颗铅笔。
+   用户原话：「**这个修改时没法退出**」—— 在那之前，进了编辑态那一行上
+   一个可点的东西都没有（铅笔自己也被输入框顶掉了），出口只剩 Esc 和"点别处"，
+   而点别处是**保存**。
+   长相走**最轻**那一档（和 `.chat-title-edit` / `.session-more` 同一套语言：
+   透明底、悬停才现形状）—— 它是这一行里最不常按的一颗，不该跟内容抢眼。
+   形状是 8px（`button{}` 的默认值，坐在**行**里的按钮）不是药丸。 */
+.rename-cancel {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--muted);
+  background: none; border-color: transparent;
+}
+.rename-cancel:hover { color: var(--text); border-color: var(--line-2); }
 /* 一条消息的外壳。★ 2026-10-05 的形状是"两块"（文字一块、图一块，
    用户当时要的）；★ 2026-10-06（晚）**照片撤出对话区之后只剩一块** ——
    气泡里的话 + 末尾那排操作（再来一版 / 「…」）。

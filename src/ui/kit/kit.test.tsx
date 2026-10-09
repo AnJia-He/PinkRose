@@ -20,6 +20,7 @@ import { Field, TextInput } from './Field.tsx'
 import { Slider } from './Slider.tsx'
 import { Btn, BtnLink } from './Btn.tsx'
 import ChatPanel from '../ChatPanel.tsx'
+import { RenameInput } from './RenameInput.tsx'
 import { LoginPage } from '../LoginPage.tsx'
 
 async function mount(node: React.ReactNode) {
@@ -243,5 +244,75 @@ describe('登录页三格换过来之后', () => {
     // 按钮是 labelable 元素，包进 label 会污染输入框的可读名字（见 LoginPage 那段注释）
     expect(eye.closest('label')).toBeNull()
     expect(c.querySelector('.login-pw input[name="password"]')).toBeTruthy()
+  })
+})
+
+/**
+ * ★ 2026-10-09（用户截图 + 原话：「**这个修改时没法退出**」）：
+ * **改名框旁边那颗「取消」**。
+ *
+ * 在这之前，进了编辑态那一行上**一个可点的东西都没有**（铅笔自己也被输入框
+ * 顶掉了），出口只剩 Esc 和"点别处"—— 而点别处是**保存**，不是退出。
+ * 三处（作品详情 / 对话列表 / 对话栏）共用这一个组件，所以修在这儿三处一起好。
+ */
+describe('RenameInput：那格改名框和它旁边那颗「取消」', () => {
+  const input = (c: HTMLElement) => c.querySelector('.x-input') as HTMLInputElement
+  const cancel = (c: HTMLElement) => c.querySelector('.rename-cancel') as HTMLButtonElement
+
+  it('编辑态里**有一颗看得见的出口**（图标键：名字只在 aria-label 上）', async () => {
+    const c = await mount(<RenameInput className="x-input" defaultValue="海边" ariaLabel="改名"
+      onCommit={() => {}} onCancel={() => {}} />)
+    expect(input(c)).toBeTruthy()
+    const btn = cancel(c)
+    expect(btn).toBeTruthy()
+    expect(btn.getAttribute('aria-label')).toBe('取消')
+    // 图标不进 textContent —— "按文字找按钮"的地方和读屏看到的都只有那个名字
+    expect(btn.querySelector('svg')).toBeTruthy()
+    expect(btn.textContent?.trim()).toBe('')
+    // ⚠️ `type="button"`：哪天它被挪进表单里，少这个就是"按一下取消、顺手交了表单"
+    expect(btn.type).toBe('button')
+  })
+
+  it('点「取消」→ **只取消，不提交**', async () => {
+    const committed: string[] = []
+    let cancelled = 0
+    const c = await mount(<RenameInput className="x-input" defaultValue="海边" ariaLabel="改名"
+      onCommit={(v) => committed.push(v)} onCancel={() => { cancelled++ }} />)
+    input(c).value = '改了一半反悔了'
+    await act(async () => { cancel(c).click() })
+    expect(cancelled).toBe(1)
+    expect(committed).toEqual([])
+  })
+
+  it('★ 鼠标按下去的那一刻**不许先提交**（`onMouseDown` 的 preventDefault）', async () => {
+    // 真机上的顺序是：按下去 → 输入框失焦 → `onBlur` → **名字先存了** ——
+    // 然后才轮到 `onClick` 去"取消"（太晚了，而且那个框已经没了）。
+    // 挡它的就是 `onMouseDown` 里那句 `preventDefault`：焦点根本不动，就不会 blur。
+    // ⚠️ jsdom 不会因为点按钮就搬焦点，所以"失焦"这半在这儿复现不了 ——
+    //    这条只钉得住**那一句 preventDefault 还在**（真机那条路由
+    //    `.superpowers/scratch/chat-title/cancel.mjs` 的探针验过：
+    //    点了 ✕ 之后名字没变、改名请求 0 次）。
+    const c = await mount(<RenameInput className="x-input" defaultValue="海边" ariaLabel="改名"
+      onCommit={() => {}} onCancel={() => {}} />)
+    const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    await act(async () => { cancel(c).dispatchEvent(ev) })
+    expect(ev.defaultPrevented).toBe(true)
+  })
+
+  it('★ 焦点**移到「取消」上**不算"点走保存" —— 键盘用户 Tab 过去不该先把名字存了', async () => {
+    const committed: string[] = []
+    const c = await mount(<RenameInput className="x-input" defaultValue="海边" ariaLabel="改名"
+      onCommit={(v) => committed.push(v)} onCancel={() => {}} />)
+    const box = input(c)
+    box.value = '键盘这条也别存'
+    // ⚠️ 派的是 **`focusout`** 不是 `blur` —— React 的 `onBlur` 挂的正是它
+    //    （合成事件按"冒泡的那个"接）。派 `blur` 的话处理器**根本不会跑**，
+    //    下面那句 `toEqual([])` 就成了**空过**：把守卫删掉它照样绿
+    //    （这版第一稿就是这么写的，跑出来才发现）。对照组就是防这个的。
+    await act(async () => { box.dispatchEvent(new FocusEvent('focusout', { relatedTarget: cancel(c), bubbles: true })) })
+    expect(committed).toEqual([])
+    // 对照组：焦点移到**别处**（relatedTarget 不是它）→ 照旧是"点走保存"
+    await act(async () => { box.dispatchEvent(new FocusEvent('focusout', { relatedTarget: document.body, bubbles: true })) })
+    expect(committed).toEqual(['键盘这条也别存'])
   })
 })

@@ -2134,6 +2134,30 @@ describe('对话栏顶上那条：这条会话叫什么 + 铅笔改名', () => {
     expect(shownName()).toBe('p')
   })
 
+  it('★★ 编辑态里有一颗**看得见的**「取消」—— 点它不发请求、名字不变', async () => {
+    // ★ 2026-10-09 用户截图 + 原话：「**这个修改时没法退出**」。
+    //   在这之前，进了编辑态那一行上**一个可点的东西都没有**（铅笔自己也被
+    //   输入框顶掉了），出口只剩 Esc（看不见的）和"点别处"—— 而那一个是**保存**。
+    //   想反悔的用户，屏幕上没有任何东西告诉他怎么办。
+    //   ⚠️ 这条同时钉着"点了它**不发请求**" —— 那颗按钮走的是取消那条路，
+    //   不是"先保存再关掉"（真机上还多一层：`onMouseDown` 的 `preventDefault`
+    //   挡住输入框先失焦，见 `kit/RenameInput`）。
+    await renderApp()
+    await uploadPhoto()
+    await click(pencil()!)
+
+    const cancelBtn = head()!.querySelector('.rename-cancel') as HTMLElement
+    expect(cancelBtn, '编辑态里该有一颗「取消」').toBeTruthy()
+    expect(cancelBtn.getAttribute('aria-label')).toBe('取消')
+
+    await typeName('改了一半反悔了')
+    await click(cancelBtn)
+
+    expect(nameBox()).toBeNull()            // 编辑态收掉了
+    expect(shownName()).toBe('p')           // 名字一个字没变
+    expect(renameCalls()).toHaveLength(0)   // 一个请求都没发
+  })
+
   it('★ 改名失败：屏幕上原样不动，上面说一句（哪不对 + 怎么办）', async () => {
     await renderApp()
     await uploadPhoto()
