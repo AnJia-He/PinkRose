@@ -976,3 +976,44 @@ export type { Adjustments, LutMeta, Rgb, RouteDecision, SessionDetail, SessionSt
 export const canvasProps = canvasPropsStore
 export const CUBE2_TEXT = cube2TextStore
 export const pipes = pipesStore
+
+// ── 测试体反复要用的几个动作 ────────────────────────────────────────────
+// ★ 2026-10-09：拆成六个文件之后，这几个原来在各 describe 里各有一份的小助手
+//   变成了"跨文件各一份"。收进这里一份（都在同一份文件里，不再到处找）。
+
+/** 几条打到某条会话上的更新请求（`steps` 是唯一看得见历史的地方）。 */
+export   const putCalls = (url: string) =>
+    fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === 'PUT')
+
+/** 屏幕上所有气泡的文字（用户的和助手的都在里面）。 */
+export   const bubbleTexts = () =>
+    [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
+
+/** 一步一格 —— **转盘上的格子**（顺序 = 步骤顺序，站着那格是 `<span>`）。 */
+export   const stepItems = () =>
+    [...container.querySelectorAll<HTMLElement>('.strip-node')]
+
+/** 拨一条调色滑块：点数字 → 打字 → 回车。 */
+export   async function setSlider(name: string, value: number) {
+    const row = [...container.querySelectorAll('.panel .slider')]
+      .find(el => el.querySelector('.slider-label')?.textContent === name)
+    expect(row, `调色面板里该有一条「${name}」`).toBeTruthy()
+    await act(async () => {
+      ;(row!.querySelector('.slider-value') as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const box = row!.querySelector('input.slider-edit') as HTMLInputElement
+    await typeIn(box, String(value))
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+/** 进裁剪 → 立刻「完成」= **换了一次底图**（账本上加一笔、落盘那趟 `baseChanged`）。 */
+export   async function cropOnce() {
+    const cell = container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
+    expect(cell, '工具行里该有「裁剪」').toBeTruthy()
+    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
+    await clickByText('完成')
+  }

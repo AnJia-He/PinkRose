@@ -6,7 +6,41 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { CUBE2_TEXT, HUANGHUN, OK, WORK, adjustPanel, bodyOf, canvasProps, clickByText, container, decision, decodedBitmaps, fakeDecoded, fetchMock, goNav, jsonResponse, lastReply, lutSection, makeGate, makeSession, openChatTool, openLutPanel, pipes, renderApp, say, tileNamed, typeIn, uploadPhoto, waitPersist, withSessions, withWorks } from './test/appHarness'
+import {
+  CUBE2_TEXT,
+  HUANGHUN,
+  OK,
+  WORK,
+  adjustPanel,
+  bodyOf,
+  bubbleTexts,
+  canvasProps,
+  clickByText,
+  container,
+  cropOnce,
+  decision,
+  decodedBitmaps,
+  fakeDecoded,
+  fetchMock,
+  goNav,
+  jsonResponse,
+  lastReply,
+  lutSection,
+  makeGate,
+  makeSession,
+  openChatTool,
+  openLutPanel,
+  pipes,
+  renderApp,
+  say,
+  setSlider,
+  stepItems,
+  tileNamed,
+  uploadPhoto,
+  waitPersist,
+  withSessions,
+  withWorks,
+} from './test/appHarness'
 import { act } from 'react'
 import { ZERO } from '../shared/adjustments.ts'
 import { type LutMeta } from '../shared/lut.ts'
@@ -643,15 +677,6 @@ describe('滤镜', () => {
 })
 
 describe('「回到这一步」不再删后面的步骤', () => {
-  /**
-   * 一步一格 —— ★ 2026-10-06（晚）：判据从对话里那两颗文字提示
-   * （`.bubble-jump` / `.bubble-current`）换成了**转盘上的格子**。
-   * 顺序 = 步骤顺序（原图在最前），点一格 = `onJump`；站着那格是 `<span>`。
-   */
-  const stepItems = () =>
-    [...container.querySelectorAll<HTMLElement>('.strip-node')]
-  const bubbleTexts = () =>
-    [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
 
   /** 上传 + 生成两版：history = [原图, 第 1 版, 第 2 版]，对话 5 条。 */
   async function twoVersions() {
@@ -1035,37 +1060,7 @@ describe('调色的「一笔」：停手 0.8 秒定稿', () => {
   const tap = (el: HTMLElement) =>
     act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
 
-  /**
-   * 拨一条调色滑块：点数字 → 打字 → 回车（面板那个零件现成的用法，
-   * 和「裁剪」那组里的 `setStraighten` 同一套动作）。
-   *
-   * ⚠️ 不走"说一句话"那条路：那条是**花钱**的路由，而且它给的是"模型算出来的
-   *   增量" —— 这里要的是"用户手上那一下"，一次 `onChange` 就是一次现场改动。
-   */
-  async function setSlider(name: string, value: number) {
-    const row = [...container.querySelectorAll('.panel .slider')]
-      .find(el => el.querySelector('.slider-label')?.textContent === name)
-    expect(row, `调色面板里该有一条「${name}」`).toBeTruthy()
-    await act(async () => {
-      ;(row!.querySelector('.slider-value') as HTMLElement).click()
-      await new Promise(r => setTimeout(r, 0))
-    })
-    const box = row!.querySelector('input.slider-edit') as HTMLInputElement
-    await typeIn(box, String(value))
-    await act(async () => {
-      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-      await new Promise(r => setTimeout(r, 0))
-    })
-  }
 
-  /** 进裁剪 → 立刻「完成」（框是默认那一个 = 整张照片，所以这一刀只换了底图）。
-   *  ★ 账本上它是一笔"换了底图的笔"，而**箭头那组**正是靠它才有东西可翻。 */
-  async function cropOnce() {
-    const cell = container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
-    expect(cell, '工具行里该有「裁剪」').toBeTruthy()
-    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
-    await clickByText('完成')
-  }
 
   it('★ 连着调（不歇）= 同一笔；停手 0.8 秒才定稿', async () => {
     await renderApp()
@@ -1208,38 +1203,13 @@ describe('调色的「一笔」：停手 0.8 秒定稿', () => {
 })
 
 describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本', () => {
-  const bubbleTexts = () =>
-    [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
   const stepNav = () => container.querySelector('.step-nav')
   const navBtns = () => [...container.querySelectorAll<HTMLButtonElement>('.step-nav-btn')]
   /** 点一下 + 让 React 把状态刷完（这个文件里别处同款）。 */
   const tap = (el: HTMLElement) =>
     act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
 
-  /** 进裁剪 → 立刻「完成」= 账本上多一笔（出生 + 这一刀）。 */
-  async function cropOnce() {
-    const cell = container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
-    expect(cell, '工具行里该有「裁剪」').toBeTruthy()
-    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
-    await clickByText('完成')
-  }
 
-  /** 拨一条调色滑块（和上一组同款：点数字 → 打字 → 回车）。 */
-  async function setSlider(name: string, value: number) {
-    const row = [...container.querySelectorAll('.panel .slider')]
-      .find(el => el.querySelector('.slider-label')?.textContent === name)
-    expect(row, `调色面板里该有一条「${name}」`).toBeTruthy()
-    await act(async () => {
-      ;(row!.querySelector('.slider-value') as HTMLElement).click()
-      await new Promise(r => setTimeout(r, 0))
-    })
-    const box = row!.querySelector('input.slider-edit') as HTMLInputElement
-    await typeIn(box, String(value))
-    await act(async () => {
-      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-      await new Promise(r => setTimeout(r, 0))
-    })
-  }
 
   it('只在这一屏出现：修图屏没有它（那一屏的照片上方是转盘）', async () => {
     await renderApp()
@@ -1403,30 +1373,7 @@ describe('★ 账本预算闸：记账统一收口（Task 5）', () => {
   const gated = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.at(-1)![1] as unknown as
     { past: { seq: number }[]; future: { seq: number }[]; params: Record<string, number> }[]
 
-  /** 进裁剪 → 立刻「完成」= 账本上多一笔（和上面两组的同款帮手）。 */
-  async function cropOnce() {
-    const cell = container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
-    expect(cell, '工具行里该有「裁剪」').toBeTruthy()
-    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
-    await clickByText('完成')
-  }
 
-  /** 拨一条调色滑块（点数字 → 打字 → 回车，同上）。 */
-  async function setSlider(name: string, value: number) {
-    const row = [...container.querySelectorAll('.panel .slider')]
-      .find(el => el.querySelector('.slider-label')?.textContent === name)
-    expect(row, `调色面板里该有一条「${name}」`).toBeTruthy()
-    await act(async () => {
-      ;(row!.querySelector('.slider-value') as HTMLElement).click()
-      await new Promise(r => setTimeout(r, 0))
-    })
-    const box = row!.querySelector('input.slider-edit') as HTMLInputElement
-    await typeIn(box, String(value))
-    await act(async () => {
-      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-      await new Promise(r => setTimeout(r, 0))
-    })
-  }
 
   /** 进点修、涂一笔，返回「擦掉这里」那颗按钮（和「点修」那一组同款：真掩码 + 真回调）。 */
   async function retouchPainted() {

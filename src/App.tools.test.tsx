@@ -6,7 +6,28 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { OK, bodyOf, canvasProps, clickByText, container, decision, decodedBitmaps, fakeBitmap, fakeDecoded, fetchMock, goNav, lastReply, makeGate, makeSession, renderApp, reopenApp, say, uploadPhoto, waitPersist, withSessions } from './test/appHarness'
+import {
+  OK,
+  bodyOf,
+  canvasProps,
+  clickByText,
+  container,
+  decision,
+  decodedBitmaps,
+  fakeBitmap,
+  fakeDecoded,
+  goNav,
+  lastReply,
+  makeGate,
+  makeSession,
+  putCalls,
+  renderApp,
+  reopenApp,
+  say,
+  uploadPhoto,
+  waitPersist,
+  withSessions,
+} from './test/appHarness'
 import { act } from 'react'
 import * as decodeMod from './image/decode'
 import * as api from './api/client'
@@ -18,9 +39,6 @@ import { describe, expect, it, vi } from 'vitest'
 import type { SuggestResponse } from './test/appHarness'
 
 describe('★ 裁剪：框 + 第二行 + 完成 = 给当前这一版记一笔账（不加转盘格）', () => {
-  /** 打到某条会话上的更新请求（`steps` 是唯一看得见历史的地方）。 */
-  const putCalls = (url: string) =>
-    fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === 'PUT')
   /** 交给画布的裁剪现场（App 算好那一整块）。 */
   const sceneOf = () => canvasProps.props.at(-1)?.crop as {
     rect: { x: number; y: number; w: number; h: number }
@@ -444,8 +462,6 @@ describe('★ 点修：涂抹层 + 第二行 + 擦掉这里 = 给当前这一版
   const sceneOf = () => last().retouch as {
     radius: number; mode: 'paint' | 'erase'; mask: Uint8Array; onMaskChange: () => void
   } | null
-  const putCalls = (url: string) =>
-    fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === 'PUT')
   const eraseButton = () => [...container.querySelectorAll('button')]
     .find(b => (b.textContent ?? '').trim() === '擦掉这里') as HTMLButtonElement
 

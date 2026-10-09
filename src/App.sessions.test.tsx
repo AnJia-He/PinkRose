@@ -6,7 +6,35 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { OK, bodyOf, canvasProps, clickByText, container, decision, decodedBitmaps, fakeDecoded, fetchMock, goNav, jsonResponse, lastReply, makeGate, makeSession, renderApp, reopenApp, root, say, typeIn, uploadPhoto, waitPersist, withSessions, withSessionsError } from './test/appHarness'
+import {
+  OK,
+  bodyOf,
+  bubbleTexts,
+  canvasProps,
+  clickByText,
+  container,
+  cropOnce,
+  decision,
+  decodedBitmaps,
+  fakeDecoded,
+  fetchMock,
+  goNav,
+  jsonResponse,
+  lastReply,
+  makeGate,
+  makeSession,
+  putCalls,
+  renderApp,
+  reopenApp,
+  root,
+  say,
+  setSlider,
+  stepItems,
+  uploadPhoto,
+  waitPersist,
+  withSessions,
+  withSessionsError,
+} from './test/appHarness'
 import { act } from 'react'
 import { ZERO, type Adjustments } from '../shared/adjustments.ts'
 import { PRESETS } from './core/presets'
@@ -24,30 +52,7 @@ describe('会话落盘：上传建会话、每一步更新', () => {
   const sessionCalls = (url: string, method: 'POST' | 'PUT') =>
     fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === method)
 
-  /** 拨一条调色滑块（和「账本」那几组同款：点数字 → 打字 → 回车）。 */
-  async function setSlider(name: string, value: number) {
-    const row = [...container.querySelectorAll('.panel .slider')]
-      .find(el => el.querySelector('.slider-label')?.textContent === name)
-    expect(row, `调色面板里该有一条「${name}」`).toBeTruthy()
-    await act(async () => {
-      ;(row!.querySelector('.slider-value') as HTMLElement).click()
-      await new Promise(r => setTimeout(r, 0))
-    })
-    const box = row!.querySelector('input.slider-edit') as HTMLInputElement
-    await typeIn(box, String(value))
-    await act(async () => {
-      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-      await new Promise(r => setTimeout(r, 0))
-    })
-  }
 
-  /** 进裁剪 → 立刻「完成」= **换了底图**（账本上加一笔、落盘那趟 `baseChanged`）。 */
-  async function cropOnce() {
-    const cell = container.querySelector('[aria-label="裁剪"]') as HTMLButtonElement
-    expect(cell, '工具行里该有「裁剪」').toBeTruthy()
-    await act(async () => { cell.click(); await new Promise(r => setTimeout(r, 0)) })
-    await clickByText('完成')
-  }
 
   it('★ 上传照片 → 会建一条会话；原图、缩略图、照片名一起送上去', async () => {
     await renderApp()
@@ -355,12 +360,6 @@ describe('会话落盘：上传建会话、每一步更新', () => {
 })
 
 describe('恢复：打开就接着上次那条', () => {
-  /** 屏幕上所有气泡的文字（用户的和助手的都在里面）。 */
-  const bubbleTexts = () =>
-    [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
-  /** 打到某条会话上的更新请求。 */
-  const putCalls = (url: string) =>
-    fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === 'PUT')
   /** 「下载」那颗按钮（桌面浏览器那一档：`canShare` 假成 false）。 */
   const downloadBtn = () =>
     [...container.querySelectorAll('.actions button')]
@@ -1378,16 +1377,6 @@ describe('恢复：打开就接着上次那条', () => {
 })
 
 describe('删除记录 —— 单条走「…」菜单，多条走勾选批量', () => {
-  /** 屏幕上所有气泡的文字（用户的和助手的都在里面）。 */
-  const bubbleTexts = () =>
-    [...container.querySelectorAll('.bubble-text')].map(e => e.textContent ?? '')
-  /** 打到某条会话上的更新请求（照「恢复」那个 describe 里那条）。 */
-  const putCalls = (url: string) =>
-    fetchMock.mock.calls.filter(([u, init]) => u === url && (init?.method ?? 'GET') === 'PUT')
-  /** 一步一格 —— **转盘上的格子**（★ 2026-10-06 晚起对话里那两颗文字提示退役了），
-   *  顺序 = 步骤顺序，站着那格是 `<span>`。 */
-  const stepItems = () =>
-    [...container.querySelectorAll<HTMLElement>('.strip-node')]
 
   /** 按**气泡文字**认那条消息（找不到时给一句人话，别让测试死在 null 上）。 */
   function msgOf(text: string): HTMLElement {
