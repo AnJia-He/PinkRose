@@ -1736,6 +1736,58 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   flex: 1; overflow-y: auto; padding: 20px;
   display: flex; flex-direction: column; gap: 16px;
 }
+/* ★ 2026-10-09：**对话栏顶上那条**（这条会话叫什么 + 一颗铅笔）。
+   用户截图 + 原话：「这一块设计像豆包一样显示当前会话名称并且用铅笔图标表示可编辑」。
+
+   横竖两条线都是**照抄这一栏已有的两格**，不是新定的数：
+     · 左右 18 = `.chat-input` / `.chat-tools` 那个内边距 —— 标题的左缘和输入
+       行那颗「＋」的左缘**对齐**（差一像素都会在真机上看着"歪了一点"）；
+     · 上下 14 = `.chat-input` 那一行的上下内边距；
+     · 底下那条发丝线 = `.chat-input` 顶上那条（同一条 `--line`）——
+       这一格于是读成"对话栏的页眉"，不是又一块面板。
+   它**不参与滚动**（`.chat-log` 才是滚的那一格）：翻历史时名字一直看得见，
+   那正是它存在的意义。 */
+.chat-head {
+  flex: none; display: flex; align-items: center; gap: var(--sp-2);
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
+}
+/* 名字。字号比气泡（14）高一档、和 `.detail-name` 的 20 不同 —— 这一栏最窄只有
+   360px，20px 的长照片名会把铅笔挤出去。
+   ⚠️ **`min-width: 0` + 截断不能漏**：flex 孩子的默认 `min-width: auto` 不肯缩到
+   内容宽度以下，而照片名可以很长（`.session-name` 那条踩过同一个坑，而且
+   **只有长名字时才看得出来**）。撑破这一行的后果是右边那颗铅笔被挤出屏幕。 */
+.chat-title {
+  flex: 1; min-width: 0; margin: 0;
+  font-size: 15px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 那颗**铅笔**：图标键，屏幕上没有字（`aria-label` 是「改名」—— 和对话列表菜单
+   里那一项逐字一样，见 `docs/文案规范.md` §2）。
+   长相走**最轻**那一档（和 `.session-more` / `.msg-more` 同一条语言：透明底 +
+   悬停才现形状）—— 它是这一栏里最不常按的一颗，不该跟名字抢眼。
+   ⚠️ **一直看得见**，不搞"悬停才浮出来"那套：这个项目在「…」那颗上栽过一次
+   （用户找不到删除键），而"名字能改"这件事**只有它一个出处**。
+   ⚠️ 形状是 8px（`button{}` 的默认值）不是药丸：它坐在**一条横条**上
+   （见上面那条"两种形状"的规矩）。 */
+.chat-title-edit {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--muted);
+  background: none; border-color: transparent;
+}
+.chat-title-edit:hover { color: var(--text); border-color: var(--line-2); }
+/* 就地改名那一格（`kit/RenameInput`）—— 它顶掉的就是那个 `<h2>`，
+   所以**字号字重跟标题走**（15/600），底色边框照 `.session-rename` 那一套
+   （`--bg` + `--accent` + `--ring`：它一出现就 autoFocus、失焦即提交退出，
+   所以"常态"就画成聚焦相）。 */
+.chat-title-input {
+  flex: 1; min-width: 0;
+  background: var(--bg); color: var(--text); font: inherit; font-size: 15px; font-weight: 600;
+  border: 1px solid var(--accent); border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
+  box-shadow: var(--ring);
+}
+.chat-title-input:focus { outline: none; }
 /* 一条消息的外壳。★ 2026-10-05 的形状是"两块"（文字一块、图一块，
    用户当时要的）；★ 2026-10-06（晚）**照片撤出对话区之后只剩一块** ——
    气泡里的话 + 末尾那排操作（再来一版 / 「…」）。

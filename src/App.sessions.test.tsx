@@ -2001,3 +2001,164 @@ describe('删除记录 —— 单条走「…」菜单，多条走勾选批量',
     expect(JSON.stringify(body)).not.toContain('第一版好了')
   })
 })
+
+/**
+ * ★ 2026-10-09：**对话栏顶上那条**（用户截图 + 原话：「这一块设计像豆包一样显示
+ * 当前会话名称并且用铅笔图标表示可编辑」）。
+ *
+ * 三件事要钉住，每一件错了都**不报错、只是屏幕上不对**：
+ *   ① 名字走 `sessionTitle()` 那**唯一**一份三级退口径（和对话列表同一份）；
+ *   ② 改名送的 patch **只有 `title` 一个字段** —— 多一个，服务端那条
+ *      `titleOnly` 判据就不成立，这条会话会在列表里凭空跳到"今天"；
+ *   ③ 没改就**什么都不发**（比的是显示名，不是 `title` 字段）—— 比字段的话，
+ *      一条"还没起过名"的会话会被这趟"没改的改名"静默实化成一个等于照片名的标题。
+ */
+describe('对话栏顶上那条：这条会话叫什么 + 铅笔改名', () => {
+  /** 顶上那一行（**还没有会话时它整个不画**，所以它可能是 null）。 */
+  const head = () => container.querySelector('.chat-head')
+  /** 屏幕上写着的名字（编辑态里没有它 —— 那时顶掉它的是输入框）。 */
+  const shownName = () => head()?.querySelector('.chat-title')?.textContent ?? null
+  const pencil = () => head()?.querySelector('.chat-title-edit') as HTMLButtonElement | null
+  const nameBox = () => head()?.querySelector('.chat-title-input') as HTMLInputElement | null
+
+  async function click(el: HTMLElement) {
+    await act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
+  }
+  /** 在改名框里打字。⚠️ 它是**非受控**的（`defaultValue`），直接写 DOM 就行 ——
+   *  和 `say()` 里那个对话输入框同一条路（受控框得走 `typeIn` 的原型 setter）。 */
+  async function typeName(text: string) {
+    const box = nameBox()!
+    box.value = text
+  }
+  async function pressKey(box: HTMLInputElement, key: string) {
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+  /** 改名那一趟 PUT（`title` 是它唯一的判据 —— 落盘那几趟不带这个字段）。 */
+  const renameCalls = () =>
+    putCalls('/api/sessions/1').filter(([, init]) => {
+      const body = JSON.parse(String((init as RequestInit).body ?? '{}')) as { title?: unknown }
+      return typeof body.title === 'string'
+    })
+
+  it('★ 上传之后顶上就写着这张照片的名字（还没起过名 → 退回文件名、去扩展名）', async () => {
+    await renderApp()
+    // 这一句同时钉住"名字**当场就有**"：建会话那趟还没回来之前，
+    // 顶上也不许是空的（照片名本来就在手上）。
+    await uploadPhoto()
+    expect(shownName()).toBe('p')
+    // 会话 id 回来了 → 铅笔在
+    expect(pencil()).toBeTruthy()
+    expect(pencil()!.getAttribute('aria-label')).toBe('改名')
+  })
+
+  it('接回来的会话：顶上写的是它的名字（用户起的名字优先于照片名）', async () => {
+    withSessions([{ ...makeSession(7, 2, '把天调蓝一点', 'S7'), title: '海边那组' }])
+    await renderApp()
+    expect(shownName()).toBe('海边那组')
+  })
+
+  it('还没起过名的旧会话：退回照片上传时那个名字（和对话列表同一份口径）', async () => {
+    // `SMETA` 的 `originalName` 是「古镇.jpg」—— 去扩展名之后顶上该写「古镇」
+    withSessions([makeSession(7, 2, '把天调蓝一点', 'S7')])
+    await renderApp()
+    expect(shownName()).toBe('古镇')
+  })
+
+  it('★ 点铅笔 → 就地变输入框（预填当前名字）；回车保存 —— **只发一次**、而且只有 title 一个字段', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await click(pencil()!)
+
+    const box = nameBox()
+    expect(box).toBeTruthy()
+    expect(box!.value).toBe('p')          // 预填的是**显示名**
+    expect(shownName()).toBeNull()        // 输入框顶掉了那个 `<h2>`
+
+    await typeName('海边那张')
+    await pressKey(box!, 'Enter')
+
+    // ① 编辑态收掉、顶上换成新名字
+    expect(nameBox()).toBeNull()
+    expect(shownName()).toBe('海边那张')
+
+    // ② ★ **只有一个字段**。多送一个（哪怕是个空对象）服务端那条 `titleOnly`
+    //    判据就不成立 —— 改个名字会让这条会话在列表里跳到"今天"。
+    const calls = renameCalls()
+    expect(calls).toHaveLength(1)
+    expect(bodyOf(calls[0]!)).toEqual({ title: '海边那张' })
+  })
+
+  it('★ 保存只发一次（回车之后浏览器不许补一个 blur 再发一遍）', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await click(pencil()!)
+    await typeName('海边那张')
+    await pressKey(nameBox()!, 'Enter')
+    expect(renameCalls()).toHaveLength(1)
+  })
+
+  it('★ 清空提交 = 退回照片名（送一个空串，服务端存成 null）', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await click(pencil()!)
+    await typeName('')
+    await pressKey(nameBox()!, 'Enter')
+
+    // ⚠️ 空串**必须原样送出去**：`null` / 不传在服务端是"这次不动标题"，
+    //    传 null 想清空的写法会一声不响地什么都不做（`api/sessions.ts` 那段）。
+    expect(bodyOf(renameCalls()[0]!)).toEqual({ title: '' })
+    expect(shownName()).toBe('p')          // 顶上退回照片名
+  })
+
+  it('★ 名字没变就什么都不发 —— 比的是**显示名**，不是 `title` 字段', async () => {
+    // 一条还没起过名的会话（`title` 是 null、显示的是照片名）：
+    // 比字段的话这趟会被当成"改了"发出去，把标题**静默实化**成等于照片名的字符串。
+    await renderApp()
+    await uploadPhoto()
+    await click(pencil()!)
+    await pressKey(nameBox()!, 'Enter')     // 一个字没动（预填的就是 'p'）
+    expect(renameCalls()).toHaveLength(0)
+    expect(shownName()).toBe('p')           // 但编辑态要收掉
+  })
+
+  it('★ Esc 取消：一个请求都不发，退回显示态', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await click(pencil()!)
+    await typeName('海边那张')
+    await pressKey(nameBox()!, 'Escape')
+    expect(renameCalls()).toHaveLength(0)
+    expect(shownName()).toBe('p')
+  })
+
+  it('★ 改名失败：屏幕上原样不动，上面说一句（哪不对 + 怎么办）', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await click(pencil()!)
+    await typeName('海边那张')
+    // 断网（`fetch` 直接炸）。`errorText` 认不出这种错，会退到我们写的那句
+    // fallback —— 而它必须是"哪不对 + 怎么办"，不是一句"失败了"。
+    fetchMock.mockImplementationOnce(async () => { throw new TypeError('network') })
+    await pressKey(nameBox()!, 'Enter')
+    expect(shownName()).toBe('p')
+    // 屏幕上**原样不动**、上面挂一句（这一句的措辞归网络层，`errorText` 认得
+    // ApiError 就用它自己那句 —— 见 `api/client` 那段）。要钉的是**不许静默**：
+    // 改没成而一声不吭，用户会以为改好了，刷新才发现。
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('网络')
+  })
+
+  it('★「新的一张」之后顶上那条整个收掉 —— 下一张不许挂着上一张的名字', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await click(pencil()!)
+    await typeName('海边那张')
+    await pressKey(nameBox()!, 'Enter')
+    expect(shownName()).toBe('海边那张')
+
+    await clickByText('新的一张')
+    expect(container.querySelector('.chat-head')).toBeNull()
+  })
+})

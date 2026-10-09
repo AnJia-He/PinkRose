@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { MoreHorizontal } from 'lucide-react'
 import { Btn } from './kit/Btn.tsx'
+import { RenameInput } from './kit/RenameInput.tsx'
 import { usePagedDays } from './kit/pagedDays.ts'
 import { SelectBar } from './kit/SelectBar.tsx'
 import { listSessions, deleteSession, updateSession, sessionThumbUrl } from '../api/sessions'
@@ -270,24 +271,18 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
                   <span className="session-steps">{s.stepCount} 步</span>
                 </button>
                 {!selecting && (renaming === s.id ? (
-                  /* 改名 —— 和作品详情页那颗同名按钮**同一套手势**：回车 / 点走保存、
-                     Esc 取消，没有「好/取消」按钮。预填**显示名**（非受控），清空提交
-                     = 回退；`placeholder` 就是那时候露出来的"会变回这个名字"。 */
-                  <input
+                  /* 改名 —— 手势（回车 / 点走保存、Esc 取消）在 `kit/RenameInput` 里，
+                     作品详情页那颗「改名」和对话栏顶上那颗铅笔**是同一套**。
+                     预填**显示名**（非受控），清空提交 = 回退；`placeholder` 就是
+                     那时候露出来的"会变回这个名字"。 */
+                  <RenameInput
                     className="session-rename"
-                    autoFocus
                     defaultValue={sessionTitle(s)}
                     placeholder={sessionTitle(s)}
                     maxLength={60}
-                    aria-label="对话名字"
-                    onBlur={(e) => void doRename(s.id, e.target.value)}
-                    onKeyDown={(e) => {
-                      // ⚠️ `isComposing`：中文输入法**选词**也是回车 —— 不挡的话
-                      //    用户打个"海边"选词，名字会半截存成"海"（一声不吭）。
-                      if (e.key === 'Enter' && !e.nativeEvent.isComposing)
-                        void doRename(s.id, (e.target as HTMLInputElement).value)
-                      if (e.key === 'Escape') setRenaming(null)
-                    }} />
+                    ariaLabel="对话名字"
+                    onCommit={(v) => void doRename(s.id, v)}
+                    onCancel={() => setRenaming(null)} />
                 ) : confirming === s.id ? (
                   <>
                     <span className="session-ask">删掉这条？</span>

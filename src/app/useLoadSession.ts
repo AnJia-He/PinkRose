@@ -62,6 +62,10 @@ export type LoadSessionDeps = {
   setBusy: Dispatch<SetStateAction<string | null>>
   setNotice: Dispatch<SetStateAction<Notice | null>>
   setCurrentSession: (id: number | null) => void
+  /** ★ 2026-10-09：对话栏顶上那个名字（`title` / `originalName` 那一对）——
+   *  接回来的这条会话叫什么，由服务端那份详情说了算。 */
+  setSessionName: Dispatch<SetStateAction<
+    { title: string | null; originalName: string | null } | null>>
   moveCursor: (id: number | null) => void
   clearTransient: () => void
   /** 「上次那张要替换掉吗」的问句也一起收（切会话换了一张照片）。 */
@@ -78,7 +82,7 @@ export function useLoadSession(deps: LoadSessionDeps) {
     editPendingRef, dirtyRef, originalFileRef,
     setImage, setParams, setLut, setMessages, setCards, setHistory, setSavedId,
     setCompareSrc, setOriginalPreview, setBusy, setNotice,
-    setCurrentSession, moveCursor, clearTransient, dismissAsk, flushEdit, flushPersist, noticeBad,
+    setCurrentSession, setSessionName, moveCursor, clearTransient, dismissAsk, flushEdit, flushPersist, noticeBad,
   } = deps
 
   /** 挂载时那次"把上次那条会话接回来"跑过没有。**它保证只跑一次** ——
@@ -424,6 +428,11 @@ export function useLoadSession(deps: LoadSessionDeps) {
       // 这行在 'open' 那趟里改的正是"现在人站在哪条会话上"，而落盘的应答
       // 回来时要拿那个影子比对。
       setCurrentSession(detail.id)
+      // ★ 2026-10-09：对话栏顶上那个名字 —— 照服务端那份详情铺上（用户起的名字
+      //   优先，没有就退回照片上传时的名字，见 `sessionTitle`）。
+      //   ⚠️ 在这一批里（**一次 await 都不许有**的那一段）—— 和 `setMessages`
+      //   同一批：中途让出的话，用户会先看到一个「还没说话」的标题再跳到真的。
+      setSessionName({ title: detail.title, originalName: detail.originalName })
       // 上一条照片那些**临时**状态跟着一起清（和 `onPick` 里换图时清的是同一批，
       // 同一个道理 —— 点选流程、"替换上次那张"的问句；两条后果见 `clearTransient`）。
       // ⚠️ 切会话那半尤其要命：不清的话"要切掉后面吗"会停在**别人那条**会话上

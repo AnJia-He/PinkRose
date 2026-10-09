@@ -151,6 +151,9 @@ describe('图标（2026-10-01 统一走 lucide）', () => {
         luts={[]} lutsKnown lut={null} lutThumbs={{ none: null, byId: {} }}
         onPickLut={() => {}} onLutAmount={() => {}} onNeedLutThumbs={() => {}} onGoImport={() => {}}
         onRetryLuts={() => {}}
+        // ★ 2026-10-09：顶上那条名字（同上 —— 给全）。`title={null}` =
+        //   "还没有会话"，那条整个不画 —— 这条用例只验箭头图标，不影响。
+        title={null} canRename={false} onRename={() => {}}
       />,
     )
     const rerun = c.querySelector('.bubble-rerun') as HTMLButtonElement
@@ -197,8 +200,14 @@ describe('没有标签的那几格', () => {
   it('搜索 / 改名 / 对话三格各自带着可访问名字（placeholder 不算名字）', () => {
     const checks = [
       ['GalleryPage.tsx', 'aria-label="找一张作品"'],
-      ['WorkDetailPage.tsx', 'aria-label="作品名字"'],
+      // ★ 2026-10-09：作品详情 / 对话列表 / 对话栏顶上那颗铅笔的改名框，
+      //   手势收进了 `kit/RenameInput` —— 名字改成**调用方传进来的 prop**
+      //   （`ariaLabel`），所以判据跟着换到调用点那两行上；组件那一头
+      //   由下面第二条钉着（它得真把 prop 挂成 `aria-label`）。
+      ['WorkDetailPage.tsx', 'ariaLabel="作品名字"'],
+      ['ChatPanel.tsx', 'ariaLabel="改名"'],
       ['ChatPanel.tsx', 'aria-label="说说想怎么改"'],
+      ['kit/RenameInput.tsx', 'aria-label={ariaLabel}'],
     ] as const
     for (const [file, needle] of checks) {
       expect(srcOf(file), file).toContain(needle)

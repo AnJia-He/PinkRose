@@ -750,9 +750,15 @@ beforeEach(() => {
     // 兜底那个 blob 形状的话，屏幕上会多出一条"刚才那一步没存下来"的通报，
     // 而它跟那条用例要测的事**一点关系都没有**（随机噪声比没有测试更糟）。
     if (/^\/api\/sessions\/\d+$/.test(url) && (init?.method ?? 'GET') === 'PUT') {
-      // 响应是 `SessionMeta`；App 那边不用它的内容（只等它成功），给形状就行。
+      // 响应是 `SessionMeta`；**`title` 照请求里那个回**（★ 2026-10-09）：
+      // 对话栏顶上那颗铅笔改名之后，屏幕上显示的就是服务端回来的这格
+      // （真服务端 `handlePutSession` 回的也是更新后的 meta）。原来这里恒回
+      // `title: null` —— 那条路读它的话，"改完名顶上没变"会被测试当成对的。
+      // 空串 = 清空，服务端存成 `null`（照 `server/sessions.ts` 那道口径）。
+      const sent = JSON.parse(String(init?.body ?? '{}')) as { title?: unknown }
+      const title = typeof sent.title === 'string' ? (sent.title.trim() || null) : null
       return jsonResponse({
-        id: 1, title: null, originalName: null,
+        id: 1, title, originalName: null,
         createdAt: 0, updatedAt: 0, hasThumb: false, stepCount: 1,
       })
     }

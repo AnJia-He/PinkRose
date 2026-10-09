@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
-import { MoreHorizontal, Plus, RotateCw, SlidersHorizontal } from 'lucide-react'
+import { MoreHorizontal, Pencil, Plus, RotateCw, SlidersHorizontal } from 'lucide-react'
 import LutPicker from './LutPicker.tsx'
 import { SelectBar } from './kit/SelectBar.tsx'
+import { RenameInput } from './kit/RenameInput.tsx'
 import logoAvatar from '../assets/logo/emperor-avatar.svg'
 // ★ 2026-10-08：勾选的分量是"一问一答"（见 `togglePick`）—— 配对规则和 App
 //   那本删除账共用同一份（core/messages.ts），别在这儿另写一套。
@@ -111,6 +112,26 @@ type Props = {
    *   走到这里就是用户已经点过「确认删除」（或者勾的全是纯文字）。
    */
   onDeleteMessages: (ids: number[]) => void
+  /**
+   * ★ 2026-10-09（用户截图 + 原话：「这一块设计像豆包一样显示当前会话名称并且
+   * 用铅笔图标表示可编辑」）：**这条会话叫什么**，摆在对话栏最顶上。
+   *
+   * 名字是 `sessionTitle()` 三级退出来的**显示名**（用户起的名字 → 照片上传时的
+   * 名字 → 「还没说话」）—— 和对话列表那一行是**同一个口径**，App 算好了传下来。
+   * `null` = 还没有会话（那就不画这一条）。
+   */
+  title: string | null
+  /**
+   * 顶上那颗**铅笔**摆不摆。
+   *
+   * ⚠️ 它和 `title` 不是一回事：上传之后名字**当场就有**（用文件名先顶一下），
+   *   而会话 id 要等建会话那趟回来才有。那一段窗口里点铅笔会**静默失败**
+   *   （App 那边没有 id 可写）—— 所以"没有 id 就不摆这颗按钮"，
+   *   而不是摆一颗点了没用的（这个项目的老规矩）。
+   */
+  canRename: boolean
+  /** 提交一个新的名字（空串 = 清空，显示回到照片名）。网络那半在 App 里。 */
+  onRename: (next: string) => void
 }
 
 export default function ChatPanel({
@@ -119,7 +140,18 @@ export default function ChatPanel({
   futureSteps, replacing, onConfirmReplace, onCancelReplace,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
   originalId, onDeleteMessage, onDeleteMessages,
+  title, canRename, onRename,
 }: Props) {
+  /**
+   * ★ 2026-10-09：顶上那个标题**正在改**（`RenameInput` 顶掉了 `<h2>`）。
+   *
+   * 手势和对话列表那颗「改名」是**同一套**（`kit/RenameInput`：回车 / 点走保存、
+   * Esc 取消）—— 区别只在这里是**就地**顶着标题改，不是弹一行。
+   * ⚠️ 名字一变（换会话 / 换照片 / 改完名）就收掉编辑态：这个组件的实例
+   *   不跟着换会话重挂，留着的话用户切过去看到的是一个空输入框。
+   */
+  const [renaming, setRenaming] = useState(false)
+  useEffect(() => { setRenaming(false) }, [title])
   // ★ 2026-10-05：**输入框那颗加号**（用户截图 + 原话「我觉得在对话框那边设一个
   //   加号，然后点击加号里面有滤镜以及以后添加的功能」）。
   //
@@ -292,6 +324,43 @@ export default function ChatPanel({
   }, [lutOpen, luts])
   return (
     <aside className="chat">
+      {/* ★ 2026-10-09：**这条会话叫什么**（用户截图 + 原话：「这一块设计像豆包
+          一样显示当前会话名称并且用铅笔图标表示可编辑」）。
+
+          三件事：
+            · 名字走 `sessionTitle()` 那**同一份**三级退口径（和对话列表那一行
+              一模一样）—— 别在这儿另退一套，两处说出两个名字是最难查的那种错；
+            · 铅笔**一直看得见**（不搞悬停才浮出来那套：这个项目在「…」那颗上
+              已经栽过一次，用户找不到删除键）；
+            · 点它**就地**改成输入框（回车 / 点走保存、Esc 取消）—— 手势和
+              对话列表那颗「改名」同一套（`kit/RenameInput`），不弹窗（全站规矩）。
+
+          ⚠️ 它是**图标键**：屏幕上没有字，名字只在 `aria-label`（「改名」——
+              和对话列表菜单里那一项**逐字一样**，见 `docs/文案规范.md` §2）。
+          ⚠️ 长名字**一行截断**（`.chat-title` 的 ellipsis）：照片名可以很长，
+              撑破这一行的话右边那颗铅笔会被挤出屏幕 —— 和 `.detail-name` 同款。
+          ⚠️ 还没有名字（`title === null`）时**整条都不画**：没有会话就没有可改的
+              东西，摆一个空标题只是多一行灰。 */}
+      {title !== null && (
+        <header className="chat-head">
+          {renaming ? (
+            <RenameInput className="chat-title-input" defaultValue={title}
+                         maxLength={60} ariaLabel="改名"
+                         onCommit={(v) => { setRenaming(false); onRename(v) }}
+                         onCancel={() => setRenaming(false)} />
+          ) : (
+            <>
+              <h2 className="chat-title">{title}</h2>
+              {canRename && (
+                <button className="chat-title-edit" aria-label="改名"
+                        onClick={() => setRenaming(true)}>
+                  <Pencil size={14} strokeWidth={1.5} aria-hidden="true" />
+                </button>
+              )}
+            </>
+          )}
+        </header>
+      )}
       <div className="chat-log" ref={logRef}>
         {messages.map(m => {
           // ★ 2026-10-06（晚）：**对话区里不再有照片**（用户原话：「对话区不留下

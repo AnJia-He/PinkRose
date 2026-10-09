@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { BtnLink } from './kit/Btn.tsx'
+import { RenameInput } from './kit/RenameInput.tsx'
 import { getWork, renameWork, deleteWork, fullUrl } from '../api/works'
 import { errorText } from '../api/client'
 import { workName, type WorkMeta, type WorkDetail } from '../../shared/works.ts'
@@ -165,18 +166,12 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
           /* ⚠️ 2026-10-01：这一格**故意没过 `<Field>`** —— 它是"就地改名"，
              名字由它旁边的位置说明（它顶掉的就是那个 `<h1>`），加标签反而是多余的。
              又因为它是 `.detail-head` 那一行的 flex 孩子（`.rename-input` 身上有
-             `flex: 1`），包一层会让那个 `flex: 1` 落错地方。可访问的名字直接给。 */
-          <input className="rename-input" autoFocus defaultValue={work.alias ?? ''}
-                 aria-label="作品名字"
-                 onBlur={e => void doRename(e.target.value)}
-                 onKeyDown={e => {
-                   // ⚠️ `isComposing`：中文输入法**选词**也是回车 —— 不挡的话
-                   //    用户打"海边"选词，名字会半截存成"海"（一声不吭）。
-                   //    （2026-10-05 补；对话列表那颗「改名」自带这一条和它的测试）
-                   if (e.key === 'Enter' && !e.nativeEvent.isComposing)
-                     void doRename((e.target as HTMLInputElement).value)
-                   if (e.key === 'Escape') setRenaming(false)
-                 }} />
+             `flex: 1`），包一层会让那个 `flex: 1` 落错地方。可访问的名字直接给。
+             ★ 2026-10-09：手势（autoFocus / 回车 / Esc / 点走）搬进 `kit/RenameInput`
+             —— 对话列表和对话栏顶上那颗铅笔是同一套，别在这儿另写一遍。 */
+          <RenameInput className="rename-input" defaultValue={work.alias ?? ''}
+                       ariaLabel="作品名字"
+                       onCommit={v => void doRename(v)} onCancel={() => setRenaming(false)} />
         ) : (
           <>
             <h1 className="detail-name">{name}</h1>

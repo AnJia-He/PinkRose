@@ -24,8 +24,11 @@ import { Nav } from './ui/Nav'
 import { me, type AccountUser } from './api/account'
 import { fetchWorkImage } from './api/works'
 import {
-  createSession, sessionOriginalUrl,
+  createSession, sessionOriginalUrl, updateSession,
 } from './api/sessions'
+// ★ 2026-10-09：对话栏顶上那个名字的**唯一**口径（三级退：用户起的名字 →
+//   照片上传时的名字 → 「还没说话」）—— 和对话列表同一份，别在这儿另退一套。
+import { sessionTitle } from '../shared/sessions.ts'
 import { decodeImageFile, type DecodedImage } from './image/decode'
 import { resizeBitmap } from './image/resize'
 import { samplePixels } from './image/sample'
@@ -412,6 +415,54 @@ export default function App() {
   }, [])
 
   /**
+   * ★ 2026-10-09（用户原话：「这一块设计像豆包一样显示当前会话名称」）：
+   * **这条会话叫什么** —— 对话栏顶上那一行要显示的东西。
+   *
+   * 存的是 `SessionMeta` 那两格（`title` / `originalName`），不是算好的字符串：
+   * 名字是**三级退**出来的（用户起的名字 → 照片上传时的名字 → 「还没说话」），
+   * 而"退到第几级"这件事只有 `sessionTitle()` 那一份口径
+   * （`shared/sessions.ts`，对话列表同一份）—— 这里再退一次就是第二个口径。
+   *
+   * 三个写入点，一条都不能少（漏一个就是"屏幕上写着上一个名字"）：
+   *   · `onPick` —— 上传那一刻，先用**文件名**顶着（会话 id 还没回来，
+   *     但名字当场就有，用户看不到一行空白）；
+   *   · `useLoadSession` —— 接回 / 点开一条旧会话时照服务端那份铺上；
+   *   · 改名成功之后 —— 只换 `title` 那一格（见 `renameSession`）。
+   * 清空它的地方只有 `resetEditor`（"把手上这一张整个放下"）。
+   */
+  const [sessionName, setSessionName] = useState<
+    { title: string | null; originalName: string | null } | null>(null)
+
+  /**
+   * 顶上那颗铅笔提交的新名字。空串 = 清空（服务端存成 `null`，显示退回照片名）。
+   *
+   * ⚠️ **没改名就什么都不发**：比的是**显示名**，不是 `title` 字段 —— 比字段的话，
+   *   一条"还没起过名"的会话（`title` = null、显示的是照片名）会被这趟"没改的改名"
+   *   **静默实化**（库里凭空多出一个等于照片名的 title）。这条账和对话列表那颗
+   *   「改名」是同一份（`SessionsPage.doRename`），两边别各写各的。
+   * ⚠️ 提交的只有 `{title}` 这一个字段 —— 服务端凭这个判据**不动 `updated_at`**
+   *   （改名字是整理，不该让这条会话在列表里跳到"今天"，见 `server/sessions.ts`
+   *   的 `titleOnly`）。往 patch 里塞别的东西就会把它顶掉。
+   * ⚠️ 失败**不许静默**：屏幕上原样，上面挂一句（照 `SessionsPage` 那条）。
+   */
+  const renameSession = useCallback(async (next: string) => {
+    const id = sessionIdRef.current
+    if (id === null) return
+    const name = next.trim()
+    if (sessionName && name === sessionTitle(sessionName)) return
+    try {
+      const meta = await updateSession(id, { title: name })
+      // ⚠️ **只换 `title` 那一格**，不拿回来的整份 meta 顶掉本地那份：
+      //   `originalName` 是上传时那个文件名，改名这一趟服务端不会动它，
+      //   而"回什么存什么"在这里会把显示名的退路一起换掉。`title` 用服务端
+      //   回来的那个（它做过 trim 和长度截断，60 字的上限在输入框上）。
+      setSessionName(n => (n ? { ...n, title: meta.title } : n))
+    } catch (e) {
+      noticeBad(errorText(e, '没改成，再试一次'))
+    }
+  }, [sessionName, noticeBad])
+
+  /**
    * ★ 2026-10-08（调色区账本 Task 7，spec §7.2）：**哪一版的"现在"变了** ——
    * 落盘按它决定这一趟"存谁"、要不要连底图一起重传。
    *
@@ -643,7 +694,7 @@ export default function App() {
     editPendingRef, dirtyRef, originalFileRef,
     setImage, setParams, setLut, setMessages, setCards, setHistory, setSavedId,
     setCompareSrc, setOriginalPreview, setBusy, setNotice,
-    setCurrentSession, moveCursor, clearTransient, dismissAsk, flushEdit, flushPersist, noticeBad,
+    setCurrentSession, setSessionName, moveCursor, clearTransient, dismissAsk, flushEdit, flushPersist, noticeBad,
   })
 
   /**
@@ -818,6 +869,13 @@ export default function App() {
 
       originalFileRef.current = file
       setImage(img)
+      // ★ 2026-10-09：对话栏顶上那个名字 —— **先用文件名顶着**（和这一趟
+      //   送上去的 `createSession(…, file.name)` 是同一个值，也就是服务端
+      //   接下来存在 `original_name` 上的那个）。建会话那趟还要一会儿，
+      //   等它回来才写的话，顶上会先空一格再补上。
+      //   ⚠️ 和 `setImage` 之间**不能有 await**（同一个批次里一起落地，
+      //   否则会先闪一帧上一个名字）。
+      setSessionName({ title: null, originalName: file.name })
       // ★ 2026-10-06（对比）：上一张那份"对比用的原图"作废 —— 不清的话，
       //   换一张照片之后按「对比」，分屏左边还是**上一张**（而且一点不报错）。
       setCompareSrc(null)
@@ -957,6 +1015,10 @@ export default function App() {
     //   （同一趟里再换一张照片那条路也有这道保险 —— 见 onPick 里 `setCurrentSession(null)`
     //    那一段；这里从另一头把它做成了正经入口。）
     setCurrentSession(null)
+    // ★ 2026-10-09：对话栏顶上那个名字跟着走 —— 照片都放下了，还留着上一条会话
+    //   的名字，下一张照片一进来，顶上会先挂着**别人的名字**（`onPick` 会当场
+    //   改掉它，但"先闪一下"和"`onSessionDeleted` 之后一直挂着"都不该有）。
+    setSessionName(null)
     // 上一条照片那些**临时**状态：点选流程、"上次那张要替换掉吗"、原图预览。
     // 留着的话红圈会钉在下一张照片上，而「替换」问的是上一张存过的那条作品；
     // 那条"要切掉后面吗"同理 —— 照片都换了，它说的那件事已经不存在
@@ -2134,6 +2196,15 @@ export default function App() {
                   onDeleteMessage={onDeleteMessage}
                   // ★ 2026-10-06 下午：选择模式里一次勾好几条那条路（同一本账）。
                   onDeleteMessages={onDeleteMessages}
+                  // ★ 2026-10-09：对话栏顶上那一行 —— 这条会话叫什么 + 一颗铅笔。
+                  //   名字走 `sessionTitle()` 那**唯一**一份三级退口径（和对话列表
+                  //   同一份）；没有会话时是 null，那一条整个不画。
+                  //   ⚠️ `canRename` **不是** `title !== null`：上传之后名字当场
+                  //   就有（先用文件名顶着），而会话 id 要等建会话那趟回来 ——
+                  //   那一段窗口里点铅笔会静默失败，所以那时**不摆**那颗按钮。
+                  title={sessionName ? sessionTitle(sessionName) : null}
+                  canRename={sessionId !== null}
+                  onRename={(next) => void renameSession(next)}
                   // marker 非空必然 picking 为真（两者出自同一个对象），所以这里
                   // 不必再 or 一次 —— 从 `pending` 推出来的东西不可能互相打架。
                   marking={picking}
