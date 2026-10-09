@@ -1,5 +1,5 @@
 import { MAX_DIMENSION, fitWithin } from '../../shared/size.ts'
-import { makeCanvas } from './canvas'
+import { makeCanvas } from './canvas.ts'
 import type { Sizable } from '../image/prepare'
 
 /**
