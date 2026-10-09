@@ -1744,6 +1744,9 @@ describe('历史小图：每一步都看得见（照片上方那条时间轴上�
    * 今天第二块整条搬走（`StepStrip`），所以要钉的换成了"消息里一张图都不许有"。
    * ⚠️ 判据按**结构**钉（`.chat img` 一个都不许有），不按"某个角落"那种松判据
    * —— 图哪天从别的路溜回对话区，这一条当场红。
+   * ★ 2026-10-09：**`img` 要去掉 AI 头像那一颗**（`.msg-avatar`）—— 用户要的
+   * 「把LOGO作为ai对话的头像」是**装饰性的图标**，不是照片；判据换成
+   * `img:not(.msg-avatar)`，"照片不许进对话区"这条规矩一个字没松。
    */
   it('★ 对话区里不再有照片 —— 小图只在转盘上', async () => {
     await renderApp()
@@ -1752,11 +1755,12 @@ describe('历史小图：每一步都看得见（照片上方那条时间轴上�
     expect(msg).toBeTruthy()
     // 那条消息里：只有话。★ 2026-10-06（晚）：它连操作行都没有了 ——
     // 「你在这里」那颗位置标记退役之后，原图那条一颗按钮都不剩。
-    expect(msg!.querySelector('img')).toBeNull()
+    // （那一颗 `.msg-avatar` 不算 —— 见上面 ★ 2026-10-09 那段。）
+    expect(msg!.querySelector('img:not(.msg-avatar)')).toBeNull()
     expect(msg!.querySelector('.bubble-text')?.textContent).toBe('准备好啦，说说想怎么改？')
     expect(msg!.querySelector(':scope > .bubble-actions')).toBeNull()
-    // 整个对话栏里一张图都没有；小图在舞台上那圈转盘里
-    expect(container.querySelector('.chat img')).toBeNull()
+    // 整个对话栏里一张照片都没有；小图在舞台上那圈转盘里
+    expect(container.querySelector('.chat img:not(.msg-avatar)')).toBeNull()
     expect(container.querySelector('.stage .strip')).toBeTruthy()
   })
 

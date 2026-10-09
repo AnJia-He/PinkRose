@@ -3,6 +3,7 @@ import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
 import { MoreHorizontal, Plus, RotateCw, SlidersHorizontal } from 'lucide-react'
 import LutPicker from './LutPicker.tsx'
+import logoAvatar from '../assets/logo/emperor-avatar.svg'
 // ★ 2026-10-08：勾选的分量是"一问一答"（见 `togglePick`）—— 配对规则和 App
 //   那本删除账共用同一份（core/messages.ts），别在这儿另写一套。
 import { expandDeleteIds } from '../core/messages'
@@ -324,6 +325,17 @@ export default function ChatPanel({
           const hasMenu = delable && m.role === 'assistant'
           return (
             <div key={m.id} className={`msg ${m.role}`}>
+              {/* ★ 2026-10-09：**AI 那侧的消息带一个小头像**（用户：「把LOGO作为
+                 ai对话的头像」）。用户自己的话**不带头像** —— 说的是"AI 的头像"。
+                 图是 `emperor-avatar.svg`（黑底圆盘 + 脸部特写，小尺寸才认得出）。
+                 `alt=""`：纯装饰，旁边就是话本身；读屏和按内容找东西的测试
+                 都不该被它搅到。
+                 ⚠️ 布局在 styles.css 那条 `.msg.assistant` 里：整列让出 36px，
+                 头像是**绝对定位**钉在左上角的 —— 别改成把气泡挤窄的行内元素
+                 （那样动作行会错位）。 */}
+              {m.role === 'assistant' && (
+                <img className="msg-avatar" src={logoAvatar} alt="" width={28} height={28} />
+              )}
               {/* ① 话。
                   ⚠️ 选择模式里点它 = 勾选（微信式的大点击面；那一档里没有
                   文字要读——真要读字就不会开着选择模式），别的入口照旧。 */}
@@ -452,6 +464,9 @@ export default function ChatPanel({
         })}
         {busy && (
           <div className="msg assistant">
+            {/* 等回复的时候头像也在（"是它在想"，不是凭空冒气泡）——和上面那条
+                同款，见 `emperor-avatar.svg`。 */}
+            <img className="msg-avatar" src={logoAvatar} alt="" width={28} height={28} />
             {/* ★ 2026-10-06（用户原话：「要让用户知道你在干嘛」）：文字后面
                 三颗**跳动的点**（打字指示器那种），替掉了原来那个 12px 的小
                 转圈 —— 三颗错开的点读起来是"还在说"、转圈读起来是"还在装"，

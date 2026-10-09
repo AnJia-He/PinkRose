@@ -1747,6 +1747,16 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .msg { display: flex; flex-direction: column; gap: var(--sp-2); max-width: 88%; }
 .msg.user { align-self: flex-end; align-items: flex-end; }
 .msg.assistant { align-self: flex-start; align-items: flex-start; }
+/* ★ 2026-10-09：**AI 消息带头像**（用户：「把LOGO作为ai对话的头像」）。
+   整列往右让出头像那一格（28 图 + 8 缝 = 36）—— 气泡和底下那排动作**一起**
+   缩进，都从气泡左缘起；头像**绝对定位**钉在左上角、和气泡顶端平齐
+   （别改成行内元素：那会把气泡挤窄、动作行也跟着错位）。
+   ⚠️ 用户那侧 `.msg.user` 一个字没动 —— 要的是"AI 的头像"。
+   头像见 `ui/ChatPanel` 的 `.msg-avatar` / `src/assets/logo/emperor-avatar.svg`
+   （黑底圆盘 + 脸部特写：对话区固定深色，黑盘在 --panel 上是一枚更深的圆，
+   白图落在上面，24~32px 都认得出）。 */
+.msg.assistant { position: relative; padding-left: 36px; }
+.msg-avatar { position: absolute; left: 0; top: 0; width: 28px; height: 28px; display: block; }
 /* ★ 2026-10-06：这里原来有一条 `.shot`（"那一步的画面 + 它下面那两颗按钮"那一块
    的外壳）。操作行不再归"图"管了 —— 它现在**每段都有**（末尾还挂着那颗「…」，
    见 `.msg-more`），所以外壳退役：图和操作行都直接挂在 `.msg` 下面，间距由
