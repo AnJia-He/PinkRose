@@ -188,6 +188,76 @@ export async function handleChangePassword(body: unknown, user: PublicUser, deps
 }
 
 /**
+ * 改用户名（★ 2026-10-09）。
+ *
+ * 来路：用户说「就像有些功能对应的增删改查的操作的补充，不要再让我一再强调，
+ * 比如用户名的修改功能」—— 账号能建、能看、能改密码、能注销，**唯独名字改不了**。
+ *
+ * ⚠️ 和 `handleChangePassword` 有三处**正好相反**，别照着它抄：
+ *   ① **不发新票**。票的签名里掺的是 `password_hash` 和 userId，**没有用户名**
+ *      （见 `session.ts` 的 `signSession`）—— 改名不动哈希，所以这张票照旧好使，
+ *      别的设备也不会被踢。发一张新票是无害但多余的动作，而"多余"在这里会误导
+ *      下一个人以为改名也要踢人。
+ *   ② 签名里没有用户名，所以**登录限流那个 key（按名字记）也不受影响** ——
+ *      改名之后用新名字登录会从零开始计数。这是可接受的（换个名字就是个新身份），
+ *      但要**知道**这件事，别哪天看到"改名能把限流清零"当成 bug。
+ *   ③ 读的是**新名字**、验的是**老哈希**（改密码那一趟反过来：读老密码、验老哈希）。
+ *
+ * ⚠️ 两条老规矩在这一趟**同样要守住**（守不住就是"规矩只在注册那一次成立"）：
+ *   · **唯一** —— 交给数据库判（不先 SELECT 再 UPDATE：两个人同时抢一个名字，
+ *     都查到"没人用"，然后一个成功一个炸在写入上，**而那个才是对的**。
+ *     和 `handleSignup` 同一套说法）。
+ *   · **密码不能和名字一样** —— 见下面那段。
+ */
+export async function handleChangeUsername(
+  body: unknown, user: PublicUser, deps: AccountDeps,
+): Promise<PublicUser> {
+  const o = asObject(body)
+  // 用的是 `checkUsername`（注册那一套：长度、字符类、保留名、归一化）——
+  // 改名走的就是"这个名字能不能拿来当账号"，和注册问的是**同一个问题**。
+  // （登录问的是另一个问题，所以那一处用的是 `normalizeUsername` —— 见它的注释。）
+  const u = checkUsername(str(o.username))
+  if (!u.ok) throw new HttpError('BAD_REQUEST', u.message)
+
+  const row = deps.db.raw
+    .prepare('SELECT password_hash FROM users WHERE id = ?')
+    .get(user.id) as { password_hash: string } | undefined
+  if (!row) throw new HttpError('BAD_REQUEST', '这个账号不在了')
+
+  // ★ 「密码不能和名字一样」这条规矩，注册和改密码那两处各写了一遍
+  //   （各传各的参数），**改名是第三个能改动名字的地方** —— 不在这儿也守一道，
+  //   这条规矩就变成了"只在你注册那一刻成立"，用户改个名就绕过去了。
+  //   注册那处的注释写着它"唯一的落地处"是 `checkPassword` 的第二个参数；
+  //   这里没有明文密码可比，只能拿**新名字**去撞那把哈希（`verifyPassword`
+  //   正是干这个的：拿一个明文和一个哈希对）。
+  //
+  //   ⚠️ **已知边界**：注册那处的比较是**折过大小写**的（密码折小写再比名字），
+  //      而这里只比得出**一模一样**那一种 —— 哈希是单向的，我没法把密码折成小写。
+  //      所以"密码是 XiaoMing、名字改成 xiaoming"这一种**盖不住**。
+  //      要盖住它就得存明文密码，那是拿一个真窟窿去补一个假窟窿，不做。
+  //      这一条写在 `server/account.test.ts` 的用例名里，别当成漏了。
+  if (await verifyPassword(u.value, row.password_hash)) {
+    throw new HttpError('BAD_REQUEST', '名字不能和密码一样')
+  }
+
+  try {
+    deps.db.raw.prepare('UPDATE users SET username = ? WHERE id = ?').run(u.value, user.id)
+  } catch (err) {
+    // 和注册那处同一套翻译：唯一约束是**数据库**在管，这里只把它的报错说成人话。
+    // ⚠️ 措辞和 `checkUsername` 里那句「留给官方账号的」**不一样，也别统一** ——
+    //    「有人用了」在"真的撞了唯一约束"这个场景下是准确的（那段注释在
+    //    `shared/account.ts`，2026-09-25 用户读错过一次，两条别混）。
+    const msg = String((err as Error).message)
+    if (msg.includes('users.username')) throw new HttpError('BAD_REQUEST', '这个名字有人用了，换一个吧')
+    throw err
+  }
+
+  // 回给前端的是**改完之后**的那份 —— 调用方拿它更新屏幕上那一行，
+  // 别让页面继续写着旧名字（那正是"改了没反应"的样子）。
+  return { id: user.id, username: u.value, email: user.email }
+}
+
+/**
  * 注销账号（spec §5；表里那行是「注销账号 | 作品全删（记录 + 文件）+ 用量记录全删」）。
  *
  * ⚠️ **顺序：先删记录、再删文件。** 反过来（先删文件）中途炸掉，留下的是

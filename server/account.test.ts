@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { openDb, type Db } from './db.ts'
 import { createStorage, type Storage } from './storage.ts'
 import {
-  handleDeleteAccount, handleSignup, handleLogin, handleChangePassword, findUserByCookie,
-  type AccountDeps,
+  handleDeleteAccount, handleSignup, handleLogin, handleChangePassword, handleChangeUsername,
+  findUserByCookie, type AccountDeps,
 } from './account.ts'
 import { createLut } from './luts.ts'
 import { SESSION_COOKIE } from './session.ts'
@@ -239,6 +239,55 @@ describe('改密码', () => {
   })
 })
 
+/**
+ * ★ 2026-10-09：**改用户名**。
+ *
+ * 来路：用户说「像有些功能对应的增删改查的操作的补充就不要再让我一再强调了，
+ * 比如用户名的修改功能」—— 账号能建、能看、能改密码、能注销，名字却只能看。
+ */
+describe('改用户名', () => {
+  it('改完：新名字能登、旧名字登不上了', async () => {
+    await handleSignup(GOOD, deps)
+    const user = (await handleLogin({ username: '小明', password: 'goodpassword' }, deps)).user
+    const next = await handleChangeUsername({ username: '阿宝' }, user, deps)
+    expect(next.username).toBe('阿宝')
+    expect((await handleLogin({ username: '阿宝', password: 'goodpassword' }, deps)).user.id).toBe(user.id)
+    await expect(handleLogin({ username: '小明', password: 'goodpassword' }, deps)).rejects.toThrow()
+  })
+
+  it('★★ 改完名字，**同一张票照旧好使** —— 和改密码那一趟正相反', async () => {
+    // 票的签名里掺的是**密码哈希**和 userId，没有用户名（`session.ts`）。
+    // 这条用例钉的就是"改名不踢人"：`/api/username` 那条路由**故意不发新票**。
+    // 变异：照着 `/api/password` 抄一份、或者顺手 `issue()` 一张新的 ——
+    //       行为上仍然是对的（新票也好使），所以**不会有别的东西红**；
+    //       但"改名要把人踢下线"这个印象会传下去（界面上那句"其他设备要重新登录"
+    //       就是照着这个印象写的，而它是假话）。这一条守的是**那句真话**。
+    await handleSignup(GOOD, deps)
+    const { token } = await handleLogin({ username: '小明', password: 'goodpassword' }, deps)
+    const user = (await handleLogin({ username: '小明', password: 'goodpassword' }, deps)).user
+    expect(findUserByCookie(`${SESSION_COOKIE}=${token}`, deps)).not.toBeNull()
+    await handleChangeUsername({ username: '阿宝' }, user, deps)
+    // 票还是那张票，人还是那个人 —— 只是名字变了
+    expect(findUserByCookie(`${SESSION_COOKIE}=${token}`, deps)?.username).toBe('阿宝')
+  })
+
+  it('名字被别人占了就拒（唯一约束由**数据库**判）', async () => {
+    await handleSignup(GOOD, deps)
+    await handleSignup({ username: '阿宝', email: 'b@b.com', password: 'goodpassword' }, deps)
+    const user = (await handleLogin({ username: '小明', password: 'goodpassword' }, deps)).user
+    await expect(handleChangeUsername({ username: '阿宝' }, user, deps))
+      .rejects.toThrow('这个名字有人用了，换一个吧')
+  })
+
+  it('名字不合规就拒（走的是**注册那一套**规则，不是登录那套归一化）', async () => {
+    await handleSignup(GOOD, deps)
+    const user = (await handleLogin({ username: '小明', password: 'goodpassword' }, deps)).user
+    // 太短 / 保留名 —— 两条都在 `checkUsername` 里，改名必须和注册问同一个问题
+    await expect(handleChangeUsername({ username: 'a' }, user, deps)).rejects.toThrow()
+    await expect(handleChangeUsername({ username: 'admin' }, user, deps)).rejects.toThrow()
+  })
+})
+
 describe('★ 密码不能和名字一样 —— 在**调用点**上真的生效', () => {
   /**
    * 为什么这组必须存在（而且必须走**完整路径**、不是直接调 `checkPassword`）：
@@ -277,6 +326,23 @@ describe('★ 密码不能和名字一样 —— 在**调用点**上真的生效
     await expect(
       handleChangePassword({ oldPassword: 'goodpassword', newPassword: 'ABCDEFGH' }, user, deps),
     ).rejects.toThrow('密码不能和名字一样')
+  })
+
+  it('改用户名时也一样 —— 同一个规则在**第三个**调用点上也生效', async () => {
+    // ★ 2026-10-09 加的。这一条尤其要紧，因为它是**最容易被漏掉的那个调用点**：
+    //   注册那处能拿明文密码直接比（还折大小写），而改名这一趟手里**只有哈希**，
+    //   所以比法不一样（拿新名字去撞哈希，见 `handleChangeUsername`）。
+    //   不在这儿守一道的话，这条规矩就变成"只在你注册那一刻成立" ——
+    //   用户改个名就绕过去了，而且**一句错都不报**。
+    //
+    // ⚠️ **已知边界，别当成漏了**：这里只比得出"一模一样"那一种。
+    //   注册那处是折过大小写的（`密码折小写 == 名字`），而哈希是单向的 ——
+    //   我没法把用户存的密码折成小写。所以"密码是 ABCDEFGH、名字改成 abcdefgh"
+    //   这一种**盖不住**。要盖住它得存明文密码，那是拿真窟窿补假窟窿，不做。
+    await handleSignup({ username: 'abcdefgh', email: 'a@b.com', password: 'goodpassword' }, deps)
+    const user = (await handleLogin({ username: 'abcdefgh', password: 'goodpassword' }, deps)).user
+    await expect(handleChangeUsername({ username: 'goodpassword' }, user, deps))
+      .rejects.toThrow('名字不能和密码一样')
   })
 })
 

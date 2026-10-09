@@ -598,6 +598,51 @@ describe('账号与鉴权', () => {
     const after = await fetch(`${base}/api/me`, { headers: { cookie: fresh } })
     expect(after.status).toBe(200)
   })
+
+  /**
+   * ★ 2026-10-09：**改用户名**那条路由。和上面「改密码」那一组**正相反**，
+   * 两处特别容易照着上面抄错：
+   *   · 它**不发新票**（票里掺的是密码哈希和 userId，没有用户名）；
+   *   · 所以旧 cookie **照旧好使**，别的设备一个都不会掉。
+   */
+  it('没登录打「改用户名」→ 401，而且是同一个 UNAUTHORIZED', async () => {
+    const { base } = await appWithUser()
+    const res = await fetch(`${base}/api/username`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: '另一个名字' }),
+    })
+    expect(res.status).toBe(401)
+    expect((await res.json() as { error: { code: string } }).error.code).toBe('UNAUTHORIZED')
+  })
+
+  it('★★ 改用户名之后：旧 cookie 照旧好使、而且**不发新票** —— 和改密码正相反', async () => {
+    const { base, cookie } = await appWithUser()
+    const before = await fetch(`${base}/api/me`, { headers: { cookie } })
+    expect(before.status).toBe(200)
+    const oldName = ((await before.json()) as { user: { username: string } }).user.username
+
+    const changed = await fetch(`${base}/api/username`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ username: '改过的名字' }),
+    })
+    expect(changed.status).toBe(200)
+    // ① 回的是**改完之后**那份（前端拿它更新屏幕上那一行）
+    expect(((await changed.json()) as { user: { username: string } }).user.username).toBe('改过的名字')
+
+    // ② ★ **一个 set-cookie 都没有**。这条断言在守着界面上一句真话：
+    //    「改好了，下次用新名字登录。」—— 要是哪天有人顺手补一句
+    //    "其他设备要重新登录"（照着改密码抄的），这里会先红。
+    expect(changed.headers.get('set-cookie')).toBeNull()
+
+    // ③ 同一张旧 cookie 问「我是谁」：还是 200，只是名字变了
+    const after = await fetch(`${base}/api/me`, { headers: { cookie } })
+    expect(after.status).toBe(200)
+    const now = ((await after.json()) as { user: { username: string } }).user.username
+    expect(now).toBe('改过的名字')
+    expect(now).not.toBe(oldName)
+  })
 })
 
 describe('★ 滑动续期：票撑不过 15 天就换一张（设计文档 §6.5）', () => {

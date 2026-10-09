@@ -784,6 +784,19 @@ beforeEach(() => {
     if (url === '/api/password' && (init?.method ?? 'GET') === 'POST') {
       return jsonResponse({ ok: true })
     }
+    // ★ 2026-10-09：改用户名。回的是**改完之后**那份 user（真服务端
+    // `handleChangeUsername` 就是这个形状），而且**顺手把 meUser 也改了** ——
+    // 真服务端之后每一趟 `/api/me` 回的也是新名字，假的那份得跟着动。
+    // ⚠️ **必须接住**：掉进下面那个兜底的 blob 形状的话，`post()` 会在读正文
+    // 那一步炸成 ApiError，界面显示「没改成，过一会儿再试。」—— 而那趟改名
+    // **其实成功了**，测试绿在一个"界面撒谎"的路径上。
+    // ⚠️ 它和 `/api/password` **不一样**：这一趟**不发新票**（没有 set-cookie），
+    //    由 `server/app.test.ts` 的那条钉着。
+    if (url === '/api/username' && (init?.method ?? 'GET') === 'POST') {
+      const sent = JSON.parse(String(init?.body ?? '{}')) as { username?: unknown }
+      meUser = { ...(meUser ?? LOGGED_IN), username: String(sent.username ?? '') }
+      return jsonResponse({ user: meUser })
+    }
     // 别的都是生成回来的那张图：fetch(url) -> blob -> createImageBitmap
     return { blob: async () => new Blob(['x']) }
   })

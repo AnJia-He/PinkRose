@@ -41,6 +41,19 @@ export async function changePassword(oldPassword: string, newPassword: string): 
 }
 
 /**
+ * 改用户名（★ 2026-10-09）。
+ *
+ * ⚠️ 和 `changePassword` **正相反**：这一趟**不发新票**。票的签名里掺的是
+ * 密码哈希和 userId，**没有用户名**（`server/session.ts`）—— 所以别的设备
+ * 不会被踢，当前这台也不用换票。别照着上面那条的注释写"所有设备下线"。
+ *
+ * 回的是**改完之后**那份 user：调用方拿它更新屏幕上那一行。
+ */
+export async function changeUsername(username: string): Promise<AccountUser> {
+  return (await post<{ user: AccountUser }>('/api/username', { username })).user
+}
+
+/**
  * 注销账号（§5）：作品、照片、会话一起删。
  *
  * ⚠️ **删了就找不回来**（我们也没有备份）—— 调用方必须先让用户确认过。

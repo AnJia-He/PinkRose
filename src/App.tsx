@@ -2332,6 +2332,9 @@ export default function App() {
           // "哪一页对应哪个网址"只有 ui/view.ts 说了算（和上面作品页同一条规矩）。
           onGo={go}
           onSignedOut={() => setUser(null)}
+          // ★ 2026-10-09：改名成功之后把新的那份 user 换进来 —— `user` 是
+          //   **App 的 state**（这一页只是看一眼），名字得有一个来源。
+          onUserChanged={setUser}
         />
       )}
       {/* 模型设置（§7.4，Task 9）。*它自己不拉名单之外的东西* ——

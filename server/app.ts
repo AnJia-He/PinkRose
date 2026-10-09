@@ -4,7 +4,7 @@ import { extname, join, normalize, resolve, sep } from 'node:path'
 import { KEY_REQUIRED } from '../shared/copy.ts'
 import { normalizeUsername } from '../shared/account.ts'
 import {
-  findUserByCookie, handleChangePassword, handleDeleteAccount, handleLogin, handleSignup,
+  findUserByCookie, handleChangePassword, handleChangeUsername, handleDeleteAccount, handleLogin, handleSignup,
   type AccountDeps, type PublicUser,
 } from './account.ts'
 import { resolveClients, type ClientDeps } from './clientFor.ts'
@@ -368,6 +368,17 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       const r = await handleChangePassword(body, user, deps.auth)
       res.setHeader('set-cookie', sessionCookie(r.token, r.expiresAt))
       sendJson(res, 200, { user: r.user })
+      return
+    }
+    if (req.method === 'POST' && path === '/api/username') {
+      // ★ 2026-10-09：改名。顺序同 /api/password（先认人，再读体）。
+      // ⚠️ **不发新票**（`set-cookie` 那行是没有的，别照着上面那条抄）——
+      //   票的签名里掺的是密码哈希和 userId，没有用户名，见
+      //   `handleChangeUsername` 那段。
+      const user = requireUser(deps, req, res)
+      const body = await readJsonBody(req)
+      const next = await handleChangeUsername(body, user, deps.auth)
+      sendJson(res, 200, { user: next })
       return
     }
     if (req.method === 'POST' && path === '/api/works') {

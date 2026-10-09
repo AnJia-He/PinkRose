@@ -1128,6 +1128,41 @@ describe('用户管理页', () => {
     expect((form.querySelector('input[name=oldPassword]') as HTMLInputElement).value).toBe('')
   })
 
+  it('★ 改用户名：点那一行 → 填新名字 → 真的打 /api/username，**页面上那一行跟着变**', async () => {
+    // ★ 2026-10-09（用户原话：「像有些功能对应的增删改查的操作的补充就不要再让我
+    // 一再强调了，比如用户名的修改功能」）—— 这一页原来是"名字只能看、不能改"。
+    await renderApp()
+    await openAccount()
+    expect(container.querySelector('.account-name')?.textContent).toBe(LOGGED_IN.username)
+
+    await act(async () => { rowByLabel('用户名').click() })
+    const form = container.querySelector('.account-form') as HTMLFormElement
+    expect(form).toBeTruthy()
+
+    await act(async () => {
+      type(form.querySelector('input[name=username]') as HTMLInputElement, '阿宝')
+    })
+    await act(async () => {
+      (form.querySelector('.account-submit') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    const call = fetchMock.mock.calls.find(c => c[0] === '/api/username')
+    expect(call).toBeTruthy()
+    expect(JSON.parse(String(call?.[1]?.body))).toEqual({ username: '阿宝' })
+
+    // ★★ 那一行**当场**换成新名字 —— 这条钉的是 `onUserChanged` 有没有接上。
+    //    只把请求发对、屏幕不动，用户读到的就是"点了没反应"（这个项目最恨的那种）。
+    expect(container.querySelector('.account-name')?.textContent).toBe('阿宝')
+
+    // ★ 那句成功的话说的是**下一步**（下次用新名字登录），**不是**改密码那句
+    //   "其他设备要重新登录"—— 在改名字这一趟那句是**假话**：票的签名里没有
+    //   用户名，一台设备都不会掉（`server/app.test.ts` 有一条钉着"不发新票"）。
+    const msg = container.querySelector('.account-msg')?.textContent ?? ''
+    expect(msg).toContain('新名字')
+    expect(msg).not.toContain('其他设备')
+  })
+
   it('★ 注销：要**再确认一次**，那句话得说清删什么、能不能后悔', async () => {
     // 用户管理页原来那句「这一版不做」就是卡在这两件事上（见 AccountPage 的注释）。
     await renderApp()

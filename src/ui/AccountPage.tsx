@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import {
-  changePassword, deleteAccount, logout, usage as fetchUsage,
+  changePassword, changeUsername, deleteAccount, logout, usage as fetchUsage,
   type AccountUser,
 } from '../api/account.ts'
 import { errorText } from '../api/client'
@@ -44,11 +44,20 @@ type Usage =
   | { state: 'unavailable' }
 
 export function AccountPage({
-  user, onGo, onSignedOut,
+  user, onGo, onSignedOut, onUserChanged,
 }: {
   user: AccountUser
   onGo: (v: View) => void
   onSignedOut: () => void
+  /**
+   * ★ 2026-10-09（用户原话：「像有些功能对应的增删改查的操作的补充就不要再让我
+   * 一再强调了，比如用户名的修改功能」）：**改完名字把新的那份 user 交回去**。
+   *
+   * 为什么不在这儿自己存一份：`user` 是 **App 的 state**（这一页是"看一眼就走"的
+   * 一屏，名字在别处也可能用得上）。这一页自己留一份显示用的副本，就等于同一个
+   * 事实有两个答案 —— 而它们迟早会对不上（改完名切走再回来，App 手里还是旧的）。
+   */
+  onUserChanged: (u: AccountUser) => void
 }) {
   const [leaving, setLeaving] = useState(false)
   const [usage, setUsage] = useState<Usage>({ state: 'loading' })
@@ -58,12 +67,17 @@ export function AccountPage({
    */
   const [models, setModels] = useState<PublicConfig[] | null>(null)
 
-  // 改密码那一段（§6.5）和注销那一段（§5）各自的开合与状态
+  // 改密码那一段（§6.5）、改用户名那一段（★ 2026-10-09）、注销那一段（§5）
+  // 各自的开合与状态
   const [pwOpen, setPwOpen] = useState(false)
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [pwBusy, setPwBusy] = useState(false)
   const [pwMsg, setPwMsg] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null)
+  const [nameOpen, setNameOpen] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [nameBusy, setNameBusy] = useState(false)
+  const [nameMsg, setNameMsg] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null)
   const [delOpen, setDelOpen] = useState(false)
   const [delBusy, setDelBusy] = useState(false)
   const [delMsg, setDelMsg] = useState<string | null>(null)
@@ -114,6 +128,27 @@ export function AccountPage({
     ).finally(() => setPwBusy(false))
   }
 
+  /**
+   * ★ 2026-10-09：改名。和上面那条改密码**只差两处**，其余照抄：
+   *   · 成功之后要把**新的那份 user 交回 App**（那一行上写着的是它）；
+   *   · 那句成功的话说的是"**下次用新名字登录**"—— 改密码那句说的是"其他设备要
+   *     重新登录"，**在这一趟是假话**：票里没有用户名，别的设备一个都不会掉
+   *     （见 `api/account.ts` 的 `changeUsername`）。
+   */
+  const submitUsername = () => {
+    if (nameBusy) return
+    setNameBusy(true)
+    setNameMsg(null)
+    changeUsername(newName).then(
+      (u) => {
+        setNameMsg({ tone: 'ok', text: '改好了，下次用新名字登录。' })
+        setNewName('')
+        onUserChanged(u)
+      },
+      (e) => setNameMsg({ tone: 'err', text: errorText(e, '没改成，过一会儿再试。') }),
+    ).finally(() => setNameBusy(false))
+  }
+
   const confirmDelete = () => {
     if (delBusy) return
     setDelBusy(true)
@@ -145,18 +180,27 @@ export function AccountPage({
         <section className="account-tile">
           <h2 className="account-tile-title">账号</h2>
           <div className="account-card">
-            {/* 用户名：它不是一个"可点的设置"，但放在这一框的最上面最自然
-                （设置页的第一行十有八九就是"你是谁"）。
+            {/* 用户名：设置页的第一行十有八九就是"你是谁"，所以它排在最上面。
 
-                ⚠️ `.account-label` / `.account-name` 这两个类**是测试的锚点，改版也不许删**：
-                `App.test.tsx` 有两条断言钉着「用户名这三个字在」和「`.account-name`
-                恰好等于用户名」（后者是防"标签被塞进名字里"的那种错法）。 */}
-            <div className="account-row account-row-static">
+                ★ 2026-10-09（用户原话：「像有些功能对应的增删改查的操作的补充就
+                不要再让我一再强调了，比如用户名的修改功能」）：这一行**从只读
+                变成可点**（原来是个 `<div className="account-row-static">`，
+                名字只能看、不能改）。形状照这一页「模型 ›」那一行，
+                点开就地长出一个表单 —— 全站没有弹窗文化。
+
+                ⚠️ `.account-label` / `.account-name` 这两个类**是测试的锚点，
+                改版也不许删**：`App.account.test.tsx` 有两条断言钉着
+                「用户名这三个字在」和「`.account-name` 恰好等于用户名」
+                （后者是防"标签被塞进名字里"的那种错法）。
+                ⚠️ 标签和名字必须**还是两个 `<span>`** —— 合成一句就撞上第二条。 */}
+            <button className="account-row" aria-expanded={nameOpen}
+              onClick={() => setNameOpen((o) => !o)}>
               <span className="account-row-label account-label">用户名</span>
               <span className="account-row-value account-name">{user.username}</span>
-            </div>
+              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
+            </button>
 
-            {/* 账号那两件（§3.6 那张图上的 改密码／注销账号）。
+            {/* 账号那三件（§3.6 那张图上的 改密码／注销账号，★ 加上改名）。
                 ⚠️ 「退出登录」**不在这张卡里**（见下面那颗按钮的注释）—— 它是"离开这一页"，
                 不是这一页上的一项设置，收进来就把两种东西混成一种了。 */}
             <button className="account-row" aria-expanded={pwOpen}
@@ -170,6 +214,27 @@ export function AccountPage({
               <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
             </button>
           </div>
+
+          {/* 改用户名的表单（★ 2026-10-09）。⚠️ 和改密码那趟**不一样**：这一改
+              **不影响登录态**（票里没有用户名），所以别在界面上写"其他设备要重新登录"。 */}
+          {nameOpen && (
+            <form className="account-form" onSubmit={(e) => { e.preventDefault(); submitUsername() }}>
+              {/* ⚠️ 提示**只写长度这一条**：字数是最猜不到的那条规矩，而字符类
+                  写全会很长（中文、字母、数字、下划线、·）—— 长到在这一格里
+                  折行、把末尾那个 `·` 孤零零甩到第二行（真机截图看过）。
+                  字符类交给服务端那句「只能用中文、字母、数字、下划线和 ·」
+                  （它就是注册页一直在用的那一句），别在这儿再写一遍更短的版本
+                  —— 两句话不一样，用户会以为两处的规矩不一样。 */}
+              <Field className="account-field" label="新用户名" hint="2 到 20 个字">
+                <TextInput name="username" autoComplete="username"
+                  value={newName} onChange={(e) => setNewName(e.target.value)} />
+              </Field>
+              {nameMsg && <p className={nameMsg.tone === 'ok' ? 'account-msg ok' : 'account-msg'}>{nameMsg.text}</p>}
+              <Btn type="submit" className="account-submit" disabled={nameBusy}>
+                {nameBusy ? '正在改…' : '改用户名'}
+              </Btn>
+            </form>
+          )}
 
           {/* 改密码的表单（§6.5）。⚠️ 服务端改完会发一张新票 —— 所以这一改等于把
               **所有设备**踢下线；当前这台拿到新票、不会掉，别在界面里吓唬人。 */}

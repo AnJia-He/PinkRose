@@ -3198,10 +3198,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 悬停那层底比全局 `--hover` 淡得多：`--hover` 是给"一整块面"用的，
    这是"面上的一行"，整块面那样变色就太重了。 */
 .account-row:where(:hover):where(:not(:disabled)) { background: var(--glass-hover); }
-/* 列表里的**只读行**（用户名、使用情况）：它们没有去处，所以没有悬停反馈。
-   ⚠️ 这条必须排在上面悬停那条**后面**才压得住（两边同权重，后写的赢）。
-   别的长相和可点的行一字不差 —— 一张卡里别有两种排版。 */
-.account-row-static:where(:hover) { background: transparent; }
+/* ★ 2026-10-09：这里原来有一条 `.account-row-static`（只读行：用户名）。
+   用户要"用户名也能改"之后，那一行变成了和「模型」一样的可点行 ——
+   这个类**全仓零引用**，按"用到再加"删掉（照 `--rose-100` 那条先例）。 */
 /* 焦点环往**里**收 2px：卡片会把往外扩的那一圈裁掉（`overflow: hidden`），
    照全局那套（offset +2px）走，键盘用户只看得到半圈。 */
 .account-row:focus-visible { outline-offset: -2px; }
