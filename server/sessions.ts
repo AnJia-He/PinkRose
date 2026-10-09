@@ -1,6 +1,7 @@
 import type { Db } from './db.ts'
 import type { Storage } from './storage.ts'
 import type { PublicUser } from './account.ts'
+import { nowMs } from './clock.ts'
 import { HttpError, asObject, str } from './http.ts'
 import { mimeOf, readImageDataUrl, saveOptionalThumb } from './imagedata.ts'
 import { assertRoomFor } from './quota.ts'
@@ -13,7 +14,6 @@ import { normalizeLutRef, type LutRef } from '../shared/lut.ts'
 import type { SessionDetail, SessionMessage, SessionMeta, SessionStep } from '../shared/sessions.ts'
 
 export type SessionsDeps = { db: Db; storage: Storage; now?: () => number }
-const nowMs = (deps: SessionsDeps): number => (deps.now ?? Date.now)()
 
 /** 单张图的上限，和作品那边同一个数（前端导出的都是 2048 长边、1 MB 上下） */
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024

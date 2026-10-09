@@ -3,6 +3,7 @@ import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
 import { MoreHorizontal, Plus, RotateCw, SlidersHorizontal } from 'lucide-react'
 import LutPicker from './LutPicker.tsx'
+import { SelectBar } from './kit/SelectBar.tsx'
 import logoAvatar from '../assets/logo/emperor-avatar.svg'
 // ★ 2026-10-08：勾选的分量是"一问一答"（见 `togglePick`）—— 配对规则和 App
 //   那本删除账共用同一份（core/messages.ts），别在这儿另写一套。
@@ -551,38 +552,18 @@ export default function ChatPanel({
       {/* ★ 2026-10-06 下午：**选择模式底下那条操作条**（输入框在这一档让位 ——
           发不了话：想聊先退出，这比"发出去了但心里没底"清楚，卡片那条花钱的
           路也一起收了，见上面）。
-          两副面孔：平时「已选 N 条 ｜ 删除 ｜ 取消」；点【删除】而勾里有带图的
-          步骤时，就地变成那一问（`batchAsk`）—— 全站"不弹窗"的规矩，
-          和 `.msg-confirm` 是同一条。 */}
+          两副面孔 + 危险色那条规矩在 `kit/SelectBar` 里（和对话列表同一份）。
+          ⚠️ 这一侧点【删除】**先看勾里有没有带图的步骤** —— 有才问那一句，
+          没有直接删（那是 `askBatchDelete` 自己的事）。 */}
       {selecting && (
-        <div className="chat-select">
-          {batchAsk ? (
-            <>
-              <span className="chat-select-note">
-                {`选中的 ${selectedIds.length} 条里有 ${stepCount} 张生成过的图，删了就找不回来了。`}
-              </span>
-              {/* 两颗里只有「确认删除」穿危险色 —— 文案都很短、长得又像，
-                  点错一次东西就没了，颜色是唯一还分得开的地方（`.danger`，
-                  和 SessionsPage 的「删掉」同一条规矩）。 */}
-              <button className="chat-select-del danger"
-                disabled={!!busy || selectedIds.length === 0}
-                onClick={doBatchDelete}>确认删除</button>
-              <button className="chat-select-cancel" disabled={!!busy}
-                onClick={() => setBatchAsk(false)}>算了</button>
-            </>
-          ) : (
-            <>
-              <span className="chat-select-count">{`已选 ${selectedIds.length} 条`}</span>
-              {/* 一条都没勾 = 点了什么也不会发生 → 直接禁用它（不留点了没反应的
-                  按钮）。⚠️ `busy` 那道闸门 App 里还有真的（和「再来一版」同一条）。 */}
-              <button className="chat-select-del"
-                disabled={!!busy || selectedIds.length === 0}
-                onClick={askBatchDelete}>删除</button>
-              <button className="chat-select-cancel" disabled={!!busy}
-                onClick={exitSelect}>取消</button>
-            </>
-          )}
-        </div>
+        <SelectBar scope="chat" count={selectedIds.length} busy={!!busy}
+          askNote={batchAsk
+            ? `选中的 ${selectedIds.length} 条里有 ${stepCount} 张生成过的图，删了就找不回来了。`
+            : null}
+          onAsk={askBatchDelete}
+          onConfirm={doBatchDelete}
+          onExitAsk={() => setBatchAsk(false)}
+          onExit={exitSelect} />
       )}
 
       {!selecting && (

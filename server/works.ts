@@ -1,6 +1,7 @@
 import type { Db } from './db.ts'
 import type { Storage } from './storage.ts'
 import type { PublicUser } from './account.ts'
+import { nowMs } from './clock.ts'
 import { HttpError, asObject, str } from './http.ts'
 import { mimeOf, readImageDataUrl, saveOptionalThumb } from './imagedata.ts'
 import { assertRoomFor } from './quota.ts'
@@ -15,8 +16,6 @@ const MAX_WORK_BYTES = 8 * 1024 * 1024
 /** 配方里最多记几句、每句多长。防的是"有人存一万条" */
 const MAX_EDITS = 100
 const MAX_EDIT_LEN = 200
-
-const nowMs = (deps: WorksDeps): number => (deps.now ?? Date.now)()
 
 export type WorkRow = {
   id: number; user_id: number; stored_name: string; thumb_name: string | null

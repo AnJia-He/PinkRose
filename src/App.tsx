@@ -39,7 +39,7 @@ import { fitToLimit, probeLimit } from './render/limits'
 import { applyDeltas, ZERO, type Adjustments } from '../shared/adjustments.ts'
 import { canShareImage } from './export/save'
 import { prepareForRouting } from './image/prepare'
-import { ApiError, isUnauthorized, postRoute } from './api/client'
+import { errorText, isUnauthorized, postRoute } from './api/client'
 import { bitmapsToClose, attachThumb, closeBitmaps, type Snapshot } from './core/history'
 // ★ 2026-10-08（调色区账本）：裁剪/点修不再推新快照 —— 它们给「当前这一版」
 //   记一笔账（`pushEdit` 把"改之前"压进 `past`），退这一步走账本的 `undoEdit`。
@@ -1228,7 +1228,7 @@ export default function App() {
       // 同上：票失效不是"出了点问题"，是"你得再登录一次"——而这句话只有在
       // 登录页上才成立。回登录页，不是留一句提示。
       if (isUnauthorized(e)) { setUser(null); return }
-      say(e instanceof ApiError ? e.message : '出了点问题，再试一次？')
+      say(errorText(e, '出了点问题，再试一次？'))
     } finally {
       setBusy(null)
     }

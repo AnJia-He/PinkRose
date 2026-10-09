@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react'
 import { applyDeltas, type Adjustments } from '../../shared/adjustments.ts'
 import { sameLutName, type LutMeta, type LutRef } from '../../shared/lut.ts'
 import type { RouteDecision, SuggestCard } from '../../shared/protocol.ts'
-import { ApiError, isAbort, isUnauthorized, postEdit, postSuggest } from '../api/client'
+import { errorText, isAbort, isUnauthorized, postEdit, postSuggest } from '../api/client'
 import { bitmapsToClose, cutAfter, pushSnapshot, type Snapshot } from '../core/history'
 import type { DecodedImage } from '../image/decode'
 import { prepareForModel, prepareForRouting, type Sizable } from '../image/prepare'
@@ -332,7 +332,7 @@ export function useGeneration(deps: GenerationDeps) {
       // 票中途失效 → 回登录页（见 isUnauthorized）。这一句和下面那句 say 是
       // **互斥**的：说"没改成"和"你被登出了"是两件事，不能一起说。
       if (isUnauthorized(e)) { setUser(null); return }
-      say(e instanceof ApiError ? e.message : '这次没改成功，再试一次？')
+      say(errorText(e, '这次没改成功，再试一次？'))
     } finally {
       // 只有"还是我这一次"才清 —— 别把后一次的 controller 抹掉
       if (editAbortRef.current === ac) editAbortRef.current = null

@@ -2,6 +2,7 @@ import {
   ALIAS_REQUIRED, BASE_URL_REQUIRED, KEY_REQUIRED, MODEL_ID_REQUIRED, NEED_KEY, UNREADABLE_KEY_HINT,
 } from '../shared/copy.ts'
 import type { PublicUser } from './account.ts'
+import { nowMs } from './clock.ts'
 import type { Db } from './db.ts'
 import { HttpError, asObject, str } from './http.ts'
 import { assertModelHostAllowed } from './hostGuard.ts'
@@ -24,7 +25,6 @@ const MAX_ALIAS = 20
 const MAX_MODEL_ID = 100
 
 export type ModelConfigDeps = { db: Db; vault: Vault; now?: () => number }
-const now = (d: ModelConfigDeps): number => (d.now ? d.now() : Date.now())
 
 /** 完整钥匙**永不出去**的形状。回给前端的只有 keyHint。 */
 export type PublicConfig = {
@@ -223,7 +223,7 @@ export function createConfig(body: unknown, user: PublicUser, deps: ModelConfigD
   const r = deps.db.raw
     .prepare(`INSERT INTO model_configs (user_id, kind, provider, base_url, api_key_enc, model_id, alias, created_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(user.id, kind, provider, baseUrl, deps.vault.seal(apiKey), modelId, alias, now(deps))
+    .run(user.id, kind, provider, baseUrl, deps.vault.seal(apiKey), modelId, alias, nowMs(deps))
 
   const row = deps.db.raw
     .prepare('SELECT id, kind, provider, base_url, api_key_enc, model_id, alias FROM model_configs WHERE id = ?')

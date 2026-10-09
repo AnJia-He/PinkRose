@@ -8,6 +8,7 @@ import {
   type AccountDeps, type PublicUser,
 } from './account.ts'
 import { resolveClients, type ClientDeps } from './clientFor.ts'
+import { nowMs } from './clock.ts'
 import type { Config } from './config.ts'
 import { handleEdit } from './edit.ts'
 import { HttpError, asObject, readJsonBody, sendBytes, sendError, sendJson, str } from './http.ts'
@@ -268,13 +269,13 @@ function renewSessionIfStale(
   const expiresAt = token === undefined ? null : expiryOf(token)
   if (expiresAt === null) return
 
-  // 「现在几点」必须和认人用的**同一个钟**（account.ts 里也是这么取的）：
+  // 「现在几点」必须和认人用的**同一个钟**（全服务端只此一个，住在 `clock.ts`）：
   // 两边各用一个钟，测试里拨动的时间就只对一半代码生效。
-  const nowMs = deps.auth.now ? deps.auth.now() : Date.now()
-  if (daysLeft(expiresAt, nowMs) >= RENEW_WITHIN_DAYS) return
+  const at = nowMs(deps.auth)
+  if (daysLeft(expiresAt, at) >= RENEW_WITHIN_DAYS) return
 
   // 新票用的是**刚刚验过的那份哈希** —— 换任何一份（比如从请求里拿）都等于自己造钥匙。
-  const next = sessionExpiry(nowMs)
+  const next = sessionExpiry(at)
   res.setHeader('set-cookie', sessionCookie(
     signSession(u.id, u.passwordHash, next, deps.auth.secret), next,
   ))

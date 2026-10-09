@@ -1,4 +1,5 @@
 import type { PublicUser } from './account.ts'
+import { nowMs } from './clock.ts'
 import type { Db } from './db.ts'
 import { HttpError, asObject, str } from './http.ts'
 import { assertRoomFor } from './quota.ts'
@@ -10,7 +11,6 @@ import {
 } from '../shared/lut.ts'
 
 export type LutDeps = { db: Db; storage: Storage; now?: () => number }
-const nowMs = (d: LutDeps): number => (d.now ? d.now() : Date.now())
 
 export type LutRow = {
   id: number; user_id: number; name: string; stored_name: string

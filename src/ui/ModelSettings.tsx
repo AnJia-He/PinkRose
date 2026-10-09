@@ -7,6 +7,7 @@ import {
   UNREADABLE_KEY_HINT, activateModel, createModel, deleteModel, listModels, testModel, updateModel,
   type ModelKind, type ProbeTarget, type ProbeResult, type PublicConfig,
 } from '../api/models'
+import { errorText } from '../api/client'
 import { Field, TextInput } from './kit/Field.tsx'
 import { Btn } from './kit/Btn.tsx'
 
@@ -106,7 +107,7 @@ export function ModelSettings() {
       // ★ 失败时**不清成空数组**：`configs` 留在 null，两栏就整套不画
       //   （见上面那段注释）。里头的消息原样显示，服务端说了什么就是什么。
       setConfigs(null)
-      setLoadError(e instanceof Error ? e.message : '打不开模型设置')
+      setLoadError(errorText(e, '打不开模型设置'))
     }
   }, [])
 
@@ -128,7 +129,7 @@ export function ModelSettings() {
       setWarn(r.wasActive ? { kind: c.kind, noun } : null)
       await reload()
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : '没删掉，再试一次')
+      setActionError(errorText(e, '没删掉，再试一次'))
     }
   }, [reload])
 
@@ -143,7 +144,7 @@ export function ModelSettings() {
       await activateModel(kind, id)
       await reload()
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : '没换过去，再试一次')
+      setActionError(errorText(e, '没换过去，再试一次'))
     }
   }, [reload])
 
@@ -378,7 +379,7 @@ function ModelForm({
       setProbe({ state: 'done', result, url, key, name })
     } catch (e) {
       setProbe({ state: 'idle' })
-      setError(e instanceof Error ? e.message : '没能试成，再试一次')
+      setError(errorText(e, '没能试成，再试一次'))
     }
   }
 
@@ -414,7 +415,7 @@ function ModelForm({
       }
       await onSaved()
     } catch (e) {
-      setError(e instanceof Error ? e.message : '没存进去，再试一次')
+      setError(errorText(e, '没存进去，再试一次'))
     } finally {
       setSaving(false)
     }

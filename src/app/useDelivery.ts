@@ -4,6 +4,7 @@ import type { Recipe } from '../../shared/works.ts'
 import type { Adjustments } from '../../shared/adjustments.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
 import { createWork, replaceWork } from '../api/works'
+import { errorText } from '../api/client'
 import {
   blobToDataUrl, buildExportBlob, buildFilename, downloadImage, shareImage,
 } from '../export/save'
@@ -260,7 +261,7 @@ export function useDelivery(deps: DeliveryDeps) {
       //    （`out` 为 null 时那个 `name` 永远不会被读到：没图就没有下载按钮。）
       setSaveFail({
         blob: out?.blob ?? null, name: out?.name ?? '',
-        why: e instanceof Error ? e.message : '没存进去',
+        why: errorText(e, '没存进去'),
       })
     } finally {
       setDelivering(null)
@@ -281,7 +282,7 @@ export function useDelivery(deps: DeliveryDeps) {
     void saveOnce(cur.blob, replaceId, cur.recipe)
       .catch((e) => setSaveFail({
         blob: cur.blob, name: cur.name,
-        why: e instanceof Error ? e.message : '没存进去',
+        why: errorText(e, '没存进去'),
       }))
       .finally(() => setDelivering(null))
   }, [asking, saveOnce])

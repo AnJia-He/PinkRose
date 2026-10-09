@@ -1,14 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MoreHorizontal } from 'lucide-react'
 import { Btn } from './kit/Btn.tsx'
-import { useLoadMoreSentinel } from './kit/loadMore.ts'
+import { usePagedDays } from './kit/pagedDays.ts'
+import { SelectBar } from './kit/SelectBar.tsx'
 import { listSessions, deleteSession, updateSession, sessionThumbUrl } from '../api/sessions'
-import { groupByDay } from '../../shared/works.ts'
-import { visibleGroups } from '../core/gallery'
+import { errorText } from '../api/client'
 import { sessionTitle, sessionMatchesQuery, type SessionMeta } from '../../shared/sessions.ts'
-
-/** 一次摆多少条。和作品页同一个数（§3.5：「先摆 60 张，够铺满一屏多一点」） */
-const PAGE = 60
 
 /**
  * 对话列表：**过程**的家（§6.1）。
@@ -52,7 +49,6 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
    * 所以这一条是列表**上面**加一句，列表原样不动。
    */
   const [delFailed, setDelFailed] = useState<string | null>(null)
-  const [limit, setLimit] = useState(PAGE)
   /** 正在问"这条要删掉吗"的是哪一条。**就地确认，不弹系统框**（这个产品的规矩） */
   const [confirming, setConfirming] = useState<number | null>(null)
   /** 正在改名字的是哪一条。**手势和作品详情页那颗「改名」同一套**：
@@ -127,26 +123,18 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
     }
     exitSelect()
   }
-  /** 「现在」只取一次：显示名要判断"是不是今年"，一次会话里不会跨年 */
-  const now = useMemo(() => Date.now(), [])
-
   useEffect(() => {
     let alive = true
     listSessions().then(
       (rs) => { if (alive) setRows(rs) },
-      (e) => { if (alive) setFailed(e instanceof Error ? e.message : '打不开对话列表') },
+      (e) => { if (alive) setFailed(errorText(e, '打不开对话列表')) },
     )
     return () => { alive = false }
   }, [])
 
-  const groups = useMemo(
-    () => (rows ? groupByDay(rows.filter(s => sessionMatchesQuery(s, q, now)), now) : []),
-    [rows, q, now])
-  const shown = useMemo(() => visibleGroups(groups, limit), [groups, limit])
-  const more = shown.length < groups.length
-
-  /** 滚到底就把下 60 条接上 —— 哨兵那套在 `kit/loadMore`（和作品页同一份）。 */
-  const sentinel = useLoadMoreSentinel(more, PAGE, setLimit)
+  /** 按天分组 + 分页 + 滚到底的哨兵：和作品页**同一套**（`kit/pagedDays`）。
+   *  （"现在"那份只喂给分组，这一页自己不用，所以不解构出来。） */
+  const { groups, shown, more, sentinel, resetLimit } = usePagedDays(rows, q, sessionMatchesQuery)
 
   async function doDelete(id: number) {
     setConfirming(null)
@@ -159,7 +147,7 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
       onDeleted(id)
     } catch (e) {
       // 说"不行"的地方都要说"那怎么办"（§3.7）——"再试一次"就是那句出路
-      setDelFailed(e instanceof Error ? e.message : '没删掉，再试一次？')
+      setDelFailed(errorText(e, '没删掉，再试一次？'))
     }
   }
 
@@ -190,7 +178,7 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
       setRows((rs) => rs?.map((r) => (r.id === id ? meta : r)) ?? null)
     } catch (e) {
       // 同上：失败了列表原样，只在上面加一句
-      setRenameFailed(e instanceof Error ? e.message : '没改成，再试一次')
+      setRenameFailed(errorText(e, '没改成，再试一次'))
     }
   }
 
@@ -211,7 +199,7 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
       <input className="gallery-search" value={q}
              placeholder="找一条…（名字，或者 9月25 这样的日期）"
              aria-label="找一条对话"
-             onChange={e => { setQ(e.target.value); setLimit(PAGE) }} />
+             onChange={e => { setQ(e.target.value); resetLimit() }} />
     </header>
   )
 
@@ -352,35 +340,15 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
       {/* ★ 2026-10-06 下午：**选择模式底下那条操作条**。它是滚动区的最后一个
           孩子 + `position: sticky; bottom: 0` —— 不管滚到哪儿它都吸在视野底下
           （勾了一段滚下去找按钮的事不该发生），滚到底就归位。
-          两副面孔：平时「已选 N 条 ｜ 删除 ｜ 取消」；点【删除】之后就地问一句
-          （全站"不弹窗"的规矩，和对话区那条 `.chat-select` 同一套）。 */}
+          两副面孔和"只有确认那颗穿危险色"的规矩在 `kit/SelectBar` 里
+          （和对话区那条同一份）。 */}
       {selecting && (
-        <div className="sessions-select">
-          {confirmAsk ? (
-            <>
-              <span className="sessions-select-note">
-                {`删掉选中的 ${selectedIds.length} 条？删了就找不回来了。`}
-              </span>
-              {/* 两颗里只有「确认删除」穿危险色（文案短、长得像，颜色是唯一
-                  还分得开的地方 —— 和 `.session-del.danger` 同一条规矩）。 */}
-              <button className="sessions-select-del danger"
-                disabled={deleting || selectedIds.length === 0}
-                onClick={() => void doBatchDelete()}>确认删除</button>
-              <button className="sessions-select-cancel" disabled={deleting}
-                onClick={() => setConfirmAsk(false)}>算了</button>
-            </>
-          ) : (
-            <>
-              <span className="sessions-select-count">{`已选 ${selectedIds.length} 条`}</span>
-              {/* 一段没勾 = 点了什么也不会发生 → 直接禁用（不留点了没反应的按钮） */}
-              <button className="sessions-select-del"
-                disabled={deleting || selectedIds.length === 0}
-                onClick={() => setConfirmAsk(true)}>删除</button>
-              <button className="sessions-select-cancel" disabled={deleting}
-                onClick={exitSelect}>取消</button>
-            </>
-          )}
-        </div>
+        <SelectBar scope="sessions" count={selectedIds.length} busy={deleting}
+          askNote={confirmAsk ? `删掉选中的 ${selectedIds.length} 条？删了就找不回来了。` : null}
+          onAsk={() => setConfirmAsk(true)}
+          onConfirm={() => void doBatchDelete()}
+          onExitAsk={() => setConfirmAsk(false)}
+          onExit={exitSelect} />
       )}
     </section>
   )

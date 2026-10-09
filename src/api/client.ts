@@ -2,6 +2,7 @@ import type {
   EditRequest, EditResponse, RouteDecision, RouteRequest, RouteResponse,
   SuggestRequest, SuggestResponse, AppErrorCode,
 } from '../../shared/protocol.ts'
+import { LutParseError } from '../../shared/lut.ts'
 
 export class ApiError extends Error {
   readonly code: AppErrorCode
@@ -29,6 +30,27 @@ export class ApiError extends Error {
  */
 export function isAbort(e: unknown): boolean {
   return (e as { name?: string } | null)?.name === 'AbortError'
+}
+
+/**
+ * 失败 → 说给用户的那句话：**服务端说的、和 Lut 解析器说的原样转，其余一律兜底。**
+ *
+ * ★ 2026-10-09 收口：这条规矩原来在十来个文件里各写了一遍
+ *   （`e instanceof Error ? e.message : '没删掉，再试一次'` 那一种），
+ *   `AccountPage` / `LutSettings` 里还各有一个同名的小助手。
+ *
+ * ⚠️ **别写成 `e instanceof Error`**：TypeError / DOMException 也是 Error，
+ *   它们的 message 是英文技术话（`Failed to fetch`、
+ *   `The source image could not be decoded.`）—— 原样显示等于把英文甩给用户。
+ *   调用点那句 `fallback` 本来就是为"说不出人话"的时刻写的。
+ * ⚠️ 认这两类，是因为**它们的 message 本来就是写给人看的中文**：
+ *   · `ApiError` —— 网络层把一切翻译过了（'连不上服务器，检查一下网络？'），
+ *     服务端那条报错原文也是照 spec §6.3 写死的；
+ *   · `LutParseError` —— 客户端这份解析用的就是服务端那份（`shared/lut.ts`），
+ *     两句话天然一致，不会漂。
+ */
+export function errorText(e: unknown, fallback: string): string {
+  return e instanceof ApiError || e instanceof LutParseError ? e.message : fallback
 }
 
 /**

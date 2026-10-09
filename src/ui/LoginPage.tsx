@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 import { login, signup } from '../api/account'
+import { errorText } from '../api/client'
 import logoMark from '../assets/logo/emperor-badge.svg'
 import { Field, TextInput } from './kit/Field.tsx'
 import { Btn } from './kit/Btn.tsx'
@@ -166,7 +167,7 @@ export function LoginPage({ onDone }: Props) {
       // 后端说的话（"这个名字已经有人用了"）比这里能编的任何一句都准，
       // 原样显示。**不清空任何输入框** —— 最气人的一种失败是密码输错一次、
       // 表单被清空，用户得从头再打一遍。
-      setError(err instanceof Error ? err.message : UNEXPECTED_FAILURE)
+      setError(errorText(err, UNEXPECTED_FAILURE))
     } finally {
       // ⚠️ 复位在 `finally` 里，而且因为上面那句 `await`，它只发生在
       // **跟随请求真的结束之后**。两条路各有一个坑，这个形状同时避开：

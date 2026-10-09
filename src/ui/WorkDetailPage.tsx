@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { BtnLink } from './kit/Btn.tsx'
 import { getWork, renameWork, deleteWork, fullUrl } from '../api/works'
+import { errorText } from '../api/client'
 import { workName, type WorkMeta, type WorkDetail } from '../../shared/works.ts'
 import { buildFilename } from '../export/save'
 import { PARAM_LABELS, PARAM_KEYS, clampAdjustments, isChanged, type Adjustments } from '../../shared/adjustments.ts'
@@ -58,7 +59,7 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
     let alive = true
     getWork(id).then(
       (w) => { if (alive) setWork(w) },
-      (e) => { if (alive) setFailed(e instanceof Error ? e.message : '打不开这一张') },
+      (e) => { if (alive) setFailed(errorText(e, '打不开这一张')) },
     )
     return () => { alive = false }
   }, [id])
@@ -91,7 +92,7 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
       const got = await renameWork(id, next || null)   // 清空 = 改回用时间当名字
       setWork(w => (w ? { ...w, alias: got.alias } : w))
     } catch (e) {
-      setFailed(e instanceof Error ? e.message : '没改成，再试一次')
+      setFailed(errorText(e, '没改成，再试一次'))
     } finally { setBusy(false) }
   }
 
@@ -102,7 +103,7 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
       await deleteWork(id)
       onBack()          // 删完回列表 —— 留在一个已经不存在的页面上最难受
     } catch (e) {
-      setFailed(e instanceof Error ? e.message : '没删掉，再试一次')
+      setFailed(errorText(e, '没删掉，再试一次'))
       setBusy(false)
     }
   }

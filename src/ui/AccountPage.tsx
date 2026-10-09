@@ -4,7 +4,7 @@ import {
   changePassword, deleteAccount, logout, usage as fetchUsage,
   type AccountUser,
 } from '../api/account.ts'
-import { ApiError } from '../api/client'
+import { errorText } from '../api/client'
 import { listModels, type PublicConfig } from '../api/models.ts'
 import { Btn } from './kit/Btn.tsx'
 import { Field, TextInput } from './kit/Field.tsx'
@@ -42,9 +42,6 @@ type Usage =
   | { state: 'loading' }
   | { state: 'ready'; count: number; bytes: number; limit: number }
   | { state: 'unavailable' }
-
-/** 网络错误那句话：服务端说了什么就转什么，没说的给一句能照着做的。 */
-const why = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback)
 
 export function AccountPage({
   user, onGo, onSignedOut,
@@ -113,7 +110,7 @@ export function AccountPage({
         setOldPw('')
         setNewPw('')
       },
-      (e) => setPwMsg({ tone: 'err', text: why(e, '没改成，过一会儿再试。') }),
+      (e) => setPwMsg({ tone: 'err', text: errorText(e, '没改成，过一会儿再试。') }),
     ).finally(() => setPwBusy(false))
   }
 
@@ -125,7 +122,7 @@ export function AccountPage({
     //（和退出登录同一条出口：App 收到就把登录页换上）。
     deleteAccount().then(
       onSignedOut,
-      (e) => { setDelBusy(false); setDelMsg(why(e, '没注销成，过一会儿再试。')) },
+      (e) => { setDelBusy(false); setDelMsg(errorText(e, '没注销成，过一会儿再试。')) },
     )
   }
 

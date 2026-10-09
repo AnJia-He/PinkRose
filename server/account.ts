@@ -1,4 +1,5 @@
 import type { Db } from './db.ts'
+import { nowMs } from './clock.ts'
 import type { Storage } from './storage.ts'
 import { hashPassword, verifyPassword } from './password.ts'
 import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../shared/account.ts'
@@ -12,8 +13,8 @@ export type AccountDeps = { db: Db; secret: string; now?: () => number }
 
 type Row = { id: number; username: string; email: string; password_hash: string }
 
-/** 时间从 deps 里取，测试才能把"30 天后过期"钉死，不随真实日期漂。 */
-const now = (d: AccountDeps): number => (d.now ? d.now() : Date.now())
+/** 时间从 deps 里取，测试才能把"30 天后过期"钉死，不随真实日期漂 ——
+ *  那一个钟现在全服务端共用（`clock.ts` 的 `nowMs`）。 */
 
 /**
  * ★ **「你是谁」永远从这里拿，绝不从请求里拿。**
@@ -45,7 +46,7 @@ export function findUserByCookie(
   // 分开处理等于给了攻击者一个信号：哪张票的 userId 是真的、只是签名不对。
   if (!row) return null
 
-  const s = verifySession(token, row.password_hash, now(deps), deps.secret)
+  const s = verifySession(token, row.password_hash, nowMs(deps), deps.secret)
   if (!s) return null
 
   // 哈希是**从库里查出来的**，不是请求里带来的 —— 上面那句 verifySession 用的也是它。
@@ -55,7 +56,7 @@ export function findUserByCookie(
 
 /** 发一张票。三处成功路径（注册/登录/改密码）共用，免得漏掉某个字段。 */
 function issue(user: PublicUser, passwordHash: string, deps: AccountDeps) {
-  const expiresAt = sessionExpiry(now(deps))
+  const expiresAt = sessionExpiry(nowMs(deps))
   return { user, token: signSession(user.id, passwordHash, expiresAt, deps.secret), expiresAt }
 }
 
@@ -81,7 +82,7 @@ export async function handleSignup(body: unknown, deps: AccountDeps) {
   try {
     deps.db.raw
       .prepare('INSERT INTO users (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)')
-      .run(u.value, e.value, hash, now(deps))
+      .run(u.value, e.value, hash, nowMs(deps))
   } catch (err) {
     // 唯一约束是**数据库**在管，这里只是把它的报错翻译成人话。
     // 不先 SELECT 一下再插 —— 两个人同时注册同一个名字，两边都会查到"没被占用"，

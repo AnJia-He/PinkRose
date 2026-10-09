@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError } from '../api/client'
+import { errorText } from '../api/client'
 import { createLut, deleteLut, listLuts, lutUsage, renameLut } from '../api/luts.ts'
 import {
-  MAX_LUT_FILE_BYTES, MAX_LUTS, MAX_LUT_NAME, LutParseError, parseCube, type LutMeta,
+  MAX_LUT_FILE_BYTES, MAX_LUTS, MAX_LUT_NAME, parseCube, type LutMeta,
 } from '../../shared/lut.ts'
 import { LUT_FILE_TOO_BIG, LUT_LIMIT_REACHED } from '../../shared/copy.ts'
 import { formatSize } from './AccountPage.tsx'
@@ -37,17 +37,7 @@ type LutsState =
   | { s: 'ready'; list: LutMeta[] }
   | { s: 'fail'; message: string }
 
-/**
- * 服务端/解析器说了什么就转什么。
- *
- * ⚠️ 认这两类**是因为它们的话本来就是给用户看的中文**：`ApiError.message` 是
- *    服务端那条报错原文（spec §6.3 冻死的几句），`LutParseError.message` 同理
- *    —— 而客户端这份 parse 用的就是**服务端那份解析器**（`shared/lut.ts`），
- *    两句话天然一致，不会漂。
- *    其余异常（TypeError 这类）原样显示就等于把英文堆栈甩给用户，给一句能照着做的。
- */
-const why = (e: unknown, fallback: string) =>
-  e instanceof ApiError || e instanceof LutParseError ? e.message : fallback
+/** 出错时那句人话的规矩在 `api/client.ts` 的 `errorText` 里（十来个文件共用一份）。 */
 
 /**
  * 读一个文件的文本（`.cube` 是纯文本）。
@@ -122,7 +112,7 @@ export function LutSettings({ onUse }: {
       if (alive.current) setLoad({ s: 'ready', list: luts })
     } catch (e) {
       // ⚠️ 失败时**绝不画成空清单**（见文件头那段）：说服务端那句话 + 下一步。
-      if (alive.current) setLoad({ s: 'fail', message: why(e, '打不开 Lut 清单') })
+      if (alive.current) setLoad({ s: 'fail', message: errorText(e,'打不开 Lut 清单') })
     }
   }, [])
 
@@ -160,7 +150,7 @@ export function LutSettings({ onUse }: {
       // 服务端可能会改名字（截断 / 去空格），名单的真值只有它那一份。
       await loadLuts()
     } catch (e) {
-      setErr(why(e, '没导进来，再试一次'))
+      setErr(errorText(e,'没导进来，再试一次'))
     } finally {
       if (alive.current) setBusy(false)
     }
@@ -182,7 +172,7 @@ export function LutSettings({ onUse }: {
       setRenaming(null)
       await loadLuts()
     } catch (e) {
-      setRenameErr(why(e, '没改成，再试一次'))
+      setRenameErr(errorText(e,'没改成，再试一次'))
     } finally {
       if (alive.current) setRenamingBusy(false)
     }
@@ -205,7 +195,7 @@ export function LutSettings({ onUse }: {
       const { sessions } = await lutUsage(l.id)
       if (alive.current) setAsk({ id: l.id, sessions })
     } catch (e) {
-      setErr(why(e, '没问出这个 Lut 有没有在用，再试一次'))
+      setErr(errorText(e,'没问出这个 Lut 有没有在用，再试一次'))
     } finally {
       if (alive.current) setChecking(null)
     }
@@ -220,7 +210,7 @@ export function LutSettings({ onUse }: {
       setAsk(null)
       await loadLuts()
     } catch (e) {
-      setErr(why(e, '没删掉，再试一次'))
+      setErr(errorText(e,'没删掉，再试一次'))
     } finally {
       if (alive.current) setDeleting(false)
     }

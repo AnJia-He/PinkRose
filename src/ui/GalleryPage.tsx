@@ -1,11 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { listWorks, fileUrl } from '../api/works'
-import { workName, matchesQuery, groupByDay, type WorkMeta } from '../../shared/works.ts'
-import { visibleGroups } from '../core/gallery'
-import { useLoadMoreSentinel } from './kit/loadMore.ts'
-
-/** 一次摆多少张（§3.5：「先摆 60 张，够铺满一屏多一点」） */
-const PAGE = 60
+import { errorText } from '../api/client'
+import { workName, matchesQuery, type WorkMeta } from '../../shared/works.ts'
+import { usePagedDays } from './kit/pagedDays.ts'
 
 export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
   /** null = 还没拿到。**它和"没有作品"是两件事** —— 混在一起的话，
@@ -13,27 +10,18 @@ export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
   const [works, setWorks] = useState<WorkMeta[] | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [q, setQ] = useState('')
-  const [limit, setLimit] = useState(PAGE)
-  /** 「现在」只取一次：显示名要判断"是不是今年"，一次会话里不会跨年 */
-  const now = useMemo(() => Date.now(), [])
 
   useEffect(() => {
     let alive = true
     listWorks().then(
       (ws) => { if (alive) setWorks(ws) },
-      (e) => { if (alive) setFailed(e instanceof Error ? e.message : '打不开作品集') },
+      (e) => { if (alive) setFailed(errorText(e, '打不开作品集')) },
     )
     return () => { alive = false }
   }, [])
 
-  const groups = useMemo(
-    () => (works ? groupByDay(works.filter(w => matchesQuery(w, q, now)), now) : []),
-    [works, q, now])
-  const shown = useMemo(() => visibleGroups(groups, limit), [groups, limit])
-  const more = shown.length < groups.length
-
-  /** 滚到底就把下一次的 60 张接上 —— 哨兵那套在 `kit/loadMore`（和对话列表同一份）。 */
-  const sentinel = useLoadMoreSentinel(more, PAGE, setLimit)
+  /** 按天分组 + 分页 + 滚到底的哨兵：和对话列表**同一套**（`kit/pagedDays`）。 */
+  const { now, groups, shown, more, sentinel, resetLimit } = usePagedDays(works, q, matchesQuery)
 
   return (
     <section className="gallery">
@@ -46,7 +34,7 @@ export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
             可访问的名字**直接给在输入框上**：placeholder 只是提示，读屏软件不保证念它。 */}
         <input className="gallery-search" value={q} placeholder="找一张…（名字，或者 9月25 这样的日期）"
                aria-label="找一张作品"
-               onChange={e => { setQ(e.target.value); setLimit(PAGE) }} />
+               onChange={e => { setQ(e.target.value); resetLimit() }} />
       </header>
 
       {failed && (
