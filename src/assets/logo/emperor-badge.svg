@@ -1,10 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 220" fill="none"
      stroke="#ffffff" stroke-width="5.63" stroke-linecap="round" stroke-linejoin="round">
-  <!-- 小皇帝 · 徽章版（★ 2026-10-09）：黑圆盘 + 白图（四周透明）。
-       底不确定是不是深色的时候用它（登录页跟随系统主题、标签页/主屏图标），
-       底确定是深色的时候直接用 emperor.svg 那张白图。
-       里面的图缩到 0.87（内容外缘半径 120.4 → 104.8，圆盘半径 110，四周留 5）；
-       线宽 5.63 = 4.9 / 0.87，缩完视觉粗细和别处一致。 -->
+  <!-- 小皇帝 · 徽章版（黑圆盘 + 白图，四周透明）。
+       底不确定是不是深色的时候用它（登录页跟随系统主题、欢迎屏背后是照片球、
+       落地页导航压在照片上）；底确定是深色的时候才直接用 emperor.svg 那张白图。
+       生成脚本 .superpowers/scratch/logo-cat/build-badge.mjs（别手改这个文件）。 -->
   <circle cx="110" cy="110" r="110" fill="#000000" stroke="none"/>
   <g transform="translate(110 110) scale(0.87) translate(-110 -110)">
 
