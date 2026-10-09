@@ -1,6 +1,7 @@
 import {
   cropOutputSize, effectiveAngle, rotatedBounds, type CropSpec,
 } from '../core/crop'
+import { makeCanvas } from '../core/canvas'
 
 /**
  * 把裁剪算式落到一张位图上（★ 2026-10-06）。
@@ -30,12 +31,9 @@ export async function cropToBitmap(
   const bounds = rotatedBounds(source.width, source.height, angle)
   const { width, height } = cropOutputSize(spec, turns, source.width, source.height)
 
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d', { colorSpace: 'srgb' })
   // ✋ 拿不到上下文就**说出来** —— 返回一张空图会让用户以为"裁出来就是黑的"
-  if (!ctx) throw new Error('裁剪时拿不到 2D 上下文（这张图画不出来）')
+  //   （那句话在 `core/canvas.ts` 里，"裁剪"两个字从这里报上去）
+  const { canvas, ctx } = makeCanvas(width, height, '裁剪不了')
 
   ctx.imageSmoothingQuality = 'high'
   ctx.translate(-spec.rect.x * bounds.w, -spec.rect.y * bounds.h)

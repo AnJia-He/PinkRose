@@ -106,7 +106,7 @@ export async function shareImage(blob: Blob, filename: string): Promise<void> {
 }
 
 async function withExif(blob: Blob, originalFile: File): Promise<Blob> {
-  const originalDataUrl = await fileToDataUrl(originalFile)
+  const originalDataUrl = await blobToDataUrl(originalFile)
   const exifObj = piexif.load(originalDataUrl)
 
   // 尺寸会变，这两个字段必须清掉，否则看图软件会显示错误信息
@@ -145,35 +145,13 @@ async function withExif(blob: Blob, originalFile: File): Promise<Blob> {
   return dataUrlToBlob(piexif.insert(exifBytes, newDataUrl))
 }
 
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((res, rej) => {
-    const r = new FileReader()
-    r.onload = () => res(r.result as string)
-    r.onerror = () => rej(r.error)
-    r.readAsDataURL(file)
-  })
-}
-
 /**
- * Blob → data URL。
- *
- * 作品集那条路的图是 base64 走 JSON 的（裁定 ①），而画布那边给的是 Blob，
- * 中间就靠这一步。`FileReader` 是浏览器自带的，不用新依赖。
- *
- * ⚠️ 这里**不是新写的一份**：`withExif` 一直在用它（写回 EXIF 要先拿到
- * 原图的 data URL）。所以这个函数的失败语义两边都要成立 —— 上面那条路
- * 有 catch（读不出来就降级成"没有 EXIF 的导出图"），作品集那条会把
- * 这句话直接说给用户听，所以 onerror 给的是一句人话。
+ * Blob → data URL —— 定义搬到 `image/blob.ts` 了（那段 `FileReader` 原来
+ * 在这儿和 `prepare.ts` 各写了一份，2026-10-09 收成一份）。这里 import 完
+ * 再转出去，免得调用方为了一个函数多认一个模块。
  */
-export function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => resolve(String(r.result))
-    // 读不出来基本只有一种原因：这个 Blob 已经失效了。给一句人话。
-    r.onerror = () => reject(new Error('这张图读不出来，再试一次'))
-    r.readAsDataURL(blob)
-  })
-}
+import { blobToDataUrl } from '../image/blob'
+export { blobToDataUrl }
 
 function dataUrlToBlob(dataUrl: string): Blob {
   const [head, body] = dataUrl.split(',')

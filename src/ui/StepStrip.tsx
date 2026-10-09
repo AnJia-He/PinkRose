@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { bindWindowDrag } from './kit/windowDrag.ts'
 
 /** 一步的样子 —— App 从 `history` 里挑出这三样交给它（位图和参数这里用不上）。 */
 export type StripStep = {
@@ -166,14 +167,11 @@ export default function StepStrip({ steps, currentId, generating, onJump }: Prop
         if (id !== undefined) onJump(id)
       }
     }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-    window.addEventListener('pointercancel', up)
-    return () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      window.removeEventListener('pointercancel', up)
-    }
+    // 三种"松手"（抬手 / 被抢走 / 取消）那条规矩在 `kit/windowDrag` 里。
+    // ⚠️ cleanup 走 `detach`（只摘监听）：依赖变了（比如转着圈又新来了一步）
+    //    不该触发 `up` —— 那会当场把它弹到最近那一格。
+    const d = bindWindowDrag(move, up)
+    return d.detach
   }, [dragging, steps, nearest, onJump, lo])
 
   /**

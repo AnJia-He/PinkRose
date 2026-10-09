@@ -1,4 +1,6 @@
 import { MAX_DIMENSION, align32, fitWithin } from '../../shared/size.ts'
+import { makeCanvas } from '../core/canvas'
+import { blobToDataUrl } from './blob'
 
 export type PreparedImage = {
   /** data URL。送后端用（后端再转发给生成模型）。 */
@@ -33,11 +35,7 @@ export async function prepareForModel(
   const width = align32(fitted.width)
   const height = align32(fitted.height)
 
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d', { colorSpace: 'srgb' })
-  if (!ctx) throw new Error('拿不到 2D 上下文')
+  const { canvas, ctx } = makeCanvas(width, height, '备不出送模型的图')
 
   // 等比缩放 + 至多 16px 的轻微拉伸。肉眼不可见，换来宽高都是 32 的倍数。
   ctx.drawImage(source, 0, 0, width, height)
@@ -79,13 +77,4 @@ export async function prepareForRouting(
   maxDim = 640,
 ): Promise<PreparedImage> {
   return prepareForModel(source, maxDim)
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((res, rej) => {
-    const r = new FileReader()
-    r.onload = () => res(r.result as string)
-    r.onerror = () => rej(r.error)
-    r.readAsDataURL(blob)
-  })
 }

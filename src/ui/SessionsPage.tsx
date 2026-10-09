@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { MoreHorizontal } from 'lucide-react'
 import { Btn } from './kit/Btn.tsx'
+import { useLoadMoreSentinel } from './kit/loadMore.ts'
 import { listSessions, deleteSession, updateSession, sessionThumbUrl } from '../api/sessions'
 import { groupByDay } from '../../shared/works.ts'
 import { visibleGroups } from '../core/gallery'
@@ -144,17 +145,8 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
   const shown = useMemo(() => visibleGroups(groups, limit), [groups, limit])
   const more = shown.length < groups.length
 
-  /** 滚到底就把下 60 条接上。和作品页那个哨兵一模一样（含"按天取整"那条规矩）。 */
-  const sentinel = useRef<HTMLDivElement | null>(null)
-  useEffect(() => {
-    const el = sentinel.current
-    if (!el) return
-    const io = new IntersectionObserver((es) => {
-      if (es.some(e => e.isIntersecting)) setLimit(n => n + PAGE)
-    })
-    io.observe(el)
-    return () => io.disconnect()
-  }, [more])
+  /** 滚到底就把下 60 条接上 —— 哨兵那套在 `kit/loadMore`（和作品页同一份）。 */
+  const sentinel = useLoadMoreSentinel(more, PAGE, setLimit)
 
   async function doDelete(id: number) {
     setConfirming(null)

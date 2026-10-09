@@ -1,4 +1,5 @@
 import { MAX_DIMENSION, fitWithin } from '../../shared/size.ts'
+import { makeCanvas } from './canvas'
 import type { Sizable } from '../image/prepare'
 
 /**
@@ -79,11 +80,7 @@ export const ORIGINAL_PREVIEW_MAX_SIDE = 1280
  */
 export function makeThumbnail(source: Sizable, maxSide = THUMB_MAX_SIDE): string {
   const { width, height } = fitWithin(source.width, source.height, maxSide)
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, width)
-  canvas.height = Math.max(1, height)
-  const ctx = canvas.getContext('2d', { colorSpace: 'srgb' })
-  if (!ctx) throw new Error('拿不到 2D 上下文，做不了缩略图')
+  const { canvas, ctx } = makeCanvas(width, height, '做不了缩略图')
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
   return canvas.toDataURL('image/jpeg', 0.7)
@@ -123,11 +120,7 @@ export function makeThumbnail(source: Sizable, maxSide = THUMB_MAX_SIDE): string
  */
 export function bitmapToDataUrl(source: Sizable, quality = 0.92): string {
   const { width, height } = fitWithin(source.width, source.height, MAX_DIMENSION)
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, width)
-  canvas.height = Math.max(1, height)
-  const ctx = canvas.getContext('2d', { colorSpace: 'srgb' })
-  if (!ctx) throw new Error('拿不到 2D 上下文，做不了 data URL')
+  const { canvas, ctx } = makeCanvas(width, height, '做不了 data URL')
   // 这里缩图是**用户那张照片的一次画质损失**，平滑档给最好的（和 resize.ts
   // 那条同款理由：默认档缩出来的边缘有锯齿）。
   ctx.imageSmoothingQuality = 'high'

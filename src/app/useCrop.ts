@@ -1,14 +1,11 @@
-import { useCallback, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useState } from 'react'
 import type { CropScene } from '../ui/Canvas'
-import type { ToolId } from '../ui/ToolBar'
-import type { DecodedImage } from '../image/decode'
-import type { Snapshot } from '../core/history'
 import { cropToBitmap } from '../image/crop'
 import {
   clampRect, effectiveAngle, fitAspect, inscribedRect, rectFromSize,
   rotatedBounds, type CropRect, type CropSpec,
 } from '../core/crop'
-import { applyBaseEdit, beginBaseEdit, discardStaleBaseEdit } from './baseEdit'
+import { applyBaseEdit, beginBaseEdit, discardStaleBaseEdit, type BaseEditToolDeps } from './baseEdit'
 
 /**
  * **裁剪那一簇**（★ 2026-10-06 立、2026-10-08 从 `App.tsx` 搬出来）——
@@ -22,24 +19,11 @@ import { applyBaseEdit, beginBaseEdit, discardStaleBaseEdit } from './baseEdit'
  * ⚠️ 和点修共用"在当前这一版底图上动一刀"的骨架（`app/baseEdit.ts`）——
  *   `commitCrop` 里只剩裁剪自己的：坏掉的像素活儿 + 两句话 + 收现场。
  */
-export type CropDeps = {
-  /** 当前开着哪个工具（现场只在 `tool === 'crop'` 时交出去）。 */
-  tool: ToolId | null
-  image: DecodedImage | null
-  setImage: Dispatch<SetStateAction<DecodedImage | null>>
-  history: readonly Snapshot[]
-  setHistory: Dispatch<SetStateAction<Snapshot[]>>
-  noticeBad: (text: string) => void
-  /** 定稿那一笔没落定的调色（`app/usePersist` 的 `flushEdit`）。 */
-  flushEdit: () => void
-  /** 换底图时那批"临时状态"一起清（`App` 的 `clearTransient`）。 */
-  clearTransient: () => void
-  baseSeqRef: { current: number }
-  cursorIdRef: { current: number | null }
-  editSeqRef: { current: number }
-  markDirty: (stepId: number, baseChanged: boolean) => void
-  setTool: (t: ToolId | null) => void
-}
+/**
+ * 入参 = `BaseEditToolDeps` —— 裁剪和点修**同一张单子**（2026-10-09 收到
+ * `baseEdit.ts` 里去了）；"现场只在 `tool === 'crop'` 时交出去"那条注在那边。
+ */
+export type CropDeps = BaseEditToolDeps
 
 /**
  * 某个角度下**默认的那个框**：居中的最大内接矩形（不碰空角），

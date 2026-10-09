@@ -1,4 +1,5 @@
 import { MAX_DIMENSION, align32, fitWithin } from '../../shared/size.ts'
+import { makeCanvas } from '../core/canvas'
 import type { Sizable } from './prepare'
 
 /** 圈的半径 = 图片长边的这个比例。6% 是"一眼能看见、又不会盖住半个画面"的折中。 */
@@ -56,11 +57,7 @@ export function markImage(
   const width = align32(fitted.width)
   const height = align32(fitted.height)
 
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d', { colorSpace: 'srgb' })
-  if (!ctx) throw new Error('拿不到 2D 上下文，画不了标记')
+  const { canvas, ctx } = makeCanvas(width, height, '画不了标记')
 
   ctx.drawImage(source, 0, 0, width, height)
 

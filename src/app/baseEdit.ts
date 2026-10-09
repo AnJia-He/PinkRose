@@ -17,10 +17,38 @@
 import type { Dispatch, SetStateAction } from 'react'
 import type { DecodedImage } from '../image/decode'
 import type { Snapshot } from '../core/history'
+import type { ToolId } from '../ui/ToolBar'
 import { pushEdit, settleLedger, type EditState } from '../core/ledger'
 
 /** `beginBaseEdit` 的产物 —— 「这一下冲着哪一版去的」两个记号。 */
 export type BaseEditGate = { seqAt: number; at: number | null }
+
+/**
+ * 裁剪（`useCrop`）/ 点修（`useRetouch`）两个 hook 的入参 —— **同一张单子**。
+ *
+ * ★ 2026-10-09：这两个文件头原来各抄了一份 13 项的 `CropDeps` / `RetouchDeps`，
+ *   一字不差（连"当前开着哪个工具"那条注释都只差一个词）。抄两份的代价和这套
+ *   骨架本身一样 —— 加一项就得记得改两处：**漏一边编译器会拦**（还算好），
+ *   真正危险的是两边**一起漂**（一处改了语意、另一处照旧），那就没人拦了。
+ */
+export type BaseEditToolDeps = {
+  /** 当前开着哪个工具（现场只在"自己那个工具"开着时交出去）。 */
+  tool: ToolId | null
+  image: DecodedImage | null
+  setImage: Dispatch<SetStateAction<DecodedImage | null>>
+  history: readonly Snapshot[]
+  setHistory: Dispatch<SetStateAction<Snapshot[]>>
+  noticeBad: (text: string) => void
+  /** 定稿那一笔没落定的调色（`app/usePersist` 的 `flushEdit`）。 */
+  flushEdit: () => void
+  /** 换底图时那批"临时状态"一起清（`App` 的 `clearTransient`）。 */
+  clearTransient: () => void
+  baseSeqRef: { current: number }
+  cursorIdRef: { current: number | null }
+  editSeqRef: { current: number }
+  markDirty: (stepId: number, baseChanged: boolean) => void
+  setTool: (t: ToolId | null) => void
+}
 
 /**
  * `await` 之前**当场读**两个记号：底图版本（`baseSeqRef`）+ 站的位置（`cursorIdRef`）。

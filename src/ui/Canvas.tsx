@@ -10,6 +10,7 @@ import { rotatedBounds, type CropRect } from '../core/crop'
 import CropOverlay from './CropOverlay'
 import CompareSplit from './CompareSplit'
 import RetouchOverlay from './RetouchOverlay'
+import { bindWindowDrag } from './kit/windowDrag.ts'
 import type { BrushMode } from '../core/retouch'
 import {
   FIT, clampView, fitBox, maxScale, oneToOne, panBy, zoomTo, type Size, type View,
@@ -450,20 +451,15 @@ export default function Canvas({
       putView(panBy(p.base, dx, dy, fitBox(image, area)))
     }
 
-    /** 三种"松手"共用它：抬手、系统把指针抢走（来电、通知、滚动接管）——
-     *  少接一个，用户按一下就会被永久留在原图上，而他没有任何办法按回来。 */
-    const end = () => {
+    // 三种"松手"（抬手 / 被抢走 / 取消）那条规矩在 `kit/windowDrag` 里 ——
+    // 少接一个，用户按一下就会被**永久留在原图上**，而他没有任何办法按回来。
+    // `stopRef` 存的是**完整收场**那一版（摘监听 + 清计时器）：下一趟 pointerdown
+    // 和组件卸载都会再调它一次，它是幂等的，不会把收场跑第二遍。
+    const d = bindWindowDrag(onMove, () => {
       if (timer !== null) { window.clearTimeout(timer); timer = null }
       setPeeking(false)
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', end)
-      window.removeEventListener('pointercancel', end)
-      if (stopRef.current === end) stopRef.current = null
-    }
-    stopRef.current = end
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', end)
-    window.addEventListener('pointercancel', end)
+    })
+    stopRef.current = d.stop
   }
 
   /**

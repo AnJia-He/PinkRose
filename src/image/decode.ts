@@ -1,3 +1,5 @@
+import { makeCanvas } from '../core/canvas'
+
 /**
  * 尺寸数学（MAX_DIMENSION / SIZE_MIN / SIZE_MAX / align32 / fitWithin / Size）
  * 已经搬到 `shared/size.ts`——后端也要用它，而 shared/ 是前后端共同的地盘。
@@ -49,11 +51,7 @@ export async function decodeImageFile(file: File): Promise<DecodedImage> {
  * 缓冲区（1200 万像素的照片约 49 MB）并强制一次 GPU 回读。
  */
 async function toSrgbBitmap(src: ImageBitmap): Promise<ImageBitmap> {
-  const canvas = document.createElement('canvas')
-  canvas.width = src.width
-  canvas.height = src.height
-  const ctx = canvas.getContext('2d', { colorSpace: 'srgb' })
-  if (!ctx) throw new Error('拿不到 2D 上下文，无法做色彩空间转换')
+  const { canvas, ctx } = makeCanvas(src.width, src.height, '没法做色彩空间转换')
   ctx.drawImage(src, 0, 0)   // ← 色彩空间转换就发生在这一行
   return createImageBitmap(canvas)
 }

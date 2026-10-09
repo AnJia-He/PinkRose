@@ -20,6 +20,7 @@
  */
 
 import { expandMask, maskBounds } from '../core/retouch'
+import { makeCanvas } from '../core/canvas'
 import { spotHeal } from './heal'
 
 /** 擦之前把掩码外扩多少像素（理由见 `core/retouch.expandMask`）。 */
@@ -41,12 +42,8 @@ export async function eraseToBitmap(
     throw new Error(`掩码尺寸和照片对不上（掩码 ${mask.length} 字节，照片 ${w}×${h}）`)
   }
 
-  const canvas = document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
-  const ctx = canvas.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true })
   // ✋ 拿不到上下文就**说出来** —— 返回一张空图会让用户以为"擦出来就是黑的"
-  if (!ctx) throw new Error('擦除时拿不到 2D 上下文（这张图画不出来）')
+  const { canvas, ctx } = makeCanvas(w, h, '擦不了', { willReadFrequently: true })
 
   ctx.drawImage(source, 0, 0)
   const image = ctx.getImageData(0, 0, w, h)

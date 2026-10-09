@@ -1,3 +1,5 @@
+import { makeCanvas } from '../core/canvas'
+
 /**
  * 把位图缩到指定尺寸，返回**新的**位图。
  *
@@ -15,11 +17,7 @@
 export async function resizeBitmap(
   src: ImageBitmap, width: number, height: number,
 ): Promise<ImageBitmap> {
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d', { colorSpace: 'srgb' })
-  if (!ctx) throw new Error('拿不到 2D 上下文，无法缩放照片')
+  const { canvas, ctx } = makeCanvas(width, height, '没法缩放照片')
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(src, 0, 0, width, height)

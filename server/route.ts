@@ -1,7 +1,7 @@
 import { ZERO, clampAdjustments, type Adjustments } from '../shared/adjustments.ts'
 import { MAX_LUTS, MAX_LUT_NAME, normalizeLutRef, type LutRef } from '../shared/lut.ts'
 import type { RouteRequest, RouteResponse } from '../shared/protocol.ts'
-import { HttpError, CHECK_YOUR_KEY_TIP } from './http.ts'
+import { HttpError, asImageBody, CHECK_YOUR_KEY_TIP } from './http.ts'
 import { ROUTER_SYSTEM, buildRouterUser } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
 import { SnError, redactSecrets, type ModelClient } from './sn.ts'
@@ -93,16 +93,9 @@ type ParsedRouteRequest = RouteRequest & {
 }
 
 function parseRequest(raw: unknown): ParsedRouteRequest {
-  if (typeof raw !== 'object' || raw === null) {
-    throw new HttpError('BAD_REQUEST', '请求体必须是 JSON 对象', 400)
-  }
-  const o = raw as Record<string, unknown>
-
-  const imageDataUrl = o.imageDataUrl
-  if (typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:image/')) {
-    // 只收 data URL。允许任意 URL 等于让前端把服务器当代理去打任意地址。
-    throw new HttpError('BAD_REQUEST', 'imageDataUrl 必须是 data:image/... 开头的 data URL', 400)
-  }
+  // 请求体得是对象、`imageDataUrl` 得是 data URL —— 两条都在 `http.ts` 的
+  // `asImageBody` 里（三个 AI 入口共用；"只收 data URL"那条 SSRF 理由也在那儿）。
+  const { o, imageDataUrl } = asImageBody(raw)
 
   const textRaw = typeof o.text === 'string' ? o.text.trim() : ''
   if (!textRaw) throw new HttpError('BAD_REQUEST', 'text 不能为空', 400)

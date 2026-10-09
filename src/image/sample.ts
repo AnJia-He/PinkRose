@@ -1,4 +1,5 @@
 import { fitWithin } from '../../shared/size.ts'
+import { makeCanvas } from '../core/canvas'
 import type { Rgb } from '../core/colorMatch'
 import type { Sizable } from './prepare'
 
@@ -42,11 +43,7 @@ export function rgbaToSamples(data: Uint8ClampedArray | Uint8Array): Rgb[] {
  */
 export function samplePixels(source: Sizable, maxSide = SAMPLE_MAX_SIDE): Rgb[] {
   const { width, height } = fitWithin(source.width, source.height, maxSide)
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, width)
-  canvas.height = Math.max(1, height)
-  const ctx = canvas.getContext('2d', { colorSpace: 'srgb' })
-  if (!ctx) throw new Error('拿不到 2D 上下文，采不了样')
+  const { canvas, ctx } = makeCanvas(width, height, '采不了样')
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
   return rgbaToSamples(ctx.getImageData(0, 0, canvas.width, canvas.height).data)

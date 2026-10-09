@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type SyntheticEvent } from 'react'
 import { ChevronsLeftRight } from 'lucide-react'
+import { bindWindowDrag } from './kit/windowDrag.ts'
 
 /**
  * 对比分屏（★ 2026-10-06，spec §3.3）：**左「原图」、右「现在」，中间一条能拖的把手**。
@@ -54,17 +55,10 @@ export default function CompareSplit(props: {
     const onMove = (e: PointerEvent) => {
       setSplit(clampSplit(((e.clientX - drag.left) / drag.width) * 100))
     }
-    // 三种"松手"共用它：抬手、系统把指针抢走（来电、通知、滚动接管）——
+    // 三种"松手"（抬手 / 被抢走 / 取消）那条规矩在 `kit/windowDrag` 里 ——
     // 少接一个，用户按一下就会被永久留在拖动状态里。
-    const end = () => setDrag(null)
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', end)
-    window.addEventListener('pointercancel', end)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', end)
-      window.removeEventListener('pointercancel', end)
-    }
+    const d = bindWindowDrag(onMove, () => setDrag(null))
+    return d.detach
   }, [drag])
 
   /**

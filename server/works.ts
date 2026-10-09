@@ -2,7 +2,7 @@ import type { Db } from './db.ts'
 import type { Storage } from './storage.ts'
 import type { PublicUser } from './account.ts'
 import { HttpError, asObject, str } from './http.ts'
-import { decodeDataUrl, mimeOf, MAX_THUMB_BYTES } from './imagedata.ts'
+import { mimeOf, readImageDataUrl, saveOptionalThumb } from './imagedata.ts'
 import { assertRoomFor } from './quota.ts'
 import { ZERO, applyDeltas, type Adjustments } from '../shared/adjustments.ts'
 import { MAX_LUT_NAME } from '../shared/lut.ts'
@@ -59,11 +59,9 @@ export async function handleCreateWork(
   body: unknown, user: PublicUser, deps: WorksDeps,
 ): Promise<{ id: number }> {
   const o = asObject(body)
-  const image = decodeDataUrl(str(o.image))
-  if (image.bytes.byteLength === 0) throw new HttpError('BAD_REQUEST', '图是空的', 400)
-  if (image.bytes.byteLength > MAX_WORK_BYTES) {
-    throw new HttpError('BAD_REQUEST', '这张图太大了，存不下', 413)
-  }
+  // 解码 + "空的 / 太大"那两个判断在 `imagedata.ts` 的 `readImageDataUrl` 里
+  // （作品和会话四处共用一份，上限从这里给）。
+  const image = readImageDataUrl(str(o.image), MAX_WORK_BYTES)
 
   // 缩略图是**可选**的：前端生成失败时，不该让整张图都存不进去（裁定 ②）。
   //
@@ -78,25 +76,10 @@ export async function handleCreateWork(
   //   （≤1 MB，5 GB 量级上它是零头），和 sessions 那边同一个口径。
   assertRoomFor(deps.db, user.id, image.bytes.byteLength, 'work')
   const storedName = await deps.storage.save(image.bytes, image.ext)
-  let thumbName: string | null = null
-  if (thumbRaw) {
-    try {
-      const thumb = decodeDataUrl(thumbRaw)
-      // ★ 2026-10-02（安全审计）：缩略图也要**有自己的体积上限**。
-      //   原来它只受总请求体 12 MB 管着 —— 一个请求能塞进来约 9 MB 的"缩略图"，
-      //   而作品那张本身的上限是 8 MB，"每张最多 8 MB"那句话当场不成立。
-      //   超了就走下面那条既有路径（当"这张没有缩略图"），**不拖垮整张图** ——
-      //   和裁定 ② 同一个道理。
-      if (thumb.bytes.byteLength > MAX_THUMB_BYTES) {
-        throw new Error(`缩略图 ${thumb.bytes.byteLength} 字节，超过上限`)
-      }
-      thumbName = await deps.storage.save(thumb.bytes, thumb.ext)
-    } catch (e) {
-      // 两种失败都不该拖垮整张图 —— 但也不能静默：不然盘满、或者前端一直在送坏缩略图，
-      // 服务端没有第二个地方会说话
-      console.error('缩略图用不了（解不开或者存不下），这张作品没有缩略图：', e)
-    }
-  }
+  // 缩略图是**可选**的：前端生成失败时，不该让整张图都存不进去（裁定 ②）。
+  // 解码、限额、落盘、吞错这一整套现在只有一份 —— `imagedata.ts` 的
+  // `saveOptionalThumb`（它头上那两条 ⚠️ 就是这里原来的注释）。
+  const thumbName = (await saveOptionalThumb(thumbRaw, deps.storage, '这张作品'))?.name ?? null
 
   const t = nowMs(deps)
   try {
@@ -301,11 +284,7 @@ export async function handleReplaceWork(
 ): Promise<WorkMeta> {
   const row = loadOwned(id, user, deps)
   const o = asObject(body)
-  const image = decodeDataUrl(str(o.image))
-  if (image.bytes.byteLength === 0) throw new HttpError('BAD_REQUEST', '图是空的', 400)
-  if (image.bytes.byteLength > MAX_WORK_BYTES) {
-    throw new HttpError('BAD_REQUEST', '这张图太大了，存不下', 413)
-  }
+  const image = readImageDataUrl(str(o.image), MAX_WORK_BYTES)
   const thumbRaw = str(o.thumb)
 
   // ★ 2026-10-04（§6.6，5 GB 配额）：替换也是**写一份新的**，要过配额 ——
@@ -314,28 +293,9 @@ export async function handleReplaceWork(
   assertRoomFor(deps.db, user.id, image.bytes.byteLength, 'work', row.bytes)
 
   const newName = await deps.storage.save(image.bytes, image.ext)
-  // ⚠️ **解码和落盘在同一个 try 里**，和 handleCreateWork 一字不差的理由（裁定 ②）：
-  // 缩略图坏的姿势有两种 —— 形状不对（解不出来）和存不下去（盘满 / 权限）——
-  // 两种都只是"这张作品没有缩略图"。落盘那一步放在 try 外面的话，它一抛，
-  // **刚写好的新图**就一个人留在盘上没人认领（记录连提都没提它）。
-  let newThumb: string | null = null
-  if (thumbRaw) {
-    try {
-      const thumb = decodeDataUrl(thumbRaw)
-      // ★ 2026-10-02（安全审计）：缩略图也要**有自己的体积上限**。
-      //   原来它只受总请求体 12 MB 管着 —— 一个请求能塞进来约 9 MB 的"缩略图"，
-      //   而作品那张本身的上限是 8 MB，"每张最多 8 MB"那句话当场不成立。
-      //   超了就走下面那条既有路径（当"这张没有缩略图"），**不拖垮整张图** ——
-      //   和裁定 ② 同一个道理。
-      if (thumb.bytes.byteLength > MAX_THUMB_BYTES) {
-        throw new Error(`缩略图 ${thumb.bytes.byteLength} 字节，超过上限`)
-      }
-      newThumb = await deps.storage.save(thumb.bytes, thumb.ext)
-    } catch (e) {
-      // 不能静默：不然盘满、或者前端一直在送坏缩略图，服务端没有第二个地方会说话
-      console.error('缩略图用不了（解不开或者存不下），这张作品没有缩略图：', e)
-    }
-  }
+  // ⚠️ 缩略图那套（解码 + 限额 + 落盘 + 吞错）现在在 `saveOptionalThumb` 里 ——
+  // 和 handleCreateWork 同一条裁定 ②，理由收在 `imagedata.ts` 那个函数头上。
+  const newThumb = (await saveOptionalThumb(thumbRaw, deps.storage, '这张作品'))?.name ?? null
   const t = nowMs(deps)
 
   // ★★ `updated_at` 在这里**不只是"上次改的时间"，它是图片 URL 的版本号**。

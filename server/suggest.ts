@@ -1,5 +1,5 @@
 import type { Route, SuggestCard, SuggestRequest, SuggestResponse } from '../shared/protocol.ts'
-import { HttpError } from './http.ts'
+import { asImageBody } from './http.ts'
 import { CARD_LABEL_MAX, SUGGEST_SYSTEM } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
 import { redactSecrets, type ModelClient } from './sn.ts'
@@ -71,12 +71,8 @@ function parseCards(content: string): { cards: SuggestCard[]; parsed: boolean } 
 }
 
 function parseRequest(raw: unknown): SuggestRequest {
-  if (typeof raw !== 'object' || raw === null) {
-    throw new HttpError('BAD_REQUEST', '请求体必须是 JSON 对象', 400)
-  }
-  const imageDataUrl = (raw as Record<string, unknown>).imageDataUrl
-  if (typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:image/')) {
-    throw new HttpError('BAD_REQUEST', 'imageDataUrl 必须是 data:image/... 开头的 data URL', 400)
-  }
+  // 请求体得是对象、`imageDataUrl` 得是 data URL —— 两条都在 `http.ts` 的
+  // `asImageBody` 里（三个 AI 入口共用）。
+  const { imageDataUrl } = asImageBody(raw)
   return { imageDataUrl }
 }

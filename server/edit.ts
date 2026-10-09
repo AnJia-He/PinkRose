@@ -1,6 +1,6 @@
 import type { EditRequest, EditResponse } from '../shared/protocol.ts'
 import { MAX_DIMENSION, checkModelSize } from '../shared/size.ts'
-import { HttpError } from './http.ts'
+import { HttpError, asImageBody } from './http.ts'
 import { buildEditPrompt } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
 import { SnError, type ModelClient } from './sn.ts'
@@ -47,15 +47,9 @@ export async function handleEdit(raw: unknown, deps: EditDeps): Promise<EditResp
 }
 
 function parseRequest(raw: unknown): EditRequest {
-  if (typeof raw !== 'object' || raw === null) {
-    throw new HttpError('BAD_REQUEST', '请求体必须是 JSON 对象', 400)
-  }
-  const o = raw as Record<string, unknown>
-
-  const imageDataUrl = o.imageDataUrl
-  if (typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:image/')) {
-    throw new HttpError('BAD_REQUEST', 'imageDataUrl 必须是 data:image/... 开头的 data URL', 400)
-  }
+  // 请求体得是对象、`imageDataUrl` 得是 data URL —— 两条都在 `http.ts` 的
+  // `asImageBody` 里（三个 AI 入口共用）。
+  const { o, imageDataUrl } = asImageBody(raw)
 
   const editPrompt = typeof o.editPrompt === 'string' ? o.editPrompt.trim() : ''
   if (!editPrompt) throw new HttpError('BAD_REQUEST', 'editPrompt 不能为空', 400)

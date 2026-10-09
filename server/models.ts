@@ -316,7 +316,9 @@ export function activateConfig(body: unknown, user: PublicUser, deps: ModelConfi
 }
 
 /**
- * 取出真正要用的那把钥匙 —— **只有造客户端的那一处会调它**。
+ * 按 id 读一行配置 → 开密文 → 拼成 `SecretConfig` —— `resolveSecret` /
+ * `resolveSecretById` 的**同一段肚子**（★ 2026-10-09 收口：两边 16 行一字不差，
+ * 而"哪几处会返回 null"这件事只有一个正确答案，抄两份就是两个版本）。
  *
  * 三种 null 是同一件事的三种成因：没配 / 没激活 / 密文读不出来。
  * 对调用方来说处置完全一样（走默认），所以不细分。
@@ -324,9 +326,9 @@ export function activateConfig(body: unknown, user: PublicUser, deps: ModelConfi
  * ⚠️ 密文读不出来时**不抛**：那是"SESSION_SECRET 被换过"或者库被改过，
  * 正确答案是安静地回默认，而不是让用户的每一次修图都 500。
  */
-export function resolveSecret(kind: ModelKind, user: PublicUser, deps: ModelConfigDeps): SecretConfig | null {
-  const id = activeIdOf(kind, user, deps)
-  if (id === null) return null
+function readSecretRow(
+  id: number, kind: ModelKind, user: PublicUser, deps: ModelConfigDeps,
+): SecretConfig | null {
   const row = deps.db.raw
     .prepare('SELECT provider, base_url, api_key_enc, model_id FROM model_configs WHERE id = ? AND user_id = ? AND kind = ?')
     .get(id, user.id, kind) as
@@ -345,32 +347,28 @@ export function resolveSecret(kind: ModelKind, user: PublicUser, deps: ModelConf
 }
 
 /**
+ * 取出真正要用的那把钥匙 —— **只有造客户端的那一处会调它**。
+ * "现在在用的是哪一套"由 `activeIdOf` 说了算，读那一套的活是 `readSecretRow`。
+ */
+export function resolveSecret(kind: ModelKind, user: PublicUser, deps: ModelConfigDeps): SecretConfig | null {
+  const id = activeIdOf(kind, user, deps)
+  if (id === null) return null
+  return readSecretRow(id, kind, user, deps)
+}
+
+/**
  * 取出**指定的**那一套的钥匙 —— 「测一下」那一路上用的。
  *
  * 和 `resolveSecret` 是同一个问题的两种问法：那个问"现在在用的是哪一套"，
  * 这个问"我点的那一套是哪一套"。差别的分量在这里：用户会去测一套**还没激活**
  * 的配置（刚存下来、或者存了还没换上去的那套）—— 那种配置 resolveSecret 看不见。
  *
- * 三种 null 和 `resolveSecret` 一个字不差（没有 / 不是我的 / 密文读不出来），
+ * 三种 null 和 `resolveSecret` 一个字不差（见 `readSecretRow`），
  * 处置也一样：**不抛**，由调用方回"没有这一套设置"。分开处理既是信息泄漏
  * （告诉你哪些 id 是真的），也会把"我们读不出来"说成"你填错了"。
  */
 export function resolveSecretById(
   id: number, kind: ModelKind, user: PublicUser, deps: ModelConfigDeps,
 ): SecretConfig | null {
-  const row = deps.db.raw
-    .prepare('SELECT provider, base_url, api_key_enc, model_id FROM model_configs WHERE id = ? AND user_id = ? AND kind = ?')
-    .get(id, user.id, kind) as
-    { provider: string; base_url: string | null; api_key_enc: string; model_id: string } | undefined
-  if (!row) return null
-
-  const opened = deps.vault.open(row.api_key_enc)
-  if (!opened.authentic) return null
-
-  return {
-    provider: row.provider as Provider,
-    baseUrl: row.base_url ?? '',
-    apiKey: opened.plaintext,
-    modelId: row.model_id,
-  }
+  return readSecretRow(id, kind, user, deps)
 }

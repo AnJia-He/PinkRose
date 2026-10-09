@@ -1,11 +1,8 @@
-import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { RetouchScene } from '../ui/Canvas'
-import type { ToolId } from '../ui/ToolBar'
-import type { DecodedImage } from '../image/decode'
-import type { Snapshot } from '../core/history'
 import { createMask, defaultBrushRadius, maskBounds, type BrushMode } from '../core/retouch'
 import { eraseToBitmap } from '../image/erase'
-import { applyBaseEdit, beginBaseEdit, discardStaleBaseEdit } from './baseEdit'
+import { applyBaseEdit, beginBaseEdit, discardStaleBaseEdit, type BaseEditToolDeps } from './baseEdit'
 
 /**
  * **点修（消除笔）那一簇**（★ 2026-10-07 立、2026-10-08 从 `App.tsx` 搬出来）——
@@ -18,24 +15,11 @@ import { applyBaseEdit, beginBaseEdit, discardStaleBaseEdit } from './baseEdit'
  *
  * ⚠️ 和裁剪共用"在当前这一版底图上动一刀"的骨架（`app/baseEdit.ts`）。
  */
-export type RetouchDeps = {
-  /** 当前开着哪个工具（现场只在 `tool === 'retouch'` 时交出去）。 */
-  tool: ToolId | null
-  image: DecodedImage | null
-  setImage: Dispatch<SetStateAction<DecodedImage | null>>
-  history: readonly Snapshot[]
-  setHistory: Dispatch<SetStateAction<Snapshot[]>>
-  noticeBad: (text: string) => void
-  /** 定稿那一笔没落定的调色（`app/usePersist` 的 `flushEdit`）。 */
-  flushEdit: () => void
-  /** 换底图时那批"临时状态"一起清（`App` 的 `clearTransient`）。 */
-  clearTransient: () => void
-  baseSeqRef: { current: number }
-  cursorIdRef: { current: number | null }
-  editSeqRef: { current: number }
-  markDirty: (stepId: number, baseChanged: boolean) => void
-  setTool: (t: ToolId | null) => void
-}
+/**
+ * 入参 = `BaseEditToolDeps` —— 点修和裁剪**同一张单子**（2026-10-09 收到
+ * `baseEdit.ts` 里去了）；"现场只在 `tool === 'retouch'` 时交出去"那条注在那边。
+ */
+export type RetouchDeps = BaseEditToolDeps
 
 /**
  * 一次擦除的**外接框**上限（像素）。耗时随它线性涨 —— 真照片探针实测

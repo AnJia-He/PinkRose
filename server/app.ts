@@ -284,6 +284,13 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
   const url = new URL(req.url ?? '/', 'http://localhost')
   const path = url.pathname
 
+  // ★ 2026-10-09：作品 / 会话 / Lut 三条路要的都是**同一套依赖**（库藏在 auth 里、
+  //   照片存在 storage 里、钟也只该有 auth 那一个）—— 下面原来把这份对象字面量
+  //   手写了 22 遍。加一个依赖时漏改一处，编译器**不拦**（结构化类型只看形状），
+  //   运行时表现为"某个接口悄悄少了那个依赖"。收成两个常量，以后改一处就够。
+  const storeDeps = { db: deps.auth.db, storage: deps.storage, now: deps.auth.now }
+  const lutDeps = { db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now }
+
   if (path.startsWith('/api/')) {
     if (req.method === 'GET' && path === '/api/health') {
       sendJson(res, 200, { ok: true })
@@ -369,9 +376,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       // **顶层**的 `db`，而 AppDeps 的库藏在 `auth` 里 —— 两个形状不是一回事，
       // 编译器当场会拦下来。`now` 也照用 auth 那一个：两边各用一个钟，
       // 测试里拨动的时间就只对一半代码生效。
-      sendJson(res, 200, await handleCreateWork(await readJsonBody(req), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, await handleCreateWork(await readJsonBody(req), user, storeDeps))
       return
     }
     if (req.method === 'GET' && path === '/api/works') {
@@ -382,9 +387,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       // 这条回的是**全部作品的元数据**，一张图、一条配方都不带 —— 要一次给完、
       // 又要小，才能让前端自己分组、搜索、再按屏幕上的位置去单取图（裁定 ③，
       // 细节见 works.ts 的 handleListWorks）。
-      sendJson(res, 200, handleListWorks(user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, handleListWorks(user, storeDeps))
       return
     }
     // ★ 全仓库第一个带路径参数的接口。这个仓库没有路由表（全是精确匹配），
@@ -396,18 +399,14 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     const fileRoute = /^\/api\/works\/(\d+)\/file$/.exec(path)
     if (req.method === 'GET' && fileRoute) {
       const user = requireUser(deps, req, res)
-      const { bytes, contentType } = await handleWorkFile(Number(fileRoute[1]), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      })
+      const { bytes, contentType } = await handleWorkFile(Number(fileRoute[1]), user, storeDeps)
       sendBytes(res, 200, bytes, contentType)
       return
     }
     const thumbRoute = /^\/api\/works\/(\d+)\/thumb$/.exec(path)
     if (req.method === 'GET' && thumbRoute) {
       const user = requireUser(deps, req, res)
-      const { bytes, contentType } = await handleWorkThumb(Number(thumbRoute[1]), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      })
+      const { bytes, contentType } = await handleWorkThumb(Number(thumbRoute[1]), user, storeDeps)
       sendBytes(res, 200, bytes, contentType)
       return
     }
@@ -422,18 +421,14 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       const user = requireUser(deps, req, res)
       // 依赖的形状同上面几条：库藏在 auth 里，整个 deps 传下去编译器当场会拦。
       // GET 所以**不读请求体** —— 没什么可读的。
-      sendJson(res, 200, handleGetWork(Number(oneRoute[1]), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, handleGetWork(Number(oneRoute[1]), user, storeDeps))
       return
     }
     if (req.method === 'PATCH' && oneRoute) {
       // 顺序同 /api/password 和 /api/works：先认人，再读体。没登录的人不该有资格
       // 让服务器缓冲 12 MB —— 而且畸形请求体的 400 会盖住"没登录"这个更重要的结局。
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, handleRenameWork(Number(oneRoute[1]), await readJsonBody(req), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, handleRenameWork(Number(oneRoute[1]), await readJsonBody(req), user, storeDeps))
       return
     }
     // 删除（DELETE）和替换（PUT）走的是同一个 `/api/works/:id`，复用上面那个正则。
@@ -441,18 +436,14 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     // 依赖的形状同上面几条：库藏在 auth 里，整个 deps 传下去编译器当场会拦。
     if (req.method === 'DELETE' && oneRoute) {
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, await handleDeleteWork(Number(oneRoute[1]), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, await handleDeleteWork(Number(oneRoute[1]), user, storeDeps))
       return
     }
     if (req.method === 'PUT' && oneRoute) {
       // 顺序同 PATCH：先认人，再读体。理由也一样 —— 畸形请求体的 400 会把
       // "没登录"这个更重要的结局盖掉。
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, await handleReplaceWork(Number(oneRoute[1]), await readJsonBody(req), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, await handleReplaceWork(Number(oneRoute[1]), await readJsonBody(req), user, storeDeps))
       return
     }
     // 这条是 `/api/works/delete`，而 `/^\/api\/works\/(\d+)$/` 匹配不到 `delete`（\d+ 挡着），
@@ -460,9 +451,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     // 一眼看到这三条是一组。
     if (req.method === 'POST' && path === '/api/works/delete') {
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, await handleDeleteWorks(await readJsonBody(req), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, await handleDeleteWorks(await readJsonBody(req), user, storeDeps))
       return
     }
     // ── 会话（2026-10-01）。设计和约束见 docs/superpowers/specs/2026-10-01-sessions-design.md
@@ -471,18 +460,14 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     // 依赖形状也必须一模一样 —— 库藏在 auth 里，整个 deps 传下去编译器当场会拦。
     if (req.method === 'POST' && path === '/api/sessions') {
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, await handleCreateSession(await readJsonBody(req), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, await handleCreateSession(await readJsonBody(req), user, storeDeps))
       return
     }
     if (req.method === 'GET' && path === '/api/sessions') {
       const user = requireUser(deps, req, res)
       // ★ 这条 handler 是**同步**的（列表只有一次查询）—— 别顺手写成 `await …`，
       //   那会把它变成 Promise，而 `sendJson` 收下一个 Promise 会序列化成 `{}`。
-      sendJson(res, 200, handleListSessions(user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, handleListSessions(user, storeDeps))
       return
     }
     // 三条图片接口共用这一条正则。⚠️ **数一数括号**：`(\d+)` 一共两个 ——
@@ -499,7 +484,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     const sessionFileRoute = /^\/api\/sessions\/(\d+)\/file\/(original|base|step\/(\d+))$/.exec(path)
     if (req.method === 'GET' && sessionFileRoute) {
       const user = requireUser(deps, req, res)
-      const d = { db: deps.auth.db, storage: deps.storage, now: deps.auth.now }
+      const d = storeDeps
       const id = Number(sessionFileRoute[1])
       const stepId = sessionFileRoute[3]
       const { bytes, contentType } = stepId
@@ -513,9 +498,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     const sessionThumbRoute = /^\/api\/sessions\/(\d+)\/thumb$/.exec(path)
     if (req.method === 'GET' && sessionThumbRoute) {
       const user = requireUser(deps, req, res)
-      const { bytes, contentType } = await handleSessionThumb(Number(sessionThumbRoute[1]), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      })
+      const { bytes, contentType } = await handleSessionThumb(Number(sessionThumbRoute[1]), user, storeDeps)
       sendBytes(res, 200, bytes, contentType)
       return
     }
@@ -527,25 +510,19 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     if (req.method === 'GET' && sessionOneRoute) {
       const user = requireUser(deps, req, res)
       // 同步 handler，理由同上面列表那条：别写成 `await`。
-      sendJson(res, 200, handleGetSession(Number(sessionOneRoute[1]), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, handleGetSession(Number(sessionOneRoute[1]), user, storeDeps))
       return
     }
     if (req.method === 'PUT' && sessionOneRoute) {
       // 顺序同 /api/password 和作品那几条：先认人，再读体。没登录的人不该有资格
       // 让服务器缓冲 12 MB —— 而且畸形请求体的 400 会盖住"没登录"这个更重要的结局。
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, await handleUpdateSession(Number(sessionOneRoute[1]), await readJsonBody(req), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, await handleUpdateSession(Number(sessionOneRoute[1]), await readJsonBody(req), user, storeDeps))
       return
     }
     if (req.method === 'DELETE' && sessionOneRoute) {
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, await handleDeleteSession(Number(sessionOneRoute[1]), user, {
-        db: deps.auth.db, storage: deps.storage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, await handleDeleteSession(Number(sessionOneRoute[1]), user, storeDeps))
       return
     }
     // ── 模型设置（§7）────────────────────────────────────────────────────
@@ -628,22 +605,18 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     // 顺序和别处一致：先认人，再读体；GET / DELETE 不读体。
     if (req.method === 'GET' && path === '/api/luts') {
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, listLuts(user, { db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now }))
+      sendJson(res, 200, listLuts(user, lutDeps))
       return
     }
     if (req.method === 'POST' && path === '/api/luts') {
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, await createLut(await readJsonBody(req), user, {
-        db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, await createLut(await readJsonBody(req), user, lutDeps))
       return
     }
     const lutFileRoute = /^\/api\/luts\/(\d+)\/file$/.exec(path)
     if (req.method === 'GET' && lutFileRoute) {
       const user = requireUser(deps, req, res)
-      const { bytes, contentType } = await handleLutFile(Number(lutFileRoute[1]), user, {
-        db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now,
-      })
+      const { bytes, contentType } = await handleLutFile(Number(lutFileRoute[1]), user, lutDeps)
       sendBytes(res, 200, bytes, contentType)
       return
     }
@@ -656,24 +629,18 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       // 那一半：`lutUsage` 哪天变成 async 而**这个调用点漏掉 await**，`sendJson`
       // 收到 Promise、`JSON.stringify` 出来就是 `{}`，回 200、看着一切正常。
       // `app.test.ts` 的「usage 回的是 JSON 对象，不是 {}」用变异实测钉着这一条。
-      sendJson(res, 200, lutUsage(Number(lutUsageRoute[1]), user, {
-        db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, lutUsage(Number(lutUsageRoute[1]), user, lutDeps))
       return
     }
     const lutOneRoute = /^\/api\/luts\/(\d+)$/.exec(path)
     if (req.method === 'PATCH' && lutOneRoute) {
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, renameLut(Number(lutOneRoute[1]), await readJsonBody(req), user, {
-        db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, renameLut(Number(lutOneRoute[1]), await readJsonBody(req), user, lutDeps))
       return
     }
     if (req.method === 'DELETE' && lutOneRoute) {
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, await deleteLut(Number(lutOneRoute[1]), user, {
-        db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now,
-      }))
+      sendJson(res, 200, await deleteLut(Number(lutOneRoute[1]), user, lutDeps))
       return
     }
     if (req.method === 'POST' && path === '/api/route') {

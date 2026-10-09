@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
 import { stampBrush, stampStroke, type BrushMode } from '../core/retouch'
+import { bindWindowDrag } from './kit/windowDrag.ts'
 
 /**
  * 照片上的**涂抹层**（★ 2026-10-07，点修）—— 用户在这一层上涂，涂出来的东西
@@ -106,18 +107,11 @@ export default function RetouchOverlay(props: {
       s.lastX = q.x
       s.lastY = q.y
     }
-    /** 三种"松手"共用它：抬手、系统把指针抢走（来电、通知、滚动接管）。 */
-    const end = () => {
-      strokeRef.current = null
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', end)
-      window.removeEventListener('pointercancel', end)
-      if (stopRef.current === end) stopRef.current = null
-    }
-    stopRef.current = end
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', end)
-    window.addEventListener('pointercancel', end)
+    // 三种"松手"（抬手 / 被抢走 / 取消）那条规矩在 `kit/windowDrag` 里。
+    // `stopRef` 存的是**完整收场**那一版（摘监听 + 丢笔迹）：下一趟 pointerdown
+    // 和组件卸载都会再调它一次，它是幂等的。
+    const d = bindWindowDrag(onMove, () => { strokeRef.current = null })
+    stopRef.current = d.stop
   }
 
   /** 悬停时那圈光标（只在层内跟；出去了就收）。 */

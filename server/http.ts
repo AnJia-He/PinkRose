@@ -84,6 +84,27 @@ export function asObject(body: unknown): Record<string, unknown> {
  */
 export const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 
+/**
+ * AI 三个入口（`/api/route`、`/api/edit`、`/api/suggest`）的公共开头：
+ * 请求体得是**普通对象**，`imageDataUrl` 得是 **data URL**。
+ *
+ * ★ 2026-10-09 收口：这两个判断（连那两句话）在三个文件里一字不差地各写了一遍。
+ *   分开写的代价不是行数 —— 是**同一个病人在三个门听到三种说法**。
+ *
+ * ⚠️ **只收 data URL**（原话在 `route.ts`）：允许任意 URL 等于让前端把服务器
+ *   当代理去打任意地址 —— SSRF。
+ * ⚠️ 请求体不是普通对象时说的是 `asObject` 那句"请求体不对"（数组也算不对）：
+ *   原来这三位各说"请求体必须是 JSON 对象"，但数组本来就不是对象。
+ */
+export function asImageBody(raw: unknown): { o: Record<string, unknown>; imageDataUrl: string } {
+  const o = asObject(raw)
+  const imageDataUrl = o.imageDataUrl
+  if (typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:image/')) {
+    throw new HttpError('BAD_REQUEST', 'imageDataUrl 必须是 data:image/... 开头的 data URL', 400)
+  }
+  return { o, imageDataUrl }
+}
+
 /** 写 JSON 响应。传 HttpError 时自动转成 spec 定的错误体形状。 */
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const isErr = body instanceof HttpError

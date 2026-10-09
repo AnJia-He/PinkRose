@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { listWorks, fileUrl } from '../api/works'
 import { workName, matchesQuery, groupByDay, type WorkMeta } from '../../shared/works.ts'
 import { visibleGroups } from '../core/gallery'
+import { useLoadMoreSentinel } from './kit/loadMore.ts'
 
 /** 一次摆多少张（§3.5：「先摆 60 张，够铺满一屏多一点」） */
 const PAGE = 60
@@ -31,17 +32,8 @@ export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
   const shown = useMemo(() => visibleGroups(groups, limit), [groups, limit])
   const more = shown.length < groups.length
 
-  /** 滚到底就把下一次的 60 张接上。 */
-  const sentinel = useRef<HTMLDivElement | null>(null)
-  useEffect(() => {
-    const el = sentinel.current
-    if (!el) return
-    const io = new IntersectionObserver((es) => {
-      if (es.some(e => e.isIntersecting)) setLimit(n => n + PAGE)
-    })
-    io.observe(el)
-    return () => io.disconnect()
-  }, [more])
+  /** 滚到底就把下一次的 60 张接上 —— 哨兵那套在 `kit/loadMore`（和对话列表同一份）。 */
+  const sentinel = useLoadMoreSentinel(more, PAGE, setLimit)
 
   return (
     <section className="gallery">

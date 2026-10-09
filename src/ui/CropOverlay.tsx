@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { MIN_SIDE, type CropRect } from '../core/crop'
+import { bindWindowDrag } from './kit/windowDrag.ts'
 
 /**
  * 照片上那个裁剪框（★ 2026-10-06）。
@@ -163,16 +164,10 @@ export default function CropOverlay(props: {
           ? resizeFree(drag.at, drag.from, dx, dy, drag.inner)
           : resizeFixed(drag.at, drag.from, dx, dy, drag.aspect, drag.inner))
     }
-    // 三种"松手"共用它：抬手、系统把指针抢走（来电、通知、滚动接管）
-    const end = () => setDrag(null)
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', end)
-    window.addEventListener('pointercancel', end)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', end)
-      window.removeEventListener('pointercancel', end)
-    }
+    // 三种"松手"（抬手 / 被抢走 / 取消）那条规矩在 `kit/windowDrag` 里；
+    // cleanup 走 `detach`（只摘监听，不触发收场）。
+    const d = bindWindowDrag(onMove, () => setDrag(null))
+    return d.detach
   }, [drag])
 
   const { box, rect } = props
