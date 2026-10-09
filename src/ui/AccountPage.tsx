@@ -172,200 +172,212 @@ export function AccountPage({
           把右边空着的地方用起来。他在画板上看过的样子：
           `.superpowers/brainstorm/430-1791133449/content/account-tiles.html`。
           窄屏网格自己叠（中屏两列、手机一列）—— `auto-fit + minmax` 干的事。
-          ⚠️ 展开的表单 / 确认跟着**所在的那一框**走（改密码、注销都在「账号」框里往下长）。 */}
-      <h1 className="account-title">个人设置</h1>
+          ⚠️ 展开的表单 / 确认跟着**所在的那一框**走（改密码、注销都在「账号」框里往下长）。
 
-      <div className="account-grid">
-        {/* ① 「账号」框：我是谁 + 账号安全那两件 */}
-        <section className="account-tile">
-          <h2 className="account-tile-title">账号</h2>
-          <div className="account-card">
-            {/* 用户名：设置页的第一行十有八九就是"你是谁"，所以它排在最上面。
+          ★★ 2026-10-09：用户说「**我感觉这整个页面的排版都很突兀，因为空间太大而我们
+          现在功能很少，优化一下**」。量出来的病根不在"几格"，在**没有宽度上限**：
+          `auto-fit + 1fr` 在宽屏上把每一格拉到三分之一屏宽 —— 1800 的窗口上
+          **一格 537px、里面只有两行字**（「模型配置」那格 537×87）。格子越宽、
+          里面越空，"空间太大"就是它。
+          → 外面套一层 `.account-inner` 收住宽度（见 `styles.css` 那段），
+          多出来的地方左右平分。**这一层是从"死代码"重新长回来的**：
+          2026-10-04 那版（720px）当年确实没事干（里面有张 420 的窄卡），
+          现在它管的是整页的版心。 */}
+      <div className="account-inner">
+          <h1 className="account-title">个人设置</h1>
 
-                ★ 2026-10-09（用户原话：「像有些功能对应的增删改查的操作的补充就
-                不要再让我一再强调了，比如用户名的修改功能」）：这一行**从只读
-                变成可点**（原来是个 `<div className="account-row-static">`，
-                名字只能看、不能改）。形状照这一页「模型 ›」那一行，
-                点开就地长出一个表单 —— 全站没有弹窗文化。
-
-                ⚠️ `.account-label` / `.account-name` 这两个类**是测试的锚点，
-                改版也不许删**：`App.account.test.tsx` 有两条断言钉着
-                「用户名这三个字在」和「`.account-name` 恰好等于用户名」
-                （后者是防"标签被塞进名字里"的那种错法）。
-                ⚠️ 标签和名字必须**还是两个 `<span>`** —— 合成一句就撞上第二条。 */}
-            <button className="account-row" aria-expanded={nameOpen}
-              onClick={() => setNameOpen((o) => !o)}>
-              <span className="account-row-label account-label">用户名</span>
-              <span className="account-row-value account-name">{user.username}</span>
-              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
-            </button>
-
-            {/* 账号那三件（§3.6 那张图上的 改密码／注销账号，★ 加上改名）。
-                ⚠️ 「退出登录」**不在这张卡里**（见下面那颗按钮的注释）—— 它是"离开这一页"，
-                不是这一页上的一项设置，收进来就把两种东西混成一种了。 */}
-            <button className="account-row" aria-expanded={pwOpen}
-              onClick={() => setPwOpen((o) => !o)}>
-              <span className="account-row-label">改密码</span>
-              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
-            </button>
-            <button className="account-row account-row-danger" aria-expanded={delOpen}
-              onClick={() => setDelOpen((o) => !o)}>
-              <span className="account-row-label">注销账号</span>
-              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
-            </button>
-          </div>
-
-          {/* 改用户名的表单（★ 2026-10-09）。⚠️ 和改密码那趟**不一样**：这一改
-              **不影响登录态**（票里没有用户名），所以别在界面上写"其他设备要重新登录"。 */}
-          {nameOpen && (
-            <form className="account-form" onSubmit={(e) => { e.preventDefault(); submitUsername() }}>
-              {/* ⚠️ 提示**只写长度这一条**：字数是最猜不到的那条规矩，而字符类
-                  写全会很长（中文、字母、数字、下划线、·）—— 长到在这一格里
-                  折行、把末尾那个 `·` 孤零零甩到第二行（真机截图看过）。
-                  字符类交给服务端那句「只能用中文、字母、数字、下划线和 ·」
-                  （它就是注册页一直在用的那一句），别在这儿再写一遍更短的版本
-                  —— 两句话不一样，用户会以为两处的规矩不一样。 */}
-              <Field className="account-field" label="新用户名" hint="2 到 20 个字">
-                <TextInput name="username" autoComplete="username"
-                  value={newName} onChange={(e) => setNewName(e.target.value)} />
-              </Field>
-              {nameMsg && <p className={nameMsg.tone === 'ok' ? 'account-msg ok' : 'account-msg'}>{nameMsg.text}</p>}
-              <Btn type="submit" className="account-submit" disabled={nameBusy}>
-                {nameBusy ? '正在改…' : '改用户名'}
-              </Btn>
-            </form>
-          )}
-
-          {/* 改密码的表单（§6.5）。⚠️ 服务端改完会发一张新票 —— 所以这一改等于把
-              **所有设备**踢下线；当前这台拿到新票、不会掉，别在界面里吓唬人。 */}
-          {pwOpen && (
-            <form className="account-form" onSubmit={(e) => { e.preventDefault(); submitPassword() }}>
-              <Field className="account-field" label="原来的密码">
-                <TextInput name="oldPassword" type="password" autoComplete="current-password"
-                  value={oldPw} onChange={(e) => setOldPw(e.target.value)} />
-              </Field>
-              <Field className="account-field" label="新密码" hint="8 位以上，别和用户名一样">
-                <TextInput name="newPassword" type="password" autoComplete="new-password"
-                  value={newPw} onChange={(e) => setNewPw(e.target.value)} />
-              </Field>
-              {pwMsg && <p className={pwMsg.tone === 'ok' ? 'account-msg ok' : 'account-msg'}>{pwMsg.text}</p>}
-              <Btn type="submit" className="account-submit" disabled={pwBusy}>
-                {pwBusy ? '正在改…' : '改密码'}
-              </Btn>
-            </form>
-          )}
-
-          {/* 注销的确认（§5）。⚠️ **不许只点一下就注销**：它删的是全部作品和照片。
-              这句话把"删什么、能不能后悔"说全 —— 这页原来迟迟不做它，
-              卡的就是这两件事没定（见 git 历史里那句「不留一个点了会出事的按钮」）。 */}
-          {delOpen && (
-            <div className="account-danger">
-              <p>
-                注销之后：<b>作品和照片会一起删掉</b>，账号也没了。
-                <b>删了就找不回来</b> —— 我们这边也没有备份。
-              </p>
-              {delMsg && <p className="account-msg">{delMsg}</p>}
-              <div className="account-danger-actions">
-                <button className="account-cancel" onClick={() => setDelOpen(false)}>先不注销</button>
-                <Btn className="account-danger-submit" disabled={delBusy} onClick={confirmDelete}>
-                  {delBusy ? '正在注销…' : '确认注销'}
-                </Btn>
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* ② 「模型配置」框：接自己模型那件事的入口（§7.4）。
-            显示的是**别名或者「默认」**，绝不是型号（§7.3）——
-            点进去是模型设置那一页（`{ kind: 'models' }`）。
-            ⚠️ 那一格写别名：用户一眼认出"就是我起的那套"；写型号名不只是难读，
-               还等于把他用的是谁家摊在屏幕上。 */}
-        <section className="account-tile">
-          <h2 className="account-tile-title">模型配置</h2>
-          <div className="account-card">
-            <button className="account-row" onClick={() => onGo({ kind: 'models' })}>
-              <span className="account-row-label">模型</span>
-              {/* 拿不到名单时这一格整个不出现（见上面那个 effect 的注释）——
-                  「默认」两个字在那种情况下是一句没根据的话。 */}
-              {models !== null && <span className="account-row-value">{modelValue(models)}</span>}
-              <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
-            </button>
-          </div>
-        </section>
-
-        {/* ③ 「作品空间用量」框（§3.6 / §6.6）。**拿不到就整个框不出现** ——
-            见上面 Usage 那段（不能说成"0"，也不能画一个空壳子）。
-            ⚠️ 原来行首那个「使用情况」标签删了：这一框的小标题就是它，
-            同一个意思不说两遍。 */}
-        {usage.state !== 'unavailable' && (
+        <div className="account-grid">
+          {/* ① 「账号」框：我是谁 + 账号安全那两件 */}
           <section className="account-tile">
-            <h2 className="account-tile-title">作品空间用量</h2>
+            <h2 className="account-tile-title">账号</h2>
             <div className="account-card">
-              {/* ★ 2026-10-05：用量饼图（用户：「这一整块都可以先放作品用量，
-                  用那个立体的大一点的圆盘图表表示」→ 看完圆环后又补
-                  「我想到了就是磁盘用量是一个叫做饼图的」→ 换成实心饼图）——
-                  **整块让给图表**：饼图居中在上、百分比 + 两个数字在下面
-                  （`.usage-figure`）。盘 `aria-hidden`：语义真值在数字里，
-                  它是"画给人看"的那份。 */}
-              <div className="usage-figure">
-                {/* ★ 2026-10-05（第六轮）：两个数**画进图形里**了（用户：「也要在图形中
-                    展现出来」）—— `used`/`rest` 由页面用 `formatSize` 算好传进去；
-                    拿不到时（loading）不传，图上占位「…」。外面那行图例因此撤了
-                    （同一组数字不说两遍），stats 只剩「N 张作品」。
-                    ★ 第八轮：「总共」换成「剩余」（用户：「我觉得应该显示剩余用量吧？」
-                    —— "还能存多少"才是行动信息；总共 = 已用 + 剩余，可推）。 */}
-                <UsagePie
-                  pct={usage.state === 'loading' ? null : usage.bytes / usage.limit}
-                  warn={usageWarn}
-                  used={usage.state === 'loading' ? undefined : formatSize(usage.bytes)}
-                  rest={usage.state === 'loading' ? undefined : formatSize(Math.max(0, usage.limit - usage.bytes))} />
-                <div className="account-stats">
-                  {usage.state === 'loading' ? (
-                    // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
-                    // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
-                    <div className="stat"><b>…</b><span>张作品</span></div>
-                  ) : (
-                    <div className="stat"><b>{usage.count}</b><span>张作品</span></div>
-                  )}
+              {/* 用户名：设置页的第一行十有八九就是"你是谁"，所以它排在最上面。
+
+                  ★ 2026-10-09（用户原话：「像有些功能对应的增删改查的操作的补充就
+                  不要再让我一再强调了，比如用户名的修改功能」）：这一行**从只读
+                  变成可点**（原来是个 `<div className="account-row-static">`，
+                  名字只能看、不能改）。形状照这一页「模型 ›」那一行，
+                  点开就地长出一个表单 —— 全站没有弹窗文化。
+
+                  ⚠️ `.account-label` / `.account-name` 这两个类**是测试的锚点，
+                  改版也不许删**：`App.account.test.tsx` 有两条断言钉着
+                  「用户名这三个字在」和「`.account-name` 恰好等于用户名」
+                  （后者是防"标签被塞进名字里"的那种错法）。
+                  ⚠️ 标签和名字必须**还是两个 `<span>`** —— 合成一句就撞上第二条。 */}
+              <button className="account-row" aria-expanded={nameOpen}
+                onClick={() => setNameOpen((o) => !o)}>
+                <span className="account-row-label account-label">用户名</span>
+                <span className="account-row-value account-name">{user.username}</span>
+                <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
+              </button>
+
+              {/* 账号那三件（§3.6 那张图上的 改密码／注销账号，★ 加上改名）。
+                  ⚠️ 「退出登录」**不在这张卡里**（见下面那颗按钮的注释）—— 它是"离开这一页"，
+                  不是这一页上的一项设置，收进来就把两种东西混成一种了。 */}
+              <button className="account-row" aria-expanded={pwOpen}
+                onClick={() => setPwOpen((o) => !o)}>
+                <span className="account-row-label">改密码</span>
+                <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
+              </button>
+              <button className="account-row account-row-danger" aria-expanded={delOpen}
+                onClick={() => setDelOpen((o) => !o)}>
+                <span className="account-row-label">注销账号</span>
+                <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
+              </button>
+            </div>
+
+            {/* 改用户名的表单（★ 2026-10-09）。⚠️ 和改密码那趟**不一样**：这一改
+                **不影响登录态**（票里没有用户名），所以别在界面上写"其他设备要重新登录"。 */}
+            {nameOpen && (
+              <form className="account-form" onSubmit={(e) => { e.preventDefault(); submitUsername() }}>
+                {/* ⚠️ 提示**只写长度这一条**：字数是最猜不到的那条规矩，而字符类
+                    写全会很长（中文、字母、数字、下划线、·）—— 长到在这一格里
+                    折行、把末尾那个 `·` 孤零零甩到第二行（真机截图看过）。
+                    字符类交给服务端那句「只能用中文、字母、数字、下划线和 ·」
+                    （它就是注册页一直在用的那一句），别在这儿再写一遍更短的版本
+                    —— 两句话不一样，用户会以为两处的规矩不一样。 */}
+                <Field className="account-field" label="新用户名" hint="2 到 20 个字">
+                  <TextInput name="username" autoComplete="username"
+                    value={newName} onChange={(e) => setNewName(e.target.value)} />
+                </Field>
+                {nameMsg && <p className={nameMsg.tone === 'ok' ? 'account-msg ok' : 'account-msg'}>{nameMsg.text}</p>}
+                <Btn type="submit" className="account-submit" disabled={nameBusy}>
+                  {nameBusy ? '正在改…' : '改用户名'}
+                </Btn>
+              </form>
+            )}
+
+            {/* 改密码的表单（§6.5）。⚠️ 服务端改完会发一张新票 —— 所以这一改等于把
+                **所有设备**踢下线；当前这台拿到新票、不会掉，别在界面里吓唬人。 */}
+            {pwOpen && (
+              <form className="account-form" onSubmit={(e) => { e.preventDefault(); submitPassword() }}>
+                <Field className="account-field" label="原来的密码">
+                  <TextInput name="oldPassword" type="password" autoComplete="current-password"
+                    value={oldPw} onChange={(e) => setOldPw(e.target.value)} />
+                </Field>
+                <Field className="account-field" label="新密码" hint="8 位以上，别和用户名一样">
+                  <TextInput name="newPassword" type="password" autoComplete="new-password"
+                    value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+                </Field>
+                {pwMsg && <p className={pwMsg.tone === 'ok' ? 'account-msg ok' : 'account-msg'}>{pwMsg.text}</p>}
+                <Btn type="submit" className="account-submit" disabled={pwBusy}>
+                  {pwBusy ? '正在改…' : '改密码'}
+                </Btn>
+              </form>
+            )}
+
+            {/* 注销的确认（§5）。⚠️ **不许只点一下就注销**：它删的是全部作品和照片。
+                这句话把"删什么、能不能后悔"说全 —— 这页原来迟迟不做它，
+                卡的就是这两件事没定（见 git 历史里那句「不留一个点了会出事的按钮」）。 */}
+            {delOpen && (
+              <div className="account-danger">
+                <p>
+                  注销之后：<b>作品和照片会一起删掉</b>，账号也没了。
+                  <b>删了就找不回来</b> —— 我们这边也没有备份。
+                </p>
+                {delMsg && <p className="account-msg">{delMsg}</p>}
+                <div className="account-danger-actions">
+                  <button className="account-cancel" onClick={() => setDelOpen(false)}>先不注销</button>
+                  <Btn className="account-danger-submit" disabled={delBusy} onClick={confirmDelete}>
+                    {delBusy ? '正在注销…' : '确认注销'}
+                  </Btn>
                 </div>
               </div>
-            </div>
-
-            {/* ★ 2026-10-04（§6.6）：用到 80% 就**主动说** —— 不能等用户存不进去了才告诉
-                他"满了"（那一刻他正想保存，等于把他堵在门口）。张数才有感觉，
-                "80%"没有；出路跟着给（一句话 + 一条直通作品集的路）。
-                ⚠️ 每张按 2 MB 估：spec 自己写的是「5 GB（约 2500 张）」。这是个**估**，
-                所以文案说的是"还能存**约**"。 */}
-            {usageWarn && usage.state === 'ready' && (
-              <p className="account-quota-warn">
-                空间用了八成往上，还能存约 {Math.max(0, Math.floor((usage.limit - usage.bytes) / (2 * 1024 * 1024)))} 张 ——{' '}
-                <button className="account-quota-go" onClick={() => onGo({ kind: 'gallery' })}>去作品集删几张</button>
-              </p>
             )}
           </section>
-        )}
 
-        {/* ★★ 2026-10-06（深夜）：这里原来还有第 4 格「调色素材」（一个 Lut 入口）。
-            用户：「**这个可以从设置里面去掉了，我们的导航栏已经有了**」——
-            左栏那一支（`Nav.tsx` 的「Lut」）去的是同一个 `kind: 'luts'`，
-            两个入口摆着，用户还得先判断"这俩是不是一个地方"。**撤了。**
-            ⚠️ 别再加回来：同一件事的入口**只有一个出处**（和"回到这一步"、
-               「你在这里」那两颗提示同一个道理）。 */}
+          {/* ② 「模型配置」框：接自己模型那件事的入口（§7.4）。
+              显示的是**别名或者「默认」**，绝不是型号（§7.3）——
+              点进去是模型设置那一页（`{ kind: 'models' }`）。
+              ⚠️ 那一格写别名：用户一眼认出"就是我起的那套"；写型号名不只是难读，
+                 还等于把他用的是谁家摊在屏幕上。 */}
+          <section className="account-tile">
+            <h2 className="account-tile-title">模型配置</h2>
+            <div className="account-card">
+              <button className="account-row" onClick={() => onGo({ kind: 'models' })}>
+                <span className="account-row-label">模型</span>
+                {/* 拿不到名单时这一格整个不出现（见上面那个 effect 的注释）——
+                    「默认」两个字在那种情况下是一句没根据的话。 */}
+                {models !== null && <span className="account-row-value">{modelValue(models)}</span>}
+                <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
+              </button>
+            </div>
+          </section>
+
+          {/* ③ 「作品空间用量」框（§3.6 / §6.6）。**拿不到就整个框不出现** ——
+              见上面 Usage 那段（不能说成"0"，也不能画一个空壳子）。
+              ⚠️ 原来行首那个「使用情况」标签删了：这一框的小标题就是它，
+              同一个意思不说两遍。 */}
+          {usage.state !== 'unavailable' && (
+            <section className="account-tile">
+              <h2 className="account-tile-title">作品空间用量</h2>
+              <div className="account-card">
+                {/* ★ 2026-10-05：用量饼图（用户：「这一整块都可以先放作品用量，
+                    用那个立体的大一点的圆盘图表表示」→ 看完圆环后又补
+                    「我想到了就是磁盘用量是一个叫做饼图的」→ 换成实心饼图）——
+                    **整块让给图表**：饼图居中在上、百分比 + 两个数字在下面
+                    （`.usage-figure`）。盘 `aria-hidden`：语义真值在数字里，
+                    它是"画给人看"的那份。 */}
+                <div className="usage-figure">
+                  {/* ★ 2026-10-05（第六轮）：两个数**画进图形里**了（用户：「也要在图形中
+                      展现出来」）—— `used`/`rest` 由页面用 `formatSize` 算好传进去；
+                      拿不到时（loading）不传，图上占位「…」。外面那行图例因此撤了
+                      （同一组数字不说两遍），stats 只剩「N 张作品」。
+                      ★ 第八轮：「总共」换成「剩余」（用户：「我觉得应该显示剩余用量吧？」
+                      —— "还能存多少"才是行动信息；总共 = 已用 + 剩余，可推）。 */}
+                  <UsagePie
+                    pct={usage.state === 'loading' ? null : usage.bytes / usage.limit}
+                    warn={usageWarn}
+                    used={usage.state === 'loading' ? undefined : formatSize(usage.bytes)}
+                    rest={usage.state === 'loading' ? undefined : formatSize(Math.max(0, usage.limit - usage.bytes))} />
+                  <div className="account-stats">
+                    {usage.state === 'loading' ? (
+                      // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
+                      // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
+                      <div className="stat"><b>…</b><span>张作品</span></div>
+                    ) : (
+                      <div className="stat"><b>{usage.count}</b><span>张作品</span></div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* ★ 2026-10-04（§6.6）：用到 80% 就**主动说** —— 不能等用户存不进去了才告诉
+                  他"满了"（那一刻他正想保存，等于把他堵在门口）。张数才有感觉，
+                  "80%"没有；出路跟着给（一句话 + 一条直通作品集的路）。
+                  ⚠️ 每张按 2 MB 估：spec 自己写的是「5 GB（约 2500 张）」。这是个**估**，
+                  所以文案说的是"还能存**约**"。 */}
+              {usageWarn && usage.state === 'ready' && (
+                <p className="account-quota-warn">
+                  空间用了八成往上，还能存约 {Math.max(0, Math.floor((usage.limit - usage.bytes) / (2 * 1024 * 1024)))} 张 ——{' '}
+                  <button className="account-quota-go" onClick={() => onGo({ kind: 'gallery' })}>去作品集删几张</button>
+                </p>
+              )}
+            </section>
+          )}
+
+          {/* ★★ 2026-10-06（深夜）：这里原来还有第 4 格「调色素材」（一个 Lut 入口）。
+              用户：「**这个可以从设置里面去掉了，我们的导航栏已经有了**」——
+              左栏那一支（`Nav.tsx` 的「Lut」）去的是同一个 `kind: 'luts'`，
+              两个入口摆着，用户还得先判断"这俩是不是一个地方"。**撤了。**
+              ⚠️ 别再加回来：同一件事的入口**只有一个出处**（和"回到这一步"、
+                 「你在这里」那两颗提示同一个道理）。 */}
+        </div>
+
+        <button
+          className="account-signout"
+          disabled={leaving}
+          onClick={() => {
+            setLeaving(true)
+            // 退出用 `api/account.ts` 里那个现成的 `logout()` —— 「会话在 cookie 里、
+            // 由哪一条路去清」只有那一处说了算，别在界面里再拼一次同样的请求。
+            // 失败也放人走：退出是幂等的、服务端只清一个 cookie，而用户要的是离开。
+            // 变异：删掉这个 `.catch` → 「请求失败也要放人走」那条测试会红
+            //      （`.then(onSignedOut)` 挂在一条已经 reject 的链上，永远不会执行）。
+            logout().catch(() => {}).then(onSignedOut)
+          }}
+        >{leaving ? '正在退出…' : '退出登录'}</button>
       </div>
-
-      <button
-        className="account-signout"
-        disabled={leaving}
-        onClick={() => {
-          setLeaving(true)
-          // 退出用 `api/account.ts` 里那个现成的 `logout()` —— 「会话在 cookie 里、
-          // 由哪一条路去清」只有那一处说了算，别在界面里再拼一次同样的请求。
-          // 失败也放人走：退出是幂等的、服务端只清一个 cookie，而用户要的是离开。
-          // 变异：删掉这个 `.catch` → 「请求失败也要放人走」那条测试会红
-          //      （`.then(onSignedOut)` 挂在一条已经 reject 的链上，永远不会执行）。
-          logout().catch(() => {}).then(onSignedOut)
-        }}
-      >{leaving ? '正在退出…' : '退出登录'}</button>
     </div>
   )
 }
