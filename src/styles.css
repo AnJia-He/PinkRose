@@ -1256,6 +1256,12 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 /* 真按钮 → 逐条按掉全局 `button{}` 那套方框（和 `.rail-tile` / `.lut-tile` 同一条老路） */
 .tool-cell {
+  /* ★ 2026-10-09：三颗工具各配了图标（14px，选型见 `ToolBar.tsx` 顶部）——
+     "图标 + 文字一行居中"，和左栏 `.nav-item` / 对话 `.chat-tool` 同一套（gap 6）。
+     ⚠️ 高度**不许因此变**：14px 的图标比 13px 那行字的行盒矮，撑高这一格的
+     还是文字（`.nav-item` 那条高度账的同一个道理）；窄屏那一行也只有这三颗、
+     放得下，**不用**像左栏那样在窄屏把图标藏起来。 */
+  display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 14px; background: none; border: 1px solid transparent;
   border-radius: var(--r-pill); color: var(--muted); font-size: 13px; cursor: pointer;
 }
