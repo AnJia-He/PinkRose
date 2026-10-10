@@ -2358,6 +2358,9 @@ export default function App() {
           // ★ 删掉**正在改的那条**时，App 这边也得知道（2026-10-02 用户报的
           //   "删了对话，修图里那张照片还在"）。理由和取舍见 `onSessionDeleted`。
           onDeleted={onSessionDeleted}
+          // ★ 2026-10-10：生成中切会话的**事前拦截**（那一版还在算，切走就白算了）
+          //   —— 判据就是这份文件顶上那个 `generating`。
+          generating={generating}
         />
       )}
       {view.kind === 'gallery' && <GalleryPage onOpen={(id) => go({ kind: 'work', id })} />}

@@ -16,7 +16,7 @@ import { sessionTitle, sessionMatchesQuery, type SessionMeta } from '../../share
  * ⚠️ 分组和分页**复用作品页那一套**（`groupByDay` + `visibleGroups`）：
  *    复制一份出来的话，同一天会在两页里显示成两个名字，而且没人会同时看着两页。
  */
-export function SessionsPage({ onOpen, onNew, onDeleted }: {
+export function SessionsPage({ onOpen, onNew, onDeleted, generating }: {
   onOpen: (id: number) => void
   onNew: () => void
   /**
@@ -30,6 +30,14 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
    *   要不要动、动什么，由 App 判（它才知道删的是不是手上那条）。
    */
   onDeleted: (id: number) => void
+  /**
+   * ★ 2026-10-10：**现在有一版还在算**（App 里是 `busy === BUSY_GENERATING`）。
+   *
+   * 用它做**切会话前的事前拦截**：那十几秒里点另一条行的话，生成的结果回来时
+   * 底图已经换了、会被丢弃（钱白花）—— 先问一句"还在算的那一版，现在切走就
+   * 不要了"，用户知情了再走。没在算时一个字都不多问。
+   */
+  generating: boolean
 }) {
   /** null = 还没拿到。**它和"一条都没有"是两件事** —— 混在一起的话，
    *  还没加载完的那一瞬间会显示"还没改过照片"，用户会以为东西没了。 */
@@ -79,6 +87,11 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
   const [confirmAsk, setConfirmAsk] = useState(false)
   /** 批删的循环正在跑（逐条 await）。跑着的时候按钮全禁用 —— 防连点。 */
   const [deleting, setDeleting] = useState(false)
+  /**
+   * ★ 2026-10-10：**"生成中切走"的就地确认**问的是哪一条（null = 没问）。
+   * 和 `confirming`（"删掉这条？"）同一个形状：一次只问一条、就地展开、不弹窗。
+   */
+  const [cutaway, setCutaway] = useState<number | null>(null)
 
   /** 退出选择模式（「取消」和"全删成功"都走它）：勾清空、确认条收掉。 */
   function exitSelect() {
@@ -250,7 +263,8 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
             <div key={s.id} className="session-block">
               <div className={
                 (renaming === s.id ? 'session-row renaming'
-                  : confirming === s.id ? 'session-row confirming' : 'session-row')
+                  : confirming === s.id ? 'session-row confirming'
+                    : cutaway === s.id ? 'session-row cutaway' : 'session-row')
                 + (menuId === s.id ? ' menu-open' : '')}>
                 {/* ★ 2026-10-06 下午：选择模式里行首那颗勾选框（用户给的那张
                     截图里就在这个位置）。系统原生那款，颜色跟主色走。 */}
@@ -261,9 +275,13 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
                     aria-label="选中这段对话" />
                 )}
                 {/* ⚠️ 选择模式里点整行 = **勾选，不是打开**（微信式：那一档里
-                    没有"进去看看"这回事）。 */}
+                    没有"进去看看"这回事）。
+                    ★ 2026-10-10：**生成中点行也不直接切** —— 就地问一句
+                    （那一版还在算，切走它就作废、钱白花；见 `generating`）。 */}
                 <button className="session-open"
-                        onClick={() => (selecting ? togglePick(s.id) : onOpen(s.id))}>
+                        onClick={() => (selecting
+                          ? togglePick(s.id)
+                          : generating ? setCutaway(s.id) : onOpen(s.id))}>
                   {/* `alt` 给名字：图上没字，读屏软件只能靠它 */}
                   <img className="session-thumb" src={sessionThumbUrl(s.id, s.updatedAt)}
                        alt={sessionTitle(s)} loading="lazy" />
@@ -293,6 +311,15 @@ export function SessionsPage({ onOpen, onNew, onDeleted }: {
                         点错一次东西就没了。见 styles.css 里那条 `.session-del.danger`。 */}
                     <button className="session-del danger" onClick={() => void doDelete(s.id)}>删掉</button>
                     <button className="session-del" onClick={() => setConfirming(null)}>取消</button>
+                  </>
+                ) : cutaway === s.id ? (
+                  /* ★ 2026-10-10：生成中切走的**事前拦截**（就地确认，照上面那套
+                     的形状）。「切过去」是**普通样式不是危险色** —— 它不删东西，
+                     只是"这次生成白算了"（用户刚被告知过）。 */
+                  <>
+                    <span className="session-ask">还在算的那一版，现在切走就不要了。</span>
+                    <button className="session-del" onClick={() => onOpen(s.id)}>切过去</button>
+                    <button className="session-del" onClick={() => setCutaway(null)}>再等等</button>
                   </>
                 ) : (
                   /* ★ 2026-10-06 下午：行尾就这一颗「…」（原来并排的「改名」

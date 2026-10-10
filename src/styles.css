@@ -2948,9 +2948,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    为什么必须让位：390px 的手机上，去掉左栏和页面留白只剩 ~250px，一行里塞不下
    "缩略图 48 + 名字 + 几步 + 问句 + 两颗按钮"。`min-width: 0` 只救得了名字
    —— 缩略图和"几步"是 `flex: none`，它们会把整行**横向撑破**（整页多出一条横向
-   滚动条，而 `.shell` 是锁死一屏的）。 */
-.session-row.confirming { justify-content: flex-end; padding: var(--sp-2) var(--sp-3); }
-.session-row.confirming .session-open { display: none; }
+   滚动条，而 `.shell` 是锁死一屏的）。
+   ★ 2026-10-10：`.cutaway`（生成中切走的那一问）**共用这两条** —— 它也是
+   "这一行换了个问题问"，形状和宽度需求一字不差。 */
+.session-row.confirming, .session-row.cutaway { justify-content: flex-end; padding: var(--sp-2) var(--sp-3); }
+.session-row.confirming .session-open, .session-row.cutaway .session-open { display: none; }
 .session-ask { flex: 1; font-size: 12px; color: var(--text); white-space: nowrap; }
 /* 两颗按钮里**只有「删掉」是危险的**：它们文案都很短、长得又一样，点错一次
    东西就没了 —— 颜色是这里唯一还能区分的余地。

@@ -117,7 +117,9 @@ afterEach(() => {
 
 async function show() {
   await act(async () => {
-    root.render(<SessionsPage onOpen={onOpen} onNew={onNew} onDeleted={onDeleted} />)
+    // ★ 2026-10-10：`generating` 必填（"生成中切会话先问一句"那条的判据）——
+    // 这一组测的是列表本身，摆 `false`（没在算）。
+    root.render(<SessionsPage onOpen={onOpen} onNew={onNew} onDeleted={onDeleted} generating={false} />)
     // 挂载那一次「拉列表」得落定，不然看到的是"还在取"那一瞬间
     await tick()
   })
@@ -255,7 +257,7 @@ describe('对话列表', () => {
     let release!: () => void
     vi.mocked(api.listSessions).mockImplementation(() => new Promise((r) => { release = () => r([ses(1)]) }))
     await act(async () => {
-      root.render(<SessionsPage onOpen={onOpen} onNew={onNew} onDeleted={onDeleted} />)
+      root.render(<SessionsPage onOpen={onOpen} onNew={onNew} onDeleted={onDeleted} generating={false} />)
       await tick()
     })
     expect(texts()).toContain('正在取')

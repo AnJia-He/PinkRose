@@ -1376,6 +1376,72 @@ describe('恢复：打开就接着上次那条', () => {
   })
 })
 
+/**
+ * ★ 2026-10-10：**生成中切走 = 那一版白算**（结果回来时底图已经换了一版，
+ * 被丢弃，只留事后一句"要的话再说一遍"）。这一条做**事前拦截**：点另一条会话
+ * 的行时先问一句，用户知情了再走 —— 而不是等他切完、钱花了之后才告诉他。
+ *
+ * ⚠️ 已知边界（先不做）：**裁剪 / 点修**落地时也会作废正在算的那一版
+ * （`baseEdit` 里推 `baseSeq`），但那条路要"开工具 → 操作 → 点完成"在
+ * 十几秒内走完，概率低；而且确认条在调色屏没有自然的落点。先拦主场景。
+ */
+describe('★（10-10）生成中切会话：先问一句', () => {
+  it('★ 点另一条会话的行：先问「正在算的那一版，切走就不要了」', async () => {
+    // 一句生成**挂住不回**（那十几秒的样子）—— ⚠️ 必须 `Once`，
+    // 持久实现会泄漏给后面的用例（clearAllMocks 不恢复实现）。
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉路人', reply: '好，这就去改。' }))
+    vi.mocked(api.postEdit).mockImplementationOnce(() => new Promise(() => {}))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')          // 生成挂起（busy = 正在改…）
+    // ★ `withSessions` 必须**等到进「对话」页之前**才挂：它一挂上，
+    //   App 启动那次"接回上次那条"就会把列表第一条接回来（屏幕上有照片了、
+    //   欢迎屏就没了 —— `uploadPhoto` 当场找不到上传框）。这条要的是
+    //   "手上刚上传一张 + 列表里另有一条旧的"，所以**先上传、后摆列表**。
+    withSessions([makeSession(1, 2, '旧账', '甲')])
+    await goNav('对话')
+    expect(location.pathname).toBe('/app/sessions')
+
+    const openRow = () => {
+      const row = container.querySelector('.session-row') as HTMLElement
+      return row.querySelector('.session-open') as HTMLButtonElement
+    }
+    await act(async () => { openRow().click(); await new Promise(r => setTimeout(r, 0)) })
+
+    // ① 问出来了，而且**没有直接切走**
+    expect(container.querySelector('.session-row')?.textContent ?? '').toContain('切走就不要了')
+    expect(location.pathname).toBe('/app/sessions')
+
+    // ② 「再等等」→ 什么都不发生，行恢复正常
+    await clickByText('再等等')
+    expect(location.pathname).toBe('/app/sessions')
+    expect(container.textContent).not.toContain('切走就不要了')
+
+    // ③ 再点一次 + 「切过去」→ 真的切
+    await act(async () => { openRow().click(); await new Promise(r => setTimeout(r, 0)) })
+    await clickByText('切过去')
+    expect(location.pathname).toBe('/app')
+  })
+
+  it('（10-10）没在算的时候点行：一句话都不多问，直接切', async () => {
+    await renderApp()
+    await uploadPhoto()
+    // 同上：进列表页之前才挂（早挂的话启动就接回那条了）
+    withSessions([makeSession(1, 2, '旧账', '甲')])
+    await goNav('对话')
+
+    const row = container.querySelector('.session-row') as HTMLElement
+    await act(async () => {
+      ;(row.querySelector('.session-open') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(location.pathname).toBe('/app')
+    expect(container.textContent).not.toContain('切走就不要了')
+  })
+})
+
 describe('删除记录 —— 单条走「…」菜单，多条走勾选批量', () => {
 
   /** 按**气泡文字**认那条消息（找不到时给一句人话，别让测试死在 null 上）。 */
