@@ -66,6 +66,9 @@ type Props = {
    *  别的忙态那颗是**禁用的「发送」**。原来 4 种忙态共用一颗「停止」，而
    *  abort 只挂在生成上：其余三段按下去没反应也没反馈，像按键坏了。 */
   onStop: () => void
+  /** ★ 2026-10-10：加号工具行里那颗**「帮我想想」**—— 再要一批建议卡
+   *  （卡片只在上传后出一次、10 秒收掉；接口一直是现成的，缺的就是这个入口）。 */
+  onAskSuggest: () => void
   /**
    * ★ 2026-10-10：**这一段是不是真的在生成**（App 那边是
    * `busy === BUSY_GENERATING` 的身份比较，别在这儿字符串嗅探）。
@@ -181,7 +184,7 @@ type Props = {
 }
 
 export default function ChatPanel({
-  messages, cards, busy, suggesting, onSend, onStop, generating, retryId, onRetry,
+  messages, cards, busy, suggesting, onSend, onStop, onAskSuggest, generating, retryId, onRetry,
   onCard, onRerun, rerunnable,
   jumpableIds, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
   futureSteps, replacing, onConfirmReplace, onCancelReplace,
@@ -786,6 +789,11 @@ export default function ChatPanel({
             <SlidersHorizontal size={14} strokeWidth={1.5} aria-hidden="true" />
             Lut
           </button>
+          {/* ★ 2026-10-10：「帮我想想」—— 再要一批建议卡。它不是"两层里的头一层"
+              （Lut 那种），点了**直接办事**（去要卡片），所以没有 `aria-expanded`。
+              忙的时候（或正在要）禁用：点了也没反应的按钮不留（老规矩）。 */}
+          <button className="chat-tool" disabled={!!busy || suggesting}
+            onClick={onAskSuggest}>帮我想想</button>
         </div>
       )}
       {/* 点开是**和微调区同一套格子**（同一个组件，两处长得一样 —— 用户当场

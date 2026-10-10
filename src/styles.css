@@ -1029,6 +1029,21 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .canvas-veil::before { width: 20px; height: 20px; }
 
+/* ★ 2026-10-10：拖着一张照片悬在窗口上时的提示层（松手 = 换成它改）。
+   全屏 `fixed` + 居中一句话。罩色和上面那个暗罩同一类（压的是内容、不跟
+   主题走），但比那档重 —— 它盖的是**整个应用**，要一眼看出"现在在拖东西、
+   松手会替代掉现在这个画面"。
+   `z-index: 50`：项目里的层都不高（sticky 头那几处是 1），这里一档盖所有。
+   `pointer-events: none`：它只是提示，别挡住下面（拖放本身不受影响）。 */
+.drop-veil {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font-size: 15px;
+  pointer-events: none;
+}
+
 /* ── 照片右下角那排缩放按钮（★ 2026-10-06，`Canvas`）────────────────────
    来路：用户说「在对话区设置一个功能帮助用户能够正常缩放照片和定位到具体的
    细节区域」—— 在这之前照片永远"适应窗口"，想看一颗痘痘去掉没有只能靠猜。

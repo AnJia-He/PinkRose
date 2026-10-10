@@ -12,7 +12,7 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { OK, canvasProps, clickByText, container, decision, fakeBitmap, fetchMock, goNav, lastReply, makeGate, renderApp, say, uploadPhoto } from './test/appHarness'
+import { OK, canvasProps, clickByText, container, decision, fakeBitmap, fetchMock, goNav, lastReply, makeGate, openChatTool, renderApp, say, uploadPhoto } from './test/appHarness'
 import { act } from 'react'
 import { ZERO } from '../shared/adjustments.ts'
 import * as decodeMod from './image/decode'
@@ -420,8 +420,11 @@ describe('对话式修图：钱花在对的地方', () => {
    * 点不动比"点了没反应"诚实，而那几段本来就短，没人会真的想取消。
    */
   it('★（10-10）「正在思考…」时那格是禁用的「发送」，不是点了没反应的「停止」', async () => {
-    // 路由那一步**挂住不回**（那 1.3~1.6 秒的样子）
-    vi.mocked(api.postRoute).mockImplementation(() => new Promise(() => {}))
+    // 路由那一步**挂住不回**（那 1.3~1.6 秒的样子）。
+    // ⚠️ 必须是 `Once`：持久的 `mockImplementation` 会**泄漏给后面的测试**
+    //    （clearAllMocks 只清记录、不恢复实现）—— 后面的用例再 `say()`
+    //    就会永远卡在这个"永不返回"上，症状是"助手一句话都不说"。
+    vi.mocked(api.postRoute).mockImplementationOnce(() => new Promise(() => {}))
     await renderApp()
     await uploadPhoto()
 
@@ -450,7 +453,8 @@ describe('对话式修图：钱花在对的地方', () => {
   it('★（10-10）等待超过 5 秒：忙气泡换成真实秒数', async () => {
     vi.mocked(api.postRoute).mockResolvedValue(
       decision({ route: 'generate', editPrompt: '去掉路人' }))
-    vi.mocked(api.postEdit).mockImplementation(() => new Promise(() => {}))   // 永远不回
+    // ⚠️ 同上必须是 `Once`（持久实现会泄漏给后面的用例）。
+    vi.mocked(api.postEdit).mockImplementationOnce(() => new Promise(() => {}))   // 永远不回
 
     await renderApp()
     await uploadPhoto()
@@ -590,6 +594,78 @@ describe('对话式修图：钱花在对的地方', () => {
     expect(lastReply()).toBe('停了。')
     expect([...container.querySelectorAll('button')]
       .find(b => (b.textContent ?? '').trim() === '再试一次')).toBeUndefined()
+  })
+
+  /**
+   * ★（10-10）「帮我想想」—— 建议卡过期（10 秒）或者用掉之后，还能主动再要一批。
+   * 原来上传后只出这一次：过了十秒那一块就永远空着（接口 `/api/suggest` 是现成的，
+   * 缺的只是"再问一次"的入口）。入口住进加号工具行 —— 以后加工具就往那一行排。
+   */
+  it('★（10-10）「帮我想想」：建议卡过期之后还能再要一批', async () => {
+    vi.mocked(api.postSuggest).mockResolvedValueOnce({
+      cards: [{ label: '亮一点', route: 'params', paramDeltas: { exposure: 20 }, editPrompt: '' }],
+      degraded: false,
+    })
+    await renderApp()
+    await uploadPhoto()
+    expect(container.querySelectorAll('.card').length).toBe(1)     // 第一批自己来了
+
+    vi.mocked(api.postSuggest).mockResolvedValueOnce({
+      cards: [{ label: '加点暖色', route: 'params', paramDeltas: { exposure: -20 }, editPrompt: '' }],
+      degraded: false,
+    })
+    await openChatTool('帮我想想')                                  // 展开加号、点它
+
+    expect(api.postSuggest).toHaveBeenCalledTimes(2)               // 真的去再要了一批
+    expect(container.textContent).toContain('加点暖色')            // 新一批上屏了
+  })
+
+  /**
+   * ★（10-10）把另一张照片**拖进页面** = 换一张改（和顶栏「新的一张」同一件事，
+   * 只是省两次点击）。⚠️ 拖放的浏览器默认行为是**直接打开那个文件**（页面跳走、
+   * 手上没落盘的改动全没）—— 所以 dragover / drop 必须 preventDefault。
+   */
+  it('★（10-10）拖一张图进来 = 换一张改（对话跟着清空重来）', async () => {
+    // 自给自足（不靠 beforeEach 的默认 mock）：这条要 `say()` 一句，
+    // 而 mock 的状态是**跨用例共享**的（clearAllMocks 不恢复实现）。
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'params', paramDeltas: { exposure: 20 }, reply: '好，亮一点。' }))
+    await renderApp()
+    await uploadPhoto()
+    await say('亮一点')
+    expect(container.querySelectorAll('.bubble.assistant:not(.pending)').length).toBe(2)
+
+    await act(async () => {
+      dispatchDrop(new File(['x'], 'b.png', { type: 'image/png' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // 第二张真的被解码了（走的是和"选一张"同一条路：onPick）
+    expect(decodeMod.decodeImageFile).toHaveBeenCalledTimes(2)
+    // 换了一张 = 对话清空重来（只剩新的那条欢迎语）
+    expect(container.querySelectorAll('.bubble.assistant:not(.pending)').length).toBe(1)
+    expect(lastReply()).toBe('准备好啦，说说想怎么改？')
+  })
+
+  it('★（10-10）粘贴一张图，同样是换一张改', async () => {
+    await renderApp()
+    await uploadPhoto()
+
+    await act(async () => {
+      dispatchPaste(new File(['x'], 'c.png', { type: 'image/png' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(decodeMod.decodeImageFile).toHaveBeenCalledTimes(2)
+  })
+
+  it('（10-10）还没有照片时不接拖放 —— 那一屏是欢迎页自己的地盘', async () => {
+    await renderApp()
+    await act(async () => {
+      dispatchDrop(new File(['x'], 'b.png', { type: 'image/png' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(decodeMod.decodeImageFile).not.toHaveBeenCalled()
   })
 })
 
@@ -1109,3 +1185,20 @@ describe('对话区跟着新消息往下走', () => {
      和它配对的那一幕（小图晚一步长出来 → 把"站的那一格"滑进视野）现在归
      时间轴管，钉在 `StepStrip.test.tsx` 里。 */
 })
+
+/** ★ 2026-10-10：往 document 上丢一个"文件被拖进来"的事件
+ *  （jsdom 没有真 DataTransfer，手搓一个只有我们读的那两个字段的）。 */
+function dispatchDrop(file: File) {
+  const ev = new Event('drop', { bubbles: true, cancelable: true })
+  Object.defineProperty(ev, 'dataTransfer', { value: { files: [file], types: ['Files'] } })
+  document.dispatchEvent(ev)
+}
+
+/** ★ 2026-10-10：往 document 上丢一个"粘贴"事件（剪贴板里是一张图）。 */
+function dispatchPaste(file: File) {
+  const ev = new Event('paste', { bubbles: true, cancelable: true })
+  Object.defineProperty(ev, 'clipboardData', {
+    value: { items: [{ kind: 'file', type: file.type, getAsFile: () => file }] },
+  })
+  document.dispatchEvent(ev)
+}

@@ -74,6 +74,8 @@ import { usePersist } from './app/usePersist'
 import { useCrop } from './app/useCrop'
 import { useRetouch } from './app/useRetouch'
 import { useLoadSession } from './app/useLoadSession'
+// ★ 2026-10-10：拖/粘一张照片进来 = 换一张改（见 hook 里的注释）。
+import { usePhotoDrop } from './app/usePhotoDrop'
 import { sameLutName, type LutRef } from '../shared/lut.ts'
 import type { SuggestCard } from '../shared/protocol.ts'
 import type { WorkMeta } from '../shared/works.ts'
@@ -840,6 +842,41 @@ export default function App() {
   /** 右下角那颗「对比」按的就是这个 —— 和工具行那颗**同一个开关**。 */
   const toggleCompare = () => pickTool(comparing ? null : 'compare')
 
+  /**
+   * ★ 2026-10-10：**去要一批建议卡片**（上传后那趟、和「帮我想想」那颗共用一份）。
+   *
+   * 分工照旧：`pickIdRef` 的序号保证**后一趟**的收尾不把**前一趟**的提示提前
+   * 收掉（换照片 / 再点一次会撞）；"正在看…"那句提示最多挂 `SUGGEST_WAIT_MS`，
+   * 到点就收 —— 卡片是可选件，绝不能让用户等它。
+   * `void`：`loadCards` 自己吞掉所有错（它绝不 reject），这里也不等它。
+   *
+   * ⚠️ 抽出来时原文一个字没动（原来整段住在 `onPick` 里）—— `baseSeqRef` 那条
+   *   `++` 留在**调用处**：它是"底图换了一版"，和卡片没有关系。
+   */
+  const runSuggest = useCallback((img: DecodedImage) => {
+    const myPick = ++pickIdRef.current
+    setSuggesting(true)
+    const settle = () => { if (pickIdRef.current === myPick) setSuggesting(false) }
+    const timer = setTimeout(settle, SUGGEST_WAIT_MS)
+    void loadCards(img).finally(() => { clearTimeout(timer); settle() })
+  }, [loadCards])
+
+  /**
+   * ★ 2026-10-10：加号工具行里那颗**「帮我想想」** —— 再要一批建议。
+   *
+   * 加它的来路：卡片只在上传后出一次、10 秒就收掉，之后**再没有入口**
+   * （接口 `/api/suggest` 一直是现成的）—— 用户改了两轮之后想问"还能怎么弄"，
+   * 没有地方问。
+   *
+   * `setCards([])`：**换一批**，不是往旧的后面叠（旧的说的还是上一版画面）。
+   * 忙的时候不接（和卡片本身同一条：生成在跑时点卡片会撞上闸门）。
+   */
+  const onAskSuggest = useCallback(() => {
+    if (!image || busy || suggesting) return
+    setCards([])
+    runSuggest(image)
+  }, [image, busy, suggesting, runSuggest])
+
   const onPick = useCallback(async (file: File, wish = '') => {
     // ★ **进门第一件事**，在下面两趟 await 之前：从这一刻起"用户自己动手了"。
     //   恢复那道闸门看的就是它（`baseSeqRef` 要等解码完才动，等它太晚 ——
@@ -923,17 +960,10 @@ export default function App() {
       //   ⚠️ 走 `moveCursor`（state + 影子 ref 一起写，见 `cursorIdRef`）。
       moveCursor(welcomeId)
 
-      // 卡片是**可选件，绝不能让用户等它**：这里只把它挂到后台去跑，
-      // 发送键立刻就是可用的（见 SUGGEST_WAIT_MS 那段）。
-      // ⚠️ **不 await**：await 了就等于又把用户挡回门外了，只是这次挡在
-      //    另一行代码上。超时那条只负责收掉"正在看…"那句提示。
-      const myPick = ++pickIdRef.current
+      // 卡片是**可选件，绝不能让用户等它**：挂到后台去跑，发送键立刻可用
+      // （序号 + 超时那套在 `runSuggest` 里，和「帮我想想」共用一份）。
       baseSeqRef.current++
-      setSuggesting(true)
-      const settle = () => { if (pickIdRef.current === myPick) setSuggesting(false) }
-      const timer = setTimeout(settle, SUGGEST_WAIT_MS)
-      // `void`：loadCards 自己吞掉所有错（它绝不 reject），这里也不等它。
-      void loadCards(img).finally(() => { clearTimeout(timer); settle() })
+      runSuggest(img)
 
       // ★ 在服务端把这条会话立起来。**不 await** —— 建会话是"锦上添花"，
       //   等它等于把用户挡在门外（上传那一步已经有一句"正在打开照片…"了）。
@@ -977,7 +1007,25 @@ export default function App() {
       //   `pickSeqRef > pickSettledSeqRef`（见 `pickSettledSeqRef` 那段）。
       pickSettledSeqRef.current++
     }
-  }, [history, say, loadCards, setCurrentSession, moveCursor, clearTransient])
+  }, [history, say, runSuggest, setCurrentSession, moveCursor, clearTransient])
+
+  /**
+   * ★ 2026-10-10：**拖/粘进来的一张照片 = 换一张改**（和顶栏「新的一张」
+   * 同一趟处理，只是不走"回欢迎屏再选"那两步）。
+   *
+   * 三句的顺序照 `startNew`：
+   *   · `busy` 时不接（生成回来会往 history 里推一步，而屏幕已经换了底图）；
+   *   · 先 `flushEdit`（"没定稿的一笔调色"记进账本）再 `flushPersist`
+   *     （欠的那趟落盘提前发出去）—— 状态马上要换新的一张，不 flush 就丢了；
+   *   · 最后 `onPick`：解码、建新会话、重置（旧的那条会话在左栏「对话」里
+   *     原样留着，不删）。
+   */
+  const onDropPhoto = useCallback((file: File) => {
+    if (busy) return
+    flushEdit()
+    flushPersist()
+    void onPick(file)
+  }, [busy, flushEdit, flushPersist, onPick])
 
   /**
    * 把"手上这一张"整个放下：照片、对话、参数、快照、会话 id，一件不留。
@@ -1775,6 +1823,15 @@ export default function App() {
   // `go` 里两条 ⚠️（`window.history` 与 `replace`）也一起。这里只剩接线。
   const { view, go } = useNav({ checking, user })
 
+  /** ★ 2026-10-10：拖/粘一张照片进来 = 换一张改（见 `usePhotoDrop`）。
+   *  ⚠️ 它必须住在 `view` 定义**之后**（`active` 要读它）—— 往前挪一格就是
+   *  TDZ（`Cannot access 'view' before initialization`），而且 typecheck 抓不到
+   *  这种"声明顺序"问题，是渲染时当场炸（和拆 App 那轮踩的同一个坑）。 */
+  const dropping = usePhotoDrop({
+    active: view.kind === 'edit' && !!image && !busy,
+    onDrop: onDropPhoto,
+  })
+
   /**
    * ★ 2026-10-05：`lutOpenNext` 的清场（那个 ref 声明在上面 `lut` 那一段旁边）。
    *
@@ -1876,6 +1933,10 @@ export default function App() {
 
   return (
     <div className="shell">
+      {/* ★ 2026-10-10：拖着一张照片悬在窗口上时的提示层（松手 = 换成它改）。
+          它 `position: fixed` 全屏，摆在页面哪一层都一样（放最前面，读起来
+          就是"先盖着、下面才是页面"）。 */}
+      {dropping && <div className="drop-veil">松手，换这张照片</div>}
       {/* 左栏在**所有**界面里都在：作品页、详情页是同一个壳，换的只是右边那一格。
           ⚠️ 它**不收"有没有照片"那个参数**（2026-10-04 试过一版，被用户否掉：
           「微调的按钮要一直在」）—— 没照片时该变的是照片那块地方，见下面 `stage`。 */}
@@ -2181,6 +2242,7 @@ export default function App() {
                   draft={draft}
                   onSend={send}
                   onStop={stopGeneration}
+                  onAskSuggest={onAskSuggest}
                   // ★ 2026-10-10：这两对是「等待要诚实」那批 ——
                   //   `generating`（这份文件上面那个 `busy === BUSY_GENERATING`）
                   //   决定那一格是「停止」还是禁用的「发送」；
