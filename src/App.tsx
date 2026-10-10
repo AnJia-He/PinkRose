@@ -2460,6 +2460,12 @@ export default function App() {
             setLut(hit && recipeLut ? { lutId: hit.id, amount: recipeLut.amount } : null)
             go({ kind: 'edit' })
           }}
+          // ★ 2026-10-10（「我的预设」，设计 §5.4）：详情页配方卡上那颗
+          //   「把这套存成预设」—— 存的是**那张作品的配方**（参数由详情页交进来，
+          //   这里别顺手换成 App 手上那套 `params`：用户看的正是这份配方）。
+          //   回调和面板头那座「我的预设」是**同一个**（createPreset + 重拉清单）；
+          //   失败那句话由组件就地显示，这一层不 catch。
+          onSavePreset={savePreset}
         />
       )}
       {/* 用户管理（§3.6）。

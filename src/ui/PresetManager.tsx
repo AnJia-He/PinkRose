@@ -25,6 +25,10 @@ import { RenameInput } from './kit/RenameInput.tsx'
  *    `LutSettings` 三处同一做法）—— 这一层**从不往名单里塞/改/抠**，`presets`
  *    是只读的当前真值。删除是**就地确认**、不弹窗（全站规矩；这一屏尤其没有——
  *    「调色就是对图片微调的界面区」，见 `AdjustmentPanel` 里那段）。
+ *
+ * ★ 2026-10-10（设计 §5.4）：**第一行（起名 + 存）抽给了 `PresetSaveRow`**
+ *   （文件底下那段）—— 作品详情页配方卡上那颗「把这套存成预设」展开的就是它，
+ *   两处共用一份。这里只剩清单 / 改名 / 删。
  */
 export function PresetManager({ presets, known, params, onSave, onRename, onDelete }: {
   /** 当前清单（真值在服务端，这里只是它最近一次的影子）。 */
@@ -38,11 +42,9 @@ export function PresetManager({ presets, known, params, onSave, onRename, onDele
   onRename: (id: number, name: string) => Promise<void>
   onDelete: (id: number) => Promise<void>
 }) {
-  /** 起名那一格现在写着什么。**成功才清空**（失败保留 —— 别让人重打一遍）。 */
-  const [name, setName] = useState('')
-  /** 存的一套**在路上**（那颗按钮同时会变成「正在存…」）。 */
-  const [busy, setBusy] = useState(false)
-  /** 这一栏上出错的那句话（存 / 改名 / 删共用一条 —— 同时只有一件事在发生）。 */
+  /** 这一栏上出错的那句话（**改名 / 删**共用一条 —— 同时只有一件事在发生）。
+   *  ⚠️ "存"那条错**不在这里**：起名那一行连它的状态一起搬去了 `PresetSaveRow`
+   *  （文件底下那段 —— 面板头和作品详情页共用同一份），那一行说自己的事。 */
   const [err, setErr] = useState<string | null>(null)
   /** 就地改名的是哪一条（null = 没在改）。 */
   const [renaming, setRenaming] = useState<number | null>(null)
@@ -66,25 +68,6 @@ export function PresetManager({ presets, known, params, onSave, onRename, onDele
 
   /** 满了吗（满 30 套就不给再存了）。清单没到手时**不拦** —— 上限由服务端兜底。 */
   const full = presets.length >= MAX_PRESETS
-
-  const doSave = async () => {
-    if (busy || full) return
-    const trimmed = name.trim()
-    // 空名字这颗按钮本来就是禁用的；这里再挡一次是防"回车提交"那条路。
-    if (trimmed === '') return
-    setErr(null)
-    setBusy(true)
-    try {
-      // 名字 trim 过再送（服务端也会 trim，两边同一条 —— 判重名认的就是 trim 后的）。
-      await onSave(trimmed, params)
-      // 成功清空输入框（失败**不**清，见 `name` 那段）—— 接着存第二套不用先删字。
-      if (alive.current) setName('')
-    } catch (e) {
-      if (alive.current) setErr(errorText(e, '没存下来，再试一次'))
-    } finally {
-      if (alive.current) setBusy(false)
-    }
-  }
 
   /**
    * 回车 / 点走之后交回来的新名字。两个"当场收工"的口子：
@@ -118,27 +101,11 @@ export function PresetManager({ presets, known, params, onSave, onRename, onDele
 
   return (
     <div className="my-presets">
-      {/* 起名 + 存。做成 `<form>`：回车 = 提交（和起名那一格别的输入框同一条手势）。 */}
-      <form className="my-presets-save"
-            onSubmit={(e) => { e.preventDefault(); void doSave() }}>
-        <input
-          className="my-presets-name"
-          value={name}
-          placeholder="给这套起个名…"
-          autoComplete="off"
-          // 名字上限 30（R5：只判不截断 —— 这里先拦住，超了服务端也会 400 拒，
-          // 但**不 slice**：手打的名字不许被静默改掉一截）。
-          maxLength={MAX_PRESET_NAME}
-          disabled={full}
-          onChange={(e) => setName(e.target.value)}
-        />
-        {/* 名字空着 / 满额 / 正在存 —— 三种都按不动。
-            ⚠️ 只禁按钮不说话 = 用户以为按钮坏了：满额那句就摆在旁边（见下）。 */}
-        <Btn type="submit" disabled={busy || full || name.trim() === ''}>
-          {busy ? '正在存…' : '存下来'}
-        </Btn>
-      </form>
-      {full && <p className="luts-hint">{PRESET_LIMIT_REACHED(MAX_PRESETS)}</p>}
+      {/* 起名 + 存 —— 这一行住在 `PresetSaveRow` 里（文件底下那段）：面板头和
+          **作品详情页**那两张脸共用**同一份**（设计 §5.4 要的"复用存组件"）。 */}
+      <PresetSaveRow params={params} full={full} onSave={onSave} />
+      {/* **改名 / 删**那条错（存那条在 `PresetSaveRow` 里自己说）—— 位置和
+          原来一样：在这一栏那一堆清单话的上面。 */}
       {err && <p className="luts-error">{err}</p>}
 
       {/* 四态里"还没到手"那一态：一句在路上的话。**不许**在这里画空清单。 */}
@@ -207,5 +174,92 @@ export function PresetManager({ presets, known, params, onSave, onRename, onDele
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * 起名 + 存**那一行** —— ★ 2026-10-10（「我的预设」，设计 §5.4）从上面那个组件里
+ * 抽出来的：**两个存入口共用这一份**（调色面板头那块的第一行 / 作品详情页配方卡上
+ * 「把这套存成预设」展开的那一行）。
+ *
+ * 为什么是"抽这一段"而不是"整体复用 `PresetManager`"：§5.4 只要"一行
+ * 「[起名][存下来]」"，而 `PresetManager` 会把清单、改名、删除一整套一起端上来。
+ * 反过来抄第二份的话，"成功清输入框 / 失败保留刚打的字 / 出错说服务端那句原话"
+ * 这些账只会记在一边 —— 下一次改只会改到一半（这正是"同一段代码被重复利用"
+ * 那条去重规矩要防的）。
+ *
+ * ⚠️ `full`（满 30 套那一档）是**选填**的：作品详情页那侧手上没有清单可数
+ *    （清单是 `usePresets` 的），所以它不传 —— 真满了服务端会用**同一句话**
+ *    （`PRESET_LIMIT_REACHED`）拒掉，原话就摆在那一行下面。
+ *    不为那一档把清单从 App 一路拽到详情页。
+ */
+export function PresetSaveRow({ params, full = false, onSave }: {
+  /** 存的就是**这套参数** —— 面板上此刻那套 / 那张作品的配方（调用方说了算）。 */
+  params: Adjustments
+  /** 满 30 套了吗？（不传 = 不拦 —— 上限由服务端兜底） */
+  full?: boolean
+  /** 存一套。成功之后 App 会重拉清单 —— 这一层只负责清输入框。 */
+  onSave: (name: string, params: Adjustments) => Promise<void>
+}) {
+  /** 起名那一格现在写着什么。**成功才清空**（失败保留 —— 别让人重打一遍）。 */
+  const [name, setName] = useState('')
+  /** 存的一套**在路上**（那颗按钮同时会变成「正在存…」）。 */
+  const [busy, setBusy] = useState(false)
+  /** 这一行上出错的那句话（就在这一行下面显示 —— 不弹窗）。 */
+  const [err, setErr] = useState<string | null>(null)
+
+  /** 卸载之后晚到的响应不再写状态（`AccountPage` / `LutSettings` 同款理由；
+   *  ⚠️ `alive.current = true` 那一行是必须的，别删 —— StrictMode 会重放
+   *  "挂载 → 卸载 → 再挂载"，见 `PresetManager` 里那段）。 */
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => { alive.current = false }
+  }, [])
+
+  const doSave = async () => {
+    if (busy || full) return
+    const trimmed = name.trim()
+    // 空名字这颗按钮本来就是禁用的；这里再挡一次是防"回车提交"那条路。
+    if (trimmed === '') return
+    setErr(null)
+    setBusy(true)
+    try {
+      // 名字 trim 过再送（服务端也会 trim，两边同一条 —— 判重名认的就是 trim 后的）。
+      await onSave(trimmed, params)
+      // 成功清空输入框（失败**不**清，见 `name` 那段）—— 接着存第二套不用先删字。
+      if (alive.current) setName('')
+    } catch (e) {
+      if (alive.current) setErr(errorText(e, '没存下来，再试一次'))
+    } finally {
+      if (alive.current) setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      {/* 起名 + 存。做成 `<form>`：回车 = 提交（和起名那一格别的输入框同一条手势）。 */}
+      <form className="my-presets-save"
+            onSubmit={(e) => { e.preventDefault(); void doSave() }}>
+        <input
+          className="my-presets-name"
+          value={name}
+          placeholder="给这套起个名…"
+          autoComplete="off"
+          // 名字上限 30（R5：只判不截断 —— 这里先拦住，超了服务端也会 400 拒，
+          // 但**不 slice**：手打的名字不许被静默改掉一截）。
+          maxLength={MAX_PRESET_NAME}
+          disabled={full}
+          onChange={(e) => setName(e.target.value)}
+        />
+        {/* 名字空着 / 满额 / 正在存 —— 三种都按不动。
+            ⚠️ 只禁按钮不说话 = 用户以为按钮坏了：满额那句就摆在旁边（见下）。 */}
+        <Btn type="submit" disabled={busy || full || name.trim() === ''}>
+          {busy ? '正在存…' : '存下来'}
+        </Btn>
+      </form>
+      {full && <p className="luts-hint">{PRESET_LIMIT_REACHED(MAX_PRESETS)}</p>}
+      {err && <p className="luts-error">{err}</p>}
+    </>
   )
 }

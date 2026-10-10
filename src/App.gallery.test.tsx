@@ -6,7 +6,7 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { HUANGHUN, WORK, canvasProps, clickByText, container, decision, fetchMock, goNav, jsonResponse, lutSection, makeSession, openLutPanel, renderApp, reopenApp, say, scrollToEnd, tileNamed, typeIn, uploadPhoto, withSessions, withWorks, withWorksError } from './test/appHarness'
+import { HUANGHUN, WORK, bodyOf, canvasProps, clickByText, container, decision, fetchMock, goNav, jsonResponse, lutSection, makeSession, openLutPanel, renderApp, reopenApp, say, scrollToEnd, tileNamed, typeIn, uploadPhoto, withPresets, withSessions, withWorks, withWorksError } from './test/appHarness'
 import { act } from 'react'
 import { ZERO } from '../shared/adjustments.ts'
 import * as api from './api/client'
@@ -551,7 +551,12 @@ describe('作品详情页：这张图怎么来的', () => {
     expect(boxes.map(b => b.querySelector('h3')?.textContent)).toEqual(['调色', '用 AI 做的'])
     expect(boxes[0]!.textContent).toContain('亮度')          // §3.5.2：不是「曝光」
     expect(boxes[0]!.textContent).toContain('+20')
-    expect(boxes[0]!.querySelectorAll('button').length).toBe(1)   // 调色那栏有「套用」
+    // ★ 调色那栏的按钮数是个**产品事实**，所以按名字列出来（不是数个数）：
+    //   原来这里写的是 `toBe(1)`（"调色那栏有「套用」"）—— 2026-10-10 加了
+    //   「把这套存成预设」（§5.4）之后它红了一瞬，那是**该红**：多一颗按钮
+    //   就该有人看一眼是谁加的、摆对地方没有。列名字的写法连"换了一颗"也挡得住。
+    expect([...boxes[0]!.querySelectorAll('button')].map(b => (b.textContent ?? '').trim()))
+      .toEqual(['把这套调色套用到我正在改的图', '把这套存成预设'])
     // ★ AI 那栏一个按钮都没有 —— 给了就是骗人（§3.5.1）
     expect(boxes[1]!.querySelectorAll('button').length).toBe(0)
     expect(boxes[1]!.textContent).toContain('把后面那个人去掉')
@@ -875,6 +880,88 @@ describe('作品详情页：这张图怎么来的', () => {
     await openLutPanel()
     expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
+  })
+
+  // ── ★ 2026-10-10（「我的预设」，设计 §5.4）：配方卡上那颗「把这套存成预设」 ──
+  // 第二个存入口（spec §8.1 原话：「看到调得好的一键存下来」）—— 停在**这张作品的
+  // 配方**上就能存，不用先"套到手上 → 再回面板头存一遍"。
+  // ⚠️ 存的是**配方那套参数**，而且**只有那十五个**（设计 §0：预设不含 Lut）。
+  // 那一行的样子（起名 + 存下来）和面板头那块是**同一份**（`PresetSaveRow`）——
+  // 抄第二份的话，"成功清空输入框""失败保留刚打的字"这些账会只记在一边。
+
+  it('配方那栏有「把这套存成预设」：点了就地展开起名那一行', async () => {
+    // 变异：不渲染那颗按钮 → 前两句红；展开块做成弹窗 → `[role=dialog]` 那条红。
+    await openWork()
+
+    // ⚠️ 按**类名**找（结构），文案单独一条钉住 —— 和这一页「套用」「改名」
+    //    那几条同一条规矩：按钮不在时要红成"少了一颗按钮"，
+    //    不是测试自己崩在 null 上。
+    const btn = container.querySelector('.recipe-save-preset') as HTMLButtonElement | null
+    expect(btn?.textContent ?? '').toContain('把这套存成预设')
+    expect(btn?.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('input.my-presets-name')).toBeNull()   // 起点：收着的
+
+    await act(async () => { btn?.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(btn?.getAttribute('aria-expanded')).toBe('true')
+
+    // **就地**：那一行摊在「调色」那张配方卡里（全站不弹窗）
+    const box = [...container.querySelectorAll('.recipe-box')][0]!
+    const row = box.querySelector('.my-presets-save')
+    expect(row, '起名那一行就摊在配方卡里').toBeTruthy()
+    // 摆出来的就是面板头那座「我的预设」的第一行（同一格输入框、同一颗「存下来」）
+    expect((row?.querySelector('input') as HTMLInputElement | null)?.placeholder).toBe('给这套起个名…')
+    expect((row?.querySelector('button')?.textContent ?? '').trim()).toBe('存下来')
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
+
+    // 再点一下 = 收起（就地展开没有"怎么关"的焦虑）
+    await act(async () => { btn?.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(container.querySelector('.my-presets-save')).toBeNull()
+  })
+
+  it('存下来的是**这份配方的 params**（不是当前修图那套 —— 用户看的正是这份）', async () => {
+    // 这一条守的是这个入口的**全部意义**：他是对着**这张作品的配方**按的那颗
+    // 按钮。存成"手上正在改的那套"就是骗人 —— 而两套参数在屏幕上长得一模一样
+    // （都是几个数字），**只有这一条断言分得开**。
+    // 变异：`onSavePreset` 那头换成 App 手上那套（`savePreset(name, params)`）→ 红。
+    const store = withPresets([])
+    await renderApp()
+    await uploadPhoto()
+    // 先把修图页那套改成和配方**分得开**的样子（40 ≠ 配方里的 20）
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 40 }, reply: '亮了一点。' }))
+    await say('亮一点')
+    expect(canvasProps.props.at(-1)?.params.exposure, '前提：手上那套不是这张作品的配方').toBe(40)
+
+    // 配方 = { ...ZERO, exposure: 20, contrast: 5 } + 一层 Lut。
+    //   ★ Lut 是**故意**放进去的：预设只含那十五个参数、不含 Lut（设计 §0），
+    //     下面那句 `toEqual` 是**精确的** —— 多送一个 `lut` 字段就红。
+    await openWork({
+      params: { ...ZERO, exposure: 20, contrast: 5 },
+      edits: ['把后面那个人去掉'],
+      lut: { name: '黄昏', amount: 80 },
+    })
+
+    const btn = container.querySelector('.recipe-save-preset') as HTMLButtonElement | null
+    await act(async () => { btn?.click(); await new Promise(r => setTimeout(r, 0)) })
+    // ⚠️ 打字走 `typeIn`（受控输入框：直接 `box.value = …` React 收不到，见它的注释）。
+    //    先正面对一句"那格真的在" —— 少了它，按钮不在时红的是 `typeIn` 内部那句
+    //    "not a valid instance of HTMLInputElement"（"测试自己坏了"的语气）。
+    const nameBox = container.querySelector('input.my-presets-name') as HTMLInputElement | null
+    expect(nameBox, '点开那一行之后才有的打字格').toBeTruthy()
+    await typeIn(nameBox!, '黄昏旅拍')
+    await clickByText('存下来')
+
+    const posts = fetchMock.mock.calls.filter(([u, init]) =>
+      u === '/api/presets' && (init as RequestInit | undefined)?.method === 'POST')
+    expect(posts).toHaveLength(1)
+    // ★ 是**这份配方**（20 / 5），不是手上那套（exposure 40）：整份一起送、一个不多一个不少。
+    expect(bodyOf(posts[0]!)).toEqual({
+      name: '黄昏旅拍', params: { ...ZERO, exposure: 20, contrast: 5 },
+    })
+    // 存完真的进了名单（App 那条回调重拉过 —— 不是往本地名单里塞一条），
+    // 输入框清空（和面板头那块**同一份**行为：成功才清）。
+    expect(store.rows().map(r => r.name)).toContain('黄昏旅拍')
+    expect((container.querySelector('input.my-presets-name') as HTMLInputElement).value).toBe('')
   })
 })
 

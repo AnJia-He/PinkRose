@@ -3182,10 +3182,21 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    都是这一页要讲的重点 —— 用主色，不是跟标签一样的灰。 */
 .recipe-param-value { font-variant-numeric: tabular-nums; color: var(--accent-300); font-weight: 600; }
 
-/* ★ 2026-10-07（评审）：药丸 —— 它是这张配方卡上的动作按钮（坐在卡上，
-   不在条/表单里），照文件头「形状」段那条规矩。 */
-.recipe-apply { width: 100%; border-radius: var(--r-pill); }
+/* ★ 2026-10-07（评审）：药丸 —— 这两颗是这张配方卡上的动作按钮（坐在卡上，
+   不在条/表单里），照文件头「形状」段那条规矩。
+   ★ 2026-10-10（「我的预设」，设计 §5.4）：原来只有「套用」一颗（`width: 100%`），
+   现在多了「把这套存成预设」，改成**并排的一行**：放得下就并排（宽屏），
+   放不下就各占一整行 —— 390px 手机上「套用到我正在改的图」那串字折行更难看。
+   `flex-wrap` + `flex: 1 1 auto` 自己就能做这件事，不需要媒体查询。
+   ⚠️ **别给这两颗写 `width: 100%`**：flex 会把 `width` 当基准（`flex-basis: auto`），
+   两颗于是永远各占一行 —— 并排那半就没了。 */
+.recipe-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.recipe-actions > * { flex: 1 1 auto; }
+.recipe-apply, .recipe-save-preset { border-radius: var(--r-pill); }
 .recipe-hint { margin: var(--sp-2) 0 0; font-size: 12px; color: var(--muted); }
+/* 「把这套存成预设」就地展开的起名那一行：和上面那排动作隔一档呼吸 ——
+   它是那颗按钮的"下半身"，不是卡上又一块独立的东西。 */
+.recipe-preset { margin-top: var(--sp-3); }
 .recipe-edits { margin: 0; padding-left: var(--sp-5); font-size: 13px; }
 .recipe-edits li { margin: var(--sp-1) 0; }
 /* 那个点默认是一颗灰豆子；它是"这一栏列出来的每一件事"的记号，

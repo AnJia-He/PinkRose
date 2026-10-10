@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { BtnLink } from './kit/Btn.tsx'
 import { RenameInput } from './kit/RenameInput.tsx'
+import { PresetSaveRow } from './PresetManager.tsx'
 import { getWork, renameWork, deleteWork, fullUrl } from '../api/works'
 import { errorText } from '../api/client'
 import { workName, type WorkMeta, type WorkDetail } from '../../shared/works.ts'
@@ -41,20 +42,31 @@ export function downloadName(w: WorkMeta): string {
  *   · 调色那栏有「套用」，而且**没有图的时候是禁用的**（裁定 ⑤：套了显示不出来，
  *     而且下一次上传会被 `setParams(ZERO)` 悄悄清掉 —— 那就成了骗人）；
  *   · AI 那栏**一个按钮都没有**。给了就是在骗人。
+ *
+ * ★ 2026-10-10（「我的预设」，设计 §5.4）：调色那栏多了**第二个去处** ——
+ *   「把这套存成预设」（就地展开一行「起名 + 存下来」，组件和面板头那块**同一份**）。
+ *   存的是**用户眼前这份配方**，而且**只有那十五个参数**（§0：预设不含 Lut）。
  */
-export function WorkDetailPage({ id, onBack, onApply, canApply }: {
+export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: {
   id: number
   onBack: () => void
   /** ★ 2026-10-05（滤镜，T12）：**连名字和强度一起**交出去 —— App 那边按名字去
    *  清单里找还没被删的那一个（配方里只存名字，id 对已经烤好的图没有意义）。 */
   onApply: (params: Adjustments, lut: { name: string; amount: number } | null) => void
   canApply: boolean
+  /** ★ 2026-10-10（「我的预设」，设计 §5.4）：把**这份配方**存成一套预设 ——
+   *  交出去的就是这一页正列着的那份（**不是**修图页上手上那套：用户看的正是这份），
+   *  **不带 Lut**（§0：预设只含那十五个参数）。失败那句话由 `PresetSaveRow`
+   *  就地显示 —— 这一层和 App 那层都不 catch（`LutSettings` 先例）。 */
+  onSavePreset: (name: string, params: Adjustments) => Promise<void>
 }) {
   const [work, setWork] = useState<WorkDetail | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
+  /** 「把这套存成预设」那一行摊开了没有（**就地展开** —— 全站不弹窗）。 */
+  const [presetOpen, setPresetOpen] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -251,11 +263,29 @@ export function WorkDetailPage({ id, onBack, onApply, canApply }: {
                 )}
               </ul>
             )}
-          <button className="recipe-apply" disabled={!canApply} onClick={() => onApply(params, lut)}>
-            把这套调色套用到我正在改的图
-          </button>
+          {/* ★ 2026-10-10（「我的预设」，设计 §5.4）：这一套配方**两个去处** ——
+              套到手上正在改的那张图上（带走），或者存成自己的一套预设。
+              ⚠️ 「存成预设」**不跟 `canApply` 一起灰**：存不需要手上先有照片
+              （灰着的只有「套用」——它的前提才是一张正在改的图）。 */}
+          <div className="recipe-actions">
+            <button className="recipe-apply" disabled={!canApply} onClick={() => onApply(params, lut)}>
+              把这套调色套用到我正在改的图
+            </button>
+            <button className="recipe-save-preset" aria-expanded={presetOpen}
+                    onClick={() => setPresetOpen(o => !o)}>
+              把这套存成预设
+            </button>
+          </div>
           {/* §3.7：告诉用户"不行"的地方，都要同时告诉他"那怎么办" */}
           {!canApply && <p className="recipe-hint">先回修图页传一张照片，才能套上去。</p>}
+          {/* 起名那一行**就地展开**在这儿（全站不弹窗）。组件和面板头那座
+              「我的预设」的第一行是**同一份**（`PresetSaveRow`）—— 交出去的只有
+              `params`：配方里的 Lut **不进预设**（§0：预设只含那十五个参数）。 */}
+          {presetOpen && (
+            <div className="recipe-preset">
+              <PresetSaveRow params={params} onSave={onSavePreset} />
+            </div>
+          )}
         </section>
 
         <section className="recipe-box">
