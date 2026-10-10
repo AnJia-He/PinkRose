@@ -147,6 +147,20 @@ export const MIGRATIONS: readonly string[] = [
     );
     CREATE INDEX luts_user ON luts(user_id);
   `,
+  // #7 presets（★ 2026-10-10「我的预设」）：用户存下来的一套 15 参数。
+  // 不再有 bytes 列 —— 它不进 5 GB 配额（设计 §2.1：纯 JSON 不占共享盘，
+  // 防滥用走条数上限）。
+  `
+  CREATE TABLE presets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT    NOT NULL COLLATE NOCASE,
+    params     TEXT    NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(user_id, name)
+  );
+  CREATE INDEX presets_user ON presets(user_id);
+  `,
 ]
 
 /**

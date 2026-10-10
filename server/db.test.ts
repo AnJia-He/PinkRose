@@ -83,6 +83,8 @@ describe('openDb', () => {
     '30ac6b003f0a9ac162d9b565eb4b374cded3cc967c224eff910e14307f1cd115',
     // 6 —— luts（2026-10-05，滤镜）
     'e2364c7b713dd1bcb314d7e0248f02a2e8a8b2c040a749364fab3bc17032f2d4',
+    // 7 —— presets（2026-10-10，我的预设）
+    '113cd7a72501e35f5ea2de5fae163e3fc622768942bc6f5bb989c0edbca22df7',
   ]
 
   it('★ 已发布的迁移一个字都不许改 —— 指纹对不上 = "老库和新库从此是两个形状"', () => {

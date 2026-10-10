@@ -81,6 +81,20 @@ export const LUT_FILE_TOO_BIG = (maxBytes: number): string =>
 export const LUT_LIMIT_REACHED = (max: number): string =>
   `最多 ${max} 个 Lut，先删掉几个再导入。`
 
+// ── 预设到上限那句（`server/presets.ts` / 界面「存下来」那一行）──────────
+//
+// ★ 2026-10-10（「我的预设」，设计 §2.2）。和上面两句同一个道理：界面拦的是
+// 体验（满额时直接把存那一行禁用、把话摆出来），服务端拦的是规矩（请求可以
+// 伪造）。**是函数、不是常量** —— 句子里那个数字必须来自 `shared/preset.ts`
+// 的 `MAX_PRESETS`：写死数字的话，上限一改这句话就开始对用户撒谎（两边一起撒）。
+
+/**
+ * 预设到条数上限了（存那一行旁边那句）。
+ * @param max 上限条数 —— 传 `MAX_PRESETS`。
+ */
+export const PRESET_LIMIT_REACHED = (max: number): string =>
+  `最多 ${max} 套预设，先删掉一套再存。`
+
 // ── 通用的那声「没成」────────────────────────────────────────────────
 
 /**

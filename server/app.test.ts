@@ -1216,6 +1216,79 @@ describe('滤镜：路由真的接上了（2026-10-05）', () => {
   })
 })
 
+describe('预设：路由真的接上了（2026-10-10）', () => {
+  /** 存一套，回它的 id（每个用例自己起 app、自己存）。 */
+  async function saveOne(base: string, cookie: string, name = '黄昏'): Promise<number> {
+    const c = await call(base, 'POST', '/api/presets', { name, params: { exposure: 30 } }, cookie)
+    expect(c.status).toBe(200)
+    return (c.body as { preset: { id: number } }).preset.id
+  }
+
+  it('★ 没登录 POST /api/presets → 401，而不是 400 —— 鉴权排在读体之前', async () => {
+    // 和 /api/luts、三个 AI 接口那几条同一条规矩（app.ts 里那段注释写着"顺序别对调"）。
+    // ⚠️ 故意送一个**畸形**请求体：认人排在读体前面，顺序反了它当场变成 400，
+    //    把"没登录"这个更重要的结局盖掉 —— 而这两件事的下一步动作完全不同
+    //    （去登录 / 换个 JSON 重发）。
+    const { base } = await appWithUser()   // 只用它起服务器，不带 cookie
+    const r = await fetch(`${base}/api/presets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '这根本不是 JSON',
+    })
+    expect(r.status).toBe(401)
+    const body = await r.json() as { error: { code: string } }
+    expect(body.error.code).toBe('UNAUTHORIZED')
+  })
+
+  it('★ 多一截的路径必须 404 —— 那条正则的锚定真的有人在守', async () => {
+    // 不锚定的话 `/^\/api\/presets\/(\d+)/` 会**静默抢走**多一截的路径，
+    // 而且回的东西看着完全正常（200 + 一个改名/删除成功的对象）。
+    // ⚠️ 真正有区分力的是 PATCH / DELETE 那两条（GET 那条**没有**对应的单条路由，
+    //    加不加 `$` 都是 404）—— 它留着是为了把"多一截"这个契约摆在明面上。
+    const { base, cookie } = await appWithUser()
+    const id = await saveOne(base, cookie)
+    // 正面对照：列表本身是通的（少了它，下面的 404 可能只是因为 app 都没起来）
+    expect((await call(base, 'GET', '/api/presets', undefined, cookie)).status).toBe(200)
+
+    expect((await call(base, 'GET', `/api/presets/${id}/usage`, undefined, cookie)).status).toBe(404)
+    // 这两条在不锚定时会**命中单条正则并真的改库**：`/…/usage` 会把预设改名（回 200）、
+    // `/…/x` 会把它删掉（回 200）
+    expect((await call(base, 'PATCH', `/api/presets/${id}/usage`, { name: 'z' }, cookie)).status).toBe(404)
+    expect((await call(base, 'DELETE', `/api/presets/${id}/x`, undefined, cookie)).status).toBe(404)
+    // 而且那两下**真的什么都没改**（不锚定的话这里已经是空列表 / 改过名了）
+    const after = await call(base, 'GET', '/api/presets', undefined, cookie)
+    expect((after.body as { presets: { name: string }[] }).presets.map(p => p.name)).toEqual(['黄昏'])
+  })
+
+  it('端到端：POST 存 → GET 看得到 → PATCH 改名 → DELETE 没了', async () => {
+    // 四个动词**各走一遍真 HTTP**：路由接对了 handler、请求体/响应体的形状都对。
+    // （上面那条只盖到 404 那半；真正成功的那半截在这。）
+    const { base, cookie } = await appWithUser()
+    const id = await saveOne(base, cookie)
+
+    const list = await call(base, 'GET', '/api/presets', undefined, cookie)
+    expect(list.status).toBe(200)
+    const presets = (list.body as {
+      presets: { id: number; name: string; params: { exposure: number } }[]
+    }).presets
+    expect(presets).toHaveLength(1)
+    expect(presets[0]!.id).toBe(id)
+    expect(presets[0]!.name).toBe('黄昏')
+    // params 随列表一起回（没有单独的详情路由，设计 §3）
+    expect(presets[0]!.params.exposure).toBe(30)
+
+    const ren = await call(base, 'PATCH', `/api/presets/${id}`, { name: '晨光' }, cookie)
+    expect(ren.status).toBe(200)
+    expect((ren.body as { preset: { name: string } }).preset.name).toBe('晨光')
+
+    const del = await call(base, 'DELETE', `/api/presets/${id}`, undefined, cookie)
+    expect(del.status).toBe(200)
+    expect(del.body).toEqual({ ok: true })
+    const empty = await call(base, 'GET', '/api/presets', undefined, cookie)
+    expect((empty.body as { presets: unknown[] }).presets).toHaveLength(0)
+  })
+})
+
 /**
  * ★ §7.4 ——「用户带自己的钥匙」这件事到底生效没有，只有下面这四条说了算。
  *

@@ -18,6 +18,7 @@ import {
 } from './models.ts'
 import { assertModelHostAllowed, assertResolvedHostAllowed } from './hostGuard.ts'
 import { createLut, deleteLut, handleLutFile, listLuts, lutUsage, renameLut } from './luts.ts'
+import { createPreset, deletePreset, listPresets, renamePreset } from './presets.ts'
 import { QUOTA_BYTES, storedBytes } from './quota.ts'
 import { createLimiter, type Limiter } from './ratelimit.ts'
 import { probeConnection } from './modeltest.ts'
@@ -291,6 +292,9 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
   //   运行时表现为"某个接口悄悄少了那个依赖"。收成两个常量，以后改一处就够。
   const storeDeps = { db: deps.auth.db, storage: deps.storage, now: deps.auth.now }
   const lutDeps = { db: deps.auth.db, storage: deps.lutStorage, now: deps.auth.now }
+  // ★ 2026-10-10（预设）：比上面两个少一样 —— **没有 storage**（纯 JSON，不落文件，
+  //   设计 §2.1）。钟必须还是 `auth` 那一个（全服务端只此一个，见 clock.ts）。
+  const presetDeps = { db: deps.auth.db, now: deps.auth.now }
 
   if (path.startsWith('/api/')) {
     if (req.method === 'GET' && path === '/api/health') {
@@ -653,6 +657,31 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     if (req.method === 'DELETE' && lutOneRoute) {
       const user = requireUser(deps, req, res)
       sendJson(res, 200, await deleteLut(Number(lutOneRoute[1]), user, lutDeps))
+      return
+    }
+    // ── 预设（「我的预设」，2026-10-10）。设计：docs/superpowers/specs/2026-10-10-my-presets-design.md
+    // 四条形状照上面的 /api/luts；**没有** `/file`（预设没有文件）和 `/usage`
+    // （预设不被任何东西引用 —— 删了不影响老会话，设计 §3）。顺序同样先认人再读体。
+    // ⚠️ 两条正则都必须**锚定整串** —— app.test.ts 有专门一条钉"多一截的路径必须 404"。
+    if (req.method === 'GET' && path === '/api/presets') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, listPresets(user, presetDeps))
+      return
+    }
+    if (req.method === 'POST' && path === '/api/presets') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, createPreset(await readJsonBody(req), user, presetDeps))
+      return
+    }
+    const presetOneRoute = /^\/api\/presets\/(\d+)$/.exec(path)
+    if (req.method === 'PATCH' && presetOneRoute) {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, renamePreset(Number(presetOneRoute[1]), await readJsonBody(req), user, presetDeps))
+      return
+    }
+    if (req.method === 'DELETE' && presetOneRoute) {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, deletePreset(Number(presetOneRoute[1]), user, presetDeps))
       return
     }
     if (req.method === 'POST' && path === '/api/route') {
