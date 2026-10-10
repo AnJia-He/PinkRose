@@ -12,9 +12,10 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { OK, canvasProps, clickByText, container, decision, fakeBitmap, fetchMock, goNav, lastReply, makeGate, openChatTool, renderApp, say, uploadPhoto } from './test/appHarness'
+import { OK, bodyOf, canvasProps, clickByText, container, decision, fakeBitmap, fetchMock, goNav, lastReply, makeGate, openChatTool, putCalls, renderApp, say, uploadPhoto, waitPersist, withPresets } from './test/appHarness'
 import { act } from 'react'
 import { ZERO } from '../shared/adjustments.ts'
+import { type PresetMeta } from '../shared/preset.ts'
 import * as decodeMod from './image/decode'
 import * as api from './api/client'
 import * as limitsMod from './render/limits'
@@ -1202,3 +1203,120 @@ function dispatchPaste(file: File) {
   })
   document.dispatchEvent(ev)
 }
+
+/**
+ * ★ 2026-10-10（「我的预设」，设计 §6.3）：**对话那条** —— 说「用我那套黄昏旅拍」
+ * 时整套参数赋上去。
+ *
+ * 走真链路：`GET /api/presets` → `usePresets` → App 的 `myPresets`（`core/presets`
+ * 那套形状）→ `useGeneration` 的 `applyDecision`。这一层量的是**接线**：
+ * ① 清单有没有送到模型面前（它靠它认名字，不给就只能编）；
+ * ② 决策回来了有没有落地；
+ * ③ 落地是不是**合流进算 `nextParams` 的那一段** —— 快照（缩略图 / 「回到这一步」）
+ *    读的就是它（另开一块 `setParams` 会让小图和主画面对不上，T8 那一类）。
+ * 名字怎么对号（trim + 忽略大小写）在 `shared/preset.ts` 那边单测兜着。
+ */
+describe('★ 我的预设：对话那条（2026-10-10）', () => {
+  /** 一套"带色"的参数（全零的比不出来 —— 和"什么都没做"分不开）。 */
+  const MINE = { ...ZERO, exposure: 33, contrast: -21, splitHiHue: 120 }
+  const PRE = (id: number, name: string, params = MINE): PresetMeta =>
+    ({ id, name, params, createdAt: 0 })
+  /** 时间轴上第 index 格的小图（和「历史小图」那一组同款）。 */
+  const thumbOf = (index: number): string | null =>
+    container.querySelectorAll<HTMLImageElement>('.strip-thumb')[index]?.getAttribute('src') ?? null
+  /** 这一趟落盘那笔 PUT 的请求体（和「滤镜」「裁剪」那两组同款）。 */
+  const lastPutBody = () => bodyOf(putCalls('/api/sessions/1').at(-1)!)
+
+  it('★ 说「用我那套X」：整套参数赋上去（和手点预设栏同一条路）', async () => {
+    withPresets([PRE(11, '黄昏旅拍')])
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', preset: { name: '黄昏旅拍' }, reply: '套上了。' }))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('用我那套黄昏旅拍')
+
+    // ① 请求里带着清单（只给名字 + 参数）：模型就是靠它认名字的
+    expect((vi.mocked(api.postRoute).mock.calls[0][0] as { presets?: unknown }).presets)
+      .toEqual([{ name: '黄昏旅拍', params: MINE }])
+    // ② 参数**整套**赋上去了 —— 和手点预设栏那一下同一条路（裁定 ⑤ 那一级）
+    expect(canvasProps.props.at(-1)?.params).toEqual(MINE)
+
+    // ③ 而且真的生效了：再发一句，这次请求里带的参数就是那一套
+    //    （少了这一半，只能证明"画布上变了"，证明不了"后面都按它走"）
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision())
+    await say('就这样')
+    const second = vi.mocked(api.postRoute).mock.calls[1][0] as { params: unknown }
+    expect(second.params).toEqual(MINE)
+  })
+
+  it('★ 套预设 + 生成同一次决策：**快照记的是套完之后的那套参数**（缩略图与主画面一致）', async () => {
+    // 这条是本任务存在的理由（设计 §6.3）：预设赋值必须**合流**进算 `nextParams`
+    // 的那一段。像 Lut 那样另开一块 `setParams` 的话，推快照时传下去的
+    // `paramsAtStep` 还是决策之前那份 —— 缩略图（从新画面上抓的）和「回到这一步」
+    // 还原出来的主画面就对不上（T8 修过两次的那一类）。
+    withPresets([PRE(11, '黄昏旅拍')])
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({
+      route: 'both', preset: { name: '黄昏旅拍' },
+      editPrompt: 'remove the tourists', reply: '好了。',
+    }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('用我那套黄昏旅拍，再把路人去掉')
+
+    // 时间轴那格的缩略图 = 那一套（抓的就是画布上此刻的颜色）
+    expect(thumbOf(1)).toBe('thumb:' + JSON.stringify(MINE))
+    // 主画面也是它 —— 两边同一个值，才是"缩略图与主画面一致"
+    expect(canvasProps.props.at(-1)?.params).toEqual(MINE)
+
+    // 快照**本身**记的也是它（落盘那一份 = 服务端将来恢复用的那一份）
+    await waitPersist()
+    expect((lastPutBody().steps.at(-1) as { params: unknown }).params).toEqual(MINE)
+  })
+
+  it('模型给的名字不在清单里：不动状态（参数一个字节没变）', async () => {
+    // 服务端本该在更前面那一层把它归 null + degraded；这是第二道 ——
+    // 照 Lut 那条"宁可什么都不做，也别套一个用户没有的东西"（设计 §6.4）。
+    // 留痕用 spy 顺手接住：这一行 console.warn 不该是屏幕上唯一发生过的事。
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      withPresets([PRE(11, '黄昏旅拍')])
+      vi.mocked(api.postRoute).mockResolvedValueOnce(
+        decision({ route: 'params', paramDeltas: { exposure: 20 } }))
+      await renderApp()
+      await uploadPhoto()
+      await say('亮一点')
+      expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 20 })
+
+      vi.mocked(api.postRoute).mockResolvedValueOnce(
+        decision({ route: 'params', preset: { name: '没有这一套' } }))
+      await say('用我那套夕阳')
+
+      // 参数还是上一步那套，一个字节没变
+      expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 20 })
+      // 第二道防线留了痕（"对不上号"这件事不该被悄悄咽掉）
+      expect(warn.mock.calls.flat().map(String).join(' ')).toContain('没有这一套')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('「用我那套X，再亮一点」：预设打底、增量叠上去', async () => {
+    // 一条式子办两件事：`base` = 命中那一套，同一次决策的增量再叠在它上面
+    // （设计 §6.3 的语义）。变异（像 Lut 那样另开一块 setParams）：后一次把
+    // 前一次盖掉 —— 用户那句"再亮一点"悄悄丢了，而画面上看起来"预设套上了"。
+    withPresets([PRE(11, '黄昏旅拍')])
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({
+      route: 'params', preset: { name: '黄昏旅拍' }, paramDeltas: { exposure: 20 },
+    }))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('用我那套黄昏旅拍，再亮一点')
+
+    expect(canvasProps.props.at(-1)?.params)
+      .toEqual({ ...MINE, exposure: MINE.exposure + 20 })
+  })
+})

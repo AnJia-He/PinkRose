@@ -748,6 +748,10 @@ export default function App() {
       // ★ 2026-10-05（T11）：说话那条路落滤镜的两样 —— `setLut` 落地、
       //   `lutsApi.luts` 把模型给的名字对成 id（写在 `applyDecision` 里）。
       setLut, luts: lutsApi.luts,
+      // ★ 2026-10-10（「我的预设」）：说话那条路落预设的那一样 —— 模型只回名字，
+      //   拿 `myPresets`（上面那个 `useMemo`）对号，命中就当**打底**的那一套
+      //   （合流进 `applyDecision` 的 `nextParams`，见设计 §6.3）。
+      myPresets,
       baseSeqRef, idRef, setBusy, setUser, noticeBad,
       setCards, setPending, pendingRef, setMessages, setHistory,
       // ★ 2026-10-08（账本，Task 4）：生成的**定稿点** —— 结果落地之前先把
@@ -1337,10 +1341,13 @@ export default function App() {
       // ★ 2026-10-05（滤镜 T11）：说话那条路要认得滤镜，靠的就是这两样 ——
       //   `luts` 是清单（**模型只能从里面照抄名字**，只给名字不给内容），
       //   `lut` 是此刻手上那个（只当上下文写进提示词）。
+      // ★ 2026-10-10（「我的预设」）：预设清单同一条路 —— 只给**名字 + 参数**
+      //   （模型只回名字，前端自己赋值），30 的截断在服务端做（请求可以伪造）。
       const decision = await postRoute({
         imageDataUrl: preview.dataUrl, text, params,
         luts: lutsApi.luts.map((l) => ({ id: l.id, name: l.name })),
         lut,
+        presets: myPresets.map((p) => ({ name: p.label, params: p.adjustments })),
       })
       // ⚠️ 两样都要比：`baseSeqRef` 覆盖换照片（上传/生成都会推它），
       //   `sessionIdRef` 是"会话"这一层的直说。
@@ -1374,11 +1381,13 @@ export default function App() {
     // ★ T11 追加 `lutsApi.luts` / `lut`：两个都进了请求体，同一条规矩。
     //   ⚠️ 依赖写 `lutsApi.luts`（那份数组），别写 `lutsApi` —— 后者每次渲染
     //   都是新对象，等于这个回调每渲染重建一次（`refreshLuts` 那边有同款注释）。
+    //   ★ 2026-10-10（预设）：`myPresets` 同一条（它进了 `presets:` 那个字段）——
+    //   它就是 `useMemo` 出来的一份稳定引用，别改成 `presetsApi.presets`。
     // ★ 2026-10-05：`cancelReplace` 同上（上面那一行清它）。
     // ★ 2026-10-05（终审残留）：`noticeBad` 也进来 —— 挡住的那一趟要说一句
     //   （"画面已经变了…"）。它身份稳定，但按这个文件的规矩：**读到的就写进依赖**。
     //   两个 ref（`sessionIdRef` / `baseSeqRef`）是稳定身份，不进依赖。
-  }, [busy, params, applyDecision, say, image, lutsApi.luts, lut, cancelReplace, noticeBad])
+  }, [busy, params, applyDecision, say, image, lutsApi.luts, lut, myPresets, cancelReplace, noticeBad])
 
   const onCard = useCallback(async (card: SuggestCard) => {
     if (busy) return

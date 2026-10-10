@@ -1,9 +1,11 @@
 import { useCallback, useRef, useState } from 'react'
 import { applyDeltas, type Adjustments } from '../../shared/adjustments.ts'
 import { sameLutName, type LutMeta, type LutRef } from '../../shared/lut.ts'
+import { samePresetName } from '../../shared/preset.ts'
 import type { RouteDecision, SuggestCard } from '../../shared/protocol.ts'
 import { errorText, isAbort, isUnauthorized, postEdit, postSuggest } from '../api/client'
 import { bitmapsToClose, cutAfter, pushSnapshot, type Snapshot } from '../core/history'
+import type { Preset } from '../core/presets'
 import type { DecodedImage } from '../image/decode'
 import { prepareForModel, prepareForRouting, type Sizable } from '../image/prepare'
 import type { ChatMessage } from '../ui/ChatPanel'
@@ -83,6 +85,18 @@ export type GenerationDeps = {
    * 对号用 `sameLutName`（trim + 忽略大小写）—— 和「照调」、设置页同一把尺子。
    */
   luts: LutMeta[]
+  /**
+   * ★ 2026-10-10（「我的预设」）：用户自己的预设清单 —— **前端形态**
+   * （`core/presets` 的 `Preset`：`label` 是名字、`adjustments` 是那 15 个参数；
+   * App 传的是它 `useMemo` 过的那个数组）。
+   *
+   * ⚠️ 它和协议里的 `RouteRequest.presets`（发给模型的那份"名字 + 参数"）是
+   *   **两样东西** —— 写成同一个名字会把读代码的人绕进去。这里一律叫 `myPresets`
+   *   （设计 §6.3 的命名）。
+   * 对号用 `samePresetName`（trim + 忽略大小写，和 `sameLutName` 同一把尺子）：
+   * 命中 → 那一套当**打底**（`applyDecision` 里合流进 `nextParams`）。
+   */
+  myPresets: Preset[]
   /** 底图换到第几版了（上传 +1、每次生成 +1）。它是"这一版还算不算数"的闸门。 */
   baseSeqRef: { current: number }
   /** 消息号发号器（和 App 那边共用同一个计数器 —— 快照要对得上号）。 */
@@ -146,8 +160,8 @@ export type GenerationDeps = {
 
 export function useGeneration(deps: GenerationDeps) {
   const {
-    image, setImage, params, setParams, lut, setLut, luts, baseSeqRef, idRef, setBusy, setUser,
-    noticeBad, setCards, setPending, setPendingReplace, pendingRef, setMessages, setHistory,
+    image, setImage, params, setParams, lut, setLut, luts, myPresets, baseSeqRef, idRef, setBusy,
+    setUser, noticeBad, setCards, setPending, setPendingReplace, pendingRef, setMessages, setHistory,
     flushEdit, tipId, setCursorId, cursorIdRef, markDirty,
   } = deps
 
@@ -455,8 +469,21 @@ export function useGeneration(deps: GenerationDeps) {
   const applyDecision = useCallback(async (d: RouteDecision, keepFromMsg: number) => {
     // 铁律：增量的叠加与钳制交给确定性代码，LLM 只负责"大概要多少"。
     // 这里显式算出新值（而不是用函数式更新），因为生成那一步的快照要用它。
-    const nextParams = (d.route === 'params' || d.route === 'both')
-      ? applyDeltas(params, d.paramDeltas)
+    //
+    // ★ 2026-10-10（预设）：**合流**——不许像 lut 那样另开一块 setParams。
+    //   快照（缩略图 / 「回到这一步」）读的就是下面这个 nextParams（下面那句
+    //   `runGenerate(..., nextParams, ...)` 传下去的那个）——另开一块会让它记的
+    //   还是旧值，缩略图和主画面对不上（T8 那类）。
+    //   语义（设计 §6.3）：**预设打底、同次决策的增量叠上去** ——
+    //   "用我那套黄昏的"（增量为空）= 整套赋值；"用黄昏那套再亮一点" = 打底 + 叠加，
+    //   两件事是同一条式子。
+    //   对不上清单（模型编了个名字）时**不动任何状态**（第二道防线，服务端本该
+    //   在更前面归 null）：照 lut 那条"宁可什么都不做，也别套一个用户没有的东西"。
+    const hit = d.preset ? myPresets.find(p => samePresetName(p.label, d.preset!.name)) : null
+    if (d.preset && !hit) console.warn('模型给了一个不在清单里的预设名：', d.preset.name)
+    const base = hit ? hit.adjustments : params
+    const nextParams = (d.route === 'params' || d.route === 'both' || hit)
+      ? applyDeltas(base, d.paramDeltas)
       : params
     if (nextParams !== params) setParams(nextParams)
 
@@ -573,6 +600,9 @@ export function useGeneration(deps: GenerationDeps) {
     // ★ T11 又读了 `luts` / `setLut`（上面那块滤镜落地），两个都得进依赖数组 ——
     //   漏掉 `luts` 的话，清单刷新之后这个回调还在用旧的（名字换成错 id）；
     //   `setLut` 是 useState 的 setter（identity 稳定），进来只是守住这条规矩。
+    // ★ 2026-10-10（预设）：`myPresets` 同一条 —— 上面拿它把模型给的名字对成
+    //   那一套参数，漏了它，刚存下来的预设说"用我那套"会一声不吭地对不上号
+    //   （清单刷新了、回调还在用旧的）。
     // ★ 2026-10-05（终审 I1）：`cursorId` 从依赖里**拿掉了** —— 生成分支现在读
     //   `cursorIdRef.current`（同步影子，理由见 `App.tsx` 的 `cursorIdRef`）。
     //   ⚠️ 别把 state 那一项加回来"保险"：它换不回正确性，只会让 read 的地方
@@ -580,7 +610,7 @@ export function useGeneration(deps: GenerationDeps) {
     // ★ 2026-10-05（设计 §4.5）：`tipId` 和 `setPendingReplace` 也进来 ——
     //   前者判"出发的那一步还是不是最新"（要不要先问一句），后者是挂那条确认条；
     //   漏了 `tipId`，站在新 tip 上生成会被当成"从旧步骤出发"，白白多问一次。
-  }, [params, say, runGenerate, image, lut, luts, setLut, tipId, setPendingReplace])
+  }, [params, say, runGenerate, image, lut, luts, myPresets, setLut, tipId, setPendingReplace])
 
   /**
    * 拉建议卡片。
