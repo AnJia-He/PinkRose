@@ -2640,6 +2640,17 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .gallery-search::placeholder { color: var(--muted-2); }
 
+/* ★ 2026-10-10：页头那两颗 —— 「按大小 / 按时间」和「多选」。
+   形状照旁边那个搜索框（同在一条上的一排：同一个圆角、同一档高度）。
+   ⚠️ 悬停自己写：这两条(0-1-0)压得过全局 `button:where(:hover)`(0-0-1)，
+   不写的话鼠标停上去一点动静都没有。 */
+.gallery-sort, .gallery-multi {
+  font-size: 13px; padding: 9px 14px;
+  border-radius: var(--r-sm);
+  background: var(--bg); border-color: var(--line-2); color: var(--muted);
+}
+.gallery-sort:hover, .gallery-multi:hover { color: var(--text); border-color: var(--line-3); }
+
 .gallery-day { margin-top: 32px; }
 /* 日期比图小、比图淡：它是**分组线**，不是内容。
    它右边拖一条横线到尽头 —— 一列图在一片深色里没有横向的锚，分组会糊在一起。 */
@@ -2677,6 +2688,23 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .gallery-cell:hover .gallery-name { color: var(--text); }
+
+/* ★ 2026-10-10：格子外面多包一层 —— 选择模式那颗勾选框要绝对定位压在图上，
+   而它**不能放进 button 里**（HTML 不允许交互元素套交互元素）。 */
+.gallery-item { position: relative; }
+/* 选择模式里格子左上那颗勾选框（和对话列表同一款系统原生）。
+   ⚠️ 它压在**照片**上：照片什么底色都有，所以垫一圈深色描边 —— 原生勾选框
+   那圈自己的边框在浅色照片上会化掉（和上面那条"浅色照片上也要立得住"同款理由）。 */
+.gallery-pick {
+  position: absolute; top: 8px; left: 8px;
+  width: 16px; height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, .45);
+}
+/* 按大小那一档每格底部那行大小（口径 = `formatSize`）——比名字（12px）再淡
+   一档：它是补充信息，不是名字。 */
+.gallery-size { display: block; margin-top: 2px; font-size: 12px; color: var(--muted-2); }
 
 /* ⚠️ 那个圈**必须转**（§3.5）：没有它，用户会以为到底了，而不是"还在加载"。
    纯 CSS 画一个（零依赖、也不用引一张图），转得慢一点 —— 它转得快会像卡住。 */
@@ -2867,11 +2895,15 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 
 /* ★ 2026-10-06 下午：**选择模式底下那条操作条**（多选批删）。
-   吸在滚动区的底下（`position: sticky; bottom: 0`，它是 `.sessions` 的最后一个
-   孩子 —— 见 SessionsPage.tsx 里那段）：不管滚到哪儿它都在视野里，滚到底归位。
-   ⚠️ 底色必须**不透明**（它底下滚过去的是会话行）、再加一层阴影把它托起来。
-   长相和对话区那条 `.chat-select` 同一套语言（同一件事的两种皮肤）。 */
-.sessions-select {
+   吸在滚动区的底下（`position: sticky; bottom: 0`，它是滚动区的最后一个
+   孩子 —— 见 SessionsPage.tsx / GalleryPage.tsx 里那段）：不管滚到哪儿它都在
+   视野里，滚到底归位。
+   ★ 2026-10-10：**作品页用的是同一副形状**（`.gallery-select`，同一个组件
+   `kit/SelectBar`）—— 两页都是"滚动的列表 + 吸底的操作条"，一份规矩两条
+   选择器，别各写各的。
+   ⚠️ 底色必须**不透明**（它底下滚过去的是会话行 / 作品格）、再加一层阴影把它
+   托起来。长相和对话区那条 `.chat-select` 同一套语言（同一件事的两种皮肤）。 */
+.sessions-select, .gallery-select {
   position: sticky; bottom: 0;
   display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
   margin-top: var(--sp-4);
@@ -2880,13 +2912,15 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   background: var(--panel); box-shadow: var(--shadow-2);
 }
 /* 左边那句计数 / 问话吃掉中间的空，把两颗按钮顶到右边（和 `.chat-select` 同款）。 */
-.sessions-select-count, .sessions-select-note { flex: 1; }
-.sessions-select-count { font-size: 13px; color: var(--muted); }
-.sessions-select-note { font-size: 12px; color: var(--text); }
+.sessions-select-count, .sessions-select-note,
+.gallery-select-count, .gallery-select-note { flex: 1; }
+.sessions-select-count, .gallery-select-count { font-size: 13px; color: var(--muted); }
+.sessions-select-note, .gallery-select-note { font-size: 12px; color: var(--text); }
 /* 只有「确认删除」穿危险色（和 `.session-del.danger` / `.chat-select-del.danger`
    同一条规矩：两颗短文案长得很像，点错一次东西就没了）。 */
-.sessions-select-del.danger { border-color: var(--danger); color: var(--danger); }
-.sessions-select-del.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+.sessions-select-del.danger, .gallery-select-del.danger { border-color: var(--danger); color: var(--danger); }
+.sessions-select-del.danger:hover:not(:disabled),
+.gallery-select-del.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 
 /* 改名态让位（和确认态同一条理由：窄屏一行塞不下"缩略图 + 名字 + 输入框"，
    见上面 `.session-row.confirming` 那段）。 */

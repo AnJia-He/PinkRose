@@ -6,13 +6,16 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { HUANGHUN, WORK, canvasProps, container, decision, fetchMock, goNav, jsonResponse, lutSection, makeSession, openLutPanel, renderApp, reopenApp, say, scrollToEnd, tileNamed, typeIn, uploadPhoto, withSessions, withWorks, withWorksError } from './test/appHarness'
+import { HUANGHUN, WORK, canvasProps, clickByText, container, decision, fetchMock, goNav, jsonResponse, lutSection, makeSession, openLutPanel, renderApp, reopenApp, say, scrollToEnd, tileNamed, typeIn, uploadPhoto, withSessions, withWorks, withWorksError } from './test/appHarness'
 import { act } from 'react'
 import { ZERO } from '../shared/adjustments.ts'
 import * as api from './api/client'
 import * as saveMod from './export/save'
 import * as thumbMod from './core/thumbnail'
 import * as lutsMod from './api/luts'
+// ★ 2026-10-10：按大小排那一格上要显示大小 —— 口径和用户管理页那个用量图
+//   同一份（断言也用同一个函数，免得两边各写各的格式）。
+import { formatSize } from './ui/AccountPage'
 import { describe, expect, it, vi } from 'vitest'
 
 describe('左栏导航：切界面不丢工作', () => {
@@ -383,6 +386,139 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     expect(none?.textContent ?? '').toContain('换个字')
     // "筛掉了"和"一张都没有"是两件事 —— 说错了用户会以为东西丢了
     expect(container.querySelector('.gallery-empty')).toBeNull()
+  })
+})
+
+/**
+ * ★ 2026-10-10：作品页的**多选批删** + **按大小排**（A 路调研点名"全仓最便宜的一笔"：
+ * 后端 `deleteWorks` + 测试一直全齐、零调用方，缺的只是这屏勾选框）。
+ * 形状照对话列表那一套（`SessionsPage` 的选择模式 + `kit/SelectBar`），
+ * 但删除走**批量接口**（一次往返；它自己会"逐条删、如实回报"）。
+ */
+describe('★（10-10）作品页：多选批删 + 按大小排', () => {
+  const T1 = 1_700_000_000_000
+  const T2 = T1 - 86_400_000
+  const T3 = T2 - 86_400_000
+
+  /**
+   * 盖上"批量删"那条路（`POST /api/works/delete`）—— 照 `withWorks` 那条的形状
+   * （只加不改，别的请求走原来的实现）。返回体就是服务端的形状
+   * `{ deleted, missing }`（§3.5 的"如实回报"）；请求体里的 ids 记下来给断言用。
+   */
+  function withDeleteWorks(reply: unknown, status = 200) {
+    const calls: number[][] = []
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works/delete') {
+        calls.push((JSON.parse(String(init?.body)) as { ids: number[] }).ids)
+        return jsonResponse(reply, status)
+      }
+      return inner(url, init)
+    })
+    return calls
+  }
+
+  /** 进选择模式 + 勾上第 n 张（0 起）。 */
+  async function pickWorks(...indexes: number[]) {
+    await clickByText('多选')
+    const picks = [...container.querySelectorAll('.gallery-pick')] as HTMLInputElement[]
+    await act(async () => {
+      for (const i of indexes) picks[i]!.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  it('★ 勾两张 → 删除 → 确认：一次请求删掉它们，名单里当场没了', async () => {
+    withWorks([WORK(1, T1, '甲'), WORK(2, T2, '乙'), WORK(3, T3, '丙')])
+    const delCalls = withDeleteWorks({ deleted: [1, 3], missing: [] })
+    await renderApp()
+    await goNav('作品')
+
+    await pickWorks(0, 2)                        // 勾「甲」和「丙」
+    expect(container.textContent).toContain('已选 2 张')
+
+    await clickByText('删除')                    // 先问一句（和对话列表同一条规矩）
+    expect(container.textContent).toContain('删掉选中的 2 张？')
+    await clickByText('确认删除')
+
+    expect(delCalls).toEqual([[1, 3]])           // 一次请求带上两个 id（批量接口）
+    // 名单里**当场**没了：等下次刷新才消失的话，用户会以为没删掉
+    const cells = [...container.querySelectorAll('.gallery-cell')].map(c => c.textContent ?? '')
+    expect(cells).toHaveLength(1)
+    expect(cells[0]).toContain('乙')
+    // 删完退出选择模式（勾选框和操作条一起收）
+    expect(container.querySelector('.gallery-pick')).toBeNull()
+    expect(container.querySelector('.gallery-select')).toBeNull()
+  })
+
+  it('★ 服务端说"本来就不在"的（missing）也当场清掉 —— 结果一样是"它没了"', async () => {
+    withWorks([WORK(1, T1, '甲'), WORK(2, T2, '乙')])
+    withDeleteWorks({ deleted: [1], missing: [2] })
+    await renderApp()
+    await goNav('作品')
+
+    await pickWorks(0, 1)
+    await clickByText('删除')
+    await clickByText('确认删除')
+
+    // 两张都从名单里走（missing 是"目标已达成"——它本来就不在了）
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(0)
+  })
+
+  it('★ 删失败：名单原样、勾还在、上面加一句"再试一次"（不清场）', async () => {
+    withWorks([WORK(1, T1, '甲'), WORK(2, T2, '乙')])
+    withDeleteWorks({ error: { code: 'INTERNAL', message: 'SENTINEL-删不动' } }, 500)
+    await renderApp()
+    await goNav('作品')
+
+    await pickWorks(0, 1)
+    await clickByText('删除')
+    await clickByText('确认删除')
+
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(2)  // 名单一个字节没动
+    expect(container.textContent).toContain('再试一次')                  // 有出路（§3.7）
+    expect(container.textContent).toContain('已选 2 张')                 // 勾还在 —— 直接再点一次就是重试
+  })
+
+  it('★ 选择模式里点格子 = 勾选，不进详情页（微信式）', async () => {
+    withWorks([WORK(1, T1, '甲')])
+    await renderApp()
+    await goNav('作品')
+
+    await clickByText('多选')
+    await act(async () => {
+      (container.querySelector('.gallery-cell') as HTMLElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(location.pathname).toBe('/app/works')      // 没跳详情
+    expect(container.textContent).toContain('已选 1 张')
+  })
+
+  it('★ 按大小排：最大的排最前、每格带上大小；切回"按时间"还是分组那副样子', async () => {
+    withWorks([
+      { ...WORK(1, T1, '小的'), bytes: 500 },
+      { ...WORK(2, T2, '大的'), bytes: 9_000_000 },
+      { ...WORK(3, T3, '中的'), bytes: 2_000 },
+    ])
+    await renderApp()
+    await goNav('作品')
+    // 默认按时间：最新的「小的」在最前
+    expect((container.querySelector('.gallery-cell')?.textContent ?? '')).toContain('小的')
+
+    await clickByText('按大小')
+    const cells = [...container.querySelectorAll('.gallery-cell')]
+    expect(cells[0]!.textContent).toContain('大的')
+    expect(cells[1]!.textContent).toContain('中的')
+    expect(cells[2]!.textContent).toContain('小的')
+    // 大小写在格子上（口径和用户管理页那个用量图**同一份** formatSize）
+    expect(container.textContent).toContain(formatSize(9_000_000))
+    // 按大小模式下不分天（分组的前提是时间序）
+    expect(container.textContent).toContain('按大小 · 3 张')
+
+    await clickByText('按时间')
+    expect(container.textContent).not.toContain(formatSize(9_000_000))   // 大小不常驻
+    expect((container.querySelectorAll('.gallery-day-title')).length).toBeGreaterThan(1)  // 分组回来了
   })
 })
 
