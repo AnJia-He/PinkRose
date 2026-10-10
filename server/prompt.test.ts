@@ -141,12 +141,24 @@ describe('ROUTER_SYSTEM', () => {
   it('★ 说清预设怎么填 —— 照抄名字、不算生成，且和 Lut 是两个字段（我的预设）', () => {
     expect(ROUTER_SYSTEM).toContain('用户让你用**他自己保存的预设**时')
     expect(ROUTER_SYSTEM).toContain('{"name": "黄昏旅拍"}')
-    expect(ROUTER_SYSTEM).toContain('这次不涉及预设 → "preset": null')
-    expect(ROUTER_SYSTEM).toContain('清单里没有的名字一个字都不许写')
+    // ⚠️ 整句连着钉：后半句「清单里没有的名字…」在 Lut 段里**逐字相同**，
+    // 单钉它等于空转（把预设段这句删了它也照绿）—— 锚点「预设」才是关键。
+    expect(ROUTER_SYSTEM).toContain('这次不涉及预设 → "preset": null。**清单里没有的名字一个字都不许写。**')
     expect(ROUTER_SYSTEM).toContain('套预设和调色一样是**本地动作**，不算生成：route 照旧给 params')
     expect(ROUTER_SYSTEM).toContain('预设和 Lut 是两回事')
     // JSON 模板里有这个键 —— 模型是照模板逐键抄的（见"键的顺序必须严格照下面来"）。
     expect(ROUTER_SYSTEM).toContain('"preset": {"name": ""} | null')
+  })
+
+  /**
+   * ★ 2026-10-10：**回话里提到预设要用界面上的那个名字**（设计 §6.2 的第五元素）。
+   *
+   * 和上面「回话里叫 Lut」同一类：预设的名字是**用户自己起的**（清单/界面上
+   * 写着「黄昏旅拍」），回话里换个说法（"帮你套上了黄昏色调那套"）他就对不上号，
+   * 不知道是哪套。
+   */
+  it('★ 回话里提到预设时照抄界面上的名字，别改写成自己的叫法（我的预设）', () => {
+    expect(ROUTER_SYSTEM).toContain('回话里提到这套预设时，**用清单/界面上的那个名字（照抄）**，别改写成你自己的叫法')
   })
 
   /**

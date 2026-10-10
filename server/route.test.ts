@@ -395,6 +395,9 @@ describe('handleRoute', () => {
     expect(sent).toContain('「黄昏旅拍」= {亮度 +100, 对比度 +12}')
     expect(sent).toContain('x'.repeat(30))
     expect(sent).not.toContain('x'.repeat(31))     // 截到 30 字，不是原样透传
+    // 空名字是**整条丢掉**，不留一格「」占位（把 route.ts 的 `if (!name) continue`
+    // 删掉这条就红 —— 标题里"丢空名"三个字得有断言兜着）。
+    expect(sent).not.toContain('「」')
   })
 
   it('★ 40 套 → 发给模型的只有 30 套（不是 30 就红）', async () => {
