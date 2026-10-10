@@ -259,10 +259,13 @@ type FakeDecision = {
   needsDisambiguation: boolean
   degraded: boolean
   lut: { name: string; amount: number } | null
+  // ★ 2026-10-10（我的预设）：协议又长了个**必填**字段 —— 这个假的形状跟一手
+  //   （探针不会因此变红，但会过期；它兑的是 /api/route 的假响应）。
+  preset: { name: string } | null
 }
 const noLut = (reply = '好。'): FakeDecision => ({
   route: 'params', paramDeltas: {}, reply, editPrompt: '',
-  needsDisambiguation: false, degraded: false, lut: null,
+  needsDisambiguation: false, degraded: false, lut: null, preset: null,
 })
 
 /** 注册一个临时账号（已有登录态就什么都不做）。 */
@@ -557,6 +560,7 @@ async function main(): Promise<void> {
     decision = {
       route: 'params', paramDeltas: {}, reply: '好，给你套上黄昏。', editPrompt: '',
       needsDisambiguation: false, degraded: false, lut: { name: '黄昏', amount: 100 },
+      preset: null,
     }
     const before8 = await pixel(page)
     await page.fill('input[name="text"]', '用黄昏那个滤镜')
@@ -584,6 +588,7 @@ async function main(): Promise<void> {
     decision = {
       route: 'params', paramDeltas: {}, reply: '好，撤掉滤镜。', editPrompt: '',
       needsDisambiguation: false, degraded: false, lut: { name: '', amount: 100 },
+      preset: null,
     }
     await page.fill('input[name="text"]', '不要滤镜了')
     await page.press('input[name="text"]', 'Enter')
@@ -604,6 +609,7 @@ async function main(): Promise<void> {
     decision = {
       route: 'both', paramDeltas: {}, reply: '好，把背景换成傍晚。', editPrompt: 'make the background evening',
       needsDisambiguation: false, degraded: false, lut: { name: '黄昏', amount: 100 },
+      preset: null,
     }
     editMode = 'fake'
     await page.fill('input[name="text"]', '把背景换成傍晚')

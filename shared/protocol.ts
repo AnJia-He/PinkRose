@@ -18,6 +18,13 @@ export type ParamDeltas = Partial<Adjustments>
 export type LutDecision = { name: string; amount: number }
 
 /**
+ * 模型对**用户预设**的决定（★ 2026-10-10）。
+ *   · `null` = 这次不碰预设（默认）
+ *   · 有名字 = 套上那一套（整组参数赋值 —— 没有"强度"这回事，所以只有名字）
+ */
+export type PresetDecision = { name: string }
+
+/**
  * 一句话被理解之后的结果。
  *
  * `degraded` 是**我们自己加的**（spec §6.1 没有）：LLM 路由失败时走降级路径
@@ -33,6 +40,12 @@ export type RouteDecision = {
   degraded: boolean
   /** ★ 2026-10-05：滤镜那半。必填 —— 新增字段就该逼每个构造点表态。 */
   lut: LutDecision | null
+  /**
+   * ★ 2026-10-10：用户预设那半。必填 —— 新增字段就该逼每个构造点表态。
+   * 和 `lut` 完全平行：清单送上去（`RouteRequest.presets?`）、模型**只回名字**、
+   * 前端自己对号赋值（名字不在清单里时 `validate.ts` 归 null + degraded）。
+   */
+  preset: PresetDecision | null
 }
 
 export type SuggestCard = {
@@ -55,6 +68,13 @@ export type RouteRequest = {
   luts?: { id: number; name: string }[]
   /** ★ 用户当前用着的滤镜（没写进清单也没关系，服务端只拿它写进提示词） */
   lut?: LutRef | null
+  /**
+   * ★ 2026-10-10：用户保存的预设清单 —— **名字 + 参数**都给（模型靠名字认它们，
+   * 参数当上下文；spec §8.1 定的"名字 + 参数一起发给模型"）。
+   * 条数上限 30 的截断在**服务端**做（`server/route.ts` 的 `normalizePresetList`）
+   * —— 请求可以伪造，前端的截不算数。
+   */
+  presets?: { name: string; params: Adjustments }[]
 }
 
 export type RouteResponse = { decision: RouteDecision }

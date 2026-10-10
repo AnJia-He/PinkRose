@@ -371,4 +371,72 @@ describe('handleRoute', () => {
       warn.mockRestore()
     }
   })
+
+  /**
+   * ★ 2026-10-10：「我的预设」那条路 —— 和滤镜**完全平行**（清单上去、只回名字）。
+   *
+   * 三条各守一个静默失效点：清单没裁（模型拿到几百条 / 空名字）、`params` 没钳
+   * （模型拿到伪造的离谱数字）、名单没传给 `parseDecision`（模型答对了也白答）。
+   */
+  it('★ 预设清单进用户消息：名字 trim / 截 30 字 / 丢空名，params 收的是钳过的值', async () => {
+    const { client, calls } = clientReplying('{"route":"params","param_deltas":{"exposure":5}}')
+    await handleRoute({
+      ...body,
+      presets: [
+        { name: '  黄昏旅拍  ', params: { exposure: 999, contrast: 12 } },  // trim + params 钳制
+        { name: '', params: { exposure: 30 } },                             // 空名字：丢掉
+        { name: 'x'.repeat(40), params: {} },                               // 超 30 字：截断
+      ],
+    }, deps(client))
+
+    const sent: string = calls[0].messages[1].content[1].text
+    expect(sent).toContain('用户保存的调色预设有：')
+    // params 是**钳过之后**的：伪造的 999 到模型手里必须是 100（同 normalizeParams 那条）。
+    expect(sent).toContain('「黄昏旅拍」= {亮度 +100, 对比度 +12}')
+    expect(sent).toContain('x'.repeat(30))
+    expect(sent).not.toContain('x'.repeat(31))     // 截到 30 字，不是原样透传
+  })
+
+  it('★ 40 套 → 发给模型的只有 30 套（不是 30 就红）', async () => {
+    // 设计 §6.1：条数上限 30 的截断在**服务端**做 —— 请求可以伪造，前端的截不算数。
+    // 30 这个数来自 `MAX_PRESETS`（和存储上限同一个常量）。
+    const { client, calls } = clientReplying('{"route":"params","param_deltas":{"exposure":5}}')
+    await handleRoute({
+      ...body,
+      presets: Array.from({ length: 40 }, (_, i) => ({
+        name: `套装${String(i + 1).padStart(2, '0')}`, params: {},
+      })),
+    }, deps(client))
+
+    const sent: string = calls[0].messages[1].content[1].text
+    // 边界钉在名字上（不数逗号）：第 30 套在、第 31 套起不许出现
+    expect(sent).toContain('套装30')
+    expect(sent).not.toContain('套装31')
+  })
+
+  it('★ 模型回的预设名在清单里 → 决策带上它（端到端）；清单外的名字 → null + degraded', async () => {
+    const presets = [{ name: '黄昏旅拍', params: { ...ZERO, contrast: 12 } }]
+
+    const { client } = clientReplying(JSON.stringify({
+      route: 'params', preset: { name: ' 黄昏旅拍 ' }, reply: '好。',
+    }))
+    const r = await handleRoute({ ...body, presets }, deps(client))
+    // 回的是**清单里的原名**（空格被 trim 掉）
+    expect(r.decision.preset).toEqual({ name: '黄昏旅拍' })
+    expect(r.decision.degraded).toBe(false)
+
+    // 模型给了个用户没有的东西：归 null（= 不动），degraded 把信号留下。
+    // ⚠️ warn 要静音：这条会打降级那行原始输出。
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { client: c2 } = clientReplying(JSON.stringify({
+        route: 'params', preset: { name: '青橙' }, reply: '好。',
+      }))
+      const r2 = await handleRoute({ ...body, presets }, deps(c2))
+      expect(r2.decision.preset).toBeNull()
+      expect(r2.decision.degraded).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })

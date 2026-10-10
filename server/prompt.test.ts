@@ -132,6 +132,24 @@ describe('ROUTER_SYSTEM', () => {
   })
 
   /**
+   * ★ 2026-10-10：「我的预设」那半 —— 和滤镜那段**完全平行**（清单上去、只回名字）。
+   *
+   * 名字对不上号时 `validate.ts` 会归 null 并打 degraded，但最便宜的一道闸
+   * 是**别让它编名字**；「本地动作」那条是防"套预设被当成生成"（12,900 tokens）；
+   * 「两回事」那条是防它把预设和 Lut 当成同一个字段。
+   */
+  it('★ 说清预设怎么填 —— 照抄名字、不算生成，且和 Lut 是两个字段（我的预设）', () => {
+    expect(ROUTER_SYSTEM).toContain('用户让你用**他自己保存的预设**时')
+    expect(ROUTER_SYSTEM).toContain('{"name": "黄昏旅拍"}')
+    expect(ROUTER_SYSTEM).toContain('这次不涉及预设 → "preset": null')
+    expect(ROUTER_SYSTEM).toContain('清单里没有的名字一个字都不许写')
+    expect(ROUTER_SYSTEM).toContain('套预设和调色一样是**本地动作**，不算生成：route 照旧给 params')
+    expect(ROUTER_SYSTEM).toContain('预设和 Lut 是两回事')
+    // JSON 模板里有这个键 —— 模型是照模板逐键抄的（见"键的顺序必须严格照下面来"）。
+    expect(ROUTER_SYSTEM).toContain('"preset": {"name": ""} | null')
+  })
+
+  /**
    * ★ 2026-10-05：reply 的两条新规矩，都是**用户拿着真截图指出来的**。
    *
    * 他截的是这一句：「好嘞，我来把右下角水印去掉，尽量让你看不出来~」，
@@ -203,6 +221,20 @@ describe('buildRouterUser', () => {
   })
   it('没导入过滤镜时不写那两行', () => {
     expect(buildRouterUser('亮一点', ZERO, [], null)).not.toContain('滤镜')
+  })
+
+  /**
+   * ★ 2026-10-10（我的预设）：清单行 —「名字 = 那套参数」都给（spec §8.1：
+   * 名字 + 参数一起发给模型，模型靠名字认它们）。
+   */
+  it('把用户的预设清单写进用户消息（名字 + 参数都给）', () => {
+    const s = buildRouterUser('用我那套黄昏的', ZERO, [], null,
+      [{ name: '黄昏旅拍', params: { ...ZERO, contrast: 12, temperature: 20 } }])
+    expect(s).toContain('用户保存的调色预设有：「黄昏旅拍」= {对比度 +12, 色温(正数=更暖) +20}')
+  })
+
+  it('一套预设都没有时不写那一行', () => {
+    expect(buildRouterUser('亮一点', ZERO, [], null, [])).not.toContain('预设')
   })
 })
 

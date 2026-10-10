@@ -387,6 +387,140 @@ describe('滤镜决策', () => {
 })
 
 /**
+ * ★ 2026-10-10：「我的预设」那条路 —— 和滤镜**完全平行**（清单上去、只回名字、
+ * 前端自己对号赋值）。
+ *
+ * 第四参数（预设名单）**默认 `[]`** —— 没给清单时任何名字都不认，
+ * 既有调用点与用例一个字不改也能过。
+ */
+describe('预设决策', () => {
+  const names = ['黄昏旅拍', '清透日系']
+
+  it('只套预设也算"有内容"：走 params，不落降级', () => {
+    const d = parseDecision({ route: 'params', preset: { name: '黄昏旅拍' } }, '用我那套黄昏的', [], names)
+    expect(d.preset).toEqual({ name: '黄昏旅拍' })
+    expect(d.route).toBe('params')
+    // 套预设是**本地动作**（整组参数赋值）：和只调滤镜一样，不是"没读懂" ——
+    // degraded 置 true 的话前端会弹"拿不太准"那句提醒，而这次它答得完全正确。
+    // 变异：把 degraded 那行里的 `!hasPreset` 去掉 → 这条红。
+    expect(d.degraded).toBe(false)
+  })
+
+  it('不认识的名字归 null，并留 degraded 信号', () => {
+    const d = parseDecision({ route: 'params', preset: { name: '青橙' } }, '用我那套青橙的', [], names)
+    expect(d.preset).toBeNull()
+    expect(d.degraded).toBe(true)
+  })
+
+  it('名字不在清单里、但另外半件事是真的 → 信号只能靠 `dropped` 留下来', () => {
+    // 同滤镜那条：纯预设 + 原话会走 §4.7 降级（degraded 本来就 true），
+    // 把 degraded 里的 `|| droppedPreset` 删掉它照样绿。这里 route=both、
+    // edit_prompt 是真的、谁都不拦，唯一能留下"预设那半被丢了"的就是 droppedPreset。
+    const d = parseDecision(
+      { route: 'both', preset: { name: '青橙' }, edit_prompt: 'remove the person' },
+      '把那个人去掉，顺便用青橙那套', [], names)
+    expect(d.route).toBe('both')
+    expect(d.preset).toBeNull()
+    expect(d.degraded).toBe(true)
+  })
+
+  it('只套预设 + 模型啰嗦地写了个 edit_prompt → 仍然走本地那条（不许升成生成）', () => {
+    // `reconcile` 的第二参数是"本地那半有没有内容"—— 只套预设也算有，
+    // 否则这个形状会被"内容为准"升成 generate：用户只是说了句预设，钱白花。
+    // 变异：把 reconcile 那行的 `hasParams || hasLut || hasPreset` 少写 preset → 红。
+    const d = parseDecision({
+      route: 'params', preset: { name: '黄昏旅拍' }, edit_prompt: 'Apply a warm sunset look.',
+    }, '用我那套黄昏的', [], names)
+    expect(d.route).toBe('params')
+    expect(d.editPrompt).toBe('')
+    expect(d.preset).toEqual({ name: '黄昏旅拍' })
+    expect(d.degraded).toBe(true)   // 丢掉过它写的那半句，信号要留
+  })
+
+  it('没提预设 = null（不动）', () => {
+    expect(parseDecision({ route: 'params', param_deltas: { exposure: 10 } }, '亮一点', [], names).preset)
+      .toBeNull()
+  })
+
+  it('大小写和空格都能对上，且回的是**清单里的原名**', () => {
+    // 回原名而不是模型写的那个：前端对号用的是同一把尺子（`samePresetName`），
+    // 但决策里带着模型的写法（尾随空格 / 大小写）时，任何**全等**判的地方都会对不上。
+    const d = parseDecision({ route: 'params', preset: { name: ' 清透日系 ' } }, 'x', [], names)
+    expect(d.preset).toEqual({ name: '清透日系' })
+  })
+
+  it('大小写对号：清单里的 `Sunset`，模型写 `sunset` 也认', () => {
+    expect(parseDecision({ route: 'params', preset: { name: 'sunset' } }, 'x', [], ['Sunset']).preset)
+      .toEqual({ name: 'Sunset' })
+  })
+
+  it('客户端没给清单时，任何名字都不认', () => {
+    expect(parseDecision({ route: 'params', preset: { name: '黄昏旅拍' } }, 'x', [], []).preset).toBeNull()
+  })
+
+  it('预设 + 生成 = both（两件事都做）', () => {
+    const d = parseDecision({ route: 'both', preset: { name: '黄昏旅拍' }, edit_prompt: 'remove the person' },
+      'x', [], names)
+    expect(d.route).toBe('both')
+    expect(d.preset).toEqual({ name: '黄昏旅拍' })
+  })
+
+  it('预设和 lut 是两个字段：同一句里各归各的，谁都不顶替谁', () => {
+    // 提示词里明写了"用户说的是哪个就回哪个字段"—— 决策层这半靠的是两段
+    // normalize 各自独立（共用一处的话这里会看到其中一个被另一个挤掉）。
+    const d = parseDecision(
+      { route: 'params', lut: { name: '黄昏', amount: 80 }, preset: { name: '清透日系' } },
+      '用清透日系那套，再加黄昏滤镜', ['黄昏'], names)
+    expect(d.lut).toEqual({ name: '黄昏', amount: 80 })
+    expect(d.preset).toEqual({ name: '清透日系' })
+    expect(d.degraded).toBe(false)
+  })
+
+  /**
+   * 形状烂的 `preset` 不是"没提预设" —— 照「形状烂的 lut」那组的同一个理由：
+   *   A 有参数：预设没套上、`degraded` 还停在 false —— 零痕迹，而回复可能还说"套上了"；
+   *   B 没参数：掉进 §4.7 的**付费降级** —— 而"只套预设不花钱"正是这条路的意义。
+   *
+   * ⚠️ 和 lut 的一条**故意不同的**：`{name: ''}` 在 lut 那边是合法的"摘掉"，
+   *    在预设这边不指向任何清单项 —— 归 `dropped`（预设是"把参数赋值过去"，
+   *    没有"摘掉"这回事），所以它也在这一组里。
+   */
+  describe('形状烂的 preset 不是"没提预设"', () => {
+    const BAD: unknown[] = ['黄昏旅拍', { amount: 80 }, {}, { name: 42 }, { name: '' }]
+
+    it('A：有参数时也留信号（droppedPreset → degraded），不再是零痕迹', () => {
+      for (const bad of BAD) {
+        const d = parseDecision(
+          { route: 'params', param_deltas: { exposure: 10 }, preset: bad }, '亮一点，顺便用黄昏那套', [], names)
+        expect(d.preset, `${JSON.stringify(bad)} 不该解出预设`).toBeNull()
+        // 变异：把 normalizePresetChoice 里"形状烂 / 不命中"那几条还回 `dropped: false` → 这里红
+        expect(d.degraded, `${JSON.stringify(bad)} 丢过东西，信号要留`).toBe(true)
+      }
+    })
+
+    it('B：没有别的内容时**不许**落进 §4.7 的付费降级', () => {
+      for (const bad of BAD) {
+        const d = parseDecision({ route: 'params', preset: bad }, '用我那套黄昏的', [], names)
+        // 模型明明说了预设那一半（只是名字对不上）：拿用户原话去跑一次生成，
+        // 等于花钱把「用我那套黄昏的」当图像指令送上去 —— 正是这条路要防的那件事。
+        expect(d.route, `${JSON.stringify(bad)} 不该被升成一次生成`).toBe('params')
+        expect(d.preset).toBeNull()
+        expect(d.degraded).toBe(true)
+      }
+    })
+
+    it('`preset: null` 与字段缺席都是正常的 —— 不许误伤', () => {
+      // 多给一个参数，免得落进"什么都没解出来 → 降级"那条路（那条路本来就 degraded）
+      const explicit = parseDecision(
+        { route: 'params', param_deltas: { exposure: 10 }, preset: null }, '亮一点', [], names)
+      expect(explicit.degraded).toBe(false)
+      const absent = parseDecision({ route: 'params', param_deltas: { exposure: 10 } }, '亮一点', [], names)
+      expect(absent.degraded).toBe(false)
+    })
+  })
+})
+
+/**
  * ★ 2026-10-06：**干净的 no-op**（读懂了、模型明说这次不用改）不再降级。
  *
  * 用户实测：对着一张照片说「你好」，模型**答得完全正确** —— 下面那坨 HELLO

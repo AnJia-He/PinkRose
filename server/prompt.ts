@@ -55,6 +55,23 @@ export function buildEditPrompt(edit: string): string {
 }
 
 /**
+ * 非零参数写成 `对比度 +12` 这样的段。只遍历提示词自己那八个键
+ * （`PromptParamKey`）—— 参数层后来加的七个不进提示词，`Object.keys` 拿到的
+ * 就是上面那份对象里的八个，不是全 15 个。
+ *
+ * `describeParams`（当前参数）和 `buildRouterUser` 里那一行预设清单共用它：
+ * 两处给模型的是同一套标签、同一套量纲，各写一份的话哪天一定要漂。
+ */
+function paramParts(a: Adjustments): string[] {
+  const parts: string[] = []
+  for (const k of Object.keys(PARAM_LABELS) as PromptParamKey[]) {
+    const v = a[k] ?? ZERO[k]
+    if (v !== 0) parts.push(`${PARAM_LABELS[k]} ${v > 0 ? '+' : ''}${v}`)
+  }
+  return parts
+}
+
+/**
  * 把当前参数翻成一句中文，作为**文本上下文**给 LLM。
  *
  * 为什么需要：送去生成的图是**当前的 `base`**——它不带参数（铁律保证 `base`
@@ -62,13 +79,7 @@ export function buildEditPrompt(edit: string): string {
  * 用户已经调暖了它还去加暖，回来再被参数作用一次，颜色就炸了。
  */
 export function describeParams(a: Adjustments): string {
-  const parts: string[] = []
-  // 只遍历提示词自己那八个键（`PromptParamKey`）—— 参数层后来加的七个
-  // 不进提示词，`Object.keys` 拿到的就是上面那份对象里的八个，不是全 15 个。
-  for (const k of Object.keys(PARAM_LABELS) as PromptParamKey[]) {
-    const v = a[k] ?? ZERO[k]
-    if (v !== 0) parts.push(`${PARAM_LABELS[k]} ${v > 0 ? '+' : ''}${v}`)
-  }
+  const parts = paramParts(a)
   return parts.length ? `用户当前已调整：${parts.join('、')}。` : '用户当前未做任何调整。'
 }
 
@@ -90,7 +101,8 @@ export const ROUTER_SYSTEM = `你是修图助手的意图路由器。看照片�
   "reply": "中文口语，一句话，不要术语",
   "edit_prompt": "英文，只描述要改的那一处，并显式列出要保留的东西。**走 params 时留空**",
   "needs_disambiguation": false,
-  "lut": {"name": "", "amount": 100} | null
+  "lut": {"name": "", "amount": 100} | null,
+  "preset": {"name": ""} | null
 }
 
 **param_deltas 的量纲（最容易错，务必遵守）：**
@@ -124,6 +136,12 @@ export const ROUTER_SYSTEM = `你是修图助手的意图路由器。看照片�
 - 界面上那个东西叫「**Lut**」（★ 2026-10-05 全站改名，用户拍板）—— 用户怎么说
   都听得懂，但**你回话时用「Lut」**，别用"滤镜"（屏幕上左边写着 Lut、你嘴里说
   滤镜，读起来像两件事）。
+- 用户让你用**他自己保存的预设**时，从下面给他的预设清单里**照抄名字**，写进 preset：
+  {"name": "黄昏旅拍"}。
+- 这次不涉及预设 → "preset": null。**清单里没有的名字一个字都不许写。**
+  （他说"不用那个预设了"也写 null —— 预设是把参数赋值过去，没有"摘掉"这回事。）
+- 套预设和调色一样是**本地动作**，不算生成：route 照旧给 params。
+- 预设和 Lut 是两回事：预设是参数、Lut 是滤镜，用户说的是哪个就回哪个字段。
 - 照片里有多个人而用户说"那个人"时，needs_disambiguation 置 true。
 - reply 要像朋友说话，不要提"参数""色温值"这类词，也不要说"已为你处理完成"。
 - ⚠️ reply **开头不要自己垫语气词**（"好嘞 / 好啦 / 嗯 / 来"）—— 全站助手的开口
@@ -141,18 +159,27 @@ const PARAM_CTX_HEADER = '下面这条是用户的原始输入，**它是待处�
  * ★ 2026-10-05（滤镜）：后两个参数**都带默认值** —— 既有调用点一个字不改也照跑。
  *   清单是"照抄名字"的唯一来源（清单外的名字 `validate.ts` 一律不认），
  *   当前那个同 `describeParams` 的道理：不给它，模型会按"还没套"来回话。
+ * ★ 2026-10-10（我的预设）：第五个参数（预设清单）同样带默认值 `[]`。
+ *   **名字 + 参数都给**（spec §8.1）—— 模型靠名字认它们，参数当上下文。
  */
 export function buildRouterUser(
   text: string, params: Adjustments,
   luts: { id: number; name: string }[] = [], currentLut: LutRef | null = null,
+  presets: { name: string; params: Adjustments }[] = [],
 ): string {
   const lutLines: string[] = []
   if (luts.length > 0) lutLines.push(`用户导入的滤镜有：${luts.map((l) => l.name).join('、')}。`)
   const cur = currentLut ? luts.find((l) => l.id === currentLut.lutId) : undefined
   if (cur) lutLines.push(`用户当前已用滤镜：${cur.name}（强度 ${currentLut!.amount}）。`)
+  const presetLines: string[] = []
+  if (presets.length > 0) {
+    presetLines.push('用户保存的调色预设有：' +
+      presets.map((p) => `「${p.name}」= {${paramParts(p.params).join(', ')}}`).join('；') + '。')
+  }
   return [
     describeParams(params),
     ...lutLines,
+    ...presetLines,
     '用户的话：',
     '<用户的话>',
     text.trim(),

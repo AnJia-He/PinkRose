@@ -1424,6 +1424,9 @@ export default function App() {
       // ★ 2026-10-05（滤镜 T11）：卡片不碰滤镜（`SuggestCard` 里没有这个字段，
       //   今天推荐卡片只说调色和结构性改动）—— 新增字段就要在这里表态。
       lut: null,
+      // ★ 2026-10-10（我的预设）：「套预设」那条路在 `useGeneration.ts`（Task 5b 接线），
+      //   卡片这半和滤镜一样不碰它 —— 先在这里表态 `null`。
+      preset: null,
     }, uid)
     // ★ 2026-10-05：`cancelReplace` 同上（onCard 里那行清它）。
   }, [busy, applyDecision, say, cancelReplace])

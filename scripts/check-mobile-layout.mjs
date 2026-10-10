@@ -283,6 +283,8 @@ const FAKE_DECISION = {
     editPrompt: '把后面那个人去掉',
     needsDisambiguation: true,
     degraded: false,
+    // ★ 2026-10-10（我的预设）：协议新加的必填字段，假的形状跟一手（会过期、不会红）。
+    preset: null,
   },
 }
 

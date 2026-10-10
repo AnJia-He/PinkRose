@@ -84,6 +84,8 @@ const FAKE_DECISION = JSON.stringify({
     route: 'generate', paramDeltas: {}, reply: '好，这就去掉。',
     editPrompt: 'Remove the person in the background.',
     needsDisambiguation: false, degraded: false,
+    // ★ 2026-10-10（我的预设）：协议新加的必填字段，假的形状跟一手（会过期、不会红）。
+    preset: null,
   },
 })
 

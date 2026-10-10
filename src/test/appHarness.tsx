@@ -477,6 +477,9 @@ export function decision(over: Partial<RouteDecision> = {}): RouteDecision {
     // ★ 2026-10-05（滤镜 T11）：`RouteDecision.lut` 是**必填** —— 新增字段就该
     //   逼着所有构造点表态，这份默认值就是"这次不碰滤镜"的表态。
     lut: null,
+    // ★ 2026-10-10（我的预设）：`preset` 同样是必填 —— 这份默认值就是
+    //   "这次不碰预设"的表态（对话那条的正式接线在 Task 5b）。
+    preset: null,
     ...over,
   }
 }

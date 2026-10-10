@@ -1,6 +1,7 @@
 import { PARAM_KEYS, PARAM_MIN, PARAM_MAX } from '../shared/adjustments.ts'
 import { sameLutName } from '../shared/lut.ts'
-import type { LutDecision, ParamDeltas, Route, RouteDecision } from '../shared/protocol.ts'
+import { samePresetName } from '../shared/preset.ts'
+import type { LutDecision, ParamDeltas, PresetDecision, Route, RouteDecision } from '../shared/protocol.ts'
 
 const ROUTES: readonly Route[] = ['params', 'generate', 'both']
 
@@ -133,13 +134,55 @@ function normalizeLutChoice(
 }
 
 /**
+ * 模型的预设决定 → 可信的 `PresetDecision`（★ 2026-10-10）。
+ *
+ * 照 `normalizeLutChoice` 逐条对写，**只有两条不同**：
+ *   · **没有"摘掉"这回事** —— 套预设是"把整组参数赋值过去"，空名字不指向任何
+ *     清单项，归 `dropped`（lut 那边的空名字是合法的"摘掉"，两边故意不同）；
+ *   · 没有 `amount`（没有"强度"这回事）。
+ *
+ * 名字必须在**用户自己的清单**里（大小写和首尾空格不算数），命中回**清单里的原名**
+ * —— 前端对号用的是同一把尺子（`samePresetName`），把模型写的那个（带尾随空格 /
+ * 大小写不同）放进决策，任何按**全等**判的地方都会对不上。
+ *
+ * 认不出来回 null（= 不动），并且**要留 degraded 信号** —— 和滤镜那边同一个理由：
+ * **"键不在"和"键在、但形状烂"是两件事**（`present`）。形状烂的 `preset`
+ * （裸字符串 / 没有 `name` / 空对象）不能和"这次没提预设"一样回 `dropped: false`，
+ * 否则要么零痕迹（回复可能还说"套上了"），要么掉进 §4.7 的**付费降级** ——
+ * 而"只套预设不花钱"正是本地动作那条路的意义。
+ *
+ * ⚠️ `null` 是**合法**写法（提示词里写着"这次不涉及预设 → `"preset": null`"）：
+ *   它和字段缺席一样都表示"模型说了这次不碰预设"，**不算烂**。
+ *
+ * @param present `preset` 这个键**在不在**（`undefined` 判据见调用点）。
+ */
+function normalizePresetChoice(
+  raw: unknown, names: readonly string[], present: boolean,
+): { preset: PresetDecision | null; dropped: boolean } {
+  // 键根本不在 / 明说 null：都是模型"这次不碰预设"，正常。
+  if (!present || raw === null) return { preset: null, dropped: false }
+  // 键在、却不是个对象（裸字符串、数字、数组…）：形状不对 —— 和"没说"完全不同。
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { preset: null, dropped: true }
+  const o = raw as Record<string, unknown>
+  const name = typeof o.name === 'string' ? o.name.trim() : null
+  // 对象里连 `name` 都没有（`{}` / `{amount:80}` / `{name:42}`）：同上，形状不对。
+  if (name === null) return { preset: null, dropped: true }
+  const hit = names.find((n) => samePresetName(n, name))
+  if (!hit) return { preset: null, dropped: true }
+  return { preset: { name: hit }, dropped: false }
+}
+
+/**
  * 从模型的原始输出解出决策。**永远不抛错**——所有异常路径都收敛成
  * 一个可用的 RouteDecision。调用方不需要 try/catch。
  *
  * ★ 2026-10-05（滤镜）：第三个参数是**用户自己的滤镜名单**。它有默认值 `[]`：
  *   没传清单时任何名字都不认（宁可不认，也不认一个我们库里没有的名字）。
+ * ★ 2026-10-10（我的预设）：第四个参数是**用户保存的预设名单**，默认值 `[]`
+ *   同理（宁可不认，也不认一个用户没有的东西）。
  */
-export function parseDecision(raw: unknown, userText = '', lutNames: readonly string[] = []): RouteDecision {
+export function parseDecision(raw: unknown, userText = '', lutNames: readonly string[] = [],
+  presetNames: readonly string[] = []): RouteDecision {
   const obj = coerceToObject(raw)
   // 解析不了时**用用户的原话**当 prompt，绝不能用模型吐出来的那坨东西。
   // 实测过后果：模型返回被截断的 JSON，降级分支拿它当编辑指令送进图像模型，
@@ -174,6 +217,12 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
     obj.lut !== undefined ? obj.lut : obj.lutChoice, lutNames, lutKeyPresent)
   const hasLut = lut !== null
 
+  // ★ 2026-10-10（我的预设）：和上面那两半同一个形状，只是 `preset` 是单个词、
+  //   没有第二个写法。**"键在不在"照样单独判**（理由和滤镜那半一样，见函数头）。
+  const presetKeyPresent = obj.preset !== undefined
+  const { preset, dropped: droppedPreset } = normalizePresetChoice(obj.preset, presetNames, presetKeyPresent)
+  const hasPreset = preset !== null
+
   const rawRoute = obj.route
   const routeIsValid = typeof rawRoute === 'string' && (ROUTES as readonly string[]).includes(rawRoute)
   const route = routeIsValid ? (rawRoute as Route) : inferRoute(hasParams, hasEdit)
@@ -196,18 +245,21 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
   //   - ★ 2026-10-05：写了个**不在清单里**的滤镜名（`dropped`）—— 同样丢了东西。
   //     而"声明 params 但只有滤镜"是**合法的纯本地动作**，不能落进那一格
   //     （它既不是空操作、也不花一分钱），所以 `!hasParams` 那条要放宽一格。
+  //   - ★ 2026-10-10（预设）：同理两条 —— `droppedPreset` 同样丢了东西；
+  //     "声明 params 但只有预设"也是合法的纯本地动作，那一格再放宽一格。
   const degraded = !routeIsValid ||
     ((route === 'generate' || route === 'both') && !hasEdit) ||
-    (route === 'params' && !hasParams && !hasLut) ||
+    (route === 'params' && !hasParams && !hasLut && !hasPreset) ||
     (route === 'params' && hasEdit) ||
-    dropped
+    dropped || droppedPreset
 
   // 声明的路由和实际内容对不上时，以**内容**为准：
   // 说 params 却给了 edit_prompt 却没有 deltas，那就是一次生成。
   // ★ 2026-10-05（滤镜）：第二个参数是"本地那半有没有内容"—— 只调滤镜
   //   也算有（滤镜和参数是同一类东西），所以传 `hasParams || hasLut`。
   //   **一处改，别改 reconcile 里面**。
-  const effectiveRoute = reconcile(route, hasParams || hasLut, hasEdit)
+  // ★ 2026-10-10（预设）：只套预设同样算本地那半有内容（同滤镜那半）。
+  const effectiveRoute = reconcile(route, hasParams || hasLut || hasPreset, hasEdit)
 
   // ★★ 2026-10-06（§7.2 更正）：**干净的 no-op** —— 读懂了，而且模型**明说这次不用改**。
   //
@@ -227,10 +279,11 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
   //     是垃圾输出（实测的 `<route>params</route><params>{"brightness":20}</params>` 那种）。
   //     声明 generate/both 却**什么都没给**也是自相矛盾（自己说要生成、又没说生成什么），
   //     那是"没读懂"，仍走旧降级。
-  //   · 三半都没内容（`!hasParams && !hasEdit && !hasLut`）。
+  //   · 本地那几半都没内容（`!hasParams && !hasEdit && !hasLut && !hasPreset`）。
   //   · `!droppedParams`：参数那一半没丢东西（见 `hasDroppedParams`）——
   //     编了键名 / 值接不住就得拿用户原话去试，不能假装那是一次 no-op。
   //   · `!dropped`：滤镜那一半没丢东西（2026-10-05 终审那条，口径不变）。
+  //   · `!droppedPreset`：预设那一半没丢东西（2026-10-10，同滤镜那条）。
   //   · `hasModelReply`：它**真说了话**。连 reply 都没给的空壳不算"说得清清楚楚"——
   //     那种形状渲染给用户的那句是我们自己的兜底文案（「…先按你说的试了一下。」），
   //     而这一路什么都没试，是句假话；仍走旧降级（那条路是真的试了）。
@@ -240,8 +293,8 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
   //     ⚠️ 2026-10-06 评审补：这一条原来漏了，和下面那道闸门自己的注释
   //     （"`userText` 为空时保持原样"）打架。
   const cleanNoop = routeIsValid && route === 'params' &&
-    !hasParams && !hasEdit && !hasLut &&
-    !dropped && !droppedParams && !needsDisambiguation && hasModelReply && userText
+    !hasParams && !hasEdit && !hasLut && !hasPreset &&
+    !dropped && !droppedPreset && !droppedParams && !needsDisambiguation && hasModelReply && userText
   if (cleanNoop) {
     return {
       route: 'params',
@@ -252,6 +305,7 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
       needsDisambiguation: false,
       degraded: false,
       lut: null,
+      preset: null,
     }
   }
 
@@ -288,7 +342,11 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
   //   —— 拿用户原话去跑一次生成，等于花钱把「用黄昏滤镜」当图像指令送上去，
   //   正是这条路存在的意义要防的那件事。信号不会丢：`degraded` 已经因为 `dropped`
   //   置成 true（上面那串），这一趟照样能被看见。
-  if (!hasParams && !hasEdit && !hasLut && !dropped && !needsDisambiguation && userText) {
+  //
+  // ★ 2026-10-10（预设）：`!hasPreset` / `!droppedPreset` 两条和滤镜一字不差 ——
+  //   只套预设也是纯本地动作；名字不在清单里（说了、没接住）也不该变成一次付费生成。
+  if (!hasParams && !hasEdit && !hasLut && !hasPreset &&
+      !dropped && !droppedPreset && !needsDisambiguation && userText) {
     return fallbackDecision(userText)
   }
 
@@ -304,6 +362,7 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
     needsDisambiguation,
     degraded: degraded || effectiveRoute !== route,
     lut,
+    preset,
   }
 }
 
@@ -397,6 +456,8 @@ export function fallbackDecision(text: string): RouteDecision {
     degraded: true,
     // 降级这条路是"原文当 prompt 去生成"，本来就没空算滤镜 —— 不碰它。
     lut: null,
+    // 预设那头同理（2026-10-10）：降级路上没算过它，也不碰。
+    preset: null,
   }
 }
 

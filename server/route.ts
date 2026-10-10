@@ -1,5 +1,6 @@
 import { ZERO, clampAdjustments, type Adjustments } from '../shared/adjustments.ts'
 import { MAX_LUTS, MAX_LUT_NAME, normalizeLutRef, type LutRef } from '../shared/lut.ts'
+import { MAX_PRESETS, MAX_PRESET_NAME } from '../shared/preset.ts'
 import type { RouteRequest, RouteResponse } from '../shared/protocol.ts'
 import { HttpError, asImageBody, CHECK_YOUR_KEY_TIP } from './http.ts'
 import { ROUTER_SYSTEM, buildRouterUser } from './prompt.ts'
@@ -45,13 +46,14 @@ export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteR
         role: 'user',
         content: [
           { type: 'image_url', image_url: { url: req.imageDataUrl } },
-          { type: 'text', text: buildRouterUser(req.text, req.params, req.luts, req.lut) },
+          { type: 'text', text: buildRouterUser(req.text, req.params, req.luts, req.lut, req.presets) },
         ],
       },
     ]), 'route')
     // ★ 2026-10-05（滤镜）：名字清单也交给 `parseDecision` —— 模型写了清单**外**
     //   的名字时，它要能判出来（归 null + degraded），别把库里没有的东西放进决策。
-    const decision = parseDecision(content, req.text, req.luts.map((l) => l.name))
+    // ★ 2026-10-10（预设）：用户自己的预设名单同理（同一个理由，一字不差）。
+    const decision = parseDecision(content, req.text, req.luts.map((l) => l.name), req.presets.map((p) => p.name))
     // `degraded` 的意思见 validate.ts 里那段注释：**这次的结果不是模型老实给的**。
     // 它必须打出来。2026-09-29 查"同一件事做两遍"那个 bug 时，`/api/route` 的响应里
     // 明明每条都带 degraded:true，但服务端一个字都不留、前端也不消费 ——
@@ -83,13 +85,14 @@ export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteR
 }
 
 /**
- * `parseRequest` 的出口。比 `RouteRequest` 里那两个可选字段更紧：**到了这里
+ * `parseRequest` 的出口。比 `RouteRequest` 里那几个可选字段更紧：**到了这里
  * 就一定有值**（缺的/坏的都归一化成空清单和 null）—— 下游不必到处判 undefined。
- * （协议里的 `luts?`/`lut?` 是留给**发送方**的自由，两道不再是一个东西。）
+ * （协议里的 `luts?`/`lut?`/`presets?` 是留给**发送方**的自由，两道不再是一个东西。）
  */
 type ParsedRouteRequest = RouteRequest & {
   luts: { id: number; name: string }[]
   lut: LutRef | null
+  presets: { name: string; params: Adjustments }[]
 }
 
 function parseRequest(raw: unknown): ParsedRouteRequest {
@@ -108,6 +111,9 @@ function parseRequest(raw: unknown): ParsedRouteRequest {
     // ★ 2026-10-05（滤镜）：清单只给名字（模型靠它认名字），当前那个只当上下文。
     luts: normalizeLutList(o.luts),
     lut: normalizeLutRef(o.lut),
+    // ★ 2026-10-10（预设）：这个给**名字 + 参数**（spec §8.1 —— 模型靠名字认它们，
+    //   参数当上下文）。
+    presets: normalizePresetList(o.presets),
   }
 }
 
@@ -135,6 +141,34 @@ function normalizeLutList(v: unknown): { id: number; name: string }[] {
     const name = typeof o.name === 'string' ? o.name.trim().slice(0, MAX_LUT_NAME) : ''
     if (!name) continue
     out.push({ id, name })
+  }
+  return out
+}
+
+/**
+ * 客户端送来的预设清单 → 给模型看的那一份（★ 2026-10-10）。
+ *
+ * 照 `normalizeLutList` 同一套规矩，**不信前端**：最多 `MAX_PRESETS` 条
+ * （多余的是**静默截断**，设计 §6.1 —— 请求可以伪造，不报错）、名字 trim 后截到
+ * `MAX_PRESET_NAME` 字、空名字丢掉、`params` 过 `normalizeParams`（= `clampAdjustments`，
+ * 客户端来的数字必须钳）。都是"静默失效点"：空名字会让提示词里多一个空档、
+ * 超长名单白烧 token，而两件都不会报错。
+ *
+ * ⚠️ 这里对超长名是 **trim + 截断**；存储侧（`server/presets.ts` 的 `createPreset`）
+ *   对超长名是**直接拒**（`presetNameOk`）。两个方向**故意不同**，别"统一"：
+ *   那边是我们自己的写入闸（截了就等于替用户改了他起的名字），这边是请求侧防御
+ *   （请求可以伪造，截断合理）。
+ */
+function normalizePresetList(v: unknown): { name: string; params: Adjustments }[] {
+  if (!Array.isArray(v)) return []
+  const out: { name: string; params: Adjustments }[] = []
+  for (const item of v) {
+    if (out.length >= MAX_PRESETS) break
+    if (typeof item !== 'object' || item === null) continue
+    const o = item as Record<string, unknown>
+    const name = typeof o.name === 'string' ? o.name.trim().slice(0, MAX_PRESET_NAME) : ''
+    if (!name) continue
+    out.push({ name, params: normalizeParams(o.params) })
   }
   return out
 }
