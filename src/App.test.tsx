@@ -410,6 +410,187 @@ describe('对话式修图：钱花在对的地方', () => {
     expect(api.postEdit).toHaveBeenCalledTimes(2)
     expect(vi.mocked(api.postEdit).mock.calls[1][1]?.aborted).toBe(false)
   })
+
+  /**
+   * ★ 2026-10-10：「停止」只在**真管用**的那一段出现。
+   *
+   * 那格原来在 4 种忙态里都摆「停止」，但 abort 只挂在生成那一段 ——
+   * 「正在思考…」里按下它**没反应也没反馈**，像按键坏了。
+   * 现在：只有生成中是「停止」；别的忙态是**禁用的「发送」**——
+   * 点不动比"点了没反应"诚实，而那几段本来就短，没人会真的想取消。
+   */
+  it('★（10-10）「正在思考…」时那格是禁用的「发送」，不是点了没反应的「停止」', async () => {
+    // 路由那一步**挂住不回**（那 1.3~1.6 秒的样子）
+    vi.mocked(api.postRoute).mockImplementation(() => new Promise(() => {}))
+    await renderApp()
+    await uploadPhoto()
+
+    const cell = () => container.querySelector('.chat-input button:not(.chat-plus)') as HTMLButtonElement
+    expect(cell().textContent).toBe('发送')
+    expect(cell().disabled).toBe(false)
+
+    await say('把后面那个人去掉')            // busy = 「正在思考…」
+
+    expect(container.querySelector('.bubble.pending')?.textContent).toContain('正在思考')
+    expect(cell().textContent).toBe('发送')   // 不是「停止」——那一段按下它什么都停不了
+    expect(cell().disabled).toBe(true)        // 而是**点不动**（灰的）
+  })
+
+  /**
+   * ★ 2026-10-10：等待段显示**真实经过的秒数**。
+   *
+   * 之前这里写死一句「大约 10 秒」，而实测生成要 8~21 秒 —— 过了 10 秒
+   * 那句话就开始骗人，用户以为卡死。现在 5 秒之后换成"已经等了 N 秒"：
+   * 秒数每秒在跳，本身就是"它还活着"的信号。
+   *
+   * ⚠️ 这条**真的等 5 秒多** —— 这个文件从头到尾用真定时器（见 appHarness 里
+   *    `waitPersist` 那段：假定时器会把 act 微任务和"挂住不回"的门一起冻上）。
+   *    就这一条：纯函数单测（`useGeneration.test.ts`）守不住**接没接上**。
+   */
+  it('★（10-10）等待超过 5 秒：忙气泡换成真实秒数', async () => {
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '去掉路人' }))
+    vi.mocked(api.postEdit).mockImplementation(() => new Promise(() => {}))   // 永远不回
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+
+    const pending = () => container.querySelector('.bubble.pending')?.textContent ?? ''
+    expect(pending()).toContain('大约 10 秒')     // 一开始还是那句预期
+
+    // 真等过 5 秒的坎（秒表 1 秒跳一次，第 5 跳 = 5 秒）
+    await act(async () => { await new Promise(r => setTimeout(r, 5200)) })
+
+    expect(pending()).toContain('已经等了')
+    expect(pending()).not.toContain('大约 10 秒')  // 两个时间不能同屏
+  }, 15_000)
+
+  /**
+   * ★ 2026-10-10（degraded 第一次被前端消费）：模型这次没老实给决策
+   * （路由失败兜底 / 我们修正过），而这个决策要去**花钱生成** —— 回复里
+   * 要说清"这次拿不太准"，不对的话用户知道换个说法（而不是怀疑自己没说清）。
+   */
+  it('★（10-10）degraded 的生成：回复里带上「拿不太准」的提醒', async () => {
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉路人', reply: '我直接按你说的试了一下。', degraded: true }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+
+    expect(lastReply()).toContain('我直接按你说的试了一下。')   // 原句还在
+    expect(lastReply()).toContain('拿不太准')                  // 提醒也在
+  })
+
+  it('（10-10）正常决策（degraded: false）：一个字都不多嘴', async () => {
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉路人', reply: '好，这就去改。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+
+    expect(lastReply()).toBe('好，这就去改。')
+  })
+
+  it('（10-10）纯参数路即使 degraded 也不提醒 —— 免费可逆，不值当报警', async () => {
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 20 }, reply: '好，亮一点。', degraded: true }))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('亮一点')
+
+    expect(lastReply()).toBe('好，亮一点。')
+    expect(api.postEdit).not.toHaveBeenCalled()
+  })
+
+  /**
+   * ★ 2026-10-10：生成失败后**一键重试** —— 不用重新打字。
+   *
+   * 最痛的挫败是"等了半天、花了钱、失败了还要重说一遍"，而修复几乎白送：
+   * 额度已自动退还（server/app.ts 的退款），当初那句 editPrompt 就在失败现场里
+   * —— 重试用它原样重跑，不重新路由（少花一次路由的钱，也少等 1.5 秒）。
+   */
+  it('★（10-10）生成失败：失败消息上有一颗「再试一次」，点了用同一句话重跑', async () => {
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉后面的路人', reply: '好，这就去改。' }))
+    vi.mocked(api.postEdit).mockRejectedValueOnce(
+      new api.ApiError('UPSTREAM_FAILED', 'AI 服务暂时没响应，再试一次'))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+
+    const retryBtn = () => [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '再试一次')
+    expect(retryBtn()).toBeTruthy()          // ① 失败消息上挂着它
+
+    // 这一次成功
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await clickByText('再试一次')
+
+    expect(api.postEdit).toHaveBeenCalledTimes(2)                                   // ② 真的又跑了一次
+    expect(vi.mocked(api.postEdit).mock.calls[1][0].editPrompt).toBe('去掉后面的路人') //    还是同一句话
+    expect(lastReply()).toBe('好，这就去改。')                                        // ③ 成功了才说当初那句应答
+    expect(retryBtn()).toBeUndefined()                                              // ④ 点过就作废（按钮收掉）
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)               // 新那一版真的落地了
+  })
+
+  it('★（10-10）失败后画面变了再点重试：说清没重试、钱一分不花', async () => {
+    // 第一版成功（转盘上两格）
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉后面的路人' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+    await renderApp()
+    await uploadPhoto()
+    await say('先把后面那个人去掉')     // 成功 → step1
+
+    // 第二句失败
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '天空换成黄昏' }))
+    vi.mocked(api.postEdit).mockRejectedValueOnce(
+      new api.ApiError('UPSTREAM_FAILED', 'AI 服务暂时没响应，再试一次'))
+    await say('天空换成黄昏')
+
+    // 用户跳回原图 —— 画面变了
+    await act(async () => {
+      ;(container.querySelector('.strip-node') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    await clickByText('再试一次')
+
+    expect(api.postEdit).toHaveBeenCalledTimes(2)     // 没有第三次：拦住了
+    expect(container.textContent).toContain('画面已经变了')
+  })
+
+  it('（10-10）「停止」不算失败：不出现「再试一次」', async () => {
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '去掉路人' }))
+    vi.mocked(api.postEdit).mockImplementation((_o, signal) => {
+      return new Promise((_res, rej) => {
+        signal?.addEventListener('abort', () => {
+          const e = new Error('aborted'); e.name = 'AbortError'; rej(e)
+        })
+      })
+    })
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+    await act(async () => {
+      (container.querySelector('.chat-input button:not(.chat-plus)') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(lastReply()).toBe('停了。')
+    expect([...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '再试一次')).toBeUndefined()
+  })
 })
 
 describe('★ 再来一版：同一句话重掷一次', () => {

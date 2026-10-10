@@ -136,6 +136,10 @@ describe('图标（2026-10-01 统一走 lucide）', () => {
         //   （「回到这一步 / 你在这里」两颗文字提示退役）。少给一个 `tsc` 就红。
         rerunnable={[1]} jumpableIds={[1]} marking={false} canConfirmMark={false}
         onSend={() => {}} onStop={() => {}} onCard={() => {}}
+        // ★ 2026-10-10：「等待要诚实」那批又多三个（同上 —— 给全，少一个 `tsc` 就红）：
+        //   `generating`（输入格那颗是「停止」还是禁用的「发送」）、
+        //   `retryId` + `onRetry`（生成失败后的「再试一次」）。
+        generating={false} retryId={null} onRetry={() => {}}
         onRerun={() => {}} onConfirmMark={() => {}} onCancelMark={() => {}}
         futureSteps={0} replacing={false}
         onConfirmReplace={() => {}} onCancelReplace={() => {}}

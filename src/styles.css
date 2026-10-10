@@ -2003,6 +2003,21 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    而点下去什么都没发生（那正是这个项目最不喜欢的一种按钮）。
    特异性 0-2-0 和上面那条 hover 相同，靠**文件顺序**分胜负：这条必须在后面。 */
 .bubble-rerun:disabled { color: var(--muted-2); border-color: var(--line); background: transparent; }
+
+/* ★ 2026-10-10：生成失败后的「再试一次」（挂在失败消息上，点一次算一次）。
+   和「再来一版」同一副药丸骨架（都是"对这条消息的下一件事"），但它是**出路**
+   —— 失败刚发生，用户在找的就是它 —— 所以穿主色、**常态就亮着**，
+   不像「再来一版」灰着等悬停。
+   ⚠️ 悬停和禁用两条都得自己写：`.bubble-retry`(0-1-0) 压得过全局那两条
+   `:where()`(0-0-1)，不写的话鼠标停上去（或者灰掉之后再悬停）都没动静。 */
+.bubble-retry {
+  display: inline-flex; align-items: center;
+  padding: 6px 12px; font-size: 12px;
+  border-radius: var(--r-pill);
+  background: var(--accent-tint); border-color: var(--accent); color: var(--accent-300);
+}
+.bubble-retry:hover:not(:disabled) { border-color: var(--accent-500); }
+.bubble-retry:disabled { color: var(--muted-2); border-color: var(--line); background: transparent; }
 /* ★ 2026-10-05 到 10-06 之间这里有一条 `.bubble-current`（「你在这里」那颗
    **点不动的位置标记**，穿的是同一副药丸骨架）。它和「回到这一步」一起退役了
    —— "我在哪"改由转盘正面那一格回答（`.strip-node.current`）。

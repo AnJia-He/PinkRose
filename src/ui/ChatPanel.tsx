@@ -9,6 +9,11 @@ import logoAvatar from '../assets/logo/emperor-avatar.svg'
 // ★ 2026-10-08：勾选的分量是"一问一答"（见 `togglePick`）—— 配对规则和 App
 //   那本删除账共用同一份（core/messages.ts），别在这儿另写一套。
 import { expandDeleteIds } from '../core/messages'
+// ★ 2026-10-10：忙气泡的**秒表**（"大约 10 秒"过点换成真实经过的秒数）。
+//   它住在那边的文件里（挨着 `BUSY_GENERATING`）。⚠️ 这里**故意不 import
+//   那个常量** —— "是不是真生成"这一半由 App 算好（`generating` prop）传进来，
+//   两处各判一次的话，哪天判据变了两处会不一致。
+import { busyText } from '../app/useGeneration'
 
 export type ChatMessage = {
   id: number
@@ -23,6 +28,30 @@ export type ChatMessage = {
  */
 const STICK_PX = 80
 
+/**
+ * ★ 2026-10-10（用户要的"等待要诚实"）：忙态持续了多少秒 —— 忙气泡那颗**秒表**。
+ *
+ * `busy` 换值就从头数：每段忙说自己的时长（"已经改 N 秒"不该算上前面那段
+ * "正在思考…"的时间，那是两件事）。没有 busy 时是 0（气泡根本不渲染）。
+ *
+ * ⚠️ 它纯粹是**显示层**的：`busy` 的值、App 的身份判据、服务端一个字不碰。
+ * ⚠️ 记的是「这一轮计的是哪句忙」而不只是秒数：busy 一变，**渲染当帧**
+ *   就落到 0（`tick.key === busy` 那道比较），不会闪一帧上一段的秒数
+ *   （effect 是画完之后才跑的，光靠 effect 里 setSec(0) 挡不住那一帧）。
+ */
+function useBusySeconds(busy: string | null): number {
+  const [tick, setTick] = useState<{ key: string | null; sec: number }>({ key: null, sec: 0 })
+  useEffect(() => {
+    if (!busy) { setTick({ key: null, sec: 0 }); return }
+    const t0 = Date.now()
+    setTick({ key: busy, sec: 0 })
+    const h = setInterval(
+      () => setTick({ key: busy, sec: Math.floor((Date.now() - t0) / 1000) }), 1000)
+    return () => clearInterval(h)
+  }, [busy])
+  return tick.key === busy ? tick.sec : 0
+}
+
 type Props = {
   messages: ChatMessage[]
   cards: SuggestCard[]
@@ -33,8 +62,25 @@ type Props = {
   suggesting: boolean
   onSend: (text: string) => void
   /** 按「停止」—— 掐掉正在跑的那一次生成（见 App.tsx 的 stopGeneration）。
-   *  只在 `busy` 时会出现：那一格平时是「发送」。 */
+   *  ★ 2026-10-10：只在**生成那一段**出现（判据是下面那个 `generating`）——
+   *  别的忙态那颗是**禁用的「发送」**。原来 4 种忙态共用一颗「停止」，而
+   *  abort 只挂在生成上：其余三段按下去没反应也没反馈，像按键坏了。 */
   onStop: () => void
+  /**
+   * ★ 2026-10-10：**这一段是不是真的在生成**（App 那边是
+   * `busy === BUSY_GENERATING` 的身份比较，别在这儿字符串嗅探）。
+   * 它管输入框那一格：生成中 = 「停止」（真能掐断），别的忙态 = 禁用的「发送」。
+   */
+  generating: boolean
+  /**
+   * ★ 2026-10-10：**哪条消息上挂着「再试一次」**（生成失败的那条失败消息；
+   * `null` = 没有）。点了就用失败现场原样重跑那次生成（见 useGeneration 的
+   * `retryGeneration`）——按钮**点一次算一次**，App 那边消费掉就消失，
+   * 别在这儿再做一层开合。
+   */
+  retryId: number | null
+  /** 按「再试一次」（见上面 `retryId`）。 */
+  onRetry: () => void
   onCard: (card: SuggestCard) => void
   /** ★ 2026-10-03：用户**在欢迎页的对话区里先打的那句话**（没有就是空串）。
    *  它只做一件事：把它填进下面那个输入框，用户按一下发送就行 ——
@@ -135,7 +181,8 @@ type Props = {
 }
 
 export default function ChatPanel({
-  messages, cards, busy, suggesting, onSend, onStop, onCard, onRerun, rerunnable,
+  messages, cards, busy, suggesting, onSend, onStop, generating, retryId, onRetry,
+  onCard, onRerun, rerunnable,
   jumpableIds, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
   futureSteps, replacing, onConfirmReplace, onCancelReplace,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
@@ -152,6 +199,8 @@ export default function ChatPanel({
    */
   const [renaming, setRenaming] = useState(false)
   useEffect(() => { setRenaming(false) }, [title])
+  // ★ 2026-10-10：忙气泡那颗秒表（见 `useBusySeconds`）。
+  const busySec = useBusySeconds(busy)
   // ★ 2026-10-05：**输入框那颗加号**（用户截图 + 原话「我觉得在对话框那边设一个
   //   加号，然后点击加号里面有滤镜以及以后添加的功能」）。
   //
@@ -439,8 +488,18 @@ export default function ChatPanel({
                     onChange={() => togglePick(m.id)}
                     aria-label="选中这条记录" />
                 </div>
-              ) : (rerunnable.includes(m.id) || hasMenu) && (
+              ) : (rerunnable.includes(m.id) || hasMenu || retryId === m.id) && (
                 <div className="bubble-actions">
+                  {/* ★ 2026-10-10：「再试一次」—— 生成失败后的一键重跑
+                      （失败消息上才有，判据是 `retryId`，见 useGeneration 的
+                      `retryGeneration`）。排在最前面：失败刚发生，这是这条
+                      消息当下**最该点**的一颗。
+                      点了就消失（App 那边点一次算一次）——这里不做开合。 */}
+                  {retryId === m.id && (
+                    <button className="bubble-retry" disabled={!!busy} onClick={onRetry}>
+                      再试一次
+                    </button>
+                  )}
                   {/* 「再来一版」= 同一句话重掷一次。**它不是"回到这一步"那类提示**
                       —— 它是一件真事：拿着当初那句话再花一次钱重跑（见 App 的
                       `onRerun`），所以"提示不要了"那一次把它留下了。
@@ -541,9 +600,12 @@ export default function ChatPanel({
                 三颗**跳动的点**（打字指示器那种），替掉了原来那个 12px 的小
                 转圈 —— 三颗错开的点读起来是"还在说"、转圈读起来是"还在装"，
                 而这条气泡说的正是"我还在想 / 还在改"。
+                ★ 2026-10-10：那句话过了 5 秒换成**真实秒数**（见 `busyText`）
+                —— 三颗点只说明"动着"，秒数说明"动了多久"（写死的"大约 10 秒"
+                在 8~21 秒的真实耗时面前，过点就开始骗人）。
                 ⚠️ `aria-hidden`：它只是动静，句子本身已经把话说完了。 */}
             <div className="bubble assistant pending">
-              {busy}
+              {busyText(busy, busySec)}
               <span className="pending-dots" aria-hidden="true"><i></i><i></i><i></i></span>
             </div>
             {/* ★ 2026-10-06（晚）：这里原来摆着"图要出现的位置"那块占位
@@ -688,12 +750,18 @@ export default function ChatPanel({
             AI 产品在这个位置放的都是「停止」（ChatGPT / Claude / Gemini 全体，
             组件库那边是 Ant Design X 的 Sender `loading` 态）。
 
+            ★ 2026-10-10：判据从 `busy` 收窄到 `generating` —— 「停止」只在
+            **它真的管用**的那一段出现（abort 只挂在生成上）。其余忙态
+            （"正在思考…" / "正在打开…"）穿的是**禁用的「发送」**：那几段本来
+            就短，没人会真的想取消，而"亮着一颗按了没反应的停止"比"灰着的
+            发送"糟得多（真机上的感觉：像按键坏了）。
+
             ⚠️ 用 `type="button"`：同一个 form 里，`type="submit"` 会让它
             在按下的同时把表单提交一遍（那就变成"停止"顺手又发了一次）。
-            ⚠️ 它**不 disabled** —— 一个按不动的"停止"比没有更让人着急。 */}
-        {busy
+            ⚠️ 停止**不 disabled** —— 一个按不动的"停止"比没有更让人着急。 */}
+        {generating
           ? <button type="button" className="stop" onClick={onStop}>停止</button>
-          : <button type="submit">发送</button>}
+          : <button type="submit" disabled={!!busy}>发送</button>}
       </form>
       )}
 

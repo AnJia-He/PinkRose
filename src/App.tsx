@@ -713,7 +713,10 @@ export default function App() {
   // ★ 2026-10-05：最新一步的 id —— `applyDecision` 判"要不要先问一句"用它。
   const tipId = history.length > 0 ? history[history.length - 1]!.id : null
 
-  const { say, runGenerate, stopGeneration, applyDecision, loadCards, nextId } =
+  const { say, runGenerate, stopGeneration, applyDecision, loadCards, nextId,
+    // ★ 2026-10-10：失败重试（「再试一次」）——`retryId` 是哪条失败消息上挂按钮，
+    //   `retryGeneration` 是点它的动作（失败现场存在 hook 里，这里只转发）。
+    retryId, retryGeneration } =
     useGeneration({
       image, setImage, params, setParams, lut,
       // ★ 2026-10-05（T11）：说话那条路落滤镜的两样 —— `setLut` 落地、
@@ -2178,6 +2181,13 @@ export default function App() {
                   draft={draft}
                   onSend={send}
                   onStop={stopGeneration}
+                  // ★ 2026-10-10：这两对是「等待要诚实」那批 ——
+                  //   `generating`（这份文件上面那个 `busy === BUSY_GENERATING`）
+                  //   决定那一格是「停止」还是禁用的「发送」；
+                  //   `retryId` / `onRetry` 是生成失败后的「再试一次」。
+                  generating={generating}
+                  retryId={retryId}
+                  onRetry={retryGeneration}
                   onCard={onCard}
                   // ★ 2026-10-06（晚）：`onJump` 和 `currentId` 两个 prop 撤了 ——
                   //   对话里那两颗文字提示（「回到这一步」/「你在这里」）随用户

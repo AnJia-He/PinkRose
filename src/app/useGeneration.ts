@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { applyDeltas, type Adjustments } from '../../shared/adjustments.ts'
 import { sameLutName, type LutMeta, type LutRef } from '../../shared/lut.ts'
 import type { RouteDecision, SuggestCard } from '../../shared/protocol.ts'
@@ -34,6 +34,27 @@ import type { ChatMessage } from '../ui/ChatPanel'
  * 失效（暗罩和占位块再也不会出现，测试和 typecheck 全绿）。
  */
 export const BUSY_GENERATING = '正在改…大约 10 秒'
+
+/**
+ * 忙气泡那句话（★ 2026-10-10）—— **写死的"大约 10 秒"过了点就换成真实秒数**。
+ *
+ * 实测生成要 8~21 秒，而那句话一过 10 秒就开始骗人，用户以为卡死。
+ * 前 5 秒照原句（生成那句自带"大约 10 秒"的预期，先给个念想）；
+ * 5 秒之后一律换成"已经等了 N 秒"——秒数每秒在跳，本身就是"它还活着"的
+ * 信号，比任何安抚的话都硬。没有时间部分的忙句（"正在思考…"）走**追加**。
+ *
+ * ⚠️ 生成那句的"正在改…"前缀在这里**又写了一遍**（常量里是完整句）——
+ *   改那句文案时两处一起改（这个函数就挨着常量，防的就是漏）。
+ * ⚠️ `BUSY_GENERATING` 的值本身一个字不许动：它是"这一段是不是真生成"的
+ *   身份判据（App 的 `busy === BUSY_GENERATING`），不是显示文案；
+ *   秒表是**另起一层**（显示层），常量不动。
+ */
+export function busyText(busy: string, sec: number): string {
+  if (sec < 5) return busy
+  return busy === BUSY_GENERATING
+    ? `正在改…已经等了 ${sec} 秒`
+    : `${busy}已经等了 ${sec} 秒`
+}
 
 export type GenerationDeps = {
   /** 当前底图。生成送的是**它**（不是原图、也不是画布），见 `runGenerate`。 */
@@ -140,6 +161,29 @@ export function useGeneration(deps: GenerationDeps) {
    * 不能跑完就无脑置 null：那样后一次的 controller 会被前一次的收尾抹掉。
    */
   const editAbortRef = useRef<AbortController | null>(null)
+
+  /**
+   * ★ 2026-10-10：**失败重试的现场** —— 生成失败时留一份，供「再试一次」原样重跑。
+   *
+   * 存的是那次调用的全套入参（editPrompt / 参数 / 滤镜 / 底图 / 出发位置 / 应答句）
+   * 加出发时的底图版本号（`seq`，点击那一刻验证环境还成不成立）。
+   * ⚠️ 现场用 ref、`retryId` 用 state —— 分工：现场是给点击处理器读的（不需要渲染），
+   *   "哪条消息上挂按钮"才需要渲染。
+   * ⚠️ `source` 存的是**那一刻真正送出去的那张**（普通生成是 `image.bitmap`，
+   *   点选那条是画过圈的临时画布）—— 重试要连那个圈一起重跑，不能用"当前底图"
+   *   现场重造（圈就丢了）。
+   */
+  const retryRef = useRef<{
+    editPrompt: string
+    paramsAtStep: Adjustments
+    lutAtStep: LutRef | null
+    source: Sizable
+    origin: { stepId: number; keepFromMsg: number }
+    reply: string
+    seq: number
+  } | null>(null)
+  /** 哪条消息上挂着「再试一次」（null = 没有）。见上面 retryRef 那段。 */
+  const [retryId, setRetryId] = useState<number | null>(null)
 
   const nextId = () => ++idRef.current
 
@@ -318,6 +362,10 @@ export function useGeneration(deps: GenerationDeps) {
       markDirty(messageId, true)
       // ★ 位置挪到新那一步（它是新的"最新"）。
       setCursorId(messageId)
+      // ★ 2026-10-10：成功一版之后，之前失败的那次现场就翻篇了（按钮收掉）——
+      //   它要重跑的是"当初那件事"，而画面上已经多了一版，语义不再成立。
+      retryRef.current = null
+      setRetryId(null)
       // ↑ 只换 base。params 原封不动继续生效 —— 整个数据模型的基石。
     } catch (e) {
       // ★ 用户按了「停止」——**这不是失败**。
@@ -332,7 +380,15 @@ export function useGeneration(deps: GenerationDeps) {
       // 票中途失效 → 回登录页（见 isUnauthorized）。这一句和下面那句 say 是
       // **互斥**的：说"没改成"和"你被登出了"是两件事，不能一起说。
       if (isUnauthorized(e)) { setUser(null); return }
-      say(errorText(e, '这次没改成功，再试一次？'))
+      // ★ 2026-10-10：失败现场留一份 —— 失败消息上给一颗「再试一次」
+      //   （不用重新打字）。额度服务端已自动退还（server/app.ts 的退款），
+      //   重试花的就是刚退还的那一次；editPrompt 原样复用，连路由都不再跑。
+      //   ⚠️ 环境还成不成立**不在这一刻判**（用户可能跳走又跳回来）——
+      //   点击那一刻再验（见 retryGeneration）。
+      retryRef.current = {
+        editPrompt, paramsAtStep, lutAtStep, source, origin, reply, seq: seqAtStart,
+      }
+      setRetryId(say(errorText(e, '这次没改成功，再试一次？')))
     } finally {
       // 只有"还是我这一次"才清 —— 别把后一次的 controller 抹掉
       if (editAbortRef.current === ac) editAbortRef.current = null
@@ -367,6 +423,33 @@ export function useGeneration(deps: GenerationDeps) {
   const stopGeneration = useCallback(() => {
     editAbortRef.current?.abort()
   }, [])
+
+  /**
+   * ★ 2026-10-10：「再试一次」—— 用失败现场**原样重跑**那次生成（不重新路由）。
+   *
+   * 两条验证（点击这一刻才判，不在失败那一刻判 —— 用户可能跳走又跳回来）：
+   *   · 底图还是当初那一版（切会话 / 换照片 / 裁剪 / 又一次成功生成都会推 `baseSeq`）；
+   *   · 光标还站在当初出发的那一步（失败之后用户能随便跳转 —— `onJump` 没有 busy 闸）。
+   * 不成立就说清"画面已经变了"+出路（文案规范 §5：哪不对 + 怎么办），
+   * 并且**一分钱不花**。
+   *
+   * ⚠️ 先消费掉现场（`retryRef.current = null`）再验证：这个按钮**点一次算一次**，
+   *   无论接下来成不成都不该再挂着一颗（第二次点击要么环境已变、要么在打重跑）。
+   * ⚠️ 判据通过 ⇒ 存的 `source` 必然还有效（底图没换版 = 没有任何 close 发生过）。
+   */
+  const retryGeneration = useCallback(() => {
+    const r = retryRef.current
+    retryRef.current = null
+    setRetryId(null)
+    if (!r) return
+    if (baseSeqRef.current !== r.seq || cursorIdRef.current !== r.origin.stepId) {
+      noticeBad('画面已经变了 —— 刚才那次没法重试了。要的话，再说一遍。')
+      return
+    }
+    void runGenerate(r.editPrompt, nextId(), r.paramsAtStep, r.lutAtStep,
+      r.source, r.origin, r.reply)
+    // ⚠️ 依赖里没有 `nextId`（它只碰 ref —— 和 `say` 那边一个口径）。
+  }, [runGenerate, noticeBad])
 
   /** 应用一个决策：参数走本地立刻生效，生成式走云端。 */
   const applyDecision = useCallback(async (d: RouteDecision, keepFromMsg: number) => {
@@ -424,6 +507,15 @@ export function useGeneration(deps: GenerationDeps) {
     }
 
     const isGen = d.route === 'generate' || d.route === 'both'
+    // ★ 2026-10-10（degraded 第一次被前端消费）：模型这次**没老实给决策**
+    //   （路由失败兜底 / 我们修正过，见 shared/protocol.ts 那段）——而这几条
+    //   要去**花钱生成**。回复里说清"这次拿不太准"，不对的话用户知道换个
+    //   说法（而不是怀疑自己没说清）。
+    //   ⚠️ 只拼给**生成**那两条（真生成 / 先问一句那条 —— 问完还是要生成）：
+    //   纯参数那条免费可逆（参数被钳一下不值当报一次警），歧义那条还没花钱。
+    const replyText = d.degraded && isGen
+      ? `${d.reply || '好了。'}这次我拿不太准，不对的话换个说法再试试。`
+      : (d.reply || '好了。')
     // ★ 2026-10-05（终审 I1）：**读一次、用两处**（确认条闸门 + `origin.stepId`）
     //   —— 它们必须是同一个位置。⚠️ 读的是**同步影子**（`cursorIdRef`），不是
     //   闭包里的 state：`send` 发出到这一刻隔着两段 await（1.3~1.6 秒），那段
@@ -439,7 +531,7 @@ export function useGeneration(deps: GenerationDeps) {
     if (isGen && image && cur !== null && tipId !== null && cur !== tipId && d.editPrompt) {
       setPendingReplace({
         stepId: cur, editPrompt: d.editPrompt,
-        reply: d.reply || '好了。', keepFromMsg,
+        reply: replyText, keepFromMsg,
       })
       return
     }
@@ -469,7 +561,7 @@ export function useGeneration(deps: GenerationDeps) {
       //   理由见上面滤镜那块。⚠️ 别"顺手"改回闭包的 `lut`。
       //   ⚠️ 切点用上面那个 `cur`（读一次、用两处 —— 见它那段注释）。
       await runGenerate(d.editPrompt, mid, nextParams, nextLut, image.bitmap,
-        { stepId: cur, keepFromMsg }, d.reply || '好了。')
+        { stepId: cur, keepFromMsg }, replyText)
       return
     }
     // 纯参数 / 不生成这条：没有"等一张图"这回事，照旧**立刻说**。
@@ -477,7 +569,7 @@ export function useGeneration(deps: GenerationDeps) {
     //   editPrompt** 的退化情形都落在这里 —— 话说、不动手。最后那一项是
     //   2026-10-06 补的闸门：那种决策进 `runGenerate` 会撞上它开头那句
     //   `if (!editPrompt) return`，一句反馈都没有 —— 静默失败。）
-    say(d.reply || '好了。')
+    say(replyText)
     // ★ T11 又读了 `luts` / `setLut`（上面那块滤镜落地），两个都得进依赖数组 ——
     //   漏掉 `luts` 的话，清单刷新之后这个回调还在用旧的（名字换成错 id）；
     //   `setLut` 是 useState 的 setter（identity 稳定），进来只是守住这条规矩。
@@ -528,5 +620,5 @@ export function useGeneration(deps: GenerationDeps) {
       console.error(e)
     }
   }, [])
-  return { say, runGenerate, stopGeneration, applyDecision, loadCards, nextId }
+  return { say, runGenerate, stopGeneration, applyDecision, loadCards, nextId, retryId, retryGeneration }
 }
