@@ -26,10 +26,13 @@ const CANCEL = 'rename-cancel'
  *   · 保存**只发一次** —— 回车 / Esc / ✕ 之后输入框被卸载，浏览器**不补 blur**
  *     （作品页顶了四天的那条，SessionsPage 的测试用"请求计数 === 1"钉着）。
  *
+ * ★ 2026-10-10：第四处 —— 调色面板「我的预设」里每一行的改名（`PresetManager`）。
+ *   上限（30）和可访问的名字（「预设名字」）由它那边给。
+ *
  * ⚠️ 它**不套壳**，两颗东西是**兄弟**（一个 fragment）：
- *   三处调用方都给输入框的类挂了 `flex: 1`（`.detail-head` / `.session-row` /
- *   `.chat-head` 那一行的 flex 孩子），包一层 `div` 会让那个 `flex: 1`
- *   落错地方 —— 作品详情页那段注释专门写过这件事。
+ *   各处调用方都给输入框的类挂了 `flex: 1`（`.detail-head` / `.session-row` /
+ *   `.chat-head` / ★ 10-10 加的 `.my-presets-rename` 那一行的 flex 孩子），
+ *   包一层 `div` 会让那个 `flex: 1` 落错地方 —— 作品详情页那段注释专门写过这件事。
  */
 export function RenameInput({
   className, defaultValue, placeholder, maxLength, ariaLabel, onCommit, onCancel,

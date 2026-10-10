@@ -36,14 +36,17 @@ import {
   setSlider,
   stepItems,
   tileNamed,
+  typeIn,
   uploadPhoto,
   waitPersist,
+  withPresets,
   withSessions,
   withWorks,
 } from './test/appHarness'
 import { act } from 'react'
 import { ZERO } from '../shared/adjustments.ts'
 import { type LutMeta } from '../shared/lut.ts'
+import { MAX_PRESETS, MAX_PRESET_NAME, type PresetMeta } from '../shared/preset.ts'
 import { matchToReference, type Rgb } from './core/colorMatch'
 import * as decodeMod from './image/decode'
 import * as api from './api/client'
@@ -225,7 +228,11 @@ describe('滤镜', () => {
     await click(tileNamed('黄昏'))
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
 
-    await click(adjustPanel().querySelector('.panel-head button') as HTMLButtonElement)
+    // ⚠️ 按文字找，不按位置（★ 2026-10-10）：「我的预设」那颗也住在 `.panel-head`
+    //    里了 —— `querySelector('.panel-head button')` 会点到它（位置是排版的事，
+    //    文字才是用户的认知，本文件各处一直是这么找的）。
+    await click([...adjustPanel().querySelectorAll('.panel-head button')]
+      .find(b => (b.textContent ?? '').trim() === '重置') as HTMLButtonElement)
 
     expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
@@ -1677,5 +1684,223 @@ describe('★ 步骤小图：活着时重抓 + 恢复时离屏重画（Task 8）
     // ④ 走完就还回去：不 `dispose` 的话每恢复一次漏一条管线 + 一张画布
     //    （而且这条路的收尾是 finally —— 失败/作废那两条也一样）。
     expect(pipe.disposed).toBe(true)
+  })
+})
+
+/**
+ * ★ 2026-10-10（「我的预设」，设计 §5.1）：调色面板头那颗「我的预设」——
+ * 存 / 改名 / 删，全部**就地展开**（不弹窗，全站规矩）。
+ *
+ * 这一层走的是**真链路**：点按钮 → App 那三个回调 → `api/presets.ts` → 假 fetch
+ * （`withPresets` 那一套装了状态的四个动词）。清单怎么拉、`known` 怎么算在
+ * `usePresets` 那边；"存下来的那个请求体对不对"只有走真链路才量得到。
+ */
+describe('★ 我的预设：存 / 管（2026-10-10）', () => {
+  const PRE = (id: number, name: string): PresetMeta =>
+    ({ id, name, params: ZERO, createdAt: 0 })
+
+  /** 点一下 + 让 React 把状态刷完（本文件各 describe 的惯例）。 */
+  const click = async (el: HTMLElement) => {
+    await act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
+  }
+  /** 上传照片 → 进调色屏（这几条的前提都是"面板在眼前"）。 */
+  const gotoAdjust = async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+  }
+  /** 面板头那颗「我的预设」（点开 = 就地展开那一块）。 */
+  const mineBtn = () => adjustPanel().querySelector('.presets-mine') as HTMLButtonElement
+  const openMine = () => click(mineBtn())
+  const nameBox = () => container.querySelector('input.my-presets-name') as HTMLInputElement
+  const saveBtn = () => [...container.querySelectorAll('.my-presets-save button')]
+    .find(b => (b.textContent ?? '').trim() === '存下来') as HTMLButtonElement
+  const rows = () => [...container.querySelectorAll('.my-presets-row')]
+  /** 打到 /api/presets 的那几笔请求（按方法挑）。 */
+  const presetCalls = (method: string) => fetchMock.mock.calls.filter(([u, init]) =>
+    String(u).startsWith('/api/presets')
+    && ((init as RequestInit | undefined)?.method ?? 'GET') === method)
+
+  it('面板头有「我的预设」——点开就地展开，不是弹窗', async () => {
+    await gotoAdjust()
+    expect(mineBtn().textContent?.trim()).toBe('我的预设')
+    expect(mineBtn().getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.my-presets')).toBeNull()
+
+    await openMine()
+    expect(mineBtn().getAttribute('aria-expanded')).toBe('true')
+    // **就地**：这一块住在面板里，摆在头和「照着这张调」之间
+    // （`compareDocumentPosition` 的 FOLLOWING = 后者在它后面）
+    const mine = adjustPanel().querySelector('.my-presets') as HTMLElement
+    const ref = adjustPanel().querySelector('.presets-ref') as HTMLElement
+    expect(mine.compareDocumentPosition(ref) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 不是弹窗：没有 dialog、没有浮层（这一屏本来就没有弹窗文化）
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
+
+    // 再点一下头 = 收起（就地展开没有"怎么关"的焦虑）
+    await openMine()
+    expect(mineBtn().getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.my-presets')).toBeNull()
+  })
+
+  it('存一套：填名字 → 点「存下来」→ POST /api/presets 体是 {name, params: 当前那套}', async () => {
+    withPresets([])
+    await gotoAdjust()
+    await setSlider('亮度', 40)              // 现在的这套 = {...ZERO, exposure: 40}
+    await openMine()
+    await typeIn(nameBox(), '黄昏旅拍')
+    await click(saveBtn())
+
+    const posts = presetCalls('POST')
+    expect(posts).toHaveLength(1)
+    // 整份参数一起送（不是"当前这个滑块的差量"）—— 存的就是面板上此刻这一套
+    expect(bodyOf(posts[0]!)).toEqual({ name: '黄昏旅拍', params: { ...ZERO, exposure: 40 } })
+    // 成功之后**重拉**清单：那一行立刻在列表里（不在本地往名单里塞一条）
+    expect(rows()[0]?.textContent).toContain('黄昏旅拍')
+    // 输入框清空 —— 接着存第二遍时不用先删字
+    expect(nameBox().value).toBe('')
+  })
+
+  it('名字空着时「存下来」禁用（不留点了没反应的按钮）', async () => {
+    await gotoAdjust()
+    await openMine()
+    expect(saveBtn().disabled, '一开始空着').toBe(true)
+    // 上限挂在那格输入上（只判不截断：超了服务端会拒，见 shared/preset.ts 的裁定）
+    expect(nameBox().maxLength).toBe(MAX_PRESET_NAME)
+    await typeIn(nameBox(), '   ')
+    expect(saveBtn().disabled, '只打空格也算空（判的是 trim 之后）').toBe(true)
+    await typeIn(nameBox(), '海边')
+    expect(saveBtn().disabled).toBe(false)
+  })
+
+  it('列表里每一套有一颗铅笔一颗垃圾桶；点垃圾桶先就地确认「删了就找不回来了。」', async () => {
+    withPresets([PRE(11, '黄昏旅拍'), PRE(12, '清透日系')])
+    await gotoAdjust()
+    await openMine()
+
+    const items = [...container.querySelectorAll<HTMLElement>('.my-presets-item')]
+    expect(items).toHaveLength(2)
+    for (const item of items) {
+      expect(item.querySelector('button[aria-label="改名"]'), '每一套都要有改名').toBeTruthy()
+      expect(item.querySelector('button[aria-label="删除"]'), '每一套都要有删除').toBeTruthy()
+    }
+
+    // 点第二行的垃圾桶 → **在那一行下面**就地摊开代价；这时候什么都还没删
+    await click(items[1]!.querySelector('button[aria-label="删除"]') as HTMLElement)
+    const ask = items[1]!.querySelector('.luts-ask') as HTMLElement
+    expect(ask, '确认块就摊在点的那一行下面').toBeTruthy()
+    expect(ask.textContent).toContain('删了就找不回来了。')
+    expect(items[0]!.querySelector('.luts-ask'), '问的是点的那一行').toBeNull()
+    expect(presetCalls('DELETE')).toHaveLength(0)
+
+    // 「算了」= 把这一问收起来，什么都不动
+    await clickByText('算了')
+    expect(container.querySelector('.luts-ask')).toBeNull()
+    expect(rows()).toHaveLength(2)
+
+    // 再来一次、这回「确认删除」→ DELETE 那一套 → 它从列表里走了
+    await click(items[1]!.querySelector('button[aria-label="删除"]') as HTMLElement)
+    await clickByText('确认删除')
+    expect(presetCalls('DELETE').map(c => String(c[0]))).toEqual(['/api/presets/12'])
+    expect(rows()).toHaveLength(1)
+    expect(container.textContent).not.toContain('清透日系')
+  })
+
+  it('改名：点铅笔就地变输入框（回车保存、Esc 取消，和全站同一套手势）', async () => {
+    withPresets([PRE(11, '黄昏旅拍')])
+    await gotoAdjust()
+    await openMine()
+
+    const row = () => rows()[0] as HTMLElement
+    const pencil = () => row().querySelector('button[aria-label="改名"]') as HTMLElement
+    await click(pencil())
+
+    // 就地变输入框：预填现在的名字（`kit/RenameInput` —— 全站同一套手势）
+    const box = row().querySelector('input') as HTMLInputElement
+    expect(box.value).toBe('黄昏旅拍')
+    expect(box.getAttribute('aria-label')).toBe('预设名字')
+
+    // Esc = 取消：一个 PATCH 都不发，名字原样
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(presetCalls('PATCH')).toHaveLength(0)
+    expect(row().querySelector('input')).toBeNull()
+    expect(row().textContent).toContain('黄昏旅拍')
+
+    // 回车 = 保存 → PATCH /api/presets/11，体里**只有名字**
+    await click(pencil())
+    const box2 = row().querySelector('input') as HTMLInputElement
+    await typeIn(box2, '海边日落')
+    await act(async () => {
+      box2.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const patches = presetCalls('PATCH')
+    expect(patches).toHaveLength(1)
+    expect(String(patches[0]![0])).toBe('/api/presets/11')
+    expect(bodyOf(patches[0]!)).toEqual({ name: '海边日落' })
+    // 成功之后显示的是我们改的名字（重拉回来的），编辑态收起来了
+    expect(row().textContent).toContain('海边日落')
+    expect(row().querySelector('input')).toBeNull()
+  })
+
+  it('满 30 套：输入行禁用 + 那句「最多 30 套预设，先删掉一套再存。」', async () => {
+    withPresets(Array.from({ length: MAX_PRESETS }, (_, i) => PRE(100 + i, `第 ${i + 1} 套`)))
+    await gotoAdjust()
+    await openMine()
+
+    expect(nameBox().disabled).toBe(true)
+    expect(saveBtn().disabled).toBe(true)
+    // 只禁不说 = 用户以为按钮坏了 —— 那句出路就在旁边
+    expect(container.textContent).toContain('最多 30 套预设，先删掉一套再存。')
+  })
+
+  it('清单还没到手时说的是「还没到手」不是「还没有」', async () => {
+    // 把 `GET /api/presets` 挂住不回 —— 清单"在路上"那一态
+    const gate = makeGate<{ presets: PresetMeta[] }>()
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/presets' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse(await gate.promise)
+      }
+      return inner(url, init)
+    })
+
+    await gotoAdjust()
+    await openMine()
+    expect(container.textContent).toContain('还没到手')
+    expect(container.textContent, '「还没有存过预设」是一句关于他资产的假话').not
+      .toContain('还没有存过预设')
+
+    // 放行：服务端真的回了空清单 —— 这时「还没有存过预设。」才是事实
+    await act(async () => {
+      gate.open({ presets: [] })
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.textContent).toContain('还没有存过预设。')
+    expect(container.textContent).not.toContain('还没到手')
+  })
+
+  it('存失败：服务端那句话就地显示，输入框**保留**刚打的字（不用重打）', async () => {
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/presets' && init?.method === 'POST') {
+        // 服务端真那句（`server/presets.ts` 的重名报错）—— sentinel 认得出是它
+        return jsonResponse(
+          { error: { code: 'BAD_REQUEST', message: 'SENTINEL-已经有一套叫「黄昏」的预设了，换个名字。' } }, 400)
+      }
+      return inner(url, init)
+    })
+
+    await gotoAdjust()
+    await openMine()
+    await typeIn(nameBox(), '黄昏')
+    await click(saveBtn())
+
+    expect(container.textContent)
+      .toContain('SENTINEL-已经有一套叫「黄昏」的预设了，换个名字。')
+    expect(nameBox().value, '失败保留 —— 用户不用重打一遍').toBe('黄昏')
   })
 })

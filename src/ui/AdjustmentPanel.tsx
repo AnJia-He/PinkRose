@@ -10,9 +10,11 @@ import {
 } from '../../shared/adjustments.ts'
 import { workName, type WorkMeta } from '../../shared/works.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
+import type { PresetMeta } from '../../shared/preset.ts'
 import { Slider } from './kit/Slider.tsx'
 import { ColorWheel } from './ColorWheel.tsx'
 import LutPicker from './LutPicker.tsx'
+import { PresetManager } from './PresetManager.tsx'
 
 /**
  * ★ 2026-10-08（用户原话：「给这些也找到合适的图标组件」—— 对着调色面板那几组说的）：
@@ -93,6 +95,18 @@ type Props = {
   onGoImport: () => void
   /** 清单没到手时那颗「再试一次」（重拉一次清单）。 */
   onRetryLuts: () => void
+  /**
+   * ★ 2026-10-10（「我的预设」，设计 §5.1）：面板头那颗按钮展开出来的**存 / 管**。
+   *
+   * 分层照上面那条「照着这张调」：面板只**摆**，清单四态在 App（`usePresets`），
+   * 存 / 改名 / 删三个动作也由 App 接线（**成功之后重拉清单**）—— 展开块
+   * （`PresetManager`）只负责把失败翻成人话、就地说话。
+   */
+  presets: readonly PresetMeta[]
+  presetsKnown: boolean
+  onSavePreset: (name: string, params: Adjustments) => Promise<void>
+  onRenamePreset: (id: number, name: string) => Promise<void>
+  onDeletePreset: (id: number) => Promise<void>
 }
 
 /**
@@ -128,6 +142,7 @@ const GRADIENTS: Partial<Record<keyof Adjustments, string>> = {
 export default function AdjustmentPanel({
   value, onChange, onReset, onMatchReference, onMatchWork,
   luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
+  presets, presetsKnown, onSavePreset, onRenamePreset, onDeletePreset,
   defaultLutOpen = false,
 }: Props) {
   const refInput = useRef<HTMLInputElement>(null)
@@ -174,6 +189,13 @@ export default function AdjustmentPanel({
   const [worksOpen, setWorksOpen] = useState(false)
   const [works, setWorks] = useState<WorksState>({ s: 'idle' })
 
+  /**
+   * ★ 2026-10-10：「我的预设」那一块里面开着没有。**默认收着**（和滤镜那一栏
+   *   同一条：收着是常态，别一进调色屏就占一截）。展开的内容是 `PresetManager`
+   *   整块 —— 它不进上面那个 `collapsed` 集合（那套管的是五组参数的默认展开）。
+   */
+  const [mineOpen, setMineOpen] = useState(false)
+
   // 卸载之后晚到的清单响应不再写状态（AccountPage 同款理由：别写进一棵不存在的树）。
   // ⚠️⚠️ **下一行 `alive.current = true` 是必须的，别删**（2026-10-05 真机抓到）：
   //   StrictMode 在开发模式会把"挂载 → 卸载 → 再挂载"整个重放一遍 —— 第一次
@@ -214,8 +236,24 @@ export default function AdjustmentPanel({
     <aside className="panel">
       <div className="panel-head">
         <span>调色</span>
+        {/* ★ 2026-10-10（「我的预设」，设计 §5.1）：存 / 改 / 删自己攒的那几套
+            参数。**住在面板头上** —— 它和「重置」都是"对整套参数"的动作，而
+            下面那些组是"对一根参数"的。
+            ⚠️ 点开是**就地展开**（`PresetManager` 就摊在下面），不是弹窗 ——
+            全站没有弹窗文化（用户原话「调色就是对图片微调的界面区」）。
+            摆设位置：头和「照着这张调」之间（它是对"这一套参数"的动作，
+            和「照着这张调」这种"产出一套参数"的按钮分开）。 */}
+        <button className="presets-mine" aria-expanded={mineOpen}
+                onClick={() => setMineOpen(o => !o)}>
+          我的预设
+        </button>
         <button onClick={onReset}>重置</button>
       </div>
+
+      {mineOpen && (
+        <PresetManager presets={presets} known={presetsKnown} params={value}
+          onSave={onSavePreset} onRename={onRenamePreset} onDelete={onDeletePreset} />
+      )}
 
       {/* 「照着这张调」**故意摆在最前**（那排药丸搬走之后它就是这一栏的第一颗），
           两条理由：

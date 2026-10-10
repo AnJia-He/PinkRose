@@ -1588,20 +1588,97 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    长相（色相环、那个可拖的点）在下面「色轮」那一段。 */
 .color-wheel { grid-row: span 3; }
 .panel-head {
-  display: flex; justify-content: space-between; align-items: center;
+  display: flex; align-items: center; gap: var(--sp-1);
+  /* ★ 2026-10-10：「我的预设」进来之后头上是**三个**孩子（标题 + 两颗动作钮）。
+     原来那条 `justify-content: space-between` 会把中间那颗摆到**正中央**，
+     像另一组的标题 —— 改成"标题自己撑开剩下的、两颗动作钮靠右挨着"
+     （它俩是一对：都是"对整套参数"的动作）。 */
   /* ★ 2026-10-05：这 16px 原来挂在 `.panel` 的 `padding-top` 上 —— 组头吸顶
      之后它变成了一条"缝"（行会从缝里露出来），挪到这里：观感一样、缝没了。
      滚动容器不折叠外边距，所以它稳稳地待在滚动内容的顶上。 */
   margin-top: 20px;
   margin-bottom: 12px; color: var(--text); font-weight: 600; font-size: 13px;
 }
+.panel-head > span { margin-right: auto; }
 /* 「重置」是这一栏里的次要动作：它不该和预设抢眼，所以是一个没有框的文字钮。
-   （和顶栏那些按钮区分开 —— 顶栏是"你要做的事"，这里是"改坏了可以退"。） */
+   （和顶栏那些按钮区分开 —— 顶栏是"你要做的事"，这里是"改坏了可以退"。）
+   ★ 2026-10-10：「我的预设」那颗穿的是**同一条**（它俩是一对）—— 见下面
+   `.my-presets` 那段注释里"`.presets-mine` 自己零声明"那句。 */
 .panel-head button {
   background: none; border: 0; color: var(--muted); font-size: 12px; padding: 4px 8px;
   border-radius: var(--r-sm);
 }
 .panel-head button:hover { background: var(--hover); color: var(--text); }
+
+/* ★ 2026-10-10（「我的预设」，设计 §5.1）：头上那颗按钮**就地展开**出来的那一块
+   —— 起名存一套 + 清单（每套：名字 + 铅笔 + 垃圾桶）。
+   形状照「滤镜」那一页的列表（`.luts-*`）：就地摊开、不摆浮层 —— 这一屏没有
+   弹窗文化。代价块 / 确认按钮 / 提示句那几样**直接穿** `.luts-expand` /
+   `.luts-ask` / `.luts-delete` / `.luts-hint` / `.luts-error` / `.luts-empty`
+   （同一个东西全站只有一份长相，别在这儿抄第二份）。
+   ⚠️ `.presets-mine`（头上那颗）**自己一条声明都没有**：它和「重置」共用上面
+   `.panel-head button` 那条长相，类名留着是测试和阅读的锚点（照 `.luts-row`
+   先例），别删。 */
+.my-presets {
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+  font-size: 13px; color: var(--text);
+}
+/* 起名那一行：输入框占满 + 一颗「存下来」。 */
+.my-presets-save { display: flex; gap: var(--sp-2); }
+.my-presets-name {
+  flex: 1; min-width: 0;
+  background: var(--bg); color: var(--text); font: inherit;
+  border: 1px solid var(--line-2); border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
+  transition: border-color var(--dur-1) ease, box-shadow var(--dur-1) ease;
+}
+/* 聚焦的写法照 `.chat-input input` 那条：只染描边在深色底上变化太小，
+   再加一道很淡的外圈。 */
+.my-presets-name:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.my-presets-name::placeholder { color: var(--muted-2); }
+/* 满 30 套时这一格按不动 —— 禁用要**看得见**（和 `button:disabled` 那条同一个
+   道理：按不动却长得和能打的一样，用户会以为是自己没点准）。 */
+.my-presets-name:disabled { opacity: .45; cursor: default; }
+/* 「还没有存过预设。」排在起名行正下方，不需要 `.luts-empty` 那 20px 顶距
+   （那条是给整页版式的）—— 收掉，间距交给上面的 gap。 */
+.my-presets .luts-empty { margin-top: 0; }
+/* 清单：一列行，外面一道描边（和上面那格输入框同宽同圆角）。 */
+.my-presets-list {
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  overflow: hidden;   /* 行里的悬停底不越出圆角 */
+}
+.my-presets-item + .my-presets-item { border-top: 1px solid var(--hair); }
+/* 一行一套：名字占满中间、两颗图标键靠右（名字长短不一时按钮才不跟着抖，
+   和 `.luts-name` 同一条）。 */
+.my-presets-row {
+  display: flex; align-items: center; gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+}
+.my-presets-label {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 铅笔 / 垃圾桶：**图标键**那一档长相（和 `.chat-title-edit` / `.rename-cancel`
+   同一套语言：透明底、悬停才现形状）—— 屏幕上没有字，名字在 `aria-label` 上。 */
+.my-presets-row button {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--muted);
+  background: none; border-color: transparent;
+}
+.my-presets-row button:hover { color: var(--text); border-color: var(--line-2); }
+/* 就地改名那一格（`kit/RenameInput`）—— 长相跟对话栏顶上那颗走
+   （`.chat-title-input`：`--bg` 底 + 主色描边 + 外圈 —— 它一出现就 autoFocus，
+   所以"常态"就画成聚焦相），尺寸跟着这一行的字号。 */
+.my-presets-rename {
+  flex: 1; min-width: 0;
+  background: var(--bg); color: var(--text); font: inherit;
+  border: 1px solid var(--accent); border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
+  box-shadow: var(--ring);
+}
+.my-presets-rename:focus { outline: none; }
 /* ★ 2026-10-05：这里原来是那排**预设药丸**（`.presets` / `.presets button`）——
    预设搬去照片左边那条竖栏了（`PresetRail`，长相见上面 `.rail-*` 那一段），
    药丸连同这几条规则一起退役。 */
@@ -1899,7 +1976,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 }
 .chat-title-input:focus { outline: none; }
 /* ★ 2026-10-09：改名框旁边那颗**「取消」**（组件在 `ui/kit/RenameInput`）——
-   **三处共用这一条**：作品详情页顶栏、对话列表那一行、对话栏顶上那颗铅笔。
+   **各处共用这一条**：作品详情页顶栏、对话列表那一行、对话栏顶上那颗铅笔、
+   ★ 2026-10-10「我的预设」每一行的改名（四处 —— 以后按上这个组件的地方
+   都跟着它，别再各写一份）。
    用户原话：「**这个修改时没法退出**」—— 在那之前，进了编辑态那一行上
    一个可点的东西都没有（铅笔自己也被输入框顶掉了），出口只剩 Esc 和"点别处"，
    而点别处是**保存**。

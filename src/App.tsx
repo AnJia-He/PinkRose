@@ -26,6 +26,8 @@ import { fetchWorkImage } from './api/works'
 import {
   createSession, sessionOriginalUrl, updateSession,
 } from './api/sessions'
+// ★ 2026-10-10（「我的预设」）：清单在 `app/usePresets`，存/改名/删三个动词在这儿。
+import { createPreset, deletePreset, renamePreset } from './api/presets'
 // ★ 2026-10-09：对话栏顶上那个名字的**唯一**口径（三级退：用户起的名字 →
 //   照片上传时的名字 → 「还没说话」）—— 和对话列表同一份，别在这儿另退一套。
 import { sessionTitle } from '../shared/sessions.ts'
@@ -66,6 +68,9 @@ import { markImage, type NormPoint } from './image/mark'
 import { useDelivery } from './app/useDelivery'
 import { BUSY_GENERATING, useGeneration } from './app/useGeneration'
 import { useLuts } from './app/useLuts'
+// ★ 2026-10-10（「我的预设」）：自己的预设清单 —— `usePresets` 就是"清单那一半"
+//   （照 `useLuts` 的对应件；存/改/删三个动作在下面那三个回调里）。
+import { usePresets } from './app/usePresets'
 // ★ 2026-10-08（拆分 Batch 3）：三个小簇各自的 hook —— 通报 / 导航 / 滤镜流程。
 import { useNotice } from './app/useNotice'
 import { useNav } from './app/useNav'
@@ -242,6 +247,12 @@ export default function App() {
    *   `noticeBad` 的身份是稳定的（`useCallback([])`），正合这个 hook 的要求。
    */
   const lutsApi = useLuts({ lut, image, params, onError: noticeBad })
+  /**
+   * ★ 2026-10-10（「我的预设」，设计 §5.1）：自己的预设清单 —— `usePresets` 就是
+   *   那"清单那一半"（同样的 `known` 语义：到手 ≠ 非空）。存 / 改名 / 删三个动作
+   *   在下面那三个回调里，成功之后都是**重拉**（名单的真值只有服务端那一份）。
+   */
+  const presetsApi = usePresets()
   /**
    * 单拎出来一个 `reload`（★ 2026-10-05）—— `lutsApi` 是每次渲染新造的**对象**，
    * 拿它当依赖的话，挂在 `refreshLuts` 上那个 effect 每次渲染都要重跑一遍
@@ -1900,6 +1911,27 @@ export default function App() {
     onRetryLuts: () => void reloadLuts(),
   }
 
+  /**
+   * ★ 2026-10-10（「我的预设」）：存 / 改名 / 删 —— 三个都**先打服务端、成功再
+   * 重拉**（`LutSettings` 的导入 / 改名 / 删除三处同一做法；本地不改名单 ——
+   * 服务端会动名字（trim），名字的真值只有它那一份）。
+   * ⚠️ 这里**不 catch**：失败那句话由 `PresetManager` 就地显示 —— `errorText`
+   *   认服务端原话（重名那种错只有服务端说得清），在这一层再写一套判断的话，
+   *   同一个毛病会长出两种说法。
+   */
+  const savePreset = async (name: string, p: Adjustments) => {
+    await createPreset(name, p)
+    await presetsApi.refresh()
+  }
+  const renamePresetTo = async (id: number, name: string) => {
+    await renamePreset(id, name)
+    await presetsApi.refresh()
+  }
+  const removePreset = async (id: number) => {
+    await deletePreset(id)
+    await presetsApi.refresh()
+  }
+
   // 还没问出"我是谁"之前什么都别显示 —— 认出没登录的访客是**一次网络往返**，
   // 直接按 user === null 渲染的话，每个登录着的用户回访时都会先看到登录页闪一下。
   //
@@ -2330,6 +2362,13 @@ export default function App() {
                   onReset={() => { setParams(ZERO); setLut(null) }}
                   onMatchReference={file => void matchReference(file)}
                   onMatchWork={w => void matchWork(w)}
+                  // ★ 2026-10-10（「我的预设」）：清单四态 + 存/改名/删三个动作
+                  //   （见上面那三个回调）。面板只摆样子 —— 和滤镜那一包同一条分层。
+                  presets={presetsApi.presets}
+                  presetsKnown={presetsApi.known}
+                  onSavePreset={savePreset}
+                  onRenamePreset={renamePresetTo}
+                  onDeletePreset={removePreset}
                   // ★ 2026-10-05（滤镜，设计 §5.2）：面板只摆样子，状态和副作用
                   //   全在 App / `useLuts` 那边。
                   //   ★ 2026-10-08：九个 props 和对话区那份是**同一份**

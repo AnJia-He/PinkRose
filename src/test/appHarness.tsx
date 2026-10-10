@@ -16,6 +16,7 @@ import { afterEach, beforeEach, expect } from 'vitest'
 import type { RouteDecision, SuggestResponse } from '../../shared/protocol.ts'
 import { ZERO, type Adjustments } from '../../shared/adjustments.ts'
 import { MAX_LUT_FILE_BYTES, type LutMeta } from '../../shared/lut.ts'
+import type { PresetMeta } from '../../shared/preset.ts'
 import type {
   SessionDetail, SessionMessage, SessionMeta, SessionStep,
 } from '../../shared/sessions.ts'
@@ -584,6 +585,47 @@ export function withSessions(initial: SessionDetail[], opts: { originalFails?: b
 }
 
 /**
+ * ★ 2026-10-10（「我的预设」T3）：盖上一整套 `/api/presets` 的四个动词 ——
+ * **有状态的那种**（照上面 `withSessions`：GET 回当前名单，POST/PATCH/DELETE
+ * 真改它、之后 GET 看得到）。
+ *
+ * ⚠️ 为什么走**真网络形状**而不是 `vi.mock('../api/presets')` 那种模块假桩：
+ *   这一层要钉的正是"存下来那个**请求体**（`{name, params}`）"和"改完之后
+ *   重拉一遍"这两件事 —— `api/presets.ts` 那四个动词就在这条链上，绕开它
+ *   等于把要测的东西一起假掉（Task 2 已经在 `src/api/presets.test.ts` 里
+ *   单独钉过 URL / 方法 / 字段名，两边合起来才是一条完整的路）。
+ */
+export function withPresets(initial: PresetMeta[]) {
+  let rows = [...initial]
+  /** 建出来的新 id：501 起（和造数据那几个 id 段分得开，一眼认得出是"刚存的"）。 */
+  let nextId = 501
+  const inner = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET'
+    if (url === '/api/presets' && method === 'GET') return jsonResponse({ presets: rows })
+    if (url === '/api/presets' && method === 'POST') {
+      const sent = JSON.parse(String(init?.body)) as { name: string; params: Adjustments }
+      const preset: PresetMeta = { id: nextId++, ...sent, createdAt: 0 }
+      rows = [preset, ...rows]
+      return jsonResponse({ preset })
+    }
+    const one = /^\/api\/presets\/(\d+)$/.exec(url)
+    if (one && method === 'PATCH') {
+      const sent = JSON.parse(String(init?.body)) as { name: string }
+      const id = Number(one[1])
+      rows = rows.map(r => (r.id === id ? { ...r, name: sent.name } : r))
+      return jsonResponse({ preset: rows.find(r => r.id === id) })
+    }
+    if (one && method === 'DELETE') {
+      rows = rows.filter(r => r.id !== Number(one[1]))
+      return jsonResponse({ ok: true })
+    }
+    return inner(url, init)
+  })
+  return { rows: () => rows }
+}
+
+/**
  * 往**受控输入框**里打字（搜索框那两处：作品页、对话列表）。
  *
  * ⚠️ 直接写 `box.value = '…'` 再派一个 input 事件**不行**：React 18 给受控输入
@@ -729,6 +771,15 @@ beforeEach(() => {
     // 各用例自己用 withModels 盖上一条真的。
     if (url === '/api/models' && (init?.method ?? 'GET') === 'GET') {
       return jsonResponse({ configs: [] })
+    }
+    // ★ 2026-10-10（「我的预设」T3）：App 挂载时 `usePresets` 会问一次清单。
+    //   默认**一套都没有**（和作品 / 模型同口径：绝大多数用例从零开始）——
+    //   要测"存了 / 满额"的样子，各用例自己用 `withPresets` 盖上一条真的。
+    //   ⚠️ **必须接住**：掉进下面那个兜底的 blob 形状的话，`listPresets` 回回
+    //   都炸、每条用例的控制台多一行「预设清单没取回来」—— 噪声会盖住真话
+    //   （和会话列表那一条同一个理由）。
+    if (url === '/api/presets' && (init?.method ?? 'GET') === 'GET') {
+      return jsonResponse({ presets: [] })
     }
     // 会话（Task 4）：**上传照片就会建一条**。默认**建得成**（id = 1）——
     // 「服务端没建成就不能假装在存」那条用例自己把这一格盖成 500。

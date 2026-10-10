@@ -66,6 +66,14 @@ function Harness({ lutOpen = false, luts = lutsFromTest }: { lutOpen?: boolean; 
       onNeedLutThumbs={() => { needThumbsCalls++ }}
       onGoImport={() => { wentImport = true }}
       onRetryLuts={() => { retriedLuts++ }}
+      // ★ 2026-10-10（「我的预设」）：这一份测的是面板本体的行为（折叠 / 分组 /
+      //   照着这张调），预设那一块的验收在 `App.adjust.test.tsx`（R3）——
+      //   这里给个"没有、到手了"的安静底，只为满足 props 形状。
+      presets={[]}
+      presetsKnown
+      onSavePreset={async () => {}}
+      onRenamePreset={async () => {}}
+      onDeletePreset={async () => {}}
     />
   )
 }
