@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { PRESETS } from '../core/presets.ts'
+import { PRESETS, type Preset } from '../core/presets.ts'
 import { ZERO } from '../../shared/adjustments.ts'
 import { useLutPreview } from './useLutPreview.ts'
 import type { Cube } from '../../shared/lut.ts'
@@ -29,10 +29,15 @@ export type PresetThumbs = {
  *   · **作废**：前一趟没跑完就换了照片/滤镜时，那一趟的结果一个字都不许写进
  *     状态（`seq` 守卫）。少了它，屏幕上是"一半旧照片一半新照片"的小图，
  *     而**看着一切正常**（滤镜那栏同一条守卫，别删）。
+ *
+ * ★ 2026-10-10（「我的预设」）：`mine` = 用户自己存的那一份清单 —— 画的活一个字
+ *   没变，只是循环从 `PRESETS` 扩成 `[...PRESETS, ...mine]`（预设栏第二段）。
  */
-export function usePresetThumbs({ image, cube }: {
+export function usePresetThumbs({ image, cube, mine }: {
   image: DecodedImage | null
   cube: Cube | null
+  /** ★ 2026-10-10：自己存的那份清单（id 是 `String(服务端 id)`，和内置同一个空间） */
+  mine: readonly Preset[]
 }): { thumbs: PresetThumbs } {
   const [thumbs, setThumbs] = useState<PresetThumbs>({ original: null, byId: {} })
   const ensurePreview = useLutPreview()
@@ -58,14 +63,19 @@ export function usePresetThumbs({ image, cube }: {
       const original = p.render(ZERO, null)
       if (s !== seq.current) return
       setThumbs(prev => ({ ...prev, original }))
-      for (const preset of PRESETS) {
+      for (const preset of [...PRESETS, ...mine]) {
         const t = p.render(preset.adjustments, cube)
         if (s !== seq.current) return
         if (!t) continue
         setThumbs(prev => ({ ...prev, byId: { ...prev.byId, [preset.id]: t } }))
       }
     })().catch((e) => console.error('预设缩略图没画出来：', e))
-  }, [image, cube, ensurePreview])
+    // ⚠️ `mine` 在依赖数组里：**存/删一套那一刻，那一格跟着长/消**（整排重画一遍）。
+    //    拖滑块照旧不重画 —— `params` 故意不在依赖里（这一排画的是每个预设自己的
+    //    参数 + 当前滤镜，见文件头）。所以**调用方必须给稳定的引用**（App 那边用
+    //    `useMemo` 包）：每次渲染一个新数组 = 这个 effect 每渲染跑一趟 =
+    //    `setThumbs` 每渲染写一次 = React 报 "Maximum update depth exceeded"。
+  }, [image, cube, ensurePreview, mine])
 
   return { thumbs }
 }

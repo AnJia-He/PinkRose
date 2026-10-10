@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Canvas from './ui/Canvas'
 import Uploader from './ui/Uploader'
 import AdjustEmpty from './ui/AdjustEmpty'
@@ -35,7 +35,7 @@ import { decodeImageFile, type DecodedImage } from './image/decode'
 import { resizeBitmap } from './image/resize'
 import { samplePixels } from './image/sample'
 import { matchToReference } from './core/colorMatch'
-import { activePresetId } from './core/presets'
+import { activePresetId, type Preset } from './core/presets'
 import { fitToLimit, probeLimit } from './render/limits'
 // ★ 2026-10-08（账本 Task 8）：恢复会话时那条**离屏重画**的临时管线（全站第三处
 //   `new TonePipeline`，规模刻意压在"一条管线 + 一张画布、用完 dispose"）——
@@ -253,6 +253,19 @@ export default function App() {
    *   在下面那三个回调里，成功之后都是**重拉**（名单的真值只有服务端那一份）。
    */
   const presetsApi = usePresets()
+  /**
+   * ★ 2026-10-10（「我的预设」，设计 §5.2）：预设栏吃的那份形状
+   *   （`core/presets` 的 `Preset`）—— 服务端 id（数字）`String(id)` 拼进内置
+   *   那套 id 空间（内置 id 全是非纯数字串，撞不上，见 `core/presets.ts`）。
+   *
+   * ⚠️ **引用必须稳**（`useMemo`）：它会进 `usePresetThumbs` 的依赖数组 ——
+   *   每次渲染一个新数组 = 每渲染重画一遍缩略图（更坏：那边 effect 重跑 →
+   *   `setThumbs` 重写 → 下一次渲染又一个新数组，React 当场报
+   *   "Maximum update depth exceeded"）。
+   */
+  const myPresets = useMemo<Preset[]>(
+    () => presetsApi.presets.map(p => ({ id: String(p.id), label: p.name, adjustments: p.params })),
+    [presetsApi.presets])
   /**
    * 单拎出来一个 `reload`（★ 2026-10-05）—— `lutsApi` 是每次渲染新造的**对象**，
    * 拿它当依赖的话，挂在 `refreshLuts` 上那个 effect 每次渲染都要重跑一遍
@@ -2026,8 +2039,10 @@ export default function App() {
                   ⚠️ 三个决定写在别处、这里只接线：
                     · 小图怎么画、什么时候作废 → `app/usePresetThumbs`；
                     · 哪一格亮着 → `core/presets` 的 `activePresetId`
-                      （判全等、挂着滤镜时谁都不亮）；
+                      （判全等、挂着滤镜时谁都不亮、范围是"内置 + 我的"）；
                     · 长相 → `ui/PresetRail`。
+                  ★ 2026-10-10（「我的预设」）：栏里第二段（`mine`）就是自己存的那份
+                    —— 一张缩略图、一次点亮、一下点击，全走上面那三条老路。
                   ⚠️ 只在调色那一屏在（`view.kind === 'adjust'`）—— 别的屏旁边是
                   对话栏，没有它的位置；而它一挂上就画十三张小图，
                   挂错地方等于让对话页也白画一遍。 */}
@@ -2035,7 +2050,8 @@ export default function App() {
                 <PresetRail
                   image={image}
                   cube={lutsApi.cube}
-                  activeId={activePresetId(params, lut !== null)}
+                  mine={myPresets}
+                  activeId={activePresetId(params, lut !== null, myPresets)}
                   // 展开拷贝：PRESETS 是模块级共享对象，直接传引用会让拖滑块改坏预设
                   // （和面板上原来那排药丸同一条理由）。
                   onPick={(p) => setParams({ ...p.adjustments })}

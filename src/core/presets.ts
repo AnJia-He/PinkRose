@@ -107,9 +107,19 @@ export const ORIGINAL_ID = 'original'
  *      那一眼看到的东西已经不是那个预设了，所以这里没有"接近"这回事
  *      （判全等而不是判某几根，是因为预设本来就是"整组赋值"，见
  *      `AdjustmentPanel` 里那段"套预设 = 新参数一并归零"）。
+ *
+ * ★ 2026-10-10（「我的预设」）：第三个参数 `mine` = 用户自己存的那一份清单
+ *   （预设栏第二段）。判据一个字没变，只是**找的范围**从"内置那十二个"扩成
+ *   "内置 + 我的" —— 两段共用这一份，点完谁亮不需要第二条路。
+ *
+ * ⚠️ **id 空间的约定**：内置 id 全是非纯数字串（`'golden'` 这种），服务端预设
+ *   的数字 id 拼进来时一律 `String(id)` —— 两边永远不会撞（`presets.test.ts`
+ *   有一条「内置 id 全是非纯数字」的测试守着这个前提）。默认值 `[]` 保住旧调用。
  */
-export function activePresetId(a: Adjustments, lutOn: boolean): string | null {
+export function activePresetId(
+  a: Adjustments, lutOn: boolean, mine: readonly Preset[] = [],
+): string | null {
   if (lutOn) return null
   if (PARAM_KEYS.every(k => a[k] === 0)) return ORIGINAL_ID
-  return PRESETS.find(p => PARAM_KEYS.every(k => p.adjustments[k] === a[k]))?.id ?? null
+  return [...PRESETS, ...mine].find(p => PARAM_KEYS.every(k => p.adjustments[k] === a[k]))?.id ?? null
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { PRESETS, ORIGINAL_ID, activePresetId } from './presets'
+import { PRESETS, ORIGINAL_ID, activePresetId, type Preset } from './presets'
 import { PARAM_KEYS, PARAM_RANGE, ZERO } from '../../shared/adjustments.ts'
 
 describe('PRESETS', () => {
@@ -27,6 +27,17 @@ describe('PRESETS', () => {
   it('id 唯一', () => {
     const ids = PRESETS.map(p => p.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  /**
+   * ★ 2026-10-10（「我的预设」）：**id 空间的约定** —— 内置 id 全是非纯数字串，
+   * 服务端预设的数字 id 一律 `String(id)` 拼进同一个空间，两边永远撞不上。
+   * 哪天有人给内置预设起名 `'5'`，用户那套 id=5 的预设就会冒名点亮它 ——
+   * 而那不会以任何别的方式报出来。
+   */
+  it('内置 id 全是非纯数字串（服务端预设 String(id) 拼进来不会撞）', () => {
+    expect(ORIGINAL_ID).not.toMatch(/^\d+$/)
+    for (const p of PRESETS) expect(p.id, `${p.label} 的 id 是纯数字`).not.toMatch(/^\d+$/)
   })
 
   it('每个预设都有中文标签', () => {
@@ -99,5 +110,27 @@ describe('activePresetId', () => {
   it('挂着滤镜时谁都不点亮（原图也不）', () => {
     expect(activePresetId({ ...PRESETS[0]!.adjustments }, true)).toBeNull()
     expect(activePresetId(ZERO, true)).toBeNull()
+  })
+
+  /**
+   * ★ 2026-10-10（「我的预设」）：第三个参数 = **自己存的那份清单** ——
+   * 全等匹配的范围从"内置那十二个"扩成"内置 + 我的"（预设栏两段共用这一份判据）。
+   */
+  const MINE: readonly Preset[] = [
+    { id: '501', label: '黄昏旅拍', adjustments: { ...ZERO, exposure: 33, temperature: 20 } },
+  ]
+
+  it('我的那套全等 = 亮它；内置那十二个照样算（同一份清单里找）', () => {
+    expect(activePresetId({ ...MINE[0]!.adjustments }, false, MINE)).toBe('501')
+    const p = PRESETS[2]!
+    expect(activePresetId({ ...p.adjustments }, false, MINE)).toBe(p.id)
+  })
+
+  it('我的这套差一个数也不亮（同一把全等尺子，没有"接近"）', () => {
+    expect(activePresetId({ ...MINE[0]!.adjustments, exposure: 34 }, false, MINE)).toBeNull()
+  })
+
+  it('不给清单（旧调用）时我的那套不算数 —— 默认值保住旧行为', () => {
+    expect(activePresetId({ ...MINE[0]!.adjustments }, false)).toBeNull()
   })
 })

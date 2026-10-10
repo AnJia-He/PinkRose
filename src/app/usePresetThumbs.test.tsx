@@ -15,7 +15,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePresetThumbs } from './usePresetThumbs.ts'
-import { PRESETS } from '../core/presets.ts'
+import { PRESETS, type Preset } from '../core/presets.ts'
 import { ZERO, type Adjustments } from '../../shared/adjustments.ts'
 import type { Cube } from '../../shared/lut.ts'
 import type { DecodedImage } from '../image/decode'
@@ -51,19 +51,22 @@ const CUBE_1 = { size: 2, rgba: new Uint8Array(8) } as unknown as Cube
 const CUBE_2 = { size: 3, rgba: new Uint8Array(27) } as unknown as Cube
 
 let out: ReturnType<typeof usePresetThumbs> | null = null
-function Probe(props: { image: DecodedImage | null; cube: Cube | null }) {
-  out = usePresetThumbs(props)
+/** 「没存过预设」那份空清单 —— 用**同一份引用**（每次新 `[]` 会让下面那条 effect 重跑）。 */
+const NO_MINE: readonly Preset[] = []
+type Props = { image: DecodedImage | null; cube: Cube | null; mine?: readonly Preset[] }
+function Probe({ image, cube, mine = NO_MINE }: Props) {
+  out = usePresetThumbs({ image, cube, mine })
   return null
 }
 
 /** 挂载 + 把异步那几拍彻底跑完（那边是一串 await，一次 act 不一定推得干净）。 */
-const show = async (root: Root, props: { image: DecodedImage | null; cube: Cube | null }) => {
+const show = async (root: Root, props: Props) => {
   await act(async () => { root.render(<Probe {...props} />) })
   await act(async () => {})
   await act(async () => {})
 }
 
-const mount = async (props: { image: DecodedImage | null; cube: Cube | null }) => {
+const mount = async (props: Props) => {
   const root = createRoot(document.createElement('div'))
   await show(root, props)
   return root
@@ -77,6 +80,12 @@ describe('usePresetThumbs', () => {
     rec.release = null
     out = null
   })
+
+  /** ★ 2026-10-10（「我的预设」）：自己存的那两套（id 是 `String(服务端 id)`）。 */
+  const MINE: readonly Preset[] = [
+    { id: '501', label: '黄昏旅拍', adjustments: { ...ZERO, exposure: 33, temperature: 20 } },
+    { id: '502', label: '清透日系', adjustments: { ...ZERO, exposure: -12, shadows: 18 } },
+  ]
 
   it('没照片：一张都不画（空手等图）', async () => {
     const root = await mount({ image: null, cube: null })
@@ -149,6 +158,45 @@ describe('usePresetThumbs', () => {
     await act(async () => {})
     expect(rec.renders).toHaveLength(PRESETS.length + 1)   // 只有第二趟画的那 13 张
     expect(out!.thumbs).toEqual(good)                      // 状态一个字没变
+    await act(async () => { root.unmount() })
+  })
+
+  /**
+   * ★ 2026-10-10（「我的预设」）：循环从 `PRESETS` 扩成 `[...PRESETS, ...mine]` ——
+   * 自己存的那套也各画一张（画法一个字没变：那一套自己的参数 + 当前滤镜）。
+   */
+  it('★ 我的预设也各画一张（内置那十二个照旧一张不少）', async () => {
+    const root = await mount({ image: IMG_A, cube: null, mine: MINE })
+    expect(rec.renders).toHaveLength(PRESETS.length + MINE.length + 1)
+    // 每一张画的仍然是"**那一个预设自己**的参数"
+    for (const [i, p] of MINE.entries()) {
+      expect(rec.renders[PRESETS.length + 1 + i]!.params, `${p.id} 那一张画错了参数`)
+        .toEqual(p.adjustments)
+    }
+    expect(Object.keys(out!.thumbs.byId)).toContain('501')
+    expect(Object.keys(out!.thumbs.byId)).toContain('502')
+    await act(async () => { root.unmount() })
+  })
+
+  /**
+   * ★ 存 / 删一套那一刻，那一格跟着长 / 消：清单（`mine`）进依赖数组、整排重画一遍。
+   * 这是**除了换照片 / 换滤镜之外唯一会重画的事** —— 拖滑块照旧不重画
+   * （`params` 故意不在依赖里，见文件头）。
+   */
+  it('★ 清单多一套 / 少一套：跟着重画（长出来 / 收掉的那一格也在里面）', async () => {
+    const root = await mount({ image: IMG_A, cube: null, mine: [] })
+    expect(rec.renders).toHaveLength(PRESETS.length + 1)
+
+    // 存了一套 → 重画：原图 + 十二内置 + 我的那 1 张
+    let before = rec.renders.length
+    await show(root, { image: IMG_A, cube: null, mine: [MINE[0]!] })
+    expect(rec.renders.slice(before)).toHaveLength(PRESETS.length + 1 + 1)
+    expect(rec.renders.at(-1)!.params).toEqual(MINE[0]!.adjustments)
+
+    // 删光 → 再重画一遍，回到只有内置那十三张
+    before = rec.renders.length
+    await show(root, { image: IMG_A, cube: null, mine: [] })
+    expect(rec.renders.slice(before)).toHaveLength(PRESETS.length + 1)
     await act(async () => { root.unmount() })
   })
 })

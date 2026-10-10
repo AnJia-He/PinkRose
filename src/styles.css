@@ -821,6 +821,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .rail-head {
   margin: 0 0 16px; color: var(--text); font-weight: 600; font-size: 13px;
 }
+/* 「我的预设」那一段的分区头（★ 2026-10-10）：它上面是一排格子（不是头），
+   所以自己带一截**组间距**（24 —— 节奏表里"组间 24·16"的那个 24）。
+   ⚠️ 这一段只在存过至少一套时才画，而且它跟着清单长/消 ——
+   没存过的人（和删光了的人）看到的版面一个像素都不变。 */
+.rail-head.mine { margin-top: 24px; }
 .rail-grid {
   display: grid; grid-template-columns: repeat(2, 1fr);
   gap: 16px 10px; align-content: start;

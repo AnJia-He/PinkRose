@@ -47,6 +47,11 @@ import { act } from 'react'
 import { ZERO } from '../shared/adjustments.ts'
 import { type LutMeta } from '../shared/lut.ts'
 import { MAX_PRESETS, MAX_PRESET_NAME, type PresetMeta } from '../shared/preset.ts'
+// ⚠️ `PRESETS` 走**直接 import**（App.sessions.test.tsx 也是这么写的），
+//   不从脚手架底下那批"原样转出去"的名字里拿：那一批（`PRESETS` / `ZERO` /
+//   `formatSize` …）在运行时是坏的 —— 读它当场 `ReferenceError: PRESETS is not
+//   defined`（2026-10-10 实测，脚手架里那批 export 的绑定被构建时丢掉了）。
+import { PRESETS } from './core/presets'
 import { matchToReference, type Rgb } from './core/colorMatch'
 import * as decodeMod from './image/decode'
 import * as api from './api/client'
@@ -1902,5 +1907,93 @@ describe('★ 我的预设：存 / 管（2026-10-10）', () => {
     expect(container.textContent)
       .toContain('SENTINEL-已经有一套叫「黄昏」的预设了，换个名字。')
     expect(nameBox().value, '失败保留 —— 用户不用重打一遍').toBe('黄昏')
+  })
+})
+
+/**
+ * ★ 2026-10-10（「我的预设」，设计 §5.2）：**用** —— 照片左边那排效果小图
+ * （预设栏）里多出「我的预设」分区，点一下**整套参数赋上去**。
+ *
+ * 这一层走真链路：`GET /api/presets` → `usePresets` → App 转成 `core/presets`
+ * 那套形状（`String(id)` 拼进同一个 id 空间）→ 预设栏；点亮判据也是**同一份**
+ * `activePresetId`（全等，范围扩到"内置 + 我的"）。存/删那一刻那一格跟着
+ * 长/消也在这儿量。
+ */
+describe('★ 我的预设：用 · 预设栏（2026-10-10）', () => {
+  /** 一套"带色"的参数（全零的预设永远点不亮 —— 那一格是「原图」的）。 */
+  const MINE_PARAMS = { ...ZERO, exposure: 33, contrast: -21, splitHiHue: 120 }
+  const PRE = (id: number, name: string, params = MINE_PARAMS): PresetMeta =>
+    ({ id, name, params, createdAt: 0 })
+  const click = async (el: HTMLElement) => {
+    await act(async () => { el.click(); await new Promise(r => setTimeout(r, 0)) })
+  }
+  /** 上传照片 → 进调色屏（预设栏只在那一屏挂）。 */
+  const gotoAdjust = async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+  }
+  /** 照片左边那条栏（按**文字**找格子 —— 位置是排版的事）。 */
+  const rail = () => container.querySelector('.rail') as HTMLElement
+  const railTiles = () => [...rail().querySelectorAll('.rail-tile')] as HTMLButtonElement[]
+  const railTile = (name: string) =>
+    railTiles().find(t => (t.textContent ?? '').includes(name)) as HTMLButtonElement
+  const railHeads = () => [...rail().querySelectorAll('.rail-head')].map(h => h.textContent)
+
+  it('存过的那套就在那条栏里：分区 + 格子 + 名字（小图也画出来了）', async () => {
+    withPresets([PRE(11, '黄昏旅拍'), PRE(12, '清透日系')])
+    await gotoAdjust()
+
+    expect(railHeads()).toEqual(['预设', '我的预设'])
+    // 内置那十三格一字没动，我的两格排在后面（同款 rail-tile，名字就是预设名）
+    expect(railTiles().map(t => t.textContent))
+      .toEqual(['原图', ...PRESETS.map(p => p.label), '黄昏旅拍', '清透日系'])
+    // 缩略图走的是**同一条画法**（`usePresetThumbs` 的循环扩到了 [...PRESETS, ...mine]）
+    expect(railTile('黄昏旅拍').querySelector('img.rail-thumb')).toBeTruthy()
+  })
+
+  it('一套都没有时整个分区不画（现有版面零变化）', async () => {
+    await gotoAdjust()   // 清单默认是空的（appHarness 里那一条）
+    expect(railHeads()).toEqual(['预设'])
+    expect(railTiles()).toHaveLength(PRESETS.length + 1)
+    // ⚠️ 只认这一栏里的字 —— 面板头上的「我的预设」是另一处的那个入口
+    expect(rail().textContent).not.toContain('我的预设')
+  })
+
+  it('点它 = 整套参数赋上去，而且那一格亮起来（跨内置/我的同一套全等判据）', async () => {
+    withPresets([PRE(11, '黄昏旅拍')])
+    await gotoAdjust()
+
+    await click(railTile('黄昏旅拍'))
+    // **整套赋值**（不是往当前参数上叠）—— 和内置预设、面板那颗「重置」同一条路
+    expect(canvasProps.props.at(-1)?.params).toEqual(MINE_PARAMS)
+    // 点亮：`activePresetId(params, 有没有滤镜, 我的清单)` 全等就是它
+    const lit = railTiles().filter(t => t.getAttribute('aria-pressed') === 'true')
+    expect(lit.map(t => t.textContent)).toEqual(['黄昏旅拍'])
+
+    // 拖一根滑块就不该再亮着（全等，没有"接近" —— 内置那条守卫在"我的"上再钉一次）
+    await setSlider('亮度', 20)
+    expect(railTiles().every(t => t.getAttribute('aria-pressed') === 'false')).toBe(true)
+  })
+
+  it('删掉一套之后栏里那格跟着消失；删的是"正在用的"那套，画面不变（§5.3）', async () => {
+    withPresets([PRE(11, '黄昏旅拍'), PRE(12, '清透日系')])
+    await gotoAdjust()
+    // 先用上它 —— 待会儿删的就是"正在用的那套"
+    await click(railTile('黄昏旅拍'))
+    expect(canvasProps.props.at(-1)?.params).toEqual(MINE_PARAMS)
+
+    // 去面板头那块「我的预设」里删（Task 3 的就地确认那一套）
+    await click(adjustPanel().querySelector('.presets-mine') as HTMLElement)
+    const row = [...container.querySelectorAll<HTMLElement>('.my-presets-row')]
+      .find(r => (r.textContent ?? '').includes('黄昏旅拍'))!
+    await click(row.querySelector('button[aria-label="删除"]') as HTMLElement)
+    await clickByText('确认删除')
+
+    // 栏里那一格跟着消失（另一套还在，所以分区还在）
+    expect(railTiles().map(t => t.textContent)).not.toContain('黄昏旅拍')
+    expect(railTile('清透日系')).toBeTruthy()
+    // **画面不变**：参数早就赋进 `params` 独立存活了 —— 删预设不回收它
+    expect(canvasProps.props.at(-1)?.params).toEqual(MINE_PARAMS)
   })
 })
