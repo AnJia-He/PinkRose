@@ -58,6 +58,9 @@ venv/
 # Node
 node_modules/
 dist/
+# 预渲染的 SSR 构建临时目录（prerender.mjs 正常跑完会自己删；
+# 中断时会留下残骸——2026-10-10 之前它一直脏在 git status 里）
+dist-prerender/
 .next/
 
 # TypeScript 增量构建产物（npm run build 的 tsc -b 会在仓库根留下它）
