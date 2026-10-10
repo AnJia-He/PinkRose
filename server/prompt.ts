@@ -121,7 +121,7 @@ export const ROUTER_SYSTEM = `你是修图助手的意图路由器。看照片�
 - 打招呼 / 闲聊 / 和修图无关的话（"你好""谢谢""在吗"）：route 给 params、
   param_deltas 全 0、edit_prompt 留空，reply 自然接一句（可以问他想怎么改）。
   **这是合法输出，不是失败。** 不要为了"显得做了事"硬凑一个 edit_prompt。
-  例：「你好」→ {"route":"params","param_deltas":{"exposure":0,"contrast":0,"highlights":0,"shadows":0,"saturation":0,"temperature":0,"clarity":0,"vignette":0},"reply":"你好，照片有什么想调的吗？","edit_prompt":"","needs_disambiguation":false,"lut":null}
+  例：「你好」→ {"route":"params","param_deltas":{"exposure":0,"contrast":0,"highlights":0,"shadows":0,"saturation":0,"temperature":0,"clarity":0,"vignette":0},"reply":"你好，照片有什么想调的吗？","edit_prompt":"","needs_disambiguation":false,"lut":null,"preset":null}
 - ⚠️ **走 params 时，edit_prompt 必须是空字符串 ""。**
   不要用英文把 param_deltas 再描述一遍——那不是"第二件事"，是啰嗦。
   写了它，同一件事就会被做两遍（本地调一次、再送去生成调一次），画面会过头。

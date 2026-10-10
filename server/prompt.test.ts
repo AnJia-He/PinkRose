@@ -127,7 +127,9 @@ describe('ROUTER_SYSTEM', () => {
     // 名字对不上号时 `validate.ts` 会归 null 并打 degraded 信号，但最便宜的一道闸
     // 是**别让它编名字** —— 编出来的名字对不上，用户那句「用那个黄昏滤镜」就白说了。
     // route 那条是防"套滤镜被当成生成"：那是要花 12,900 tokens 的一条路。
-    expect(ROUTER_SYSTEM).toContain('清单里没有的名字一个字都不许写')
+    // ⚠️ 整句连着钉：后半句「清单里没有的名字…」在预设段里**逐字相同**，
+    // 单钉它等于空转（把 Lut 段这句删了它也照绿）—— 锚点「滤镜」才是关键。
+    expect(ROUTER_SYSTEM).toContain('这次不涉及滤镜 → "lut": null。**清单里没有的名字一个字都不许写。**')
     expect(ROUTER_SYSTEM).toContain('套滤镜和调色一样是**本地动作**，不算生成：route 照旧给 params')
   })
 
@@ -207,6 +209,9 @@ describe('ROUTER_SYSTEM', () => {
     expect(ROUTER_SYSTEM).toContain('这是合法输出，不是失败')
     // 例子要带上**那句回复本身**：这是实测里模型答对了的那一句，照抄它最稳。
     expect(ROUTER_SYSTEM).toContain('你好，照片有什么想调的吗？')
+    // ⚠️ 示例得**逐键照模板**，键尾也要钉住：模型是照示例抄键的，"示例漏键"
+    //    真发生过一次（加 Lut 时示例跟了一手、加预设时没跟）—— 删掉补的键必须红。
+    expect(ROUTER_SYSTEM).toContain('"lut":null,"preset":null')
   })
 })
 
