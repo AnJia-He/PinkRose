@@ -3054,9 +3054,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .session-del.danger { color: var(--danger); }
 
 /* 空态照作品页那两条（"两句拉开档次"的理由在那边写着，这里一样成立）。 */
-/* 空态 —— **两处共用**：对话列表（「还没改过照片。」+「去改一张」）和调色那一屏
-   （「还没有照片。」+「选一张照片」，见 `ui/AdjustEmpty.tsx`）。
-   两处照的都是 §3.7 那个句式：**主句说现状，按钮说"那怎么办"**。
+/* 空态 —— **四处共用**：对话列表（「还没改过照片。」+「去改一张」）、调色那一屏
+   （「还没有照片。」+「选一张照片」，见 `ui/AdjustEmpty.tsx`）、作品页空态
+   （★ 2026-10-11 T5 起，「还没有作品。」+「去改一张」）和 404 那一页那件
+   （`ui/NotFound.tsx`）；「打不开」的错误态标准件搭的也是这一族皮（见下面那条）。
+   四处照的都是 §3.7 那个句式：**主句说现状，按钮说"那怎么办"**。
 
    ★ 2026-10-04：原来是 `.sessions-empty` 自己一套，加第二处时**没有各抄一份**
    （"同一个长相只有一份"那条）—— 规矩搬到 `empty-state` 这一组上。
@@ -3078,7 +3080,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* ★ 2026-10-11（设计跟进 Task 2）：「打不开」标准件（`ui/kit/ErrorState`）。
    皮就是上面那族 `.empty-state*`（居中、17px 主句、药丸按钮），这里只补一档
    间距：错误态常是整屏就这一件，和 `.sessions-empty` 一样从顶上往下压一段
-   （作品页 / 对话页 / 详情页三处共用 —— "同一个长相只有一份"那条）。
+   （作品页 / 对话页 / 详情页 / 模型 / Lut 五处共用 —— "同一个长相只有一份"那条）。
    ★ 它换掉的是「刷新一下页面，再试一次。」+ `.gallery-hint` / `.detail-hint`
    那两句空话：出路从"劝用户整页刷新"变成一颗**真的重跑那趟请求**的按钮。 */
 .error-state { margin-top: 18vh; }
@@ -3675,8 +3677,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    负 margin 是让标题和它贴成一组：表单的 flex gap 是 16px，
    标题-副标题之间收成 8px，副标题-第一个字段之间保持 16px。 */
 .models-form-lede { margin: calc(-1 * var(--sp-2)) 0 0; font-size: 14px; color: var(--muted); line-height: 1.6; }
-/* 字段下面那行小字、还有「测一下」旁边那句。和 `.gallery-hint` / `.luts-hint`
-   同一套观感 —— 同一类话在两个页面上不该长得像两件事。
+/* 字段下面那行小字、还有「测一下」旁边那句。和 `.luts-hint` 同一套观感
+   —— 同一类话在两个页面上不该长得像两件事。
    ⚠️ `margin: 0`：这几处都坐在 flex 列里，间距由 gap 给。 */
 .models-hint { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
 

@@ -394,17 +394,6 @@ export function withWorks(works: unknown[]) {
   })
 }
 
-/** 盖上"取作品列表失败"这一条 —— 500 + 一句服务端的话（用 sentinel 认领它）。 */
-export function withWorksError(message: string) {
-  const inner = fetchMock.getMockImplementation()!
-  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
-    if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') {
-      return jsonResponse({ error: { code: 'INTERNAL', message } }, 500)
-    }
-    return inner(url, init)
-  })
-}
-
 /** ★ 2026-10-04：用户管理页的「使用情况」现在吃 `/api/me` 的 `usage`
  *  （那边把**会话**占的空间也算进去了）。这一组给它盖上真数；上限默认 5 GB。 */
 export function withUsage(u: { count: number; bytes: number }) {
