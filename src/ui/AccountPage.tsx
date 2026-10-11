@@ -164,6 +164,12 @@ export function AccountPage({
   /** §6.6 的 80% 提醒：那一格数字变色 + 下面那句带出路的提醒，都由它决定。 */
   const usageWarn = usage.state === 'ready' && usage.bytes / usage.limit >= 0.8
 
+  /** ★ 2026-10-11：右列「剩余 >99.9%」那行的字（三档规则全在 `restPctLabel` 里）。
+      只有 `ready` 时给字；loading / 拿不到都是**空串** —— 那一行整个不渲染，不许编一个数
+      （同上面 `Usage` 那段）。⚠️ 判 `=== 'ready'`（不能写 `!== 'loading'`）：剩下那一支
+      还带着 `unavailable`，`bytes` 在它身上不存在 —— 那是 typecheck 才能看见的红。 */
+  const restLabel = usage.state === 'ready' ? restPctLabel(usage.bytes / usage.limit) : ''
+
   return (
     <div className="account">
       {/* ★★ 2026-10-04（晚）：用户说「布局看着都不合理」→ 第一次有了标题 + 一张列表卡。
@@ -171,18 +177,28 @@ export function AccountPage({
           → 一列窄卡通吃改成**三个小框架排一行**（一类一框：账号 / 模型配置 / 作品空间用量），
           把右边空着的地方用起来。他在画板上看过的样子：
           `.superpowers/brainstorm/430-1791133449/content/account-tiles.html`。
-          窄屏网格自己叠（中屏两列、手机一列）—— `auto-fit + minmax` 干的事。
-          ⚠️ 展开的表单 / 确认跟着**所在的那一框**走（改密码、注销都在「账号」框里往下长）。
+          （窄屏当时靠网格自己叠：中屏两列、手机一列。）
+          ⚠️ 展开的表单 / 确认跟着**所在的那一组**走（改密码、注销都在「账号」组里往下长）。
 
           ★★ 2026-10-09：用户说「**我感觉这整个页面的排版都很突兀，因为空间太大而我们
           现在功能很少，优化一下**」。量出来的病根不在"几格"，在**没有宽度上限**：
           `auto-fit + 1fr` 在宽屏上把每一格拉到三分之一屏宽 —— 1800 的窗口上
           **一格 537px、里面只有两行字**（「模型配置」那格 537×87）。格子越宽、
           里面越空，"空间太大"就是它。
-          → 外面套一层 `.account-inner` 收住宽度（见 `styles.css` 那段），
-          多出来的地方左右平分。**这一层是从"死代码"重新长回来的**：
-          2026-10-04 那版（720px）当年确实没事干（里面有张 420 的窄卡），
-          现在它管的是整页的版心。 */}
+          → 外面套一层 `.account-inner` 收住宽度（那一版收的是 1200 —— 三格并排
+          各约 381px 要的宽度）。**这一层是从"死代码"重新长回来的**：
+          2026-10-04 那版（720px）当年确实没事干（里面有张 420 的窄卡）。
+
+          ★★ 2026-10-11（**终版：单列分组**）：用户说「**设置页看起来很业余很散漫**」
+          → 真机体检（`.superpowers/scratch/design-audit/report.md`）确认了观感，
+          病根是**版式选错了**（设计 §一）：三格并排是"仪表盘"排版，而三块内容量
+          差五倍（账号 3 行 / 模型 1 行 / 用量一整张 300px 高的大饼图），同排并列必然
+          高低参差；「退出登录」还孤零零悬在左下角、底下大片空白；1200 的版心装这点
+          内容本来就太大。
+          → **并排退役，改单列分组**：版心收到 680px 居中（`styles.css` 的
+          `.account-inner`），一类一组往下排（`.account-grid` 从网格改回一列 flex）；
+          用量那一组横过来 —— 饼在左、百分比和「N 张作品」竖排右列（`.usage-copy`），
+          窄屏自然叠回上下。锚点类一个没动（`App.account.test.tsx` 那串）。 */}
       <div className="account-inner">
           <h1 className="account-title">个人设置</h1>
 
@@ -314,11 +330,17 @@ export function AccountPage({
               <div className="account-card">
                 {/* ★ 2026-10-05：用量饼图（用户：「这一整块都可以先放作品用量，
                     用那个立体的大一点的圆盘图表表示」→ 看完圆环后又补
-                    「我想到了就是磁盘用量是一个叫做饼图的」→ 换成实心饼图）——
-                    **整块让给图表**：饼图居中在上、百分比 + 两个数字在下面
-                    （`.usage-figure`）。盘 `aria-hidden`：语义真值在数字里，
-                    它是"画给人看"的那份。 */}
-                <div className="usage-figure">
+                    「我想到了就是磁盘用量是一个叫做饼图的」→ 换成实心饼图）。
+                    盘 `aria-hidden`：语义真值在数字里，它是"画给人看"的那份。
+
+                    ★ 2026-10-11（单列版式）：从"饼居中在上、数字在下面居中"改
+                    **横排** —— 饼在左，百分比 + 「N 张作品」竖排右列（`.usage-copy`，
+                    见 styles.css 那段）。饼组件内部（几何 / 配色 / 两条压图标签）
+                    一个字没动。
+                    ⚠️ `usage-pie-warn` 现在**也挂到这一层**：百分比那行从饼里搬进
+                    右列之后，不再是被饼包着的后代 —— 不挂到一个共同祖先上的话，
+                    `.usage-pie-warn .usage-pie-pct`（用到八成整行变红）永远匹配不上。 */}
+                <div className={usageWarn ? 'usage-figure usage-pie-warn' : 'usage-figure'}>
                   {/* ★ 2026-10-05（第六轮）：两个数**画进图形里**了（用户：「也要在图形中
                       展现出来」）—— `used`/`rest` 由页面用 `formatSize` 算好传进去；
                       拿不到时（loading）不传，图上占位「…」。外面那行图例因此撤了
@@ -330,14 +352,20 @@ export function AccountPage({
                     warn={usageWarn}
                     used={usage.state === 'loading' ? undefined : formatSize(usage.bytes)}
                     rest={usage.state === 'loading' ? undefined : formatSize(Math.max(0, usage.limit - usage.bytes))} />
-                  <div className="account-stats">
-                    {usage.state === 'loading' ? (
-                      // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
-                      // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
-                      <div className="stat"><b>…</b><span>张作品</span></div>
-                    ) : (
-                      <div className="stat"><b>{usage.count}</b><span>张作品</span></div>
-                    )}
+                  {/* ★ 2026-10-11：右列 —— 百分比那行（`restPctLabel` 说了算，和饼里
+                      那两条标签同一套数）+「N 张作品」。loading 时百分比那行**整个
+                      不渲染**（空串），只留 stats 的「…」占位。 */}
+                  <div className="usage-copy">
+                    {restLabel !== '' && <span className="usage-pie-pct">剩余 {restLabel}</span>}
+                    <div className="account-stats">
+                      {usage.state === 'loading' ? (
+                        // 占位用「…」不用 0：这一格马上就会被真数替掉，而"0"读起来是关于
+                        // 用户资产的**一句断言**，哪怕只闪半秒也不该是假的。
+                        <div className="stat"><b>…</b><span>张作品</span></div>
+                      ) : (
+                        <div className="stat"><b>{usage.count}</b><span>张作品</span></div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -430,9 +458,10 @@ export function modelValue(configs: PublicConfig[]): string {
  *     「这上面有一个大圆圈也不好看呀」—— 极小占比时它像一颗图钉戳在盘上。
  *     **别再加圆点/珠子这类末端装饰**：楔形本身就是饼图的语言。
  *
- * ⚠️ 百分比数字在饼**下面**（顶面上压字对比度会随占比漂）。
- * ⚠️ 大字行写的是**剩余率**（见下面 `restPct` 的注释）；「>99.9%」是它的诚实上限
- *    写法，和以前「<0.1%」一个道理 —— 不假装精确到没有的小数位。
+ * ⚠️ 百分比那行**不在这个组件里了**（★ 2026-10-11：单列版式把它挪进了右列
+ *   `.usage-copy`，格式化在导出的 `restPctLabel` 里、由页面调 —— 这里只剩饼和
+ *   两条压图标签。那段"先补主语 → 翻成剩余视角 → 整整一行一个款式"的演化史
+ *   跟着搬去了 `restPctLabel` 的注释）。
  */
 export const MIN_SLICE_RATIO = 5 / 360
 
@@ -449,21 +478,6 @@ export function UsagePie({ pct, warn, used, rest }: {
   const drawRatio = ratio === null || ratio <= 0 ? 0 : Math.max(ratio, MIN_SLICE_RATIO)
   // loading（ratio === null）画 pie3dPaths(0)：整块厚饼、没有扇形。
   const g = pie3dPaths(drawRatio)
-  /**
-   * 大字行显示的是**剩余率**（★ 2026-10-05 第九轮。用户先看到裸着的「<0.1%」说
-   * 「这个数字你得告诉用户是什么呀」，补了「已用」前缀；接着又说
-   * 「**这不还是用的量不是剩余量呀**」—— 他要这行看**剩余**的视角。
-   * 说穿了："还剩多少"才是他打开这页的问题，已用是答完之后的余数）。
-   *
-   * 格式化规则和老口径（已用）**互为镜像**：剩余 >99.95% 写「>99.9%」
-   *（对应老口径的「<0.1%」），90~99.9 一位小数，≤90 取整；真的全满时显示
-   * 「剩余 0%」—— 那是真话，不是「0.0%」那种假话。
-   */
-  const restPct = ratio === null ? null : Math.max(0, Math.min(100, 100 - ratio * 100))
-  const label = restPct === null ? ''
-    : restPct > 99.95 ? '>99.9%'
-    : restPct > 90 ? `${restPct.toFixed(1)}%`
-    : `${Math.round(restPct)}%`
   return (
     <div className={warn ? 'usage-pie-wrap usage-pie-warn' : 'usage-pie-wrap'}>
       <svg className="usage-pie" viewBox="0 0 120 120" aria-hidden="true">
@@ -496,14 +510,37 @@ export function UsagePie({ pct, warn, used, rest }: {
         <i className="usage-chart-dot usage-chart-dot-rest" aria-hidden="true" />
         剩余 <b>{rest ?? '…'}</b>
       </span>
-      {/* 百分比那行（★ 2026-10-05 第八/九/十轮：先补主语「已用」（用户：「这个数字
-          你得告诉用户是什么呀」）→ 翻成剩余视角（「这不还是用的量不是剩余量呀」）
-          → 第十轮：「剩余」和数字**并成一行**（用户：「字体和颜色应该跟数字保持
-          一致吧看着好别扭」—— 小灰标签贴大数字的混搭他不认，整行 22px 一个款式；
-          warn 时也整行一起红）。读屏读出来是「剩余 99.7%」。 */}
-      {label !== '' && <span className="usage-pie-pct">剩余 {label}</span>}
     </div>
   )
+}
+
+/**
+ * 右列那行「剩余 N%」的格式化（★ 2026-10-11：**从 `UsagePie` 里搬出来的** ——
+ * 单列版式（设计 §一）把这一行从饼下面挪进了右列 `.usage-copy`，和「N 张作品」
+ * 做一竖排，所以它不再住在组件里，由页面调）。
+ *
+ * 规则**一个字没动**，演化史照搬（★ 2026-10-05 第九/十轮）：显示的是**剩余率**
+ *（用户先看到裸着的「<0.1%」说「这个数字你得告诉用户是什么呀」，补了「已用」
+ * 前缀；接着又说「**这不还是用的量不是剩余量呀**」—— 他要看**剩余**的视角：
+ * "还剩多少"才是他打开这页的问题，已用是答完之后的余数）。
+ * 第十轮：「剩余」和数字**并成一行**（用户：「字体和颜色应该跟数字保持一致吧
+ * 看着好别扭」—— 小灰标签贴大数字的混搭他不认，整行 22px 一个款式；
+ * warn 时也整行一起红，见 styles.css 的 `.usage-pie-pct`）。
+ *   · 剩余 >99.95% 写「>99.9%」—— 四舍五入成「100.0%」对着一个存过东西的人
+ *     就是"一个字节都没存"的假话；诚实上限写法，和以前「<0.1%」互为镜像；
+ *   · 90~99.9 一位小数；其余取整；真的全满时是「剩余 0%」—— 那是真话，
+ *     不是「0.0%」那种假话。
+ *（读屏读出来是「剩余 99.7%」那一整句。）
+ *
+ * `ratio === null`（还没拿到）回**空串** —— 那一行整个不渲染，不许编一个数
+ *（同「0 张作品」那条：宁可少说一句，不说一句假的）。
+ */
+export function restPctLabel(ratio: number | null): string {
+  if (ratio === null) return ''
+  const restPct = Math.max(0, Math.min(100, 100 - Math.max(0, Math.min(1, ratio)) * 100))
+  return restPct > 99.95 ? '>99.9%'
+    : restPct > 90 ? `${restPct.toFixed(1)}%`
+    : `${Math.round(restPct)}%`
 }
 
 /**

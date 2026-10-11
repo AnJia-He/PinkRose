@@ -8,8 +8,10 @@
  */
 import { CUBE2_TEXT, LOGGED_IN, MODEL, canvasProps, container, decision, fetchMock, goNav, jsonResponse, makeGate, renderApp, say, setMeFails, setMeGate, setMeUsage, setMeUsageGate, setMeUser, uploadPhoto, withModels, withModelsError, withUsage, withUsageError } from './test/appHarness'
 import { act } from 'react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { MAX_LUT_FILE_BYTES, type LutMeta } from '../shared/lut.ts'
-import { MIN_SLICE_RATIO, formatSize, modelValue, pie3dPaths } from './ui/AccountPage'
+import { MIN_SLICE_RATIO, formatSize, modelValue, pie3dPaths, restPctLabel } from './ui/AccountPage'
 import * as api from './api/client'
 import * as lutsMod from './api/luts'
 import { describe, expect, it, vi } from 'vitest'
@@ -814,6 +816,21 @@ describe('用户管理页', () => {
     return container.querySelector('.account-stats')?.textContent ?? null
   }
 
+  /** ★ 2026-10-11：读 styles.css 里某条规则的正文 —— **版式那一半 jsdom 量不到**
+   *  （没有排版引擎、也不加载 styles.css），只能把契约钉在源码层（同款做法见
+   *  `CompareSplit.test.tsx` / `styles.ruler.test.ts`）。只接**以点开头的类选择器**。
+   *
+   *  ⚠️ 先剥块注释（照 ruler 守卫那天的教训：注释里写出"`.类名 {`"一样的字样
+   *  会被当成真规则）；路径走 `process.cwd()` —— jsdom 环境里 `import.meta.url`
+   *  拼出来不是 `file://`，`fileURLToPath` 当场就报（`kit.test.tsx` 那边踩过）。 */
+  function cssRule(selector: string): string {
+    const css = readFileSync(join(process.cwd(), 'src', 'styles.css'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+    const body = new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(css)?.[1]
+    expect(body, `styles.css 里该有 \`${selector}\` 那条规则`).toBeTruthy()
+    return body!
+  }
+
   /** 按**行上那几个字**取一行（现在有三行：模型 / 改密码 / 注销账号）。 */
   function rowByLabel(label: string): HTMLButtonElement {
     const row = [...container.querySelectorAll('.account-row')]
@@ -844,6 +861,65 @@ describe('用户管理页', () => {
     //   "这是你的用户名"。标签是**另起一格**，`.account-name` 里仍然只有名字
     //   （上面那条断言就是钉这个的）。
     expect(container.querySelector('.account-label')?.textContent).toBe('用户名')
+  })
+
+  it('★ 版式：三个分组按**单列**排（不再并排三个 tile 一行）（2026-10-11）', async () => {
+    // 用户原话：「设置页看起来很业余很散漫」。真机体检
+    //（`.superpowers/scratch/design-audit/report.md`）量出来的病根是**仪表盘排版**：
+    // 三格并排装三块内容量差五倍的东西（账号 3 行 / 模型 1 行 / 用量一整张
+    // 300px 高的大饼图）—— 同排并列必然高低参差；「退出登录」还孤零零悬在左下角。
+    // 新样子（设计 §一）：单列分组、版心 680px 居中。
+    //
+    // ⚠️ "单列"住在 CSS 里，jsdom 量不到 —— 所以这条**一半量 DOM 结构、
+    //    一半读源码**把 `.account-grid` 那条规则钉住（`cssRule` 在文件上半段）。
+    await renderApp()
+    await openAccount()
+
+    const grid = container.querySelector('.account-grid')
+    expect(grid).toBeTruthy()
+    const tiles = [...grid!.children].filter(el => el.classList.contains('account-tile'))
+    expect(tiles, '三个分组，一个不多一个不少').toHaveLength(3)
+    // 单列的**顺序**就是阅读顺序：账号 → 模型配置 → 作品空间用量
+    expect(tiles.map(t => t.querySelector('.account-tile-title')?.textContent))
+      .toEqual(['账号', '模型配置', '作品空间用量'])
+    // 「退出登录」不归任何一组（它是"离开这一页"，不是这一页上的一项设置）——
+    // 收进版心那条流里就行，别收进任何一个 tile
+    expect(grid!.querySelector('.account-signout')).toBeNull()
+    expect(container.querySelector('.account .account-signout')).toBeTruthy()
+
+    // CSS 那一半：并排（auto-fit）退役 —— 它就是"参差"的来源
+    const gridRule = cssRule('.account-grid')
+    expect(gridRule, 'auto-fit 并排 = 三块内容量差五倍还同排，别回来').not.toContain('auto-fit')
+    expect(gridRule, '单列的排法：flex 竖排').toContain('flex-direction: column')
+    // 版心 680（原 1200）：1200 是"三格并排"要的宽度，单列不再需要
+    expect(cssRule('.account-inner')).toContain('max-width: 680px')
+  })
+
+  it('★ 用量区：百分比和「N 张作品」进了右侧 .usage-copy（饼上只留那两条压图标签）（2026-10-11）', async () => {
+    // 旧样子：饼居中在上、百分比 + 张数在下面居中（整块 300px 高的竖排）。
+    // 单列版式把这一块横过来 —— 饼在左、数字在右（设计 §一）。
+    // 做法：`UsagePie` 不再渲染 `.usage-pie-pct`，由页面用 `restPctLabel` 算好、
+    // 和 `.account-stats` 一起放进右列 `.usage-copy`。
+    withUsage({ count: 2, bytes: 10 * 1024 * 1024 })
+    await renderApp()
+    await openAccount()
+
+    const figure = container.querySelector('.usage-figure')
+    expect(figure).toBeTruthy()
+    const copy = figure!.querySelector('.usage-copy')
+    expect(copy, '右列 .usage-copy 该在 .usage-figure 里').toBeTruthy()
+    // 右列竖排两样：百分比那行 + 「N 张作品」
+    expect(copy!.querySelector('.usage-pie-pct')?.textContent).toBe('剩余 99.8%')
+    expect(copy!.querySelector('.account-stats')?.textContent).toMatch(/^2\s*张作品/)
+    // ⚠️ 饼那一侧**只剩饼和两条压图标签**（已用 / 剩余）—— 百分比那行不许再留在
+    // 里面（留了就是同一个数说两遍，而且单列版式里它该在右列）
+    const pie = figure!.querySelector('.usage-pie-wrap')
+    expect(pie).toBeTruthy()
+    expect(pie!.querySelector('.usage-pie-pct')).toBeNull()
+    expect(pie!.querySelectorAll('.usage-chart-tag')).toHaveLength(2)
+
+    // CSS 那一半：窄屏叠成上下两段全靠 `flex-wrap`（不写就永远贴着挤）
+    expect(cssRule('.usage-figure'), '窄屏自然叠的开关').toContain('flex-wrap: wrap')
   })
 
   it('★ 右上角那颗 👤 点得开它，而且地址栏跟着走', async () => {
@@ -1514,5 +1590,17 @@ describe('用户管理页', () => {
     expect(formatSize(240 * 1024)).toBe('240 KB')
     expect(formatSize(342 * MB)).toBe('342 MB')
     expect(formatSize(1.5 * 1024 * MB)).toBe('1.5 GB')
+  })
+
+  it('restPctLabel：三档各说一句话（2026-10-11 从 UsagePie 搬出来时**规则一个字没动**）', () => {
+    // 三档：>99.95 → 「>99.9%」（诚实上限 —— 四舍五入成「100%」就是
+    // "一个字节都没存"的假话）；90~99.9 一位小数；其余取整。
+    expect(restPctLabel((10 * 1024 * 1024) / (5 * 1024 ** 3))).toBe('99.8%')
+    expect(restPctLabel((495 * 1024) / (5 * 1024 ** 3))).toBe('>99.9%')
+    expect(restPctLabel(0.84)).toBe('16%')
+    // 还没拿到（loading）：空串 = 那一行**整个不渲染** —— 不许编一个数
+    //（同「0 张作品」那条：宁可少说一句，不说一句假的）
+    expect(restPctLabel(null)).toBe('')
+    // 变异：把 `>99.95` 那一档删掉 → 第二条显示「100.0%」，这一条红
   })
 })
