@@ -226,7 +226,9 @@ git commit -m "feat(对话): 路由失败也挂「再试一次」—— 10-10 �
   - 名字表：「下载」（把这次统一的事记一笔）；「回到这一步」词条更新为**能力名**
     （只活在转盘格子的 aria-label 里，门面不再拿它当标题/描述）；
   - 新增错误句/页面文案条目：**「没找到这一页」/「地址可能打错了，或者这一页已经不在了。」/
-    「这张作品不在了。」**（Task 2 落的）；**「刷新一下页面，再试一次。」记为退役**；
+    「这张作品不在了。」**（Task 2 落的）；**「刷新一下页面，再试一次。」记为退役中** ——
+    作品/对话/详情三页随 T2 已退役；`ModelSettings.tsx:177` / `LutSettings.tsx:273` 两处
+    随 T5 收齐（T5 完成后全站归零）——措辞带上这个限定，别写成"已全站退役"；
   - 改完跑 `npm run check:copy` 确认 exit 0。
 
 - [ ] **Step 1: 写失败测试**（落地页那格的新文字按字面量钉；两处下载新名字按字面量钉）
@@ -245,6 +247,7 @@ git commit -m "docs(文案): 落地页改说转盘 + 「下载」全站一名 + 
 **Files:**
 - Modify: `src/ui/Nav.tsx`（aria-current）/ `src/ui/Banners.tsx`（通知条 role）
 - Modify: `src/ui/GalleryPage.tsx` + `src/App.tsx`（空态按钮）/ `src/ui/ModelSettings.tsx` + `src/App.tsx`（面包屑）
+- Modify: `src/ui/ModelSettings.tsx` + `src/ui/LutSettings.tsx`（**错误态换 ErrorState** —— 见下面第 5 项）
 - Modify: 相应测试
 
 - [ ] **Step 1: 写失败测试**
@@ -254,6 +257,7 @@ it('导航当前项有 aria-current="page"（含人物图标那颗）', ...)
 it('通知条 role="status"（读屏能听见「存好了…」这类通报）', ...)
 it('作品空态有一颗「去改一张」，点了去修图页', ...)
 it('模型设置页头有「← 个人设置」，点了回设置页', ...)
+it('模型设置 / Lut 页打不开：也是居中的「打不开」块 + 一颗「再试一次」（旧句退役）', ...)
 ```
 
 - [ ] **Step 2: 跑红 → 实现**
@@ -268,6 +272,9 @@ it('模型设置页头有「← 个人设置」，点了回设置页', ...)
 - `ModelSettings.tsx`：`<h1 className="models-title">` 上方加与作品详情「← 作品」同款的
   面包屑按钮「← 个人设置」（类名照抄详情页那颗的样式来源；props 加 `onBack`，
   App 传 `() => go({ kind: 'account' })`）。
+- `ModelSettings.tsx:177` / `LutSettings.tsx:273`：两处仍是旧写法的错误态
+  （「刷新一下页面，再试一次。」）→ 换成同款 `ErrorState`（`onRetry` = 重拉各自的数据）；
+  旧句连同钉它的测试一并退役 —— 至此全站归零。
 
 - [ ] **Step 3: 跑绿 + 全量两绿 + 提交**
 
