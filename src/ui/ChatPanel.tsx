@@ -807,23 +807,34 @@ export default function ChatPanel({
           输入框上头"）。
 
           就地展开、不弹浮层：这一屏没有弹窗文化（和调色面板同一条规矩）。
-          它和下面的格子是**两级**：这一行是"有哪些工具"，下面才是工具本身。 */}
+          它和下面的格子是**两级**：这一行是"有哪些工具"，下面才是工具本身。
+
+          ★ 2026-10-11 晚（用户：「留的空间大一点，这里的图标整体是正方形，就跟
+          微信的一样」）：每一项是**微信点＋那种格子** —— 方形图标块（54×54）
+          + 下方一行小字，不是横着的药丸。⚠️ 上一版（当天下午）就是横药丸，
+          别再"顺手改回去"；判定形态请看 `.chat-tool-icon` 那块（长相住在
+          styles.css 的 `.chat-tools` 一段）。 */}
       {!selecting && toolsOpen && (
         <div className="chat-tools">
           <button className={lut ? 'chat-tool on' : 'chat-tool'} aria-expanded={lutOpen}
             onClick={() => setLutOpen((o) => !o)}>
-            <SlidersHorizontal size={14} strokeWidth={1.5} aria-hidden="true" />
+            {/* ★ 2026-10-11 晚：图标住进 `.chat-tool-icon`（那块方形格子）——
+                悬停/点亮的反馈都长在格子身上，整项按钮本身是透明的。 */}
+            <span className="chat-tool-icon">
+              <SlidersHorizontal size={20} strokeWidth={1.5} aria-hidden="true" />
+            </span>
             Lut
           </button>
           {/* ★ 2026-10-10：「帮我想想」—— 再要一批建议卡。它不是"两层里的头一层"
               （Lut 那种），点了**直接办事**（去要卡片），所以没有 `aria-expanded`。
               忙的时候（或正在要）禁用：点了也没反应的按钮不留（老规矩）。
               ★ 2026-10-11（用户：「点击加号后的展开设计的更美观一点」）：补上
-              `Sparkles` 图标 —— 原来一粒带图标一粒不带，并排看着像两个体系；
-              现在是"图标 + 文字"同构的两粒（图标 14、线宽 1.5，和上面的 Lut 对齐）。 */}
+              `Sparkles` 图标 —— 原来一粒带图标一粒不带，并排看着像两个体系。 */}
           <button className="chat-tool" disabled={!!busy || suggesting}
             onClick={onAskSuggest}>
-            <Sparkles size={14} strokeWidth={1.5} aria-hidden="true" />
+            <span className="chat-tool-icon">
+              <Sparkles size={20} strokeWidth={1.5} aria-hidden="true" />
+            </span>
             帮我想想
           </button>
         </div>

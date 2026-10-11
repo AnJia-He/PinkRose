@@ -2263,9 +2263,12 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    显示而不是显示在上方」）—— DOM 里排在 `<form>` 后面，所以这里的内边距是
    "上 0 / 下 14"（上面那条 14px 的间隔由输入框自己的下内边距给；下边留 14
   到面板底边，不然药丸贴着屏幕边）。⚠️ 别写回 `14px 18px 0`（那是"在输入框
-   上面"那一版的写法，写回去药丸会顶到面板下沿、和输入框挤在一起）。 */
+   上面"那一版的写法，写回去药丸会顶到面板下沿、和输入框挤在一起）。
+   ★ 2026-10-11 **晚**：每项从「横药丸」改成**微信点＋那种方块格**
+   （`.chat-tool-icon`：54×54 方形块 + 下方一行小字）—— 用户拿微信的加号面板
+   当参照定的形态；格子间隔也跟着拉开到 --sp-4。 */
 .chat-tools {
-  display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: 0 18px 14px;
+  display: flex; flex-wrap: wrap; gap: var(--sp-4); padding: 0 18px 14px;
   /* ★ 2026-10-11（用户：「点击加号后的展开设计的更美观一点」）：这一行**淡入** ——
      从输入框这边往下落 4px 出现（入场动画的模子照 `.card` 的 `card-in`：
      同一个 --dur-2 / --ease / both）。条件渲染每次开都会重放，不用 key 帮忙。
@@ -2275,28 +2278,38 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   animation: chat-tools-in var(--dur-2) var(--ease) both;
 }
 @keyframes chat-tools-in { from { opacity: 0; transform: translateY(-4px) } }
-/* 一项工具 = 一颗药丸（就是原来那颗「滤镜」的长相，只是从"常驻在输入框上面"
-   搬进了加号里）。⚠️ 它是**真 `<button>`**：键盘走得到，`aria-expanded` 报得出
-   它自己那块面板开着没有。
-
-   ★ 2026-10-11（用户：「点击加号后的展开设计的更美观一点」）：**长相显式写死**。
-   之前这条只写了圆角、内边距和字色 —— 底色和描边是**继承全局 `button{}`**
-   来的（`--raised` 底 + `--line-2` 描边），而字色又压到了 `--muted`：三样一凑，
-   真机截图里看着像**禁用态**（灰字 + 灰胶囊）。现在照 `.card` / `.tool-cell`
-   同一条"药丸坐在面板底上"的思路把三样写明，不靠继承碰运气。
-   尺寸升到 6px 14px（28px 高，和 `.tool-cell` 同档）：26px 的小胶囊在这一行
-   显小、也不好按。 */
+/* 一项工具 = **微信点＋那种方块格**（★ 2026-10-11 晚定型）：
+   一块 54×54 的方形格子（`.chat-tool-icon`）+ 下方一行小字。
+   ⚠️ 上一版（同天下午）是「实底横药丸」—— 用户拿微信的加号面板当参照定了
+   现在这个形态，别再顺手改回去。
+   ⚠️ 整项是**真 `<button>`**（键盘走得到，`aria-expanded` 报得出它自己那块
+   面板开着没有），但按钮自己透明无框 —— 看得见的那块长相全挂在
+   `.chat-tool-icon` 上（全局 `button:where(:hover)` 只到 0-0-1，盖不过这里的
+   `background: none`，所以按钮本身不会偷偷长出灰底）。 */
 .chat-tool {
-  display: inline-flex; align-items: center; gap: 6px;
-  border-radius: var(--r-pill); padding: 6px 14px; font-size: 13px;
-  background: var(--raised); border-color: var(--line-2); color: var(--text);
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  background: none; border: 1px solid transparent; padding: 0;
+  font-size: 12px; color: var(--muted);
 }
-/* ⚠️ 悬停要自己写一条：`.chat-tool`（0-1-0）会盖过全局那条
-   `button:where(:hover)`（0-0-1）—— 不写的话悬停时背景不动，看着像没反应。
-   禁用态不给悬停反馈（`:not(:disabled)`）：「看着能点、点下去什么都没发生」
-   是这个项目最不喜欢的一种按钮。 */
-.chat-tool:hover:not(:disabled) { background: var(--hover); border-color: var(--line-3); }
-.chat-tool.on { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
+/* 那块方形格子：`--r-md` 圆角、抬起来一档的实底 + 一道最轻的发丝线。
+   图标 20（约 37%）——「留的空间大一点」的全部落点就在这（54 的块配 20 的图标）。
+   ⚠️ transition 只写 background-color / border-color（色的过渡，不是位移动画）。 */
+.chat-tool-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 54px; height: 54px; border-radius: var(--r-md);
+  background: var(--raised); border: 1px solid var(--line); color: var(--text);
+  transition: background-color var(--dur-1) ease, border-color var(--dur-1) ease;
+}
+/* 悬停：块浮一档、下面的小字跟着变亮。⚠️ 要自己写（`.chat-tool` 是 0-1-0，
+   盖过全局那条 0-0-1）；`:not(.on)` 让点亮态不被悬停顶掉（点亮是比悬停更强的
+   状态，和 `.chat-plus` / `.tool-cell` 同一条）；`:not(:disabled)` 不给禁用项
+   悬停反馈（「看着能点、点下去什么都没发生」是这个项目最不喜欢的一种按钮）。 */
+.chat-tool:hover:not(:disabled):not(.on) .chat-tool-icon { background: var(--hover); border-color: var(--line-2); }
+.chat-tool:hover:not(:disabled) { color: var(--text); }
+/* 点亮（正用着滤镜）：块和字一起穿强调色 —— 和 `.tool-cell.on` 同一套。
+   ⚠️ 这条排在悬停那条**后面**（两个都是 0-2-0，靠文件顺序分胜负）。 */
+.chat-tool.on { color: var(--accent-300); }
+.chat-tool.on .chat-tool-icon { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
 
 /* ★ 2026-10-08：和 `.chat-tools` 同一档（它也在输入框下面）—— 上 0 / 下 14，
    上面那条 14px 间隔由工具行自己的下内边距给。
