@@ -2313,10 +2313,15 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    ⚠️ 它是**图标键**：没有可见文字，名字只在 `aria-label`（"更多工具"）上 ——
    和「个人设置」那颗同一条规矩（删了它，读到/找到的就是一个没有名字的按钮）。
    ⚠️ 长相走**次要**那一档（透明底 + 描边），别抢「发送」 —— 这一行里主按钮
-   只有那一颗。`align-self: stretch` 让它跟输入框一样高（那一行的高度由输入框定）。 */
+   只有那一颗。`align-self: stretch` 让它跟输入框一样高（那一行的高度由输入框定）。
+   ★ 2026-10-11（用户：「留的空间大一点，这里的图标整体是正方形，就跟微信的
+   一样」）：**正方形** —— 宽度不再写死 36px，用 `aspect-ratio: 1` 从高度推
+   （高度仍由 stretch 跟输入框走，约 40×40）。图标还是 16，四边留白因此均匀
+   且够大，和微信输入框左边那颗＋同一个道理。⚠️ 别再写回固定 `width`：那一写
+   回窄长条，留白左右 / 上下就不一样大了。 */
 .chat-plus {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 36px; padding: 0; align-self: stretch;
+  aspect-ratio: 1; padding: 0; align-self: stretch;
   background: transparent; border-color: var(--line-2); color: var(--muted);
 }
 .chat-plus:hover { color: var(--text); border-color: var(--line-3); background: var(--hover); }
