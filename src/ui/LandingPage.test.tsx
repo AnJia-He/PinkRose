@@ -122,6 +122,22 @@ describe('落地页', () => {
     expect(box.style.getPropertyValue('--lp-p')).toBe('80%')
   })
 
+  it('★ 「怎么用」那格说的是**转盘**，不再说点对话 —— 那交互 2026-10-06 就退役了', async () => {
+    // ★ 2026-10-11（设计跟进 T4）。原来这一格写着「每一步都挂在对话里，点哪一句
+    //   就回到哪一步」—— 而"点气泡跳步"随那两颗文字提示在 2026-10-06 一起退役了
+    //   （见《文案规范》名字表那条），现在是照片上方那圈转盘（`ui/StepStrip`）。
+    //   留着老句 = 落地页在介绍一个**不存在的交互**（体检当场抓到的假话）。
+    //   变异：把 h3 或 p 改回任意旧措辞 → 下面两条各自红。
+    await render()
+    const cell = container.querySelector('.lp-cell.lp-photo')!
+    expect(cell.querySelector('h3')?.textContent).toBe('点哪一版，回哪一版')
+    expect(cell.querySelector('p')?.textContent).toBe(
+      '改过的每一版都排在照片上方那圈里 —— 点哪一格就回哪一版。调色不伤原图，照片随时能回到刚上传的样子。')
+    // ★ 老话**整页一个字都不许留**：这句在任何情况下都是假的（那个交互整个不在），
+    //   不是"哪半真哪半假"的问题 —— §三那条最要紧的规矩管的就是它。
+    expect(container.textContent).not.toContain('点哪一句')
+  })
+
   it('★ 待在这一页时，挂到 `html` 上的那个类是活的 —— 离开就摘掉', async () => {
     // `body` 的底色、`color-scheme`、文档滚动条这三样是文档级的，
     // 写在 `.lp` 里面管不到它们（App 那边是深色）。没挂这个类的话，

@@ -89,7 +89,10 @@ export default function Banners({
               //    **别照着这里在别处也随手加 `!`**：换个地方它可能真的会是 null。
               onClick={() => downloadImage(saveFail.blob!, saveFail.name)}
             >
-              下载到电脑
+              {/* ★ 2026-10-11（设计跟进 T4）：原来叫「下载到电脑」——「把图拿到
+                  手」这一个动作当时全站三个名字（顶栏「下载」/ 这里「下载到电脑」/
+                  详情页「下载到我的电脑」）。统一成「下载」，和顶栏那一格同词。 */}
+              下载
             </Btn>
           )}
           <button onClick={onDismissSaveFail}>知道了</button>

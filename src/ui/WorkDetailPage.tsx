@@ -251,7 +251,11 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
 
             `download` 带值（M2）：不带值时浏览器按 URL 末段起名 —— 现在末段是
             `file`（还带 `?v=…`），下下来是个没有扩展名的文件。 */}
-        <BtnLink className="detail-download" href={fullUrl(work)} download={downloadName(work)}>下载到我的电脑</BtnLink>
+        {/* ★ 2026-10-11（设计跟进 T4）：按钮的字从「下载到我的电脑」收成朴素的
+            「下载」——「把图拿到手」这一个动作**全站只有一个名字**（顶栏那一格、
+            存失败横幅上那颗，都是它）。上面那段注释里引用的旧名字留着不改：
+            它说的是**历史**（C1 那会儿两处都调错 URL）。 */}
+        <BtnLink className="detail-download" href={fullUrl(work)} download={downloadName(work)}>下载</BtnLink>
         {confirming ? (
           <span className="detail-confirm">
             <span>删掉作品集里的这一份吗？删了就找不回来了。</span>

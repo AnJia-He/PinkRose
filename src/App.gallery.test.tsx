@@ -667,6 +667,10 @@ describe('作品详情页：这张图怎么来的', () => {
     // `buildFilename` 去掉 → 下一条红。
     expect(dl?.getAttribute('download') ?? '').toMatch(/\.jpg$/)
     expect(dl?.getAttribute('download') ?? '').not.toBe('file')
+    // ★ 2026-10-11（设计跟进 T4）：「把图拿到手」这一个动作**全站只有一个名字** ——
+    //   按钮上的字从「下载到我的电脑」收成朴素的「下载」（顶栏那一格也是它）。
+    //   变异：改回任意旧叫法 → 这一条红。
+    expect((dl?.textContent ?? '').trim()).toBe('下载')
   })
 
   it('★ 改个中文名，网址一动不动（§3.5.1）', async () => {
@@ -1328,7 +1332,9 @@ describe('保存 = 存进作品集（Task 13）', () => {
     expect(container.textContent).toContain('没能存进「作品」')
     // ⚠️ 按**类名**找那个盒子（结构），文案单独一条钉住 —— 不做"按文案找元素"。
     const dl = container.querySelector('.save-fail button.download') as HTMLButtonElement | null
-    expect(dl?.textContent ?? '').toContain('下载到电脑')   // 文案：按钮叫这个
+    // 文案：按钮就叫「下载」（★ 2026-10-11 全站一名 —— 原来是「下载到电脑」，
+    // 和顶栏、详情页各叫各的；变异：改回旧名 → 这一条红）
+    expect((dl?.textContent ?? '').trim()).toBe('下载')
     expect(dl).toBeTruthy()                                 // 结构：它真的在
     expect(dl?.disabled).toBe(false)          // ★ 按钮得真的能按
     await act(async () => { dl?.click(); await new Promise(r => setTimeout(r, 0)) })
