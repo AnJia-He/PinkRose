@@ -4,6 +4,8 @@ import { errorText } from '../api/client'
 import { workName, matchesQuery, type WorkMeta } from '../../shared/works.ts'
 import { usePagedDays } from './kit/pagedDays.ts'
 import { SelectBar } from './kit/SelectBar.tsx'
+// ★ 2026-10-11（设计跟进 Task 2）：打不开时的标准件（居中一句 + 「再试一次」）。
+import { ErrorState } from './kit/ErrorState.tsx'
 // ★ 2026-10-10：按大小排那档里每格要写大小 —— 口径和用户管理页那个用量图
 //   **同一份**（'342 MB' / '1.5 GB'），别在这儿再写一个格式化。
 import { formatSize } from './AccountPage'
@@ -38,6 +40,15 @@ export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
    *  这一句只加在列表**上面**，名单原样不动（照 SessionsPage 的 `delFailed`）。 */
   const [delFailed, setDelFailed] = useState<string | null>(null)
 
+  /**
+   * 「再试一次」的扳机（★ 2026-10-11）：把它加一，下面那个 effect 就重跑一趟。
+   *
+   * ⚠️ 为什么是"重跑 effect"而不是把加载那段提成一个函数：那份 `alive` 闸
+   *   （卸载后不许 setState）**只对着它自己那次 effect 的清理时机**才对得上 ——
+   *   提出来之后"什么时候算过期"就得在函数里另写一套判断，两套迟早对不上。
+   */
+  const [reload, setReload] = useState(0)
+
   useEffect(() => {
     let alive = true
     listWorks().then(
@@ -45,7 +56,13 @@ export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
       (e) => { if (alive) setFailed(errorText(e, '打不开作品集')) },
     )
     return () => { alive = false }
-  }, [])
+  }, [reload])
+
+  /** 「再试一次」：清掉那句错误（屏幕当场换回"正在打开…"）、重跑加载。 */
+  function retry() {
+    setFailed(null)
+    setReload(n => n + 1)
+  }
 
   /** 按天分组 + 分页 + 滚到底的哨兵：和对话列表**同一套**（`kit/pagedDays`）。 */
   const { now, groups, shown, more, sentinel, resetLimit } = usePagedDays(works, q, matchesQuery)
@@ -159,16 +176,14 @@ export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
       </header>
 
       {failed && (
-        <>
-          <p className="gallery-error">{failed}</p>
-          {/* §3.7：说"不行"的地方，都要同时告诉他"那怎么办"。这一页**不新造按钮**，
-              **"刷新一下页面"是用户本来就有的出路**，这句话就是把那条出路说出口。
-              （2026-09-25 改：原来写的是"重试逻辑是 Task 12 的事" —— 那是假的。
-                Task 12 交出去的是**详情页**，没有给作品页加重试；而且这一轮明确决定
-                **不造重试按钮**：作品页的出路到今天就是"刷新一下"。那句假话会把下一个
-                读的人往两个方向引 —— 要么以为已经有重试了，要么以为 Task 12 欠着它。） */}
-          <p className="gallery-hint">刷新一下页面，再试一次。</p>
-        </>
+        /* ★ 2026-10-11（设计跟进 Task 2）：错误态就是**整页那一件**（居中 +
+            一颗能点的出口），不再是"左上角一行红字 + 一句空话"。
+            换掉的那句话是「刷新一下页面，再试一次。」—— 它把出路全押在
+            **整页刷新**上：用户在这一屏之外的东西（还没存的那张照片）会被
+            一起冲掉，而我们明明可以只把这一趟请求重跑一遍。
+            旧口径说"§3.7 要的是告诉用户怎么办，而刷新是用户本来就会的"——
+            现在按钮替他把那句话说完了，而且是真的做了那件事。 */
+        <ErrorState text={failed} onRetry={retry} />
       )}
       {/* ★ 2026-10-10：删失败那一句只加在列表**上面**，名单原样（照 SessionsPage）。 */}
       {delFailed && <p className="gallery-error">{delFailed}</p>}

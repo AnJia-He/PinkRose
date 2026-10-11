@@ -20,9 +20,16 @@
  * 用户手里可能有旧书签。它们只是"认得出来"——真走过去之后，`App` 的 `go()`
  * 会把地址栏改写成 `/app/...` 那一套（一次导航就搬过去了）。
  *
- * 认不出来的路径**退回落地页**（= `/`）—— 首页是那种情况下的标准答案，
- * 而白屏是最差的答案。**登录着的人不会因此被关在营销页上**：
- * 落地页那一条会立刻把他们送去 `/app`。
+ * ★ 2026-10-11 改向：认不出来的路径**不再退回落地页**，改给一支 `notfound`
+ *   （「没找到这一页」）。09-30 那版的口径是"首页是标准答案"，用了十天发现
+ *   它把两件事混成了一件：**营销页替坏网址背了锅** —— 地址栏里明明是一条打错
+ *   的网址，屏幕却成了门面，用户以为"这产品一打开就这样"，而真正发生的是
+ *   **链接错了**。现在那一页诚实地说"没找到"，实体路径放进 `path` 原样带着
+ *   （那是地址栏**不改写**的依据 —— 改写了，用户手里那条坏链接就变成一个
+ *   看着没问题的地址了）。
+ *
+ *   ⚠️ 变的只是"**认不出来**"时的答案：`/` 本体**照旧**是 `landing`，
+ *   门面自己一步没动。
  */
 export type View =
   | { kind: 'landing' }
@@ -56,6 +63,11 @@ export type View =
   //   `go({ kind: 'luts' })` 得先是个合法的 `View`）；那一页本身随后就到。
   //   在那之前走到这一支会看到一屏空的 —— 有网址、还认不出来才是更坏的形状。
   | { kind: 'luts' }
+  // ★ 2026-10-11（设计跟进 Task 2）：**认不出的网址**。见顶上那段大头注释 ——
+  //   它记着 `path`（地址栏那条原样的网址），`pathOf` 原样还回去。
+  //   ⚠️ 这一支**不是**"又一支页面"：它是 `viewFromPath` 说不认识时的落点，
+  //   页面本体在 `ui/NotFound.tsx`。
+  | { kind: 'notfound'; path: string }
 
 /** App 的地盘。写在这儿是为了让"它挪过窝"这件事只有一处要说。 */
 const APP = '/app'
@@ -100,7 +112,10 @@ export function viewFromPath(path: string): View {
   if (path === `${APP}/adjust`) return { kind: 'adjust' }
   if (path === APP) return { kind: 'edit' }
   if (path === '/') return { kind: 'landing' }
-  return { kind: 'landing' }
+  // 剩下的全是不认识的（打错的、坏链接）—— 给一页诚实的找不到，
+  // **原路径带着**（地址栏不改写，见顶上那段）。白屏是最差的答案，
+  // 冒充首页是第二差的：它让用户以为"产品就这样"。
+  return { kind: 'notfound', path }
 }
 
 export function pathOf(v: View): string {
@@ -112,5 +127,8 @@ export function pathOf(v: View): string {
   if (v.kind === 'models') return `${APP}/models`
   if (v.kind === 'luts') return `${APP}/luts`
   if (v.kind === 'adjust') return `${APP}/adjust`
+  // 原样还回去（不是某条"规范网址"）—— `go()` 靠它决定要不要改写地址栏，
+  // 而 notfound 这一支**永远不改写**。
+  if (v.kind === 'notfound') return v.path
   return APP
 }

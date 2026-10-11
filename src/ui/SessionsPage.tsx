@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { MoreHorizontal } from 'lucide-react'
 import { Btn } from './kit/Btn.tsx'
+import { ErrorState } from './kit/ErrorState.tsx'
 import { RenameInput } from './kit/RenameInput.tsx'
 import { usePagedDays } from './kit/pagedDays.ts'
 import { SelectBar } from './kit/SelectBar.tsx'
@@ -137,6 +138,13 @@ export function SessionsPage({ onOpen, onNew, onDeleted, generating }: {
     }
     exitSelect()
   }
+  /** ★ 2026-10-11：「再试一次」的扳机 —— 加一，下面那个 effect 重跑。
+   *  （为什么不把加载那段提成函数：那道 `alive` 闸只对着自己那次 effect 的
+   *  清理时机才对得上，提出来就得另写一套"什么时候算过期"，两套迟早对不上。）
+   *  ⚠️ 它必须声明在 effect **前面**（deps 数组在 render 时就求值，写在后面
+   *  会撞 TDZ）。 */
+  const [reload, setReload] = useState(0)
+
   useEffect(() => {
     let alive = true
     listSessions().then(
@@ -144,7 +152,13 @@ export function SessionsPage({ onOpen, onNew, onDeleted, generating }: {
       (e) => { if (alive) setFailed(errorText(e, '打不开对话列表')) },
     )
     return () => { alive = false }
-  }, [])
+  }, [reload])
+
+  /** 「再试一次」：清掉那句错误（屏幕当场换回"正在取…"）、重跑加载。 */
+  function retry() {
+    setFailed(null)
+    setReload(n => n + 1)
+  }
 
   /** 按天分组 + 分页 + 滚到底的哨兵：和作品页**同一套**（`kit/pagedDays`）。
    *  （"现在"那份只喂给分组，这一页自己不用，所以不解构出来。） */
@@ -205,7 +219,7 @@ export function SessionsPage({ onOpen, onNew, onDeleted, generating }: {
      不然用户搜错一个字就只能刷新页面。窄屏上它会折成两行（`.gallery-head` 是
      `flex-wrap: wrap`），和作品页同一副样子。
      ⚠️ 类名走的是**作品页那一套**（`.gallery-head/title/search`，这一页本来就在
-     复用 `.gallery-day-title` / `.gallery-error` / `.gallery-hint`）：同一种组件
+     复用 `.gallery-day-title` / `.gallery-error`）：同一种组件
      全站一份长相，两页各写一份迟早会长歪。 */
   const head = (
     <header className="gallery-head">
@@ -221,10 +235,12 @@ export function SessionsPage({ onOpen, onNew, onDeleted, generating }: {
     return (
       <section className="sessions">
         {head}
-        <p className="gallery-error">{failed}</p>
-        {/* §3.7：说"不行"的地方，都要同时告诉他"那怎么办"。这一页**不新造按钮**，
-            和作品页一样："刷新一下"是用户本来就有的那条出路。 */}
-        <p className="gallery-hint">刷新一下页面，再试一次。</p>
+        {/* ★ 2026-10-11（设计跟进 Task 2）：和作品页**同一个标准件**（居中一句 +
+            「再试一次」）。换掉的是「刷新一下页面，再试一次。」—— 那句话把出路
+            押在整页刷新上：用户这一屏之外的活儿（还没存的那张照片）会陪葬，
+            而重跑这一趟请求就够了。两页一个形状，也是照空态那套"同一个组件
+            全站一份长相"的规矩。 */}
+        <ErrorState text={failed} onRetry={retry} />
       </section>
     )
   }

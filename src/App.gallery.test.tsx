@@ -6,7 +6,7 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { HUANGHUN, WORK, bodyOf, canvasProps, clickByText, container, decision, fetchMock, goNav, jsonResponse, lutSection, makeSession, openLutPanel, renderApp, reopenApp, say, scrollToEnd, tileNamed, typeIn, uploadPhoto, withPresets, withSessions, withWorks, withWorksError } from './test/appHarness'
+import { HUANGHUN, WORK, bodyOf, canvasProps, clickByText, container, decision, fetchMock, goNav, jsonResponse, lutSection, makeSession, openLutPanel, renderApp, reopenApp, say, scrollToEnd, tileNamed, typeIn, uploadPhoto, withPresets, withSessions, withWorks } from './test/appHarness'
 import { act } from 'react'
 import { ZERO } from '../shared/adjustments.ts'
 import * as api from './api/client'
@@ -291,6 +291,52 @@ describe('回门面：左栏那颗「产品介绍」', () => {
   })
 })
 
+/**
+ * ★ 2026-10-11（设计跟进 Task 2）：**认不出的网址**落在「没找到这一页」。
+ *
+ * 在那之前它冒充首页（`viewFromPath` 兜底回 landing，见 `ui/view.ts`）——
+ * 地址栏里明明是一条打错的网址，屏幕却成了营销页，用户以为"这产品就这样"。
+ * 现在给一页**诚实的找不到**：地址栏一个字不改写、两颗按钮各自能去对地方。
+ */
+describe('★（10-11）认不出的网址：一页诚实的找不到', () => {
+  it('认不出的网址落在「没找到这一页」，地址栏保持原样，两颗按钮各自能去对地方', async () => {
+    history.replaceState(null, '', '/totally/bogus')
+    await renderApp()
+    // ⚠️ 那条自动跳转（登录着的人打开 `/` 会被送去 App）是个 effect ——
+    //   再让一轮；它要是没让路，下面那句"地址没变"会红。
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+
+    expect(container.querySelector('.notfound')).toBeTruthy()
+    expect(container.textContent).toContain('没找到这一页')
+    expect(container.textContent).toContain('地址可能打错了')
+    // ★ 地址栏**保持原样**：这条网址就是用户手里那条（收藏夹里那条 / 别人发来的
+    //   那条）—— 改写了，用户手里那条坏链接就变成一个"看着没问题"的地址了。
+    expect(location.pathname).toBe('/totally/bogus')
+
+    // 一号按钮「回到修图」= 回工作台（登录着的人的正事）
+    await clickByText('回到修图')
+    expect(container.querySelector('.app')).toBeTruthy()     // 修图那一屏回来了
+    expect(container.querySelector('.notfound')).toBeNull()
+    expect(location.pathname).toBe('/app')
+
+    // 再站回那条坏网址（后退 / 重新打开一次），这回走二号按钮「看产品介绍」：
+    // 它走**门面那一套**（`onGo({kind:'landing'})` → `FRONT_PAGE`，和 Nav 那颗
+    // 「产品介绍」同一条路）。自己拼一个 `/` 的话，登录着的人会被自动跳转立刻
+    // 撵回来 —— 那颗按钮等于"点了没反应"。
+    history.replaceState(null, '', '/totally/bogus')
+    await act(async () => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelector('.notfound')).toBeTruthy()
+    await clickByText('看产品介绍')
+    expect(container.querySelector('.lp')).toBeTruthy()
+    expect(location.search).toBe('?home=1')
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    expect(container.querySelector('.lp')).toBeTruthy()   // 没被自动跳转撵回来
+  })
+})
+
 describe('作品页：先摆 60 张、按天分组、名字就是时间', () => {
 
   /**
@@ -355,20 +401,39 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     expect(container.textContent).toContain('还没有作品')
   })
 
-  it('★ 取列表失败时，除了"不行"还得给一句"怎么办"（§3.7）', async () => {
-    // 计划里的全局约束：凡告诉用户"不行"，都要同时告诉他"那怎么办" ——
-    // 只说"不行"的地方都是死胡同。
-    withWorksError('SENTINEL-列表读不出来')
+  it('作品页打不开：居中的一句 + 一颗「再试一次」，点了就重新 fetch（第一次 500、第二次成功）', async () => {
+    // ★ 2026-10-11：错误态从"左上角红字 + 一句劝人刷新"改成**和空态同一副样子**
+    //   （居中一句 + 一颗按钮）。那颗按钮不是装样子：它把这一页**同一个请求**
+    //   原样再跑一遍 —— 「刷新一下页面，再试一次。」那句整个退役（它把"那怎么办"
+    //   推给浏览器，而这一页自己给得起出路）。
+    let listGets = 0
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works' && (init?.method ?? 'GET') === 'GET') {
+        listGets += 1
+        if (listGets === 1) {
+          return jsonResponse({ error: { code: 'INTERNAL', message: 'SENTINEL-列表读不出来' } }, 500)
+        }
+        return jsonResponse({ works: [WORK(1, 1_700_000_000_000)] })
+      }
+      return inner(url, init)
+    })
     await renderApp()
     await goNav('作品')
 
-    expect(container.querySelector('.gallery-error')?.textContent ?? '').toContain('SENTINEL-列表读不出来')
-    // 出路那句话 —— 这一页不新造按钮，"刷新一下"是用户本来就有的。
-    // （原来这里写着"重试逻辑是 Task 12 的事"：Task 12 交出去的是详情页，
-    //   **没有**给作品页加重试 —— 作品页的出路到今天还是"刷新一下"。
-    //   那句话是假的，2026-09-25 改掉；`GalleryPage.tsx` 里同一句假话
-    //   2026-09-25 的第二轮也跟着改了 —— 现在两处说的是同一件事。）
-    expect(container.querySelector('.gallery-hint')?.textContent ?? '').toContain('刷新')
+    // 居中的那一件：`.empty-state` 是空态那一组长相（`text-align: center` 在它身上），
+    // `.error-state` 是这一族里的"打不开"（18vh 那口气也照空态）。
+    const err = container.querySelector('.error-state.empty-state')
+    expect(err?.textContent ?? '').toContain('SENTINEL-列表读不出来')
+    // ★ 退役的那句**一个字都不许再出现**（`?? ''`：元素在不在都要红成一句人话）
+    expect(container.textContent).not.toContain('刷新一下页面')
+
+    await clickByText('再试一次')
+    // **真的重新发了一次**（只把红字收掉、底下一动不动的话，这句当场红）
+    expect(listGets).toBe(2)
+    // 第二次成了 → 名单摆出来，错误态整个让位
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(1)
+    expect(container.querySelector('.error-state')).toBeNull()
   })
 
   it('搜不到时说的是"没找到"＋换个字试试 —— 和"一张都没有"不是同一件事', async () => {
@@ -686,16 +751,18 @@ describe('作品详情页：这张图怎么来的', () => {
     expect(canvasProps.props.at(-1)?.params).toEqual({ ...ZERO, exposure: 20, contrast: 5 })
   })
 
-  it('★ 打不开这一张时也要说"那怎么办"（§3.7）—— 和作品页一个说法', async () => {
-    // §3.7 是全局约束：凡告诉用户"不行"，都要同时告诉他"那怎么办"。
-    // 加载失败那一屏原来**只有一句"不行"** —— 用户读到的是死胡同
-    // （返回按钮在那儿不等于说了出路）。这里**不新造按钮、不新造重试逻辑**：
-    // 和作品页同一条出路、同一句话（"刷新一下"是用户本来就有的）。
+  it('详情页 404：说「这张作品不在了。」+「回作品」按钮 —— 不再出现「刷新一下页面」', async () => {
+    // ★ 2026-10-11：404 和"网络抖了一下"是**两件事**。404 是**它没了** ——
+    //   劝人再试一次是骗人（再点一百次也回不来），出路是回列表。
+    //   ⚠️ 判据看 **HTTP 状态**，夹具照线上真实的形状：`server/works.ts` 扔的是
+    //   `new HttpError('BAD_REQUEST', '没有这张作品', 404)` —— body 里的 code 是
+    //   `BAD_REQUEST`（`AppErrorCode` 里根本没有"找不到"这一档），
+    //   "它不在"这个事实**只在状态行上**（见 `api/client.ts` 的 `ApiError.status`）。
     const inner = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === '/api/works') return jsonResponse({ works: [WORK(1, 1_700_000_000_000)] })
       if (url === '/api/works/1' && (init?.method ?? 'GET') === 'GET') {
-        return jsonResponse({ error: { code: 'NOT_FOUND', message: 'SENTINEL-没有这张作品' } }, 404)
+        return jsonResponse({ error: { code: 'BAD_REQUEST', message: '没有这张作品' } }, 404)
       }
       return inner(url, init)
     })
@@ -706,11 +773,52 @@ describe('作品详情页：这张图怎么来的', () => {
       await new Promise(r => setTimeout(r, 0))
     })
 
-    expect(container.querySelector('.detail-error')?.textContent ?? '')
-      .toContain('SENTINEL-没有这张作品')
-    // 变异：把这句提示删掉 → 这一条红（`expected '' to contain '刷新'`）。
-    // `?? ''`：元素不在了要红成"少了一句话"，不是 vitest 那句"参数组合非法"。
-    expect(container.querySelector('.detail-hint')?.textContent ?? '').toContain('刷新')
+    expect(container.querySelector('.error-state')?.textContent ?? '').toContain('这张作品不在了。')
+    // ★ 退役的那句**一个字都不许再出现**（和作品页同一天改的口径）
+    expect(container.textContent).not.toContain('刷新一下页面')
+    // 出路是一颗**按得到的按钮**：回作品列表（`onBack`），不是一句劝
+    await clickByText('回作品')
+    expect(container.querySelector('.gallery')).toBeTruthy()
+    expect(location.pathname).toBe('/app/works')
+  })
+
+  it('详情页网络错（非 404）：保留重试按钮 + 同一句话', async () => {
+    // 和上面那条**互为反面**：不是 404 的失败不许说"它没了" ——
+    //   那可能只是抖了一下，出路就是再试一次（同一个请求原样重跑）。
+    //   两句话都由服务端那句（走 `errorText`）兜着：500 时原样显示。
+    let gets = 0
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works') return jsonResponse({ works: [WORK(1, 1_700_000_000_000)] })
+      if (url === '/api/works/1' && (init?.method ?? 'GET') === 'GET') {
+        gets += 1
+        if (gets === 1) {
+          return jsonResponse({ error: { code: 'INTERNAL', message: 'SENTINEL-打不开这一张' } }, 500)
+        }
+        return jsonResponse({
+          id: 1, alias: null, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_000,
+          bytes: 100, hasThumb: true,
+          recipe: { params: { ...ZERO, exposure: 20 }, edits: [] },
+        })
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+    await act(async () => {
+      (container.querySelector('.gallery-cell') as HTMLButtonElement).click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    // 服务端说的那句话原样在屏幕上（没有被换成「这张作品不在了。」那句）
+    const err = container.querySelector('.error-state')
+    expect(err?.textContent ?? '').toContain('SENTINEL-打不开这一张')
+    expect(err?.textContent ?? '').not.toContain('不在了')
+
+    await clickByText('再试一次')
+    expect(gets).toBe(2)                       // 真的重新发了一次
+    expect(container.querySelector('.detail-image')).toBeTruthy()
+    expect(container.querySelector('.error-state')).toBeNull()
   })
 
   it('删除确认只说「删了就找不回来了」', async () => {
@@ -1367,5 +1475,46 @@ describe('对话列表：页头与搜索', () => {
     expect(container.querySelector('.sessions-empty')).toBeNull()
     // 搜索框自己得留着 —— 不然搜错一个字只能刷新页面
     expect(searchBox()).toBeTruthy()
+  })
+
+  it('对话页打不开：同上（两页一个形状）', async () => {
+    // ★ 2026-10-11：和作品页那一条**同一副样子**（居中一句 + 一颗「再试一次」）——
+    //   同一个毛病在两页里的解法只有一份（`ui/kit/ErrorState`），别长歪。
+    // ⚠️ 挂载时 App 自己就**会问一次** `/api/sessions`（"上次那条"，见
+    //   `useLoadSession` 那个 effect），所以闸不能用"第几个请求"当判据 ——
+    //   先让挂载那趟跑完，再合上闸，坏的就一定是**这一页读到的那一趟**。
+    let failNext = false
+    let gets = 0
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/sessions' && (init?.method ?? 'GET') === 'GET') {
+        gets += 1
+        if (failNext) {
+          failNext = false
+          return jsonResponse({ error: { code: 'INTERNAL', message: 'SENTINEL-对话列表打不开' } }, 500)
+        }
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })   // 放走"上次那条"那一趟
+    failNext = true
+    await goNav('对话')
+
+    const err = container.querySelector('.error-state.empty-state')
+    expect(err?.textContent ?? '').toContain('SENTINEL-对话列表打不开')
+    // ★ 退役的那句**一个字都不许再出现**
+    expect(container.textContent).not.toContain('刷新一下页面')
+    // 页头（标题 + 搜索框）还在 —— 四种状态里它都在，照作品页
+    expect(container.querySelector('.gallery-title')?.textContent).toBe('我的对话')
+    expect(searchBox()).toBeTruthy()
+
+    const before = gets
+    await clickByText('再试一次')
+    expect(gets).toBe(before + 1)              // 真的重新发了一次，不是只把红字收掉
+    // 这一趟才成功 → 空态（这个账号一条都没有），错误态整个让位
+    expect(container.querySelector('.sessions-empty-title')?.textContent)
+      .toContain('还没改过照片')
+    expect(container.querySelector('.error-state')).toBeNull()
   })
 })

@@ -6,12 +6,33 @@ import { LutParseError } from '../../shared/lut.ts'
 
 export class ApiError extends Error {
   readonly code: AppErrorCode
+
+  /**
+   * HTTP 状态码；不在"服务端回过话"这条路上的失败（连不上、正文读不出来、
+   * 根本不是 JSON）是 `null`。
+   *
+   * ★ 2026-10-11（404 分流）欠下的那笔账：`AppErrorCode`（spec §6.3）
+   *   里**没有**"找不到"这一支 —— 服务端说"没有这张作品"时走的是
+   *   `BAD_REQUEST` + HTTP 404（见 `server/http.ts` 的 `HttpError`），
+   *   而状态码只活在响应行里、**不在 JSON 正文里**。以前这里读完正文就把它
+   *   丢了，于是前端**认不出 404**："这张作品没了"和"网断了"是同一个形状，
+   *   只能一起劝人"再试一次"——可一张被删掉的作品再试一百次也不会回来。
+   *
+   * ⚠️ 别把判据写成"message 里有'没有'"那种字面量匹配：那是拿文案当协议。
+   *   判的东西是**服务端说的状态码**，`code` 管"哪一类"，`status` 管"哪一件"。
+   */
+  readonly status: number | null
+
   // 前端这份跑在 Vite/esbuild 上，参数属性本来也能用，
   // 但全项目统一不用——免得哪天被复制到后端踩 Node 剥离模式的坑。
-  constructor(code: AppErrorCode, message: string) {
+  //
+  // `status` 给了默认值：另一条构造路径（`api/luts.ts` 的本地解析、
+  // 测试里手搓的错误）没有 HTTP 这一层，不该被迫写个假状态码。
+  constructor(code: AppErrorCode, message: string, status: number | null = null) {
     super(message)
     this.name = 'ApiError'
     this.code = code
+    this.status = status
   }
 }
 
@@ -106,7 +127,9 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     const message = typeof parsed?.error?.message === 'string'
       ? parsed.error.message
       : '出了点问题，再试一次？'
-    throw new ApiError(code, message)
+    // 状态码原样带上（见 `ApiError.status` 那段）—— 它是"这张作品没了（404）"
+    // 和"网抖了一下（500）"之间**唯一**分得开的信号。
+    throw new ApiError(code, message, res.status)
   }
   return parsed as T
 }

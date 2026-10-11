@@ -20,6 +20,7 @@ import { AccountPage } from './ui/AccountPage'
 import { ModelSettings } from './ui/ModelSettings'
 import { LutSettings } from './ui/LutSettings'
 import LandingPage from './ui/LandingPage'
+import { NotFound } from './ui/NotFound'
 import { Nav } from './ui/Nav'
 import { me, type AccountUser } from './api/account'
 import { fetchWorkImage } from './api/works'
@@ -1975,6 +1976,15 @@ export default function App() {
   //   （登录着的人到不了这一条：上面那个 effect 已经把他们送去 `/app` 了。
   //    真到得了也只是多看一眼门面，不会坏。）
   if (view.kind === 'landing') return <LandingPage onEnter={() => go({ kind: 'edit' })} />
+
+  // ★ 2026-10-11（设计跟进 Task 2）：**认不出的网址**（`ui/view.ts` 的
+  //   `notfound` 那一支）给一页诚实的找不到。摆在这一层、和落地页同一个位置：
+  //   它管的是"网址本身不认识"，**和登没登录无关** —— 访客跟了一条坏链接
+  //   也该看到它，而不是先撞上登录页（那会让访客以为"看内容要先注册"）。
+  //   ⚠️ 「地址栏保持原样」是这一支存在的全部理由的一半：屏幕上给一页
+  //   "没找到"，地址栏那条坏网址**一个字不改写**（`pathOf` 原样还回去）
+  //   —— 用户要能把手里那条链接对上号，才明白是**链接**错了。
+  if (view.kind === 'notfound') return <NotFound onGo={go} />
 
   // 没登录就只有登录页。底下那些修图的东西一样都不挂载：三个 AI 接口现在
   // 都只认登录过的人（否则 401），挂上去也只是让用户先挑好照片再被拒。

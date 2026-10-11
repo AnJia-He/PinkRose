@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { BtnLink } from './kit/Btn.tsx'
+import { ErrorState } from './kit/ErrorState.tsx'
 import { RenameInput } from './kit/RenameInput.tsx'
 import { PresetSaveRow } from './PresetManager.tsx'
 import { getWork, renameWork, deleteWork, fullUrl } from '../api/works'
-import { errorText } from '../api/client'
+import { errorText, ApiError } from '../api/client'
 import { workName, type WorkMeta, type WorkDetail } from '../../shared/works.ts'
 import { buildFilename } from '../export/save'
 import { PARAM_LABELS, PARAM_KEYS, clampAdjustments, isChanged, type Adjustments } from '../../shared/adjustments.ts'
@@ -62,6 +63,21 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
 }) {
   const [work, setWork] = useState<WorkDetail | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
+  /**
+   * ★ 2026-10-11（404 分流）：这一张**没了**（服务端回 404），不是"没打开"。
+   *
+   * 分它出来是因为两者的出路**不是同一条**：网络抖了 → 再试一次有用；
+   * 作品被删了 → 再试一万次也不会回来，该说的是"它不在了" + 一条**回头路**。
+   * 之前两件事共用一个形状，只能一起劝人刷新 —— 对被删的作品，那句话是假的。
+   *
+   * ⚠️ 判据是**服务端说的状态码**（`ApiError.status === 404`），不是
+   *   `AppErrorCode`（那个联合类型里根本没有"找不到"这一支）也不是 message
+   *   里有没有"没有"这种字面量 —— 拿文案当协议，改一个字就静默失灵。
+   */
+  const [gone, setGone] = useState(false)
+  /** 「再试一次」的扳机（加一 → 下面 effect 重跑）。⚠️ 声明在 effect 前面（deps
+   *  在 render 时就求值，写在后面会撞 TDZ）。 */
+  const [reload, setReload] = useState(0)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -72,10 +88,21 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
     let alive = true
     getWork(id).then(
       (w) => { if (alive) setWork(w) },
-      (e) => { if (alive) setFailed(errorText(e, '打不开这一张')) },
+      (e) => {
+        if (!alive) return
+        setGone(e instanceof ApiError && e.status === 404)
+        setFailed(errorText(e, '打不开这一张'))
+      },
     )
     return () => { alive = false }
-  }, [id])
+  }, [id, reload])
+
+  /** 「再试一次」：清掉那句错误和 404 记号（屏幕当场换回"正在打开…"）、重跑加载。 */
+  function retry() {
+    setFailed(null)
+    setGone(false)
+    setReload(n => n + 1)
+  }
 
   /**
    * 「现在」——**一次挂载只取一次**（跨年那一刻不会自己翻新，和 `GalleryPage` 同款）。
@@ -123,12 +150,20 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
 
   if (failed && !work) return (
     <section className="detail">
-      <p className="detail-error">{failed}</p>
-      {/* §3.7：告诉用户"不行"的地方，都要同时告诉他"那怎么办"。
-          这一屏原来**只有一句"不行"**（"没有这张作品"）—— 返回按钮在那儿不等于说了出路。
-          **不新造按钮、不新造重试逻辑**：和作品页同一条出路、同一句话，
-          `刷新一下页面，再试一次。` 两页一字不差（`.detail-hint` 和 `.gallery-hint` 同一套观感）。 */}
-      <p className="detail-hint">刷新一下页面，再试一次。</p>
+      {gone ? (
+        /* ★ 2026-10-11（404 分流）：这一张**没了**（被删了 / 链接是旧的）——
+            别再劝他刷新：再试一万次也不会回来。说清事实 + 给一条回头路
+            （「回作品」就是页面顶上那颗返回，换了个更顺手的落点）。
+            ⚠️ 这里**不显示服务端那句**（"没有这张作品"）：屏幕上剩下的东西
+            只有这一件，它得说全 —— "没找到"和"怎么办"一起。 */
+        <ErrorState text="这张作品不在了。" retryLabel="回作品" onRetry={onBack} />
+      ) : (
+        /* 其余失败（网络抖了、服务器打盹）—— "再试一次"是真的有用，
+            重跑的是**这一页那一趟 `getWork`**，不是整页刷新（用户在这一屏
+            之外的活儿不该陪葬）。换掉的那句「刷新一下页面，再试一次。」
+            和作品页/对话页是**同一次退役**（2026-10-11，设计跟进 Task 2）。 */
+        <ErrorState text={failed} onRetry={retry} />
+      )}
     </section>
   )
   if (!work) return <section className="detail"><p className="detail-loading">正在打开…</p></section>

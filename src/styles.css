@@ -2828,8 +2828,9 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
 /* 三种"还没有图"的状态：**都没有图，说的却是三件不同的事**（还没拿到 /
    一张都没有 / 筛掉了），所以各是各的句子，别合成一句。
-   `.gallery-hint` 也出现在"取列表失败"那条下面（§3.7 的出路那句话）——
-   所以它自己带颜色，不靠 `.gallery-empty` 继承。 */
+   `.gallery-hint` 自己带颜色，不靠 `.gallery-empty` 继承 —— 它**不只住在这里**
+   （★ 2026-10-11：原来还在"取列表失败"那条下面当过那句"出路话"，那天三页的
+   失败态换成 `ErrorState` 的「再试一次」按钮了，见下面 `.error-state` 那段）。 */
 .gallery-loading, .gallery-none { margin: var(--sp-5) 0 0; color: var(--muted); }
 .gallery-empty {
   margin-top: 18vh; text-align: center; color: var(--text);
@@ -3071,6 +3072,40 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .sessions-empty { margin-top: 18vh; }
 /* `.adjust-empty` 只是个**锚点类**（探针 / 测试按它点名），长相全在上面那 3 条上。 */
 
+/* ★ 2026-10-11（设计跟进 Task 2）：「打不开」标准件（`ui/kit/ErrorState`）。
+   皮就是上面那族 `.empty-state*`（居中、17px 主句、药丸按钮），这里只补一档
+   间距：错误态常是整屏就这一件，和 `.sessions-empty` 一样从顶上往下压一段
+   （作品页 / 对话页 / 详情页三处共用 —— "同一个长相只有一份"那条）。
+   ★ 它换掉的是「刷新一下页面，再试一次。」+ `.gallery-hint` / `.detail-hint`
+   那两句空话：出路从"劝用户整页刷新"变成一颗**真的重跑那趟请求**的按钮。 */
+.error-state { margin-top: 18vh; }
+
+/* ── 「没找到这一页」（★ 2026-10-11，`ui/NotFound.tsx`）─────────────────
+   给"认不出的网址"的落点（`ui/view.ts` 的 `notfound` 那一支，见那个文件头上
+   的改向注释）。它**是一整页**、不是某一屏里的一个块 —— 住在落地页/登录页
+   那一层（App.tsx 里挨着那条 `landing` 的 early return），所以自己撑满一屏、
+   居中；里面那件用的还是空态那一族的皮。
+   ⚠️ 这一页**不改写地址栏**（App 侧 `go()` 靠 `pathOf` 把原路径还回去）——
+   它要说的就是"你手里那条链接是坏的"，屏幕和地址栏得对得上号。 */
+.notfound {
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-5);
+}
+.notfound-note { margin: var(--sp-2) 0 0; font-size: 13px; color: var(--muted); }
+/* 两颗按钮并排，中间的距离比"主句↔按钮"那一段小一档——它们是一组选择。 */
+.notfound-actions {
+  display: flex; align-items: center; justify-content: center;
+  gap: var(--sp-3); margin-top: var(--sp-4);
+}
+/* ⚠️ 主按钮得**摘掉** `.empty-state .btn-primary` 给的 `margin-top`：在 flex
+   行里它会把主按钮单独往下推、和旁边那颗错开（那条外边距是"按钮跟在句子
+   下面"时留的）。这条写在 `.empty-state` 那组**后面**才盖得住（特异性同为
+   0-2-0，靠文件顺序分胜负）。 */
+.notfound-actions .btn-primary { margin-top: 0; }
+/* 两颗都是药丸 —— 这一族（空态 / 门面上的按钮）的形状，见上面「形状」段。 */
+.notfound-actions button { border-radius: var(--r-pill); }
+
 /* ── 作品详情页（Task 12）：这张图怎么来的 ──────────────────────────
    ⚠️ **`.detail` 必须自己滚**（下面那条 overflow-y: auto），和 `.gallery` 同一条规矩：
    它是 `.shell` 的**直接子元素**，不住在 `.app` 里 —— `.app` 那个 overflow: hidden
@@ -3150,11 +3185,12 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .detail-confirm .detail-delete { border-color: var(--danger); color: var(--danger); }
 .detail-delete:hover { border-color: var(--danger); color: var(--danger); }
 .detail-loading { margin: var(--sp-5) 0 0; color: var(--muted); }
+/* ⚠️ `.detail-error` 还在用（改名 / 删除失败时列表上面那一句），别一起删。
+   ★ 2026-10-11：`「刷新一下页面，再试一次。」` 那句话连同它的 `.detail-hint`
+   **退役**（设计跟进 Task 2）—— 详情页"打不开"整块换成了 `ErrorState`
+   （404 给「这张作品不在了。」+「回作品」，其余给「再试一次」）。它原来在
+   `.gallery-hint` 那条注释里被点过名，是个"同一句话在两个页面上"的例子。 */
 .detail-error { margin: var(--sp-5) 0 0; color: var(--danger); }
-/* §3.7 的"那怎么办"那句话 —— 和 `.gallery-hint` 同一套观感：同一句话在两个页面上
-   （作品页「取列表失败」、详情页「打不开这一张」），不该长得像两件事。
-   自己带颜色，别指望从 `.detail-error` 继承。 */
-.detail-hint { margin: var(--sp-2) 0 0; font-size: 13px; color: var(--muted); }
 
 /* ⚠️ **两栏永远是两栏**（§3.5.1）：调色是配方（能带走），AI 编辑是这张图的经历
    （带不走）。窄屏只是**排成一列**，不是合成一个盒子 —— 盒子的个数不许变。 */
@@ -3636,7 +3672,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    负 margin 是让标题和它贴成一组：表单的 flex gap 是 16px，
    标题-副标题之间收成 8px，副标题-第一个字段之间保持 16px。 */
 .models-form-lede { margin: calc(-1 * var(--sp-2)) 0 0; font-size: 14px; color: var(--muted); line-height: 1.6; }
-/* 字段下面那行小字、还有「测一下」旁边那句。和 `.gallery-hint` / `.detail-hint`
+/* 字段下面那行小字、还有「测一下」旁边那句。和 `.gallery-hint` / `.luts-hint`
    同一套观感 —— 同一类话在两个页面上不该长得像两件事。
    ⚠️ `margin: 0`：这几处都坐在 flex 列里，间距由 gap 给。 */
 .models-hint { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
