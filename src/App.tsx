@@ -1301,6 +1301,24 @@ export default function App() {
     // ⚠️ 依赖数组里去掉了 `say` —— 这个回调不再用它了（按"读到的才写进依赖"）。
   }, [busy, pendingReplace, image, params, lut, runGenerate])
 
+  /**
+   * ★ 2026-10-11（设计跟进 T3）：**路由失败**的现场 + 哪条气泡挂「再试一次」
+   * —— 10-10 那批「失败一键重试」唯一没收尾的一截。
+   *
+   * 生成失败那半在 `useGeneration.ts`（`retryRef` 存整套入参）；路由失败没那么
+   * 重 —— 那句话到 `postRoute` 就断了，**什么都还没发生**，所以现场只要
+   * "那句原文 + 出发时那两把尺子"（`sidAt` / `seqAt`，和 `send` 里那对同源），
+   * 点重试 = 把那句话**再说一遍**（见 `retryRoute`）。
+   *
+   * ⚠️ 现场用 ref、`routeRetryId` 用 state —— 和生成那一对的分工一字不差：
+   *   现场是给点击处理器读的（不需要渲染），"哪条气泡上挂按钮"才需要渲染。
+   * ⚠️ 两者都不必手动清：消息 id 是**只涨不回头**的（`nextId` 只 `++`、
+   *   恢复会话只把号往上抬），换会话 / 清空之后旧号不可能再挂到别人身上。
+   */
+  const routeRetryRef = useRef<{ text: string; sid: number | null; seq: number } | null>(null)
+  /** 哪条消息上挂着「再试一次」（路由失败那条失败消息；null = 没有）。 */
+  const [routeRetryId, setRouteRetryId] = useState<number | null>(null)
+
   const send = useCallback(async (text: string) => {
     const canvas = canvasElRef.current
     if (!canvas || !image || busy) return
@@ -1373,7 +1391,13 @@ export default function App() {
       // 同上：票失效不是"出了点问题"，是"你得再登录一次"——而这句话只有在
       // 登录页上才成立。回登录页，不是留一句提示。
       if (isUnauthorized(e)) { setUser(null); return }
-      say(errorText(e, '出了点问题，再试一次？'))
+      // ★ 2026-10-11（设计跟进 T3）：失败现场留一份、失败气泡下挂「再试一次」
+      //   —— 这句话里一直写着"再试一次？"，而底下**没有按钮**。
+      //   `say` 的返回值就是那条助手消息的 id（快照那套早就靠它对号，这里要
+      //   的是同一个号）。存的是**出发时**那两把尺子（`sidAt` / `seqAt`）：
+      //   重试那一刻环境还成不成立，验的就是这一对（见 `retryRoute`）。
+      routeRetryRef.current = { text, sid: sidAt, seq: seqAt }
+      setRouteRetryId(say(errorText(e, '出了点问题，再试一次？')))
     } finally {
       setBusy(null)
     }
@@ -1388,7 +1412,42 @@ export default function App() {
     // ★ 2026-10-05（终审残留）：`noticeBad` 也进来 —— 挡住的那一趟要说一句
     //   （"画面已经变了…"）。它身份稳定，但按这个文件的规矩：**读到的就写进依赖**。
     //   两个 ref（`sessionIdRef` / `baseSeqRef`）是稳定身份，不进依赖。
+    //   ★ 2026-10-11（T3）：上面那两样新东西同理 —— `routeRetryRef` 是 ref、
+    //   `setRouteRetryId` 是 useState 的 setter（同 `setPending`），都不进依赖。
   }, [busy, params, applyDecision, say, image, lutsApi.luts, lut, myPresets, cancelReplace, noticeBad])
+
+  /**
+   * ★ 2026-10-11（设计跟进 T3）：「再试一次」（路由失败那颗）—— 把那句话
+   * **原样再发一遍**，等价于用户重新打一遍、按发送。
+   *
+   * 为什么不在这里自己重跑一遍 `postRoute`：那等于把 `send` 里那四十行
+   * （发号、插消息、记两把尺子、清卡片、忙碌态、回来后的闸门）抄第二份 ——
+   * 两份从第一天起就会漂。走 `send` 一个字节都不多：它自己会重发同一句话、
+   * 再把决策交给 `applyDecision`（正是"照正常流程走"）。
+   *
+   * 点击这一刻先验那两把尺子（和 `send` 里回来时那道闸**同一对**，连
+   * `sidAt === null` 那一格都照抄）：底图换了一版（切会话 / 换照片 / 裁剪 /
+   * 又一次成功生成都会推 `baseSeq`），或者会话换了人 —— 那句话说的是
+   * **当初那张画面**，不再成立。不成立就说清"画面已经变了"+ 出路
+   * （文案规范 §5：哪不对 + 怎么办），并且**一分钱不花**。
+   *
+   * ⚠️ 先消费掉现场（`routeRetryRef.current = null`）+ 收按钮、**再**验证：
+   *   这颗按钮**点一次算一次**（和生成那颗一个口径，见 `retryGeneration`）——
+   *   无论接下来成不成都不该再挂着一颗。
+   * ⚠️ 通报那句和 `useGeneration` 里那颗重试的**逐字一样**（同一件事、同一副
+   *   说法）：改它的时候两处一起改，别只改一边。
+   */
+  const retryRoute = useCallback(() => {
+    const r = routeRetryRef.current
+    routeRetryRef.current = null
+    setRouteRetryId(null)
+    if (!r) return
+    if ((r.sid !== null && sessionIdRef.current !== r.sid) || baseSeqRef.current !== r.seq) {
+      noticeBad('画面已经变了 —— 刚才那次没法重试了。要的话，再说一遍。')
+      return
+    }
+    void send(r.text)
+  }, [send, noticeBad])
 
   const onCard = useCallback(async (card: SuggestCard) => {
     if (busy) return
@@ -2320,6 +2379,13 @@ export default function App() {
                   generating={generating}
                   retryId={retryId}
                   onRetry={retryGeneration}
+                  // ★ 2026-10-11（T3）：**路由失败**那颗「再试一次」—— 同一颗
+                  //   按钮的第二套状态（现场是 `routeRetryRef`，两把尺子是
+                  //   会话 + 底图版本，见上面 `send` 旁边那条 `retryRoute`）。
+                  //   两套**并列**、不合并成一个 prop：生成失败要重跑的是整套
+                  //   生成现场，路由失败只要把那句话再说一遍 —— 两件事、两套验证。
+                  routeRetryId={routeRetryId}
+                  onRetryRoute={retryRoute}
                   onCard={onCard}
                   // ★ 2026-10-06（晚）：`onJump` 和 `currentId` 两个 prop 撤了 ——
                   //   对话里那两颗文字提示（「回到这一步」/「你在这里」）随用户

@@ -84,6 +84,16 @@ type Props = {
   retryId: number | null
   /** 按「再试一次」（见上面 `retryId`）。 */
   onRetry: () => void
+  /**
+   * ★ 2026-10-11（设计跟进 T3）：**路由失败**那颗「再试一次」的头一格
+   * （`null` = 没有）—— 和上面 `retryId` 是**两套状态**（生成失败 / 路由失败），
+   * 两个回调各挂各的，**别合并成一个判据**：两件事的现场和验证都不一样
+   * （见 App.tsx 的 `retryRoute` 与 useGeneration 的 `retryGeneration`）。
+   * 形状（类名、文字、busy 禁用、点一次算一次）和上面那颗完全一样。
+   */
+  routeRetryId: number | null
+  /** 按那颗「再试一次」（路由失败那颗，见上面 `routeRetryId`）。 */
+  onRetryRoute: () => void
   onCard: (card: SuggestCard) => void
   /** ★ 2026-10-03：用户**在欢迎页的对话区里先打的那句话**（没有就是空串）。
    *  它只做一件事：把它填进下面那个输入框，用户按一下发送就行 ——
@@ -185,6 +195,7 @@ type Props = {
 
 export default function ChatPanel({
   messages, cards, busy, suggesting, onSend, onStop, onAskSuggest, generating, retryId, onRetry,
+  routeRetryId, onRetryRoute,
   onCard, onRerun, rerunnable,
   jumpableIds, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
   futureSteps, replacing, onConfirmReplace, onCancelReplace,
@@ -491,7 +502,7 @@ export default function ChatPanel({
                     onChange={() => togglePick(m.id)}
                     aria-label="选中这条记录" />
                 </div>
-              ) : (rerunnable.includes(m.id) || hasMenu || retryId === m.id) && (
+              ) : (rerunnable.includes(m.id) || hasMenu || retryId === m.id || routeRetryId === m.id) && (
                 <div className="bubble-actions">
                   {/* ★ 2026-10-10：「再试一次」—— 生成失败后的一键重跑
                       （失败消息上才有，判据是 `retryId`，见 useGeneration 的
@@ -500,6 +511,17 @@ export default function ChatPanel({
                       点了就消失（App 那边点一次算一次）——这里不做开合。 */}
                   {retryId === m.id && (
                     <button className="bubble-retry" disabled={!!busy} onClick={onRetry}>
+                      再试一次
+                    </button>
+                  )}
+                  {/* ★ 2026-10-11（T3）：**路由失败**那颗「再试一次」—— 和上面
+                      那颗同一个长相（同一个类、同一句话、同一条 busy 禁用），
+                      挂的是**另一套状态**（"你那句话还没被理解"那一段路，
+                      见 App.tsx 的 `retryRoute`）。两颗**并列**、不合并：
+                      生成失败要重跑的是整套生成现场，路由失败只要把那句话
+                      再说一遍 —— 两件事、两套验证，条件也不该揉进一个判据。 */}
+                  {routeRetryId === m.id && (
+                    <button className="bubble-retry" disabled={!!busy} onClick={onRetryRoute}>
                       再试一次
                     </button>
                   )}

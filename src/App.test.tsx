@@ -12,7 +12,7 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { OK, bodyOf, canvasProps, clickByText, container, decision, fakeBitmap, fetchMock, goNav, lastReply, makeGate, openChatTool, putCalls, renderApp, say, uploadPhoto, waitPersist, withPresets } from './test/appHarness'
+import { OK, bodyOf, canvasProps, clickByText, container, cropOnce, decision, fakeBitmap, fetchMock, goNav, jsonResponse, lastReply, makeGate, openChatTool, putCalls, renderApp, say, uploadPhoto, waitPersist, withPresets } from './test/appHarness'
 import { act } from 'react'
 import { ZERO } from '../shared/adjustments.ts'
 import { type PresetMeta } from '../shared/preset.ts'
@@ -595,6 +595,104 @@ describe('对话式修图：钱花在对的地方', () => {
     expect(lastReply()).toBe('停了。')
     expect([...container.querySelectorAll('button')]
       .find(b => (b.textContent ?? '').trim() === '再试一次')).toBeUndefined()
+  })
+
+  /**
+   * ★ 2026-10-11（设计跟进 T3）：**路由失败**也挂「再试一次」—— 10-10 那批
+   * 「失败一键重试」唯一没收尾的一截。
+   *
+   * 路由失败（你说的那句话还没被理解）原来只有一句 `say(...)`：字里说着
+   * "再试一次？"而**失败气泡下没有按钮** —— 用户要么原样重打一遍，要么就卡在
+   * 那儿。生成失败那半 10-10 就做好了（上面三条），这一半补上同款形状：
+   * 复用同一颗 `.bubble-retry`。点它 = **把那句话原样再说一遍**（等价于用户
+   * 重新打一遍再发送），成功之后照正常流程走（`postRoute` → `applyDecision`）。
+   */
+  it('★（10-11）路由失败：失败气泡下有「再试一次」，点了用同一句话重发（第二次成功 → 正常走下去）', async () => {
+    // 第一句：路由那一趟就失败了（1.3~1.6 秒白等，只回一句"出了点问题"）
+    vi.mocked(api.postRoute).mockRejectedValueOnce(
+      new api.ApiError('UPSTREAM_FAILED', 'AI 服务暂时没响应，再试一次'))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+
+    const retryBtn = () => [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '再试一次')
+    expect(retryBtn()).toBeTruthy()                    // ① 失败气泡下挂着它
+
+    // 这一次路由成功 → 生成真的跑、新那一版真的落地（"照正常流程走"整条链）
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'generate', editPrompt: '去掉后面的路人', reply: '好，这就去改。' }))
+    vi.mocked(api.postEdit).mockResolvedValueOnce(OK)
+    await clickByText('再试一次')
+
+    expect(api.postRoute).toHaveBeenCalledTimes(2)     // ② 真的又路由了一次
+    const first = vi.mocked(api.postRoute).mock.calls[0][0] as { text: string }
+    const again = vi.mocked(api.postRoute).mock.calls[1][0] as { text: string }
+    expect(again.text).toBe(first.text)                //    送上去的还是同一句话
+    expect(again.text).toBe('把后面那个人去掉')
+    expect(api.postEdit).toHaveBeenCalledTimes(1)      // ③ 成功路径照走
+    expect(lastReply()).toBe('好，这就去改。')
+    expect(container.querySelectorAll('.strip-node')).toHaveLength(2)
+    expect(retryBtn()).toBeUndefined()                 // ④ 点过就作废（按钮收掉）
+  })
+
+  it('★（10-11）路由失败后画面变了再点重试：不动它、说清为什么（照生成重试那两把尺子）', async () => {
+    vi.mocked(api.postRoute).mockRejectedValueOnce(
+      new api.ApiError('UPSTREAM_FAILED', 'AI 服务暂时没响应，再试一次'))
+
+    await renderApp()
+    await uploadPhoto()
+    await say('把后面那个人去掉')
+    expect(api.postRoute).toHaveBeenCalledTimes(1)
+
+    // 用户裁了一刀（= 换了一版底图），再回头点那颗「再试一次」——
+    // 那句话说的是**当初那张画面**，不再成立（和生成那颗同一副判据）
+    await goNav('调色')
+    await cropOnce()
+    await goNav('修图')                                // 调色那一屏没有对话栏
+
+    await clickByText('再试一次')
+
+    expect(api.postRoute).toHaveBeenCalledTimes(1)     // 没有第二次：拦住了，钱一分不花
+    expect(container.querySelector('.notice')?.textContent ?? '').toContain('画面已经变了')
+    expect([...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '再试一次')).toBeUndefined()   // 点一次算一次
+  })
+
+  it('★（10-11）上传后立刻说话、建会话这时才回来 → 重试照常重发（不许拿"画面已经变了"的假话打发）', async () => {
+    // 和上面那道闸的**另一半**（同 `send` 里返回时那道闸的 `sidAt !== null` 一格）：
+    // 出发时 `sidAt === null`（建会话还在半路），失败之后建会话才回来 —— 那是
+    // **同一条会话在长出来**，不是"人走了"。现场那一格要是照比，用户会拿到一句
+    // **假话**，而且这句话永远重试不了。
+    const sessionGate = makeGate<{ id: number }>()
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/sessions' && (init?.method ?? 'GET') === 'POST') {
+        return jsonResponse(await sessionGate.promise)
+      }
+      return inner(url, init)
+    })
+    vi.mocked(api.postRoute).mockRejectedValueOnce(
+      new api.ApiError('UPSTREAM_FAILED', 'AI 服务暂时没响应，再试一次'))
+
+    await renderApp()
+    await uploadPhoto()                        // 照片进来；建会话被挂住（sessionId 还是 null）
+    await say('亮一点')                         // 立刻说话：出发时 sidAt === null；路由失败
+
+    // 建会话在这之后才回来：`sessionIdRef` 从 null 拨成 id
+    await act(async () => {
+      sessionGate.open({ id: 1 })
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    vi.mocked(api.postRoute).mockResolvedValueOnce(
+      decision({ route: 'params', paramDeltas: { exposure: 20 }, reply: '给你提亮了。' }))
+    await clickByText('再试一次')
+
+    expect(api.postRoute).toHaveBeenCalledTimes(2)     // 重发真的送出去了
+    expect(container.textContent).not.toContain('画面已经变了')
+    expect(lastReply()).toBe('给你提亮了。')            // 成功路径照走
   })
 
   /**

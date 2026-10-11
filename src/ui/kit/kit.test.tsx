@@ -142,6 +142,9 @@ describe('图标（2026-10-01 统一走 lucide）', () => {
         //   `onAskSuggest`（工具行那颗「帮我想想」）。
         onAskSuggest={() => {}}
         generating={false} retryId={null} onRetry={() => {}}
+        // ★ 2026-10-11：路由失败那颗「再试一次」也是这套（同上 —— 给全，
+        //   少一个 `tsc` 就红）：`routeRetryId` + `onRetryRoute`。
+        routeRetryId={null} onRetryRoute={() => {}}
         onRerun={() => {}} onConfirmMark={() => {}} onCancelMark={() => {}}
         futureSteps={0} replacing={false}
         onConfirmReplace={() => {}} onCancelReplace={() => {}}
