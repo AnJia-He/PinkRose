@@ -11,7 +11,7 @@ import { buildFilename } from '../export/save'
 import { PARAM_LABELS, PARAM_KEYS, clampAdjustments, isChanged, type Adjustments } from '../../shared/adjustments.ts'
 
 /**
- * 详情页那个「下载到我的电脑」下下来叫什么。
+ * 详情页那个「下载」下下来叫什么。
  *
  * **`<a download>` 必须带值**：不带值时浏览器拿 URL 末段当文件名 ——
  * 现在末段是 `file`（还可能跟着 `?v=…`），下下来就是一个**没有扩展名**的文件，

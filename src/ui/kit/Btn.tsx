@@ -43,7 +43,7 @@ export function Btn(props: {
 }
 
 /** 同长相的**链接**版：`download` 属性只有真 `<a>` 带得动
- *  （详情页「下载到我的电脑」就是它）。 */
+ *  （详情页「下载」就是它）。 */
 export function BtnLink(props: {
   className?: string
   children: React.ReactNode

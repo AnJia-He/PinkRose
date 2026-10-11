@@ -719,7 +719,11 @@ describe('★ 5 GB 配额（作品）', () => {
   it('满了之后：新的一张存不进去 —— 而且那句话要给出路（先下载、再删几张）', async () => {
     fillUp(QUOTA_BYTES)
     await expect(handleCreateWork({ image: JPEG }, USER, deps))
-      .rejects.toThrow(/空间满了.*下载.*删/)
+      // ★ 2026-10-11（设计跟进 T4 fix）：正则**连名字一起钉** —— 原来写的是
+      // `/空间满了.*下载.*删/`，「下载」和「下载到电脑」两个名字都过，名字漂了
+      // 一声不吭。这句原文经 `saveFail.why` **原样显示**在那条横幅上，就挨着
+      // 叫「下载」的那颗按钮（《文案规范》二.2：同一件东西只有一个名字）。
+      .rejects.toThrow(/空间满了.*「下载」.*删/)
     // 盘上**一个字节都没写**（`filler.jpg` 只是库里那一行，本来就不在盘上）——
     // 先看配额、后落盘，拒掉的时候什么都没留下
     expect(readdirSync(root)).toEqual([])

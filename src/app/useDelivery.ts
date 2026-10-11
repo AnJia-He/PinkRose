@@ -67,7 +67,7 @@ export function useDelivery(deps: DeliveryDeps) {
   const [asking, setAsking] =
     useState<{ blob: Blob; name: string; recipe: Recipe } | null>(null)
 
-  /** 存失败时把图和名字留在这儿 —— **它是那个「下载到电脑」按钮的全部依据**（§6.6 ①）。
+  /** 存失败时把图和名字留在这儿 —— **它是那个「下载」按钮的全部依据**（§6.6 ①）。
    *  ⚠️ `blob` 为 null 是**另一种失败**：图根本没做出来（`buildExportBlob` 那步就炸了）。
    *  那时候没有东西能给用户，说的话也不能是"图还在" —— 那是骗人（他会去找一个
    *  屏幕上根本不存在的按钮）。 */
@@ -159,7 +159,7 @@ export function useDelivery(deps: DeliveryDeps) {
   //
   //    代价是：**存不进去的时候，改好的图就只在屏幕上，一关页面就没了**。
   //    而那一刻他要的是"拿到图去发朋友圈"。所以下面那条失败路径上必须当场
-  //    给一个「下载到电脑」—— §6.6 ①，§10 点名它「最容易漏」。
+  //    给一个「下载」—— §6.6 ①，§10 点名它「最容易漏」。
 
   /**
    * **此刻**这一份配方：参数 + 用户在屏幕上说过的原话 + （★ 2026-10-05）用的滤镜。
@@ -238,7 +238,7 @@ export function useDelivery(deps: DeliveryDeps) {
     setDelivering('save')
     setSaveFail(null)
     // ⚠️ 声明在 try 外面、留着 null：它同时是"图做出来了没有"的标记，
-    //    catch 里要靠它决定能不能给用户一个「下载到电脑」（§6.6 ①）。
+    //    catch 里要靠它决定能不能给用户一个「下载」（§6.6 ①）。
     let out: { blob: Blob; name: string } | null = null
     try {
       out = await exportCurrent()

@@ -300,7 +300,7 @@ export async function handleReplaceWork(
   // ★★ `updated_at` 在这里**不只是"上次改的时间"，它是图片 URL 的版本号**。
   //
   // 前端三条图片 URL 全都把它拼进去当缓存钥匙：列表缩略图（`fileUrl`）、
-  // 详情页大图（`.detail-image`）、「下载到我的电脑」（`fullUrl`）——
+  // 详情页大图（`.detail-image`）、「下载」（`fullUrl`）——
   // 而 `/api/works/:id/file` 和 `/thumb` 回的是 **`immutable`** 长缓存。
   //
   // ⚠️ 所以**任何改动这张作品的字节的写入，都必须 bump 这个值**。忘了 bump 不会报错、
