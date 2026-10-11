@@ -1860,7 +1860,12 @@ describe('★ 限流：登录、注册、探活', () => {
       await post(base, '/api/login', { username: '小明', password: 'wrongpassword' })
     }
     expect((await post(base, '/api/login', { username: '小明', password: 'wrongpassword' })).status).toBe(429)
-  })
+    // ★ 2026-10-11：**显式超时**。这条要发 21 次登录请求，每次都要跑一遍 scrypt
+    // 校验（同步、CPU 密集）—— 真机实测 6.1s，本来就贴着 vitest 默认的 5s 线跑：
+    // 机器稍慢一点，"慢"就会伪装成"限流逻辑坏了"（当天全量里红过两次，单跑实测
+    // 6.1s、放宽超时即绿 —— 功能一直是好的）。断言一个没动，只是不再拿
+    // "机器快不快"当判据。写法照 `src/App.test.tsx:472` 的先例（15_000）。
+  }, 20_000)
 })
 
 /**
