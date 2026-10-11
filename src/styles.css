@@ -2264,15 +2264,38 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    "上 0 / 下 14"（上面那条 14px 的间隔由输入框自己的下内边距给；下边留 14
   到面板底边，不然药丸贴着屏幕边）。⚠️ 别写回 `14px 18px 0`（那是"在输入框
    上面"那一版的写法，写回去药丸会顶到面板下沿、和输入框挤在一起）。 */
-.chat-tools { display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: 0 18px 14px; }
+.chat-tools {
+  display: flex; flex-wrap: wrap; gap: var(--sp-2); padding: 0 18px 14px;
+  /* ★ 2026-10-11（用户：「点击加号后的展开设计的更美观一点」）：这一行**淡入** ——
+     从输入框这边往下落 4px 出现（入场动画的模子照 `.card` 的 `card-in`：
+     同一个 --dur-2 / --ease / both）。条件渲染每次开都会重放，不用 key 帮忙。
+     ⚠️ 收起仍是**瞬收**（这一块是整块卸载的，没有退场动画可言）——
+     用户点关闭时立即收回反而是干练的，别为对称去改成常驻 + 高度动画
+     （那样收起的按钮还在 DOM 里，键盘会 Tab 到看不见的东西）。 */
+  animation: chat-tools-in var(--dur-2) var(--ease) both;
+}
+@keyframes chat-tools-in { from { opacity: 0; transform: translateY(-4px) } }
 /* 一项工具 = 一颗药丸（就是原来那颗「滤镜」的长相，只是从"常驻在输入框上面"
    搬进了加号里）。⚠️ 它是**真 `<button>`**：键盘走得到，`aria-expanded` 报得出
-   它自己那块面板开着没有。 */
+   它自己那块面板开着没有。
+
+   ★ 2026-10-11（用户：「点击加号后的展开设计的更美观一点」）：**长相显式写死**。
+   之前这条只写了圆角、内边距和字色 —— 底色和描边是**继承全局 `button{}`**
+   来的（`--raised` 底 + `--line-2` 描边），而字色又压到了 `--muted`：三样一凑，
+   真机截图里看着像**禁用态**（灰字 + 灰胶囊）。现在照 `.card` / `.tool-cell`
+   同一条"药丸坐在面板底上"的思路把三样写明，不靠继承碰运气。
+   尺寸升到 6px 14px（28px 高，和 `.tool-cell` 同档）：26px 的小胶囊在这一行
+   显小、也不好按。 */
 .chat-tool {
   display: inline-flex; align-items: center; gap: 6px;
-  border-radius: var(--r-pill); padding: 5px 12px; font-size: 13px; color: var(--muted);
+  border-radius: var(--r-pill); padding: 6px 14px; font-size: 13px;
+  background: var(--raised); border-color: var(--line-2); color: var(--text);
 }
-.chat-tool:hover { color: var(--text); }
+/* ⚠️ 悬停要自己写一条：`.chat-tool`（0-1-0）会盖过全局那条
+   `button:where(:hover)`（0-0-1）—— 不写的话悬停时背景不动，看着像没反应。
+   禁用态不给悬停反馈（`:not(:disabled)`）：「看着能点、点下去什么都没发生」
+   是这个项目最不喜欢的一种按钮。 */
+.chat-tool:hover:not(:disabled) { background: var(--hover); border-color: var(--line-3); }
 .chat-tool.on { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
 
 /* ★ 2026-10-08：和 `.chat-tools` 同一档（它也在输入框下面）—— 上 0 / 下 14，
@@ -2301,6 +2324,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    少了它，"这张图套着滤镜"在**修图这一屏**就没有任何地方显示了
    （原来那颗常驻的「滤镜」还担着这个信息）。 */
 .chat-plus.on { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
+/* ★ 2026-10-11：开着时「＋」转 45° 变「×」—— 开关状态看得见（再点一下就是关）。
+   ⚠️ 判据是 `aria-expanded`（JSX 里早就挂着），**不是**新加一个 class ——
+   开关状态只许这一个出处，两个出处迟早对不上。
+   ⚠️ 转的是**内层 svg**：按钮自己还有全局那条 `:active` 的 scale(.97)，
+   分层之后两个 transform 各转各的、互不打架。 */
+.chat-plus svg { transition: transform var(--dur-2) var(--ease); }
+.chat-plus[aria-expanded="true"] svg { transform: rotate(45deg); }
 
 .chat-input { display: flex; gap: var(--sp-2); padding: 14px 18px; border-top: 1px solid var(--line); }
 .chat-input input {

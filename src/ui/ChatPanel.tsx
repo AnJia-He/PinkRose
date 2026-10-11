@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
-import { MoreHorizontal, Pencil, Plus, RotateCw, SlidersHorizontal } from 'lucide-react'
+import { MoreHorizontal, Pencil, Plus, RotateCw, SlidersHorizontal, Sparkles } from 'lucide-react'
 import LutPicker from './LutPicker.tsx'
 import { SelectBar } from './kit/SelectBar.tsx'
 import { RenameInput } from './kit/RenameInput.tsx'
@@ -748,7 +748,11 @@ export default function ChatPanel({
             ⚠️ 再点一下要**连展开的工具一起收**：加号是这一摊**唯一**的开关，
             只收自己的话，那排格子会留在原地而**没有关它的地方**。
             ⚠️ 里面正用着滤镜时点一下 `.on`：少了它，"这张图套着滤镜"在修图
-            这一屏就**没有任何地方显示**了（原来那颗常驻的「滤镜」还担着这件事）。 */}
+            这一屏就**没有任何地方显示**了（原来那颗常驻的「滤镜」还担着这件事）。
+            ★ 2026-10-11：「＋」开着时转 45° 变「×」（和药丸行的入场动画同时长开）
+            —— 那个旋转的规则住在 CSS 里、按 `aria-expanded` 选中（见 styles.css
+            `.chat-plus` 一段），**别在 JSX 里再加一个开关 class**：那样"开关状态"
+            就有了两个出处，迟早对不上。 */}
         <button type="button" className={lut ? 'chat-plus on' : 'chat-plus'}
           aria-label="更多工具" aria-expanded={toolsOpen}
           onClick={() => setToolsOpen((o) => { if (o) setLutOpen(false); return !o })}>
@@ -813,9 +817,15 @@ export default function ChatPanel({
           </button>
           {/* ★ 2026-10-10：「帮我想想」—— 再要一批建议卡。它不是"两层里的头一层"
               （Lut 那种），点了**直接办事**（去要卡片），所以没有 `aria-expanded`。
-              忙的时候（或正在要）禁用：点了也没反应的按钮不留（老规矩）。 */}
+              忙的时候（或正在要）禁用：点了也没反应的按钮不留（老规矩）。
+              ★ 2026-10-11（用户：「点击加号后的展开设计的更美观一点」）：补上
+              `Sparkles` 图标 —— 原来一粒带图标一粒不带，并排看着像两个体系；
+              现在是"图标 + 文字"同构的两粒（图标 14、线宽 1.5，和上面的 Lut 对齐）。 */}
           <button className="chat-tool" disabled={!!busy || suggesting}
-            onClick={onAskSuggest}>帮我想想</button>
+            onClick={onAskSuggest}>
+            <Sparkles size={14} strokeWidth={1.5} aria-hidden="true" />
+            帮我想想
+          </button>
         </div>
       )}
       {/* 点开是**和微调区同一套格子**（同一个组件，两处长得一样 —— 用户当场
