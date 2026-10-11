@@ -214,6 +214,31 @@ describe('左栏导航：切界面不丢工作', () => {
     expect(container.querySelector('.empty-state')).toBeNull()
     expect(格子()).toContain('调色')      // 而那一格**还在**
   })
+
+  it('★ 当前那一支带 aria-current="page"（含人物图标那颗）—— 读屏软件能听见"你在哪"', async () => {
+    // ★ 2026-10-11（设计跟进 T5，spec §二 #6）。亮点（`.on`）是给眼睛的，
+    //   `aria-current="page"` 是给读屏的 —— 少了它，读屏用户在一列七颗里
+    //   听不出自己正站在哪一支上。
+    await renderApp()
+    const 当前项 = () => [...container.querySelectorAll('.nav-item[aria-current="page"]')]
+      .map(b => b.getAttribute('aria-label') || (b.textContent ?? '').trim())
+    expect(当前项()).toEqual(['修图'])                 // 起点：修图页
+
+    await goNav('作品')
+    expect(当前项()).toEqual(['作品'])                 // 跟着走，而且只有一个答案
+
+    // 「个人设置」那颗是人物图标（没有可见文字，名字只在 aria-label 上）——
+    // 它站在用户管理那一页上时也得有 aria-current
+    const me = [...container.querySelectorAll('.nav button')]
+      .find(b => b.getAttribute('aria-label') === '个人设置') as HTMLButtonElement
+    expect(me).toBeTruthy()
+    await act(async () => { me.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(container.querySelector('.account')).toBeTruthy()   // 前提：真的到了那一页
+    expect(当前项()).toEqual(['个人设置'])
+    // ⚠️ 「产品介绍」是"出门"、不是 App 里的第六支 —— 它**不该**有 aria-current
+    //   （上面 `当前项()` 的三次断言合起来就在守这一条：出门那一趟不在 ITEMS 里）。
+    // 变异：把 `aria-current` 从 ITEMS 循环或人物那颗上删掉 → 这一条红
+  })
 })
 
 describe('回门面：左栏那颗「产品介绍」', () => {
@@ -399,6 +424,20 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     await goNav('作品')
     expect(container.querySelector('.gallery')).toBeTruthy()
     expect(container.textContent).toContain('还没有作品')
+    // ★ 2026-10-11（设计跟进 T5）：出路从"指方位的一句话"（「左边点「修图」，
+    //   做一张试试。」）换成和对话列表空态**同款**的一颗按钮 —— 窄屏上左栏
+    //   在底下，"左边"指的是错的方向；一颗真能点的按钮不受版面影响。
+    //   ⚠️ 旧那句话连**类名**一起退役（`.gallery-hint` 在这页上不再有落点）。
+    expect(container.querySelector('.gallery-hint')).toBeNull()
+    const go = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '去改一张') as HTMLButtonElement | undefined
+    expect(go, '空态里没有那颗「去改一张」—— 用户看到"还没有作品"之后没有下一步').toBeTruthy()
+
+    await act(async () => { go!.click(); await new Promise(r => setTimeout(r, 0)) })
+    // 真的把人送到了"能改图"的地方（作品页整个让位、落到修图页的上传前那一屏）
+    expect(location.pathname).toBe('/app')
+    expect(container.querySelector('.gallery')).toBeNull()
+    expect(container.querySelector('.welcome')).toBeTruthy()
   })
 
   it('作品页打不开：居中的一句 + 一颗「再试一次」，点了就重新 fetch（第一次 500、第二次成功）', async () => {
@@ -1163,6 +1202,27 @@ describe('保存 = 存进作品集（Task 13）', () => {
     // ★ 「保存不再自动下载」—— 变异：把 downloadImage 加回保存流程 → 必须红
     expect(saveMod.downloadImage).not.toHaveBeenCalled()
     expect(container.textContent).toContain('存好了')
+  })
+
+  it('★ 通报条带 role="status"：读屏能听见「存好了…」这类通报（2026-10-11）', async () => {
+    // ★ 设计跟进 T5（spec §二 #6）。`.notice` 是"这件事成了 / 没成"的**通报** ——
+    //   它不是页面上的内容，而是**刚刚发生的一件事**，读屏软件该主动念出来。
+    //   ⚠️ 提问条（`.ask`）和存失败条（`.save-fail`）**不加**：前者在等用户回答、
+    //   后者是"图还在，先拿到手"，都不是"通报"的性质 —— 别顺手一起加。
+    //   ⚠️ 忙态气泡也**刻意没有** aria-live：它里面的秒表每秒变一次，会把读屏刷屏
+    //   （设计稿 §三 的裁定，那不是漏项）。
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      (url === '/api/works' && init?.method === 'POST') ? jsonResponse({ id: 9 }) : inner(url, init))
+    await renderApp()
+    await uploadPhoto()
+    await clickTop('存进作品')
+
+    // 前提：那条通报**真的出现了**（少了这半句，元素不在时下面会红成"没有东西"）
+    const notice = container.querySelector('.notice')
+    expect(notice?.textContent ?? '').toContain('存好了')
+    expect(notice?.getAttribute('role')).toBe('status')
+    // 变异：把 role="status" 从 `.notice` 根元素上删掉 → 这一条红
   })
 
   it('★ 配方带着「用户说过的话」，而且**没有**那个英文 prompt', async () => {

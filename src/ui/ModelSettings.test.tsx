@@ -56,10 +56,13 @@ let store: PublicConfig[]
 let nextId: number
 let container: HTMLElement
 let root: Root
+/** 页头那颗「← 个人设置」按下去之后，App 该被叫到（★ 2026-10-11 设计跟进 T5）。 */
+let onBack: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   store = []
   nextId = 100
+  onBack = vi.fn()
   // ⚠️ **必须清调用记录**：不清的话上一条用例留下的 `updateModel(1, {...})`
   //    会跟着走进下一条，`not.toHaveBeenCalledWith` 那几条否定断言就会
   //    红在一个和本用例毫无关系的地方（第一版正是这么红的）。
@@ -110,7 +113,7 @@ afterEach(() => {
 
 async function show() {
   await act(async () => {
-    root.render(<ModelSettings />)
+    root.render(<ModelSettings onBack={onBack} />)
     // 挂载时那一次「拉名单」得落定，不然看到的是"还在打开"那一瞬间
     await new Promise((r) => setTimeout(r, 0))
   })
@@ -708,17 +711,56 @@ describe('模型设置', () => {
     // ★ 这是这一页最要命的一条假话：拉不到名单却画成空名单，等于对一个配了
     //   三套模型的用户说"你什么都没配"，而且他会照着这个画面去重配一遍。
     //   （和用户管理页「0 张作品」那一条是同一个毛病，见 AccountPage 的注释。）
+    // ★ 2026-10-11（设计跟进 T5）：下一步从"劝人整页刷新"（「刷新一下页面，
+    //   再试一次。」）换成**一颗真的重跑这一趟请求的按钮** —— 长相就是
+    //   `ui/kit/ErrorState`（和作品 / 对话 / 详情 / Lut 各处同一副）。
     vi.mocked(api.listModels).mockRejectedValueOnce(
       new ApiError('UPSTREAM_FAILED', '连不上服务器，检查一下网络？'))
     await show()
 
-    expect(container.querySelector('.models-error')?.textContent).toContain('连不上服务器')
-    // 说"不行"的地方都要同时说"那怎么办"（《文案规范》：哪不对 + 怎么办）
-    expect(container.textContent).toContain('刷新一下页面，再试一次')
+    // 居中的那一件（空态那一族的皮）里写着服务端那句话
+    const err = container.querySelector('.error-state.empty-state')
+    expect(err?.textContent ?? '').toContain('连不上服务器')
+    // 退役的那句**一个字都不许再出现**
+    expect(container.textContent).not.toContain('刷新一下页面')
     // 两栏都不许出现 —— 尤其不许出现「用默认（本服务提供）」
     expect(container.querySelector('.models-group')).toBeNull()
     expect(container.textContent).not.toContain('用默认')
     // 变异：拿不到时 `setConfigs([])`（画成空名单）→ 这一条红
+  })
+
+  it('★ 名单拉不到时那颗「再试一次」**真的重拉**（第二趟成了就把名单画出来）', async () => {
+    // 光有那颗按钮不算数：只把红字收掉、请求一动不动的话，用户点一万次也是
+    // 同一片空白 —— 这条用"服务端被叫了几次"钉住它真的重跑了那一趟。
+    let calls = 0
+    vi.mocked(api.listModels).mockImplementation(async () => {
+      calls += 1
+      if (calls === 1) throw new ApiError('UPSTREAM_FAILED', '连不上服务器，检查一下网络？')
+      return { configs: store.map((c) => ({ ...c })) }
+    })
+    await show()
+    const err = container.querySelector('.error-state.empty-state')
+    expect(err?.textContent ?? '').toContain('连不上服务器')
+
+    // 第二趟有东西了（用户"网络恢复了"）
+    store = [CHAT(1, { alias: '我的便宜货', active: true })]
+    await click(inPart(err!, '再试一次'))
+
+    expect(calls).toBe(2)                                   // 真的重新发了一趟
+    expect(container.querySelector('.error-state')).toBeNull()
+    expect(container.querySelectorAll('.models-row')).toHaveLength(1)   // 名单画出来了
+  })
+
+  it('★ 页头那颗「← 个人设置」把 onBack 交出去（和作品详情「← 作品」同一副样子）', async () => {
+    await show()
+    const back = container.querySelector('.models .detail-back') as HTMLButtonElement | null
+    expect(back, '页头没有那颗回「个人设置」的按钮').toBeTruthy()
+    // 箭头是图标（`aria-hidden`，和详情页那颗一样）—— 按钮上的字只有那四个字
+    expect(back!.textContent).toBe('个人设置')
+    expect(back!.querySelector('svg')).toBeTruthy()
+
+    await click(back)
+    expect(onBack).toHaveBeenCalledTimes(1)
   })
 
   it('「编辑」「删除」「添加一套」都有活干 —— 页面上不许有点了哪都不去的按钮', async () => {

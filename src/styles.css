@@ -2830,9 +2830,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 
 /* 三种"还没有图"的状态：**都没有图，说的却是三件不同的事**（还没拿到 /
    一张都没有 / 筛掉了），所以各是各的句子，别合成一句。
-   `.gallery-hint` 自己带颜色，不靠 `.gallery-empty` 继承 —— 它**不只住在这里**
-   （★ 2026-10-11：原来还在"取列表失败"那条下面当过那句"出路话"，那天三页的
-   失败态换成 `ErrorState` 的「再试一次」按钮了，见下面 `.error-state` 那段）。 */
+   ★ 2026-10-11（设计跟进 T5）：`.gallery-hint` 这条规则**退役了** —— 它最后
+   一个落点是作品页空态那句「左边点「修图」，做一张试试。」，那天换成了和对话
+   列表同款的一颗「去改一张」（按钮的间距 / 药丸形走 `.empty-state .btn-primary`，
+   所以那个容器多挂了 `empty-state` 这个类，见 `GalleryPage`）。它更早还给
+   "取列表失败"当过"出路话"，那条随 T2 换成了 `ErrorState`。 */
 .gallery-loading, .gallery-none { margin: var(--sp-5) 0 0; color: var(--muted); }
 .gallery-empty {
   margin-top: 18vh; text-align: center; color: var(--text);
@@ -2841,7 +2843,6 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* "还没有作品"是**这一页的主句**：它原来和下面那句小字一样大、一样灰，
    于是整屏看上去只是"没加载出来"。两句拉开档次才读得出"这是一句结论"。 */
 .gallery-empty-title { margin: 0; font-size: 17px; }
-.gallery-hint { margin: var(--sp-2) 0 0; font-size: 13px; color: var(--muted); }
 .gallery-error { margin: var(--sp-5) 0 0; color: var(--danger); }
 
 /* ── 对话列表（Task 6，§6.1）：**过程**的家 ────────────────────────

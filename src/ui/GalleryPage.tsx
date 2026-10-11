@@ -4,13 +4,19 @@ import { errorText } from '../api/client'
 import { workName, matchesQuery, type WorkMeta } from '../../shared/works.ts'
 import { usePagedDays } from './kit/pagedDays.ts'
 import { SelectBar } from './kit/SelectBar.tsx'
+import { Btn } from './kit/Btn.tsx'
 // ★ 2026-10-11（设计跟进 Task 2）：打不开时的标准件（居中一句 + 「再试一次」）。
 import { ErrorState } from './kit/ErrorState.tsx'
 // ★ 2026-10-10：按大小排那档里每格要写大小 —— 口径和用户管理页那个用量图
 //   **同一份**（'342 MB' / '1.5 GB'），别在这儿再写一个格式化。
 import { formatSize } from './AccountPage'
 
-export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
+export function GalleryPage({ onOpen, onNew }: {
+  onOpen: (id: number) => void
+  /** ★ 2026-10-11（设计跟进 T5）：空态那颗「去改一张」的去处 —— App 传的
+   *  和对话列表空态**同一条路**（回修图页的上传前那一屏）。 */
+  onNew: () => void
+}) {
   /** null = 还没拿到。**它和"没有作品"是两件事** —— 混在一起的话，
    *  还没加载完的那一瞬间会显示"还没有作品"，用户会以为东西没了。 */
   const [works, setWorks] = useState<WorkMeta[] | null>(null)
@@ -190,13 +196,17 @@ export function GalleryPage({ onOpen }: { onOpen: (id: number) => void }) {
       {!works && !failed && <p className="gallery-loading">正在打开…</p>}
 
       {works && works.length === 0 && (
-        <div className="gallery-empty">
-          {/* ⚠️ 那个类名不是多余的：主句和下面那句小字**必须拉开档次**（CSS 里
-              那句"整屏看上去只是'没加载出来'"就是为它写的），而按 `p:first-child`
-              那种 DOM 位置去选，谁在前面加一句就当场错位。 */}
+        /* ★ 2026-10-11（设计跟进 T5）：出路从"指方位的一句话"（「左边点「修图」，
+            做一张试试。」）换成和对话列表空态**同款**的一颗按钮 —— 窄屏上左栏
+            在底下，"左边"指的是错的方向；一颗真能点的按钮不受版面影响。
+            `empty-state` 那个类带着 `Btn` 要的那点间距和药丸形（和
+            `.sessions-empty` 同一份，别在这儿各写一份）。
+            ⚠️ 主句的类名不是多余的：CSS 里"整屏看上去只是'没加载出来'"那句
+            就是为它写的，别顺手删。 */
+        <div className="gallery-empty empty-state">
           <p className="gallery-empty-title">还没有作品。</p>
           {/* §3.7：告诉用户"不行"的地方，都要同时告诉他"那怎么办" */}
-          <p className="gallery-hint">左边点「修图」，做一张试试。</p>
+          <Btn onClick={onNew}>去改一张</Btn>
         </div>
       )}
 

@@ -2506,7 +2506,12 @@ export default function App() {
           generating={generating}
         />
       )}
-      {view.kind === 'gallery' && <GalleryPage onOpen={(id) => go({ kind: 'work', id })} />}
+      {/* ★ 2026-10-11（设计跟进 T5）：空态那颗「去改一张」—— **和上面会话列表
+          空态同一条路**（`startNew` + 回修图页），别在这儿另写一条。 */}
+      {view.kind === 'gallery' && (
+        <GalleryPage onOpen={(id) => go({ kind: 'work', id })}
+                     onNew={() => { startNew(); go({ kind: 'edit' }) }} />
+      )}
       {view.kind === 'work' && (
         <WorkDetailPage
           id={view.id}
@@ -2565,13 +2570,17 @@ export default function App() {
       )}
       {/* 模型设置（§7.4，Task 9）。*它自己不拉名单之外的东西* ——
           这一页要用的清单（几套配置、哪套在用）全从 `/api/models` 来，
-          不进 App 这层状态：那是"设置"，不是修图现场，别让两处各存一份。 */}
-      {view.kind === 'models' && <ModelSettings />}
+          不进 App 这层状态：那是"设置"，不是修图现场，别让两处各存一份。
+          ★ 2026-10-11（设计跟进 T5）：页头那颗「← 个人设置」—— 这一页是
+          「个人设置」的里面一格，回程就是那一页。地址仍然只有 `go` / `ui/view.ts`
+          说了算，组件拿到的是个回调。 */}
+      {view.kind === 'models' && <ModelSettings onBack={() => go({ kind: 'account' })} />}
       {/* 滤镜（★ 2026-10-05，设计 §5.1）：设置里的第 4 格点进来就是它。
           和「模型」同一条：这一页的清单**自己拉自己管**，不进 App 这层状态 ——
           那是"设置"，不是修图现场，别让两处各存一份。
-          ⚠️ **不给它 `onBack`**：它和「模型设置」同一层，那一页也没有返回
-          （左栏一直在，出去走左栏就是了）—— 两页的走法不该长成两个样子。
+          ⚠️ **不给它 `onBack`**：它只从左栏那一支进得来，而左栏一直在（出去走
+          左栏就是了）—— 和「模型设置」不一样：那一页是从「个人设置」里那行点
+          进来的，所以才挂了「← 个人设置」（★ 2026-10-11 设计跟进 T5 加的）。
           ⚠️ 出去时**重拉一次清单**是上面那个 effect（看 `view.kind` 的边沿）干的，
           不在这句 JSX 里；`LutSettings` 这边只管自己那一份。 */}
       {view.kind === 'luts' && (

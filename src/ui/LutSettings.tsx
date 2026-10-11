@@ -8,6 +8,8 @@ import { LUT_FILE_TOO_BIG, LUT_LIMIT_REACHED } from '../../shared/copy.ts'
 import { formatSize } from './AccountPage.tsx'
 import { Btn } from './kit/Btn.tsx'
 import { Field, TextInput } from './kit/Field.tsx'
+// ★ 2026-10-11（设计跟进 Task 2 / T5）：打不开时的标准件（居中一句 + 一颗能点的出口）。
+import { ErrorState } from './kit/ErrorState.tsx'
 
 /**
  * 设置里那一页「滤镜」（设计 §5.1）—— **导入 / 改名 / 删除 `.cube`**。
@@ -267,11 +269,12 @@ export function LutSettings({ onUse }: {
       {/* 四态里"还没到手"的那两态：一句在路上的话。**不许**在这里画空清单。 */}
       {(load.s === 'idle' || load.s === 'loading') && <p className="luts-hint">正在打开…</p>}
       {load.s === 'fail' && (
-        <>
-          <p className="luts-error">{load.message}</p>
-          {/* §3.7：说了"不行"就得给"那怎么办" */}
-          <p className="luts-hint">刷新一下页面，再试一次。</p>
-        </>
+        /* ★ 2026-10-11（设计跟进 T5）：和作品 / 对话 / 详情 / 模型设置四处
+           **同一副样子** —— 居中一句 + 一颗真的重跑这一趟的「再试一次」
+           （`ui/kit/ErrorState`）。§3.7 那条没变：说了"不行"就得给"那怎么办"。
+           换掉的那句是「刷新一下页面，再试一次。」—— 整页刷新会把他这一屏
+           之外的活儿一起冲掉，而重跑这一趟就够了。 */
+        <ErrorState text={load.message} onRetry={() => void loadLuts()} />
       )}
       {load.s === 'ready' && load.list.length === 0 && (
         // 这句只在**真的拉到了空清单**之后才说（见文件头那段）

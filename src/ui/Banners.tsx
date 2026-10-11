@@ -33,7 +33,14 @@ export default function Banners({
   return (
     <>
       {notice && (
-        <div className={notice.tone === 'ok' ? 'notice ok' : 'notice'}>
+        /* ★ 2026-10-11（设计跟进 T5，spec §二 #6）：`role="status"` —— 这条是
+           **"这件事成了 / 没成"的通报**，不是页面上的内容，读屏软件该主动念出来
+           （「存好了，在左边「作品」里。」这类话没人念就等于没说）。
+           ⚠️ 只给**这一块**：下面 `.ask`（在等用户回答）和 `.save-fail`（图还在，
+           先拿到手）都不是"通报"的性质，别顺手一起加。
+           ⚠️ 忙态气泡也**刻意没有** aria-live（它里面的秒表每秒变一次，会把读屏
+           刷屏）—— spec §三 的裁定，不是漏项。 */
+        <div role="status" className={notice.tone === 'ok' ? 'notice ok' : 'notice'}>
           <p>{notice.text}</p>
           <button onClick={onDismissNotice}>知道了</button>
         </div>

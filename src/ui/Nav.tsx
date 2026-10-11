@@ -107,6 +107,13 @@ export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
     <nav className="nav">
       {ITEMS.map(({ kind, label, Icon }) => (
         <button key={kind} className={`nav-item${here === kind ? ' on' : ''}`}
+                /* ★ 2026-10-11（设计跟进 T5，spec §二 #6）：亮点（`.on`）是给眼睛的，
+                   `aria-current="page"` 是给读屏的 —— 少了它，读屏用户在这一列里
+                   听不出自己正站在哪一支上。两处判据**同一个**（`here === kind`），
+                   别让它俩漂开。
+                   ⚠️ 下面那颗「产品介绍」**不挂**：它是"出门"（离开 App 去门面），
+                   不是 App 里的第六个地方 —— `current` 该回答的是"我在 App 的哪一支"。 */
+                aria-current={here === kind ? 'page' : undefined}
                 onClick={() => onGo({ kind })}>
           <Icon size={16} strokeWidth={1.5} aria-hidden="true" />
           {label}
@@ -148,6 +155,9 @@ export function Nav({ view, onGo }: { view: View; onGo: (v: View) => void }) {
           删了任何一个，都会变成"看着没问题、但没人找得到它"。*/}
       <button className={`nav-item nav-me${atAccount ? ' on' : ''}`}
               onClick={() => onGo({ kind: 'account' })}
+              /* ★ 2026-10-11（设计跟进 T5）：和上面五支同一条 —— 站在用户管理
+                 那两页（账号 / 模型设置）时，读屏该听见"你在这里"。 */
+              aria-current={atAccount ? 'page' : undefined}
               aria-label="个人设置" title="个人设置">
         <UserRound size={20} strokeWidth={1.5} aria-hidden="true" />
       </button>

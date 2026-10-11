@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Plus, TriangleAlert } from 'lucide-react'
+import { ArrowLeft, Check, Plus, TriangleAlert } from 'lucide-react'
 import {
   ALIAS_REQUIRED, BASE_URL_REQUIRED, KEY_REQUIRED, MODEL_ID_REQUIRED, NEED_KEY,
 } from '../../shared/copy.ts'
@@ -10,6 +10,8 @@ import {
 import { errorText } from '../api/client'
 import { Field, TextInput } from './kit/Field.tsx'
 import { Btn } from './kit/Btn.tsx'
+// ★ 2026-10-11（设计跟进 Task 2 / T5）：打不开时的标准件（居中一句 + 一颗能点的出口）。
+import { ErrorState } from './kit/ErrorState.tsx'
 
 /**
  * 模型设置（§7.4）。**这一页是"限制"那件事的门面**，不是能力展示 ——
@@ -75,7 +77,17 @@ type Shape = 'openai-compatible' | 'anthropic-compatible'
  * 两种说法，用户会以为这是两件事 —— 2026-09-30 之前它们是**各写了一遍**的。
  */
 
-export function ModelSettings() {
+export function ModelSettings({ onBack }: {
+  /**
+   * ★ 2026-10-11（设计跟进 T5）：页头那颗「← 个人设置」的回程。
+   *
+   * 这一页是从「个人设置」里那一行点进来的**里面一格**（§7.4），顶上得有一条
+   * 回头的路 —— 和作品详情页那颗「← 作品」**同一副样子**（同一个 `.detail-back`
+   * 长相，别在这儿发明第二个）。"哪一页对应哪个网址"仍然只有 `ui/view.ts` 说了算：
+   * 这一层只交一个回调，地址由 App 那边改。
+   */
+  onBack: () => void
+}) {
   /** 名单。`null` = 还没拿到（见下面 loadError 那条注释，拿不到就不画空名单）。 */
   const [configs, setConfigs] = useState<PublicConfig[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -150,6 +162,12 @@ export function ModelSettings() {
 
   return (
     <section className="models">
+      {/* ★ 2026-10-11（设计跟进 T5）：面包屑 —— 这一页是「个人设置」的里面一格，
+          顶上给一条回头的路。长相和作品详情页那颗**同一份**（`.detail-back`：
+          路径是路径，比标题小一档、淡一档；箭头是个装饰图标）。 */}
+      <button type="button" className="detail-back" onClick={onBack}>
+        <ArrowLeft size={14} strokeWidth={1.5} aria-hidden="true" />个人设置
+      </button>
       <h1 className="models-title">模型设置</h1>
       {/* 顶上这句话是全页的**前提**：不说清"不配会怎样、在用谁的花谁的钱"，
           用户连该不该往下看都判断不了。
@@ -170,12 +188,15 @@ export function ModelSettings() {
             那一家）也要读到同一句真话，所以主语只能是"照片和你说的话"。 */}
       <p className="models-privacy">照片和你说的话会经过我们的服务器转给第三方模型服务商；我们只转发，不拿去训练。</p>
 
-      {/* ★ 拉不到名单：说出来 + 给下一步。**不许**画成空名单（见文件头那段）。 */}
+      {/* ★ 拉不到名单：说出来 + 给下一步。**不许**画成空名单（见文件头那段）。
+          ★ 2026-10-11（设计跟进 T5）：下一步是**一颗真的重跑这一趟请求的按钮**
+          （`ui/kit/ErrorState`，和作品 / 对话 / 详情 / Lut 各处同一副样子）——
+          旧的那句「刷新一下页面，再试一次。」退役（整页刷新会把他这一屏之外的
+          活儿一起冲掉，而重跑这一趟就够了）。点之前先把那句话收掉：屏幕当场
+          换回「正在打开…」（和作品页那颗同一副行为）。 */}
       {loadError && (
-        <>
-          <p className="models-error">{loadError}</p>
-          <p className="models-hint">刷新一下页面，再试一次。</p>
-        </>
+        <ErrorState text={loadError}
+          onRetry={() => { setLoadError(null); void reload() }} />
       )}
       {!configs && !loadError && <p className="models-hint">正在打开…</p>}
       {actionError && <p className="models-error">{actionError}</p>}

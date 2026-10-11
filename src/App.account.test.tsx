@@ -1298,6 +1298,37 @@ describe('用户管理页', () => {
     expect(location.pathname).toBe('/app/models')
   })
 
+  it('★ 模型设置页头有「← 个人设置」，点了回设置页（2026-10-11）', async () => {
+    // ★ 设计跟进 T5（spec §二 附）。这一页是从「个人设置」里那一行点进来的
+    //   **里面一格**，顶上给一条回头的路 —— 和作品详情页那颗「← 作品」
+    //   **同一副样子**（同一个 `.detail-back` 长相，别在这儿发明第二个）。
+    //   箭头是个图标（`aria-hidden`，和详情页那颗一样），按钮上的字只有那四个字。
+    withModels([])
+    await renderApp()
+    await openAccount()
+
+    await act(async () => {
+      rowByLabel('模型').click()
+      await new Promise(r => setTimeout(r, 0))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelector('.models-title')?.textContent).toBe('模型设置')
+
+    const back = container.querySelector('.models .detail-back') as HTMLButtonElement | null
+    expect(back, '页头没有那颗回「个人设置」的按钮').toBeTruthy()
+    expect(back!.textContent).toBe('个人设置')
+    expect(back!.querySelector('svg'), '箭头不见了（它和详情页那颗是同一个长相）').toBeTruthy()
+
+    await act(async () => {
+      back!.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    // 回到的是**设置页本身**，不是"两边都没了"
+    expect(location.pathname).toBe('/app/account')
+    expect(container.querySelector('.account')).toBeTruthy()
+    expect(container.querySelector('.models')).toBeNull()
+  })
+
   it('★ 模型清单拿不到时，那一行右边那格**不出现**（不许替他写「默认」）', async () => {
     // 和「0 张作品」一模一样的毛病（§3.6 + 《文案规范》§3）：写「默认」等于
     // 替一个**接了自己模型**的人声明"你没接"。宁可少说一句，不说一句假的。
@@ -1448,15 +1479,37 @@ describe('用户管理页', () => {
     //    名单，这一条量的是"那一页拿不到"，与 App 那份无关）。
     // ★ 2026-10-06（深夜）：入口从「个人设置那一格」换成**左栏那一支** ——
     //   用户把设置里那格撤了（见 `AccountPage` 那段注释）。
-    vi.mocked(lutsMod.listLuts)
-      .mockResolvedValueOnce({ luts: [] })
-      .mockRejectedValue(new api.ApiError('UPSTREAM_FAILED', 'SENTINEL-滤镜清单拉不回来'))
+    // ★ 2026-10-11（设计跟进 T5）：假服务端改成**跟着次数变**（第一发空名单、
+    //   第二发炸、"再试一次"那一发给一份真名单）—— 这样下面那颗按钮
+    //   "到底有没有重新拉"才有靶子（只重渲染一次、不重发请求的话，`calls` 不动）。
+    let calls = 0
+    vi.mocked(lutsMod.listLuts).mockImplementation(async () => {
+      calls += 1
+      if (calls === 1) return { luts: [] }          // App 挂载那一趟（见上）
+      if (calls === 2) throw new api.ApiError('UPSTREAM_FAILED', 'SENTINEL-滤镜清单拉不回来')
+      return { luts: [LUTM(1, { name: '黄昏' })] }  // 「再试一次」那一趟
+    })
     await renderApp()
     await goNav('Lut')
 
     // 说的必须是**服务端那句话**（原样），不是我们替它总结的
-    expect(container.textContent).toContain('SENTINEL-滤镜清单拉不回来')
+    // ★ 2026-10-11（T5）：错误态和作品 / 对话两页**同一副样子**（`ErrorState`：
+    //   居中一句 + 一颗「再试一次」），不再是"一句红字 + 一句劝人刷新" ——
+    //   「刷新一下页面，再试一次。」至此全站退役。
+    const err = container.querySelector('.error-state.empty-state')
+    expect(err?.textContent ?? '').toContain('SENTINEL-滤镜清单拉不回来')
     expect(container.textContent).not.toContain('还没有导入过 Lut')
+    expect(container.textContent).not.toContain('刷新一下页面')
+
+    // 那颗按钮**真的重跑这一页这一趟请求**（只把红字收掉的话，下面三句都红）
+    const before = calls
+    await act(async () => {
+      ;(err!.querySelector('button') as HTMLButtonElement).click()
+      await settle()
+    })
+    expect(calls).toBe(before + 1)
+    expect(container.querySelector('.error-state')).toBeNull()
+    expect(container.textContent).toContain('黄昏')     // 清单真的画出来了
   })
 
   it('★ 还没到手的时候是「正在打开…」，不是「还没有导入过 Lut」', async () => {
