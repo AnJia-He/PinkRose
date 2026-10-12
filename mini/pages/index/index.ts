@@ -399,6 +399,12 @@ Page({
     console.error('[index] 照片加载/渲染失败：' + detail, e)
     if (!String((e as { errMsg?: string })?.errMsg).includes('cancel')) {
       wx.showToast({ title: '这张照片打不开，换一张试试', icon: 'none' })
+      // ★ M3（2026-10-12 全支大审）：渲染失败会停在 `stage='edit'` —— 那是个
+      //    **没有管线的死壳**（按钮都在，点「保存」「说一句」全是静默 no-op，
+      //    用户觉得点了没反应）。回空态（走 onPickAgain 那一套：拆管线、掐在飞
+      //    的生成、清浮条/撤销、代数 +1），让按钮都回到能用的地方。
+      //    已经在空态时调它是无副作用的重置（要写的值本来就一样）。
+      this.onPickAgain()
     }
   },
 
@@ -993,15 +999,24 @@ Page({
    * 导出尺寸、双路径、授权引导都在那边；这里只管流程和 toast）。
    *
    * 三件事：
-   *   ① **防重复点**：`saving` 一问就早退 —— 导出+存盘这一趟可能要一两秒，
-   *      连点会导出 N 张一样的图、弹 N 个系统框。顺带 `showLoading(mask)` 把页面
+   *   ① **防重复点 + 生成中挡住**：`saving` / `generating` 一问就早退（生成那条见
+   *      下面 I1 注释）；导出这趟要一两秒，连点会导出 N 张一样的图、弹 N 个系统框。顺带 `showLoading(mask)` 把页面
    *      按住（也顺手挡住"导出到一半点「换一张」"—— 管线被拆了这趟就废了）。
    *   ② **失败分两段报**：导出失败 / 存相册失败，各自一句人话（`e.message` 就是
    *      给用户看的话，见 export.ts 的文件头）。
    *   ③ 成功那声「已存到相册」在 saveToAlbum 里面 toast —— 它才知道存盘真的过了。
    */
   async onSave() {
-    if (this.saving) return
+    // ★ I1（2026-10-12 全支大审）：**生成中不接受保存** —— 导出和生成抢同一块
+    //    画布缓冲：生成若在导出的 0.1~0.8 秒窗口里回来，`setImage/resizeToImage`
+    //    就把缓冲换掉了，`canvasToFile` 读的是旧尺寸区域（新图被裁 / 黑边），
+    //    还配一声「已存到相册」。触发只要"转圈时顺手点一下保存"（户外很自然）。
+    //    蒙层已经示意在忙，这里静默忽略成本最低（和 `saving` 那条防重入一个出口）。
+    //    `endPeek()` 顺手收掉：**按住看原图**的到点定时器是同类"导出中途有人往
+    //    缓冲里画"的来源（到点重画一帧 / 抬手画回来）。⚠️ 放在守卫**后面** ——
+    //    按住的手指还压着时不该动他的画面。
+    if (this.saving || this.data.generating) return
+    this.endPeek()
     const pipe = this.pipe
     const node = this.node
     if (!pipe || !node) return

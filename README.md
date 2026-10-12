@@ -17,6 +17,7 @@
 | AI 怎么理解人话（给模型的提示词） | [prompt.ts](server/prompt.ts) |
 | 写文案的规矩（怎么说话、禁用什么词） | [文案规范.md](docs/文案规范.md) |
 | 模型的接口地址、钥匙 | 界面上「个人设置 → 模型配置」；代码在 [models.ts](server/models.ts) |
+| 微信小程序（`mini/`「户外快速修图」） | 改小程序时进来，细节看 [mini/README.md](mini/README.md) |
 
 ### `src/ui/` 里每个页面分别是哪个文件
 

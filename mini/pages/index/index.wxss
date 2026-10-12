@@ -55,6 +55,12 @@
   line-height: 1.4;
 }
 
+/* 微信 <button> 自带一层 ::after 伪元素描边 —— 不清掉，药丸边上会多一圈
+   默认灰线（M2，2026-10-12 全支大审）。页面上的按钮全是 .big-btn，一条就够。 */
+.big-btn::after {
+  border: none;
+}
+
 .big-btn.ghost {
   margin-top: 24rpx;
   background: transparent;

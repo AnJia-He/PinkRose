@@ -77,6 +77,10 @@ node mini/scripts/smoke.cjs
 `getImageInfo:fail file not found`、`statSync` 报 `permission denied`），
 而冒烟恰恰要在模拟器里读它。不 ignore 也没事：整个小程序包（含这张图）才
 334 KB，离 2 MB 主包上限远得很。
+⚠️ **发布前要摘掉 dev 通道的两样**：包里的测试图 `assets/test-photo.jpg`、和
+「载入测试照片」那颗按钮（wxml `.dev-btn` + onLoad 算的 `dev` 判据 + index.ts 的
+`DEV_PHOTO` / `onDevPhoto`）—— **只能改代码 / 删文件**（给图加 `packOptions.ignore`
+上面试过：连模拟器一起剥，不可行）。两个冒烟都靠这颗按钮进编辑态，留到验收后再摘。
 ⚠️ 冒烟跑的是**模拟器**（电脑显卡）：它筛得掉编不过的着色器，答不了「真机跑不跑得动」。
 
 ## 「说一句」冒烟（Task 12）

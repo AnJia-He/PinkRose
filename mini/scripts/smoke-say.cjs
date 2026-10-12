@@ -19,7 +19,7 @@
  *                                生成完 → 撤销把"参数+底图"一起还原（一层）
  *   D degraded 「随便修一下」   —— 浮条拼上"拿不太准"提醒（电脑版口径）
  *   E 拿不准   「把那个人去掉」 —— 参数照收（exposure +6）、生成拦住、没有蒙层、撤销没被动过
- *   F 停止     改 mock 延时到 14s —— 秒表 5 秒内不带数字、5 秒后「已经等了 N 秒」；
+ *   F 停止     改 mock 延时到 20s —— 秒表 5 秒内不带数字、5 秒后「已经等了 N 秒」；
  *                                点「停止」→ 请求真掐断（mock 的 editAborted 计数为证）、
  *                                画面/参数/撤销原样、浮条「停了。」
  *
@@ -110,8 +110,14 @@ async function mockUp() {
 
 ;(async () => {
   // 保险丝：整条超过上限直接退（码 2）—— 不傻等（smoke.cjs 同款理由）。
-  setTimeout(() => {
-    log('\n✖ 看门狗：整条冒烟超过 ' + (WATCHDOG_MS / 1000) + ' 秒还没跑完 —— 直接退（码 2）。')
+  setTimeout(async () => {
+    log('\n✖ 看门狗：整条冒烟超过 ' + (WATCHDOG_MS / 1000) + ' 秒还没跑完 —— 收尾后直接退（码 2）。')
+    // ★ M5（2026-10-12 全支大审）：`process.exit` 会**跳过 finally** —— 这里先补
+    //   收尾：API 地址必须指回 config（它是运行期全局开关，留着会把模拟器之后的
+    //   一切请求都打到 mock，症状只有"连不上"，很难查）；mock 是本脚本 spawn 的
+    //   子进程，退出前也顺手杀掉（不然它留在 4399 上）。
+    try { if (page) await rpc(page.callMethod('__probeSetApiBase', ''), 'watchdog reset api base', 8000) } catch (e) { log('  [warn] 看门狗里 API 地址没能指回 config：', e && e.message) }
+    if (mockProc) mockProc.kill()
     process.exit(2)
   }, WATCHDOG_MS)
 
@@ -333,8 +339,8 @@ async function mockUp() {
       'generating=' + dE.generating + ' canUndo=' + dE.canUndo + '（前值 ' + eBefore.canUndo + '）')
     await shot(mp, 'say-E-disambig')
 
-    // ── [F] 停止 + 秒表换挡：「把路人去掉」（mock 延时改成 14 秒）─────────────
-    log('\n[F] 停止 + 秒表：把 mock 的 editMs 改成 ' + EDIT_MS_LONG + ' 秒级的慢响应')
+    // ── [F] 停止 + 秒表换挡：「把路人去掉」（mock 延时改成 20 秒）─────────────
+    log('\n[F] 停止 + 秒表：把 mock 的生成延时改成 ' + (EDIT_MS_LONG / 1000) + ' 秒（慢响应）')
     await getJson('/mock/set?editMs=' + EDIT_MS_LONG)
     const fBefore = await rpc(page.data(), 'page.data')
     const fParams0 = await params()
