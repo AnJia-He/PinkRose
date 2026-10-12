@@ -41,7 +41,9 @@ export function syncFiles(checkOnly = false) {
   const known = FILES.map(([, out]) => out)
   const problems = []
   for (const [src, out] of FILES) {
-    const source = readFileSync(join(ROOT, src), 'utf8')
+    // ★ autocrlf：源头在检出时可能是 CRLF。一律折成 LF 再写 —— 镜像的行尾必须
+    //   只由这一行代码决定，检出的机器换一下不能变。
+    const source = readFileSync(join(ROOT, src), 'utf8').replace(/\r\n/g, '\n')
     let body = rewriteImports(source, known)
     if (body.includes("from '../")) problems.push(`${out} 里残留 ../ 相对路径`)
     body = HEADER + body
@@ -49,7 +51,9 @@ export function syncFiles(checkOnly = false) {
     if (checkOnly) {
       let existing = null
       try { existing = readFileSync(dest, 'utf8') } catch {}
-      if (existing !== body) problems.push(`${out} 与源头不一致（跑一遍同步）`)
+      // ★ 比对前折行尾：本机 core.autocrlf=true，检出会把镜像写成 CRLF，
+      //   按字节比就是每次 checkout 后**误报**一遍漂移 —— 那种守卫只会教人忽略它。
+      if (existing?.replace(/\r\n/g, '\n') !== body) problems.push(`${out} 与源头不一致（跑一遍同步）`)
     } else {
       mkdirSync(outputDir, { recursive: true })
       writeFileSync(dest, body)
