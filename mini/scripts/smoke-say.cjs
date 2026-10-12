@@ -14,7 +14,7 @@
  *   A params   「亮一点」      —— 输入条「在想…」（不弹蒙层）→ 参数叠加 + 点亮「通透提亮」
  *                                + 浮条（原文）→ 5 秒淡出
  *   B generate 「把路人去掉」   —— 蒙层（秒数前 5 秒不带数字）→ 新图（尺寸换成 mock 那张）
- *                                → 浮条 + 撤销 → 点撤销 → 画面和参数都回到发前 + 像素逐点还原
+ *                                → 浮条 + 撤销 → 点撤销 → 画面和参数都回到发前 + 采样点/色数还原
  *   C both     「亮一点再去掉路人」—— 蒙层**期间**就能读到参数已生效（contrast +20），
  *                                生成完 → 撤销把"参数+底图"一起还原（一层）
  *   D degraded 「随便修一下」   —— 浮条拼上"拿不太准"提醒（电脑版口径）
@@ -229,7 +229,7 @@ async function mockUp() {
     const dB = await waitData(page, x => x.sayBubble !== '', 6000)
     check('A5 浮条显示模型那句话（原文）', dB.sayBubble === '好，我把照片调成了通透提亮的样子。',
       JSON.stringify(dB.sayBubble))
-    check('A6 参数路上没有出过蒙层（generating 始终 false）', dB.generating === false,
+    check('A6 参数路浮条出现这一刻没有蒙层（单拍 generating=false）', dB.generating === false,
       'generating=' + dB.generating)
     await shot(mp, 'say-A-params')
     const dFade = await waitData(page, x => x.sayBubble === '', 7500)
@@ -269,9 +269,9 @@ async function mockUp() {
     check('B8 撤销：参数也回到发前', JSON.stringify(bParams1) === JSON.stringify(bParams0),
       JSON.stringify(bParams1) === JSON.stringify(bParams0) ? '' : JSON.stringify(bParams1))
     const bColors2 = await colors()
-    check('B9 撤销后像素逐点还原（同底图同参数 → 同画面）',
+    check('B9 撤销后采样点 + 色数还原（16×16 网格：首采样点、颜色数双双相同）',
       bColors2.first === bColors0.first && bColors2.colors === bColors0.colors,
-      bColors0.first + ' vs ' + bColors2.first)
+      bColors0.first + '/' + bColors0.colors + '色 vs ' + bColors2.first + '/' + bColors2.colors + '色')
     check('B10 撤销完按钮收掉（一层）', dUndo.canUndo === false, 'canUndo=' + dUndo.canUndo)
     await shot(mp, 'say-B-undone')
 

@@ -599,6 +599,12 @@ Page({
     } catch (e) {
       console.error('[index] 路由没走通：', e)
       this.setData({ sayBusy: false })
+      // ★ Task 12 审查 Minor：失败也查代数 —— 等这一会儿里换了照片 / 回空态，这句
+      // 失败只该烂在控制台里，别挂到新照片的浮条上（同下面成功路径那道闸门的处置）。
+      if (this.genPhotoSeq !== seqAtStart || this.pipe !== pipe) {
+        console.error('[index] 路由失败回来时画面已经变了，这一趟丢掉（这句不提）')
+        return
+      }
       // ApiError 的 message 就是能直接给人看的话（lib/api.ts 的文件头）；
       // 兜底那句和电脑版路由失败一字不差。
       this.showBubble(e instanceof ApiError ? e.message : '出了点问题，再试一次？')
@@ -740,6 +746,10 @@ Page({
           // 画面和参数**一个字没动过**（也正因此不许说"没修成功"）
           this.showBubble('停了。')
         }
+      } else if (gone()) {
+        // ★ Task 12 审查 Minor：画面已经翻篇（换了照片 / 撤销了）时，迟到的失败
+        // 只留控制台 —— 别把「没修成功」挂到新照片的浮条上（同上面 abort 分支的闸）。
+        console.error('[index] 生成失败回来时画面已经变了，这一句不提：', e)
       } else {
         console.error('[index] 生成没走通：', e)
         this.showBubble(e instanceof ApiError ? e.message : '这次没修成功，再试一次？')
@@ -809,13 +819,15 @@ Page({
   /**
    * 「撤销」（spec §4.3）：回到**说那句话之前**的画面和参数 —— **一层，只对生成有意义**
    * （点错风格点「原图」就回去了）。撤销完按钮收掉（消费掉 undoSnap）；生成**成功**
-   * 才会再亮。
+   * 才会再亮。撤销**没走通**时（画面一个字没动）现场放回、按钮重新亮 —— 那句
+   * 「再试一次？」才有个真能点的出口（Task 12 审查 Minor）。
    */
   async onUndo() {
     const snap = this.undoSnap
     const pipe = this.pipe
     const node = this.node
     if (!snap || !pipe || !node) return
+    const seqAtStart = this.genPhotoSeq
     // 先消费（同步）—— 防连点两下、也防撤销半路又来一次
     this.undoSnap = null
     this.setData({ canUndo: false })
@@ -838,7 +850,18 @@ Page({
       pipe.render(this.params)
     } catch (e) {
       console.error('[index] 撤销没走通：', e)
-      this.showBubble('这会儿撤不回去了，再试一次？')
+      // ★ Task 12 审查 Minor：撤销失败时画面和参数**一个字没动**（所有改动都在最后
+      // 一个 await 之后）—— 把快照放回去、「撤销」重新亮着，那句「再试一次？」才真
+      // 有个能点的按钮；否则等于承诺了一个不存在的出口。
+      // ⚠️ 只有"世界没变"才放回：等的这会儿换了照片 / 新的生成落了图，那笔现场已经
+      // 翻篇（undoSnap 该是 null 或有新的），放回去 = 把旧照片的撤销挂到新照片头上。
+      if (this.pipe === pipe && this.genPhotoSeq === seqAtStart) {
+        this.undoSnap = snap
+        this.setData({ canUndo: true })
+        this.showBubble('这会儿撤不回去了，再试一次？')
+      } else {
+        console.info('[index] 撤销失败回来时画面已经变了，这句不提（不挂到新照片上）')
+      }
     }
   },
 
