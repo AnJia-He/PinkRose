@@ -12,6 +12,10 @@
     <view class="empty-sub">拍完随手修，30 秒发出去</view>
     <button class="big-btn" bindtap="onCamera">拍一张</button>
     <button class="big-btn ghost" bindtap="onAlbum">从相册选</button>
+    <!-- ★ 冒烟用的测试通道（Task 7）：**仅开发版**可见（dev = envVersion 是不是 develop，
+         见 index.ts 的 onLoad）。点了把打进包的 assets/test-photo.jpg 走「选完照片」
+         的同一条路 —— 绕开系统选图弹窗，automator 才点得动。别改名成看不出用途的词。 -->
+    <button class="big-btn ghost dev-btn" wx:if="{{dev}}" bindtap="onDevPhoto">载入测试照片</button>
   </view>
 
   <view class="edit" wx:if="{{stage === 'edit'}}">

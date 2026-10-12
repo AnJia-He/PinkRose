@@ -45,6 +45,36 @@ mini\scripts\prepare-types.cmd
 再拷进 `mini/types/`；**没有**构建 npm、**没有**动电脑版 `package.json`。
 没生成时 `tsc` 会报 `Cannot find name 'wx'`，跑一遍脚本就好。
 
+## 冒烟 + 全黑哨兵
+
+```bash
+node mini/scripts/smoke.cjs
+```
+
+**为什么有它**：GLSL 编不过 = **每张照片全黑**，而 typecheck / 构建 / 单测四样全瞎
+（电脑版 2026-10-05 真机抓到过一次，来路写在 `src/render/shader.ts` 顶上）。
+只有「真渲染 + 读像素数颜色」这条探针抓得到 —— 纯色画布就是静默失败。
+
+先按上面「怎么跑」起好 CLI（它开 `ws://127.0.0.1:9420`），再跑脚本。它做四件事：
+
+1. 先跑 `node scripts/sync-mini-shared.mjs --check` —— 镜像漂了直接失败退出（别测漂的镜像）；
+2. 进主页面 → 点**仅开发版可见**的「载入测试照片」按钮（`dev` = `wx.getAccountInfoSync()
+   .miniProgram.envVersion === 'develop'`，wxml `wx:if` 判的；照片是打进包的
+   `assets/test-photo.jpg`，绕开系统选图弹窗）→ 等风格栏 13 格就绪；
+3. 对 13 档（原图 + 12 预设）逐档：点那一格 → 轮询 `activeStyle` 确认 → 调页面上的
+   `__probeColors()`（纯读、16×16 网格数颜色、同步返回 `{colors, first, err}`）；
+4. 断言：每档 `colors > 1`（纯色 = 全黑/全白的静默失败）且 `err === 0`、
+   「原图」与「黑白」两档 `first` 不相同。**失败会存截图**
+   （`.superpowers/mini/smoke-fail-*.png`）并 exit 1；全过 exit 0。
+
+⚠️ 测试图 `assets/test-photo.jpg`（159 KB）就放在包里 —— **别给它加
+`packOptions.ignore`**（2026-10-12 试过、又撤了）：那条实测**连本地模拟器编译
+也一起生效**，同一个包里徽章标读得到、它读不到（`getImageInfo` 报
+`getImageInfo:fail file not found`、`statSync` 报 `permission denied`），
+而冒烟恰恰要在模拟器里读它。不 ignore 也没事：整个小程序包（含这张图）才
+334 KB，离 2 MB 主包上限远得很。
+⚠️ 冒烟跑的是**模拟器**（电脑显卡）：它筛得掉编不过的着色器，答不了「真机跑不跑得动」。
+
 ## API 地址怎么改
 
 「说一句」走电脑版后端。地址在 `lib/config.ts`（后续任务加）——

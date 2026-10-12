@@ -272,6 +272,15 @@ export class TonePipeline {
     return out
   }
 
+  /**
+   * 仅测试/探针用：读一次 GL 错误码（0 = 干净）。⚠️ 和 GL 的 getError 同语义 ——
+   * **读一次清一次账**，连着读第二次恒为 0。「全黑哨兵」（pages/index 的
+   * `__probeColors`）每档画面读一次就靠它。
+   */
+  getError(): number {
+    return this.gl.getError()
+  }
+
   dispose(): void {
     const gl = this.gl
     gl.deleteProgram(this.program)

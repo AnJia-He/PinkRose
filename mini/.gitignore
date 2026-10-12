@@ -4,3 +4,10 @@ types/
 # ⚠️ 根 .gitignore 的 `*.png` 会把徽章标也吃掉（和当年 src/assets/logo/ 同一个坑：
 # 换台机器 clone 下来图是残的、而且一声不吭）。它就是空态那一屏的界面本身，放行。
 !assets/emperor-badge.png
+
+# 同理放行冒烟用的测试照片（★ 2026-10-12 Task 7）：根 .gitignore 的 `*.jpg` 会把它
+# 吃掉，而它是 `scripts/smoke.cjs` 的**输入**（dev 通道直接加载它）—— 换台机器
+# clone 下来没这张图，冒烟起不来。（曾想用 packOptions.ignore 把它排出预览/上传包，
+# 实测那条**连本地模拟器**也一起排掉、冒烟直接读不到；不 ignore 也没事：整个包
+# 才 334KB，离 2MB 主包上限远得很。证据与结论见 README「冒烟 + 全黑哨兵」。）
+!assets/test-photo.jpg
