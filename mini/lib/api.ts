@@ -41,9 +41,20 @@ export class ApiError extends Error {
   }
 }
 
-/** 实际打哪个地址：调试覆盖优先（config.ts 那段写着什么时候填、什么时候清）。 */
+/** 实际打哪个地址：调试覆盖优先（config.ts 那段写着什么时候填、什么时候清）。
+ *  ★ Task 12：「说一句」的 mock 冒烟要**运行期**把它指到本地 mock（4399）——
+ *  改 config.ts 那个常量会触发开发者工具重编译（会话容易坏，见 mini/README
+ *  的「半死不活」那条），所以这里留一个 setter 给探针。默认值仍是 config 的常量，
+ *  生产路径没有任何地方调 setter。 */
+let baseOverride: string = API_BASE_OVERRIDE
+
+/** 运行期换地址（**只给探针/冒烟用**）。传 '' 恢复 config.ts 的值。 */
+export function setApiBaseOverride(url: string): void {
+  baseOverride = url
+}
+
 function baseUrl(): string {
-  return API_BASE_OVERRIDE || API_BASE
+  return baseOverride || API_BASE
 }
 
 /** 服务端错误体的形状：`{ error: { code, message } }`（server/http.ts 的 sendJson） */
@@ -52,15 +63,43 @@ interface ErrorBody {
 }
 
 /**
+ * 可选的两样（★ Task 12）—— 都只有「说一句」的生成那条路用：
+ *
+ *   · `timeoutMs` —— 覆盖 `wx.request` 的默认超时（**60 秒**，基础库 2.10.0 起
+ *     才有 timeout 这个字段）。为什么生成那条路要显式给一个更大的值：
+ *     `/api/edit` 在服务端要过**全局串行队列**（server/queue.ts），一次商汤
+ *     编辑本身 4~8.5 秒、上游自己的超时是 180 秒（sn.ts 的 EDIT_TIMEOUT_MS）——
+ *     队列里前面还排着别人的时候，60 秒的默认值会被**正常但排队久**的请求撞上，
+ *     而打出去失败会被下面译成「连不上服务器，检查一下网络？」——那是**假话**
+ *     （网好着呢，是等得久）。页面给的是 120 秒（见 index.ts 的 EDIT_TIMEOUT_MS）。
+ *
+ *   · `onTask` —— 把这一次请求的 `RequestTask` 交出去（「停止」按钮要按它的
+ *     `abort()`）。⚠️ 401 重登重试时**两次请求都会回调一次**：调用方拿到的
+ *     是**最近一次**的 task，abort 要打最新的那个（页面里 aborted 旗标兜底：
+ *     task 来晚了就直接掐）。
+ */
+export interface PostOptions {
+  timeoutMs?: number
+  onTask?: (task: WechatMiniprogram.RequestTask) => void
+}
+
+/** 「这一次请求是被 abort 掉的」—— 不是网络故障（见 post 的 fail 分支）。 */
+export function isAbortError(e: unknown): boolean {
+  return e instanceof ApiError && e.code === 'ABORTED'
+}
+
+/**
  * 打一次 POST —— **唯一**碰 `wx.request` 的地方（url / method / header 都在这儿定）。
  *
  * @param token 非空就带 `Authorization: Bearer <token>`；登录那一次传 null。
  */
-function post<T>(path: string, body: unknown, token: string | null): Promise<T> {
+function post<T>(path: string, body: unknown, token: string | null, opts?: PostOptions): Promise<T> {
   return new Promise<T>((ok, no) => {
-    wx.request({
+    const task = wx.request({
       url: baseUrl() + path,
       method: 'POST',
+      // 不传就是平台默认（60 秒）——只在调用方显式要的时候才写进去
+      ...(opts && opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
       header: {
         'content-type': 'application/json',
         ...(token ? { Authorization: 'Bearer ' + token } : {}),
@@ -83,10 +122,21 @@ function post<T>(path: string, body: unknown, token: string | null): Promise<T> 
         no(new ApiError(err && typeof err.code === 'string' ? err.code : 'INTERNAL', message, status))
       },
       fail: e => {
-        console.error('[api] ' + path + ' 打不出去：' + ((e && e.errMsg) || String(e)))
+        const msg = String((e && e.errMsg) || e)
+        console.error('[api] ' + path + ' 打不出去：' + msg)
+        // ★「停止」按下的那一下：wx.request 被 abort → 走 fail，errMsg 含 'abort'。
+        //   这不是故障，单独认出来（页面照着它说「停了。」，不说"没改成"）。
+        if (msg.indexOf('abort') >= 0) return no(new ApiError('ABORTED', '已停止'))
+        // 超时和"真连不上"分开说：等了 120 秒没回来时，「检查一下网络」
+        // 是句假话（网好的，是服务端那边慢 / 队列长）——文案规范 §5 哪不对+怎么办。
+        if (msg.indexOf('timeout') >= 0) {
+          return no(new ApiError('UPSTREAM_FAILED', '服务器这次回得太慢，再试一次？'))
+        }
         no(new ApiError('UPSTREAM_FAILED', '连不上服务器，检查一下网络？'))
       },
     })
+    // 把掐断开关交给调用方（「停止」）。放在 wx.request 返回之后、同一个 tick 里。
+    if (opts && opts.onTask) opts.onTask(task)
   })
 }
 
@@ -105,13 +155,14 @@ export function apiPostNoAuth<T>(path: string, body: unknown): Promise<T> {
  * **外面** —— 所以"只重试一次"不是靠自觉，是结构：它再 401 就直接抛出去，
  * 由调用方接住说话（再撞一百次也不会好，那多半是"这台设备上的票被换过了"）。
  */
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+export async function apiPost<T>(path: string, body: unknown, opts?: PostOptions): Promise<T> {
   try {
-    return await post<T>(path, body, await getToken())
+    return await post<T>(path, body, await getToken(), opts)
   } catch (e) {
     if (!(e instanceof ApiError) || e.status !== 401) throw e
     console.warn('[api] ' + path + ' 回了 401 —— 清掉旧票、重登一次再试')
     clearToken()
-    return await post<T>(path, body, await getToken())
+    // opts 两次都传：重试那一次也要有超时和 onTask（abort 要能掐到**正在飞的那一个**）
+    return await post<T>(path, body, await getToken(), opts)
   }
 }

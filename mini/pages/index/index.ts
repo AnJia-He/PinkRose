@@ -13,12 +13,23 @@
 //          冒烟用的「载入测试照片」按钮只在这一态显示（体验版/正式版不给）
 //   statusBar —— 状态栏高度，顶栏自己让位用
 //   topbarPadRight —— 顶栏右侧给微信那颗胶囊（••• | ⊙）让出的宽度
-import { ZERO, type Adjustments } from '../../lib/shared/adjustments'
+//
+// ★ Task 12（说一句）新增的一簇：
+//   sayText —— 输入条里的字（受控值）
+//   sayBusy / sayBusyText —— 输入条的忙态（忙碌期间输入框换成一句话，不再收字）：
+//                            路由那 1.3~1.6 秒显示「在想…」（spec §4.2：这段不弹蒙层）；
+//                            生成期间显示「正在修…」（秒数在蒙层上，这条不跟秒）
+//   sayBubble —— 输入条上方那条浮条的字（'' = 收着不显示）；5 秒后自动淡出
+//   generating / genText / genSeconds —— 生成中蒙层（暗化 + 转圈 + 秒表文案 + 停止）。
+//                genText 是**算好的整句**（页面里唯一的文案口径，冒烟按它断言）；
+//                5 秒内不带秒数（电脑版契约），之后「正在修…已经等了 N 秒」
+//   canUndo —— 照片右下角「撤销」亮不亮（一次生成 = 一层，只对生成有意义）
+import { applyDeltas, ZERO, type Adjustments } from '../../lib/shared/adjustments'
 import { activePresetId, ORIGINAL_ID, PRESETS } from '../../lib/shared/presets'
 import { TonePipeline, type CanvasNode } from '../../lib/gl/tonePipeline'
 import { renderThumbSprite, type ThumbCell } from '../../lib/image/thumbs'
 import { exportPhoto, saveToAlbum } from '../../lib/image/export'
-import { ApiError, apiPost } from '../../lib/api'
+import { ApiError, apiPost, isAbortError, setApiBaseOverride } from '../../lib/api'
 import { getToken } from '../../lib/auth'
 import { prepareForModel, prepareForRouting } from '../../lib/image/prepare'
 
@@ -36,6 +47,15 @@ interface IndexData {
   dev: boolean
   statusBar: number
   topbarPadRight: number
+  // ── ★ Task 12（说一句）──────────────────────────────────────────────
+  sayText: string
+  sayBusy: boolean
+  sayBusyText: string
+  sayBubble: string
+  generating: boolean
+  genText: string
+  genSeconds: number
+  canUndo: boolean
 }
 
 /**
@@ -64,6 +84,68 @@ const PEEK_HOLD_MS = 150
  * （按住看原图直接变成"看运气"）。
  */
 const MOVE_CANCEL_PX = 5
+
+/** 浮条停留时长（毫秒）—— spec §4.2「几秒后淡出」；5 秒是电脑版忙文案换挡用的坎，
+ *  这里取它当"一眼看得完"的量。 */
+const BUBBLE_MS = 5000
+
+/**
+ * 生成那条路的 `wx.request` 超时（毫秒）—— **不吃平台默认的 60 秒**（Task 11 审查
+ * 留给 Task 12 评估的那条）。理由（完整版在 `lib/api.ts` 的 PostOptions 注释）：
+ * `/api/edit` 在服务端要过**全局串行队列**，一次商汤编辑本身 4~8.5 秒、上游自己的
+ * 超时是 180 秒 —— 队列里前头还排着的时候，60 秒会被**正常但排队久**的请求撞上，
+ * 而那个失败会被 api 层译成「连不上服务器」（假话：网好着，是等得久）。
+ * 120 秒 = 上游 180 秒里我们这边肯等的下限，比它再小就又可能误杀正常请求。
+ */
+const EDIT_TIMEOUT_MS = 120000
+
+/** 生成结果的落盘槽（ping-pong，见 `writeGenImage`）：写"当前没在显示"的那个，
+ *  撤销要还原的那张文件绝不会被覆盖。 */
+const GEN_SLOT_0 = 'pr-gen-0.jpg'
+const GEN_SLOT_1 = 'pr-gen-1.jpg'
+
+/** 秒表换挡点（秒）—— 电脑版契约：**5 秒内不显示秒数**（`busyText` 同款）。
+ *  ⚠️ 修的时候别动这个数：那是"提前看到秒数"和"永远看不到秒数"的分界。 */
+const GEN_SECONDS_AFTER = 5
+
+/** 秒表重算间隔（毫秒）：250ms 一跳，但**文案变了才 setData**（一秒只渲一次）。
+ *  用 1000ms 整数跳会偶尔跳秒（定时器漂移 —— 电脑版评论里记过同款）。 */
+const GEN_TICK_MS = 250
+
+/**
+ * `/api/route` 回来的决策 —— 字段名以 `shared/protocol.ts` 的 `RouteDecision` 为准
+ * （那份**没同步进小程序**，见 sync-mini-shared.mjs 的 FILES 表；这里只收读者要用的）。
+ * ⚠️ `lut` / `preset` 在协议里是**必填**字段，小程序第一版两样都没有（没有用户滤镜 /
+ * 用户预设那两块界面）—— 收下即弃，真后端给了非 null 会留一行警告（别静默）。
+ */
+interface RouteDecision {
+  route: 'params' | 'generate' | 'both'
+  /** 参数**增量**（缺的键按 0 算，叠加交给共享 applyDeltas —— LLM 不做算术） */
+  paramDeltas: Partial<Adjustments>
+  reply: string
+  editPrompt: string
+  needsDisambiguation: boolean
+  degraded: boolean
+  lut: unknown
+  preset: unknown
+}
+
+/** `POST /api/edit` 的回体（`shared/protocol.ts` 的 EditResponse，字段名一字不改）。 */
+interface EditResult {
+  imageDataUrl: string
+  width: number
+  height: number
+}
+
+/**
+ * 「撤销」要还原的现场（spec §4.3：**回生成前的画面和参数**）。
+ * ⚠️ 在**发送那一刻**就拍好 —— 'both' 那条参数先落地，等生成开始再拍就拍到
+ * "落过参数"的了（撤销还原不回去）。生成**成功**那刻才写进 `undoSnap`。
+ */
+interface UndoSnap {
+  photo: string
+  params: Adjustments
+}
 
 /** 选一张照片（拍照 / 相册）→ 临时文件路径。
  *  用户点取消时 reject（errMsg 形如「chooseMedia:fail cancel」）—— 调用方别当错误报。 */
@@ -177,6 +259,14 @@ Page({
     spriteW: 0,
     activeStyle: null,
     dev: false,
+    sayText: '',
+    sayBusy: false,
+    sayBusyText: '',
+    sayBubble: '',
+    generating: false,
+    genText: '',
+    genSeconds: 0,
+    canUndo: false,
   } as IndexData,
 
   // 非 data 的实例状态。`as` 是为了让推断出 `TonePipeline | null`（不然收窄成 null）。
@@ -208,6 +298,30 @@ Page({
   peeking: false,
   /** 这次按下的起点（手指挪没挪动，按它判，见 MOVE_CANCEL_PX）。 */
   peekStart: { x: 0, y: 0 },
+
+  /** ★ Task 12：浮条 5 秒淡出的计时器（null = 没有浮条在屏上）。 */
+  bubbleTimer: null as number | null,
+  /**
+   * ★ Task 12：这一次生成的「停止」把手。**一个对象、不是单个 task**：
+   * 「停止」可能按在 task 交出来**之前**（缩图那一两百毫秒里）—— 那时先记
+   * `aborted`，`onTask` 到的时候补掐（见 onStopGen / runGenerate 的 opts.onTask）。
+   * `aborted` 也让 catch 分得清"人叫停的"和"真失败"。
+   */
+  genAbort: { task: null, aborted: false } as {
+    task: WechatMiniprogram.RequestTask | null
+    aborted: boolean
+  },
+  /** ★ Task 12：蒙层秒表（genStartedAt = 出发时刻，文案变了才 setData）。 */
+  genTickTimer: null as number | null,
+  genStartedAt: 0,
+  /**
+   * ★ Task 12：照片的代数 —— **换照片 / 撤销 / 生成落图**都 +1。所有异步的"回来"
+   * （路由决策、生成结果）落地前都拿出发时抄的号对一遍，对不上就是"画面已经变了"，
+   * 结果作废只留一句通报 —— 电脑版 `baseSeqRef` 的同类（那边追过串会话那个大坑）。
+   */
+  genPhotoSeq: 0,
+  /** ★ Task 12：「撤销」还原的现场（见 UndoSnap）。生成**成功**那刻才写；撤销消费掉。 */
+  undoSnap: null as UndoSnap | null,
 
   onLoad() {
     // 状态栏高度给顶栏让位（navigationStyle 是 custom，页面自己画顶栏）
@@ -258,13 +372,21 @@ Page({
   async applyPickedPhoto(path: string) {
     const info = await new Promise<WechatMiniprogram.GetImageInfoSuccessCallbackResult>(
       (ok, no) => wx.getImageInfo({ src: path, success: ok, fail: no }))
+    // ★ Task 12：照片要换了 —— 在飞的生成/路由/浮条/撤销从这一刻起全部翻篇：
+    // 生成掐掉（那一趟回来也一定作废，顺手让服务端也停），旧照片的撤销和浮条清掉。
+    // ⚠️ 代数 **+1 要赶在 setData 之前**（同步）—— setData 的落地要等一个来回，
+    //    在飞的那趟生成万一在这个缝里回来，看到的就是"画面已经变了"该有的样子。
+    this.abortGenInFlight()
+    this.clearBubble()
+    this.undoSnap = null
+    this.genPhotoSeq++
     // 先进编辑态（画布得在树上才能拿到节点），渲染接在 setData 落地之后。
     // 风格栏三个字段在这里**归零**：上一张照片的 sprite/点亮一律不许带过来
     // （新照片的 sprite 画好之前，条上宁可先空着，也不能挂旧照片的小图）。
     await new Promise<void>(ok => this.setData(
       {
         stage: 'edit', photo: path, photoW: info.width, photoH: info.height,
-        styles: [], spritePath: '', spriteW: 0, activeStyle: null,
+        styles: [], spritePath: '', spriteW: 0, activeStyle: null, canUndo: false,
       }, ok))
     await this.startRender(path)
   },
@@ -350,7 +472,16 @@ Page({
 
   onPickAgain() {
     this.disposePipe()
-    this.setData({ stage: 'empty', photo: null, photoW: 0, photoH: 0, stageW: 0, stageH: 0 })
+    // ★ Task 12：回空态 = 一切归零 —— 在飞的生成掐掉、浮条收掉、撤销作废、
+    // 代数 +1（在飞的"回来"看到它就知道画面没了）。
+    this.abortGenInFlight()
+    this.clearBubble()
+    this.undoSnap = null
+    this.genPhotoSeq++
+    this.setData({
+      stage: 'empty', photo: null, photoW: 0, photoH: 0, stageW: 0, stageH: 0,
+      canUndo: false, sayBusy: false, generating: false,
+    })
   },
 
   /**
@@ -430,6 +561,348 @@ Page({
     this.setData({ activeStyle: activePresetId(this.params, false) })
   },
 
+  // ── ★ Task 12 · 说一句（输入 → 路由 → 分流 → 蒙层/停止 → 换图/撤销）─────────
+
+  /** 输入条打字（受控值）。 */
+  onSayInput(e: WechatMiniprogram.Input) {
+    this.setData({ sayText: e.detail.value })
+  },
+
+  /**
+   * 按下发送箭头 / 键盘上的发送键 —— 「说一句」的起点。
+   *
+   * 顺序（和电脑版 App.tsx 的 `send` 同一条流水）：**先挂号**（sayBusy = 输入条换成
+   * 「在想…」，这 1.3~1.6 秒不弹蒙层，spec §4.2）→ 640 缩图 → `/api/route`（带当前
+   * 15 参数当上下文）→ 决策回来先过一道**代数闸门**（等这一会儿里换了照片/撤销了，
+   * 决策作废、一个字不动 —— 电脑版同款守卫与话术）→ applyDecision 分流。
+   */
+  async onSaySend() {
+    if (this.data.sayBusy || this.data.generating) return // 上一句还没算完
+    const text = (this.data.sayText || '').trim()
+    if (!text) return // 空话不发（键盘的发送键也会走到这儿）
+    const pipe = this.pipe
+    const photo = this.data.photo
+    if (!pipe || !photo) return
+    // ★ 撤销的现场**在发送这一刻**拍好（'both' 那条参数马上要落地，晚了就拍到
+    //   "落过参数"的了）—— 但只在生成**成功**那刻才写进 undoSnap（见 runGenerate）。
+    const snap: UndoSnap = { photo, params: { ...this.params } }
+    const seqAtStart = this.genPhotoSeq
+    this.setData({ sayText: '', sayBusy: true, sayBusyText: '在想…' })
+    let decision: RouteDecision
+    try {
+      // 路由看的是**用户此刻看到的画面**（640 小图；这条故意不做 align32，见 prepare.ts）
+      const small = await prepareForRouting(photo, this.data.photoW, this.data.photoH)
+      const res = await apiPost<{ decision: RouteDecision }>('/api/route', {
+        imageDataUrl: small, text, params: { ...this.params },
+      })
+      decision = res.decision
+    } catch (e) {
+      console.error('[index] 路由没走通：', e)
+      this.setData({ sayBusy: false })
+      // ApiError 的 message 就是能直接给人看的话（lib/api.ts 的文件头）；
+      // 兜底那句和电脑版路由失败一字不差。
+      this.showBubble(e instanceof ApiError ? e.message : '出了点问题，再试一次？')
+      return
+    }
+    // 等这 1.3~1.6 秒里画面变了（换了照片 / 撤销了）：决策作废，一个字不动。
+    // 话术照电脑版 —— 不说"没听懂"（问题不在那句话），说清"这边没动它、可以再说一遍"。
+    if (this.genPhotoSeq !== seqAtStart || this.pipe !== pipe) {
+      console.error('[index] 决策回来时画面已经变了，这一趟丢掉（钱没花，参数也没动）')
+      this.setData({ sayBusy: false })
+      if (this.data.stage === 'edit') {
+        this.showBubble('刚才那句话还没算完，画面已经变了 —— 这边没动它。要的话，再说一遍。')
+      }
+      return
+    }
+    await this.applyDecision(decision, snap)
+  },
+
+  /**
+   * 决策落地 —— 分流三条（契约照电脑版 `useGeneration.ts` 的 applyDecision，那边是权威）：
+   *
+   *   · params / both：参数那半**本地立刻生效**（叠加 + 钳制交给共享 applyDeltas，
+   *     模型只负责"大概要多少"）；点亮沿用共享 activePresetId（全等才亮）。
+   *   · needsDisambiguation：参数照收（免费可逆），**生成拦住**（电脑版 §6.3）——
+   *     小程序第一版没有"在图上点一下"那条路，话术尾巴改成"换个说法"（不许承诺点选）。
+   *   · degraded：拼上电脑版一字不差的提醒（只拼给**生成**那两条 —— 纯参数免费可逆，
+   *     不值当报一次警）。
+   *   · generate / both：进 runGenerate（蒙层 → … → 换图 + 撤销）。
+   */
+  async applyDecision(d: RouteDecision, snap: UndoSnap) {
+    const isParams = d.route === 'params' || d.route === 'both'
+    if (isParams) {
+      this.params = applyDeltas(this.params, d.paramDeltas || {})
+      const pipe = this.pipe
+      if (pipe) pipe.render(this.params)
+      // 点亮 = 共享判据算的（和点风格那条同一个函数、同一条规矩：全等才亮）
+      this.setData({ activeStyle: activePresetId(this.params, false) })
+    }
+    // lut / preset 在协议里必填，但小程序第一版还没有那两块（没有用户滤镜/预设）——
+    // 收下即弃。真后端给了非 null 时留一行警告，别静默。
+    if (d.lut || d.preset) {
+      console.warn('[index] 决策带了 lut/preset —— 小程序第一版还没这两样，忽略了')
+    }
+    if (d.needsDisambiguation) {
+      this.setData({ sayBusy: false })
+      this.showBubble((d.reply || '好了。') + '我不太确定你指的是哪个 —— 换个说法再试试。')
+      return
+    }
+    const isGen = d.route === 'generate' || d.route === 'both'
+    const replyText = d.degraded && isGen
+      ? (d.reply || '好了。') + '这次我拿不太准，不对的话换个说法再试试。'
+      : (d.reply || '好了。')
+    // 纯参数 / 不生成（含"模型声明 generate 却没给 editPrompt"的退化）：话说、不动手。
+    // ⚠️ 退化那条必须落在这里 —— 进 runGenerate 会撞上开头的空 prompt 闸门，一声不吭。
+    if (!isGen || !d.editPrompt) {
+      this.setData({ sayBusy: false })
+      this.showBubble(replyText)
+      return
+    }
+    await this.runGenerate(d.editPrompt, replyText, snap)
+  },
+
+  /**
+   * 生成那半：蒙层（暗化 + 转圈 + 秒表 + 停止）→ 新图落盘 → 换图 + 一句 reply + 撤销。
+   *
+   * @param reply 成功那一刻**和图片一起**说的话（电脑版契约：不在出发时先承诺）
+   * @param snap 出发时拍好的「撤销」现场（见 UndoSnap —— 别在这里拍）
+   */
+  async runGenerate(editPrompt: string, reply: string, snap: UndoSnap) {
+    const pipe = this.pipe
+    const node = this.node
+    const photo = this.data.photo
+    if (!pipe || !node || !photo || !editPrompt) {
+      // 正常路径进不来（出发前都核过）——真进来了就收掉忙态，别把「在想…」干挂着
+      this.setData({ sayBusy: false })
+      return
+    }
+    this.endPeek() // 万一有人正按着照片（长按看原图）—— 要换画面了，先把那笔收掉
+    // ★ 这一趟的"我还在不在"：代数没动 + 还是那根管线。写完文件、加载完图之后
+    //   **一次性同步上屏**（这中间不许再有 await，同 startRender 那条纪律）。
+    const seqAtStart = this.genPhotoSeq
+    const gone = () => this.genPhotoSeq !== seqAtStart || this.pipe !== pipe
+    // 「停止」的把手：一个对象（见 genAbort 字段注释）+ 这一趟的身份令牌
+    // （finally 里别把**下一次**生成的忙态/秒表清掉）。
+    const abort = { task: null as WechatMiniprogram.RequestTask | null, aborted: false }
+    this.genAbort = abort
+    this.setData({ sayBusy: true, sayBusyText: '正在修…', generating: true, genText: '正在修…', genSeconds: 0 })
+    this.startGenTicker()
+    try {
+      // 送模型的是**当前底图**（2048 + align32 的缩图），不是屏幕那张带效果的画面（铁律）
+      const prepared = await prepareForModel(photo, this.data.photoW, this.data.photoH)
+      const out = await apiPost<EditResult>('/api/edit', {
+        imageDataUrl: prepared.dataUrl,
+        editPrompt,
+        width: prepared.width,
+        height: prepared.height,
+      }, {
+        // 生成这条路显式给 120 秒（理由见 EDIT_TIMEOUT_MS / api.ts 的 PostOptions）
+        timeoutMs: EDIT_TIMEOUT_MS,
+        onTask: task => {
+          // 「停止」可能按在 task 交出来**之前**（缩图那一两百毫秒里）：补掐
+          if (abort.aborted) task.abort()
+          else abort.task = task
+        },
+      })
+      if (gone()) return this.dropLateGen()
+      const path = await this.writeGenImage(out.imageDataUrl)
+      if (gone()) return this.dropLateGen()
+      const img = await loadImage(node, path)
+      if (gone()) return this.dropLateGen()
+      const box = await queryStage(this)
+      if (gone()) return this.dropLateGen()
+      // ↓ 从这里往下**全是同步的**（没有 await，画面不会被别的东西拆台）
+      // 尺寸以**实际拿到的像素**为准（img.width/height），声明只当报警依据 —— 同电脑版
+      if (img.width !== out.width || img.height !== out.height) {
+        console.warn('[index] 生成回图尺寸与声明不符：声明 ' + out.width + 'x' + out.height +
+          '，实际 ' + img.width + 'x' + img.height + '（以实际为准，不拉伸）')
+      }
+      pipe.setImage(img)
+      pipe.resizeToImage()
+      const k = Math.min(1, box.w / img.width, box.h / img.height)
+      this.genPhotoSeq++ // 从这一刻起这张就是"当前"（在飞的旧任务全作废）
+      this.setData({
+        photo: path, photoW: img.width, photoH: img.height,
+        stageW: Math.round(img.width * k), stageH: Math.round(img.height * k),
+        canUndo: true,
+      })
+      this.undoSnap = snap
+      pipe.render(this.params) // 参数原封不动继续生效（铁律：生成只换底图）
+      this.showBubble(reply)
+    } catch (e) {
+      if (isAbortError(e)) {
+        if (this.genPhotoSeq !== seqAtStart) {
+          // 是**换照片**顺手掐的（见 abortGenInFlight）—— 画面都换了，这一趟不出声，
+          // 更不许把「停了。」挂到新照片头上
+          console.info('[index] 换照片时掐掉了在飞的生成，这一趟不作声')
+        } else {
+          // 人按的「停止」——不是失败：只说一句收尾（电脑版一字不差），
+          // 画面和参数**一个字没动过**（也正因此不许说"没修成功"）
+          this.showBubble('停了。')
+        }
+      } else {
+        console.error('[index] 生成没走通：', e)
+        this.showBubble(e instanceof ApiError ? e.message : '这次没修成功，再试一次？')
+      }
+    } finally {
+      // 只收拾**我这一趟**的东西 —— 别把下一次生成的忙态/秒表清掉（换照片掐断
+      // 之后用户可能已经又发了一句，旧这趟的收尾才姗姗来迟）。
+      if (this.genAbort === abort) {
+        this.genAbort = { task: null, aborted: false }
+        this.stopGenTicker()
+        this.setData({ generating: false, sayBusy: false })
+      }
+    }
+  },
+
+  /** 生成回来时画面已经变了：结果作废。钱花了，但写进别的画面更坏 —— 电脑版同款
+   *  通报（留痕 + 说清"没写进去、可以再说一遍"）。 */
+  dropLateGen() {
+    console.error('[index] 生成回来时画面已经变了（换照片 / 撤销），这一版不写进去')
+    if (this.data.stage === 'edit') {
+      this.showBubble('刚才那次生成回来时，画面已经变了 —— 结果没写进去。要的话，再说一遍。')
+    }
+  },
+
+  /**
+   * 生成回来的 dataURL → **用户数据目录里的一张文件**（画布的 `img.src` 认文件路径
+   * 最稳；dataURL 直接喂不保证认）。
+   *
+   * ★ 两个槽 ping-pong：写"当前没在显示"的那个 —— 撤销要还原的那张文件
+   * （`snap.photo`，出发时拍的就是当时的当前）**绝不会被覆盖**。当前是槽 0 就写槽 1，
+   * 反之亦然；原图（选来的临时路径）不在槽里，更碰不到。
+   */
+  writeGenImage(dataUrl: string): Promise<string> {
+    const comma = dataUrl.indexOf(',')
+    if (!dataUrl.startsWith('data:image/') || comma < 0) {
+      console.error('[index] 生成结果不是图片 dataURL：' + String(dataUrl).slice(0, 40))
+      return Promise.reject(new Error('生成的图存不下来，再试一次？'))
+    }
+    const slot = (this.data.photo || '').indexOf(GEN_SLOT_0) >= 0 ? GEN_SLOT_1 : GEN_SLOT_0
+    const filePath = wx.env.USER_DATA_PATH + '/' + slot
+    return new Promise((ok, no) => {
+      wx.getFileSystemManager().writeFile({
+        filePath,
+        data: dataUrl.slice(comma + 1),
+        encoding: 'base64',
+        success: () => ok(filePath),
+        fail: e => {
+          console.error('[index] 生成结果写文件失败：' + ((e && e.errMsg) || '未知原因'))
+          no(new Error('生成的图存不下来，再试一次？'))
+        },
+      })
+    })
+  },
+
+  /**
+   * 蒙层的「停止」（spec §4.3：停止掐断连接 —— 电脑版同款契约）。
+   * `RequestTask.abort()` 让在飞的那次 wx.request 走 fail（errMsg 含 abort）——
+   * api 层把它单独译成 ABORTED，runGenerate 的 catch 收尾说「停了。」。
+   * ⚠️ 缩图那一两百毫秒里 task 还没交出来：先记 aborted，onTask 到的时候补掐。
+   */
+  onStopGen() {
+    if (!this.data.generating) return
+    this.genAbort.aborted = true
+    if (this.genAbort.task) this.genAbort.task.abort()
+  },
+
+  /**
+   * 「撤销」（spec §4.3）：回到**说那句话之前**的画面和参数 —— **一层，只对生成有意义**
+   * （点错风格点「原图」就回去了）。撤销完按钮收掉（消费掉 undoSnap）；生成**成功**
+   * 才会再亮。
+   */
+  async onUndo() {
+    const snap = this.undoSnap
+    const pipe = this.pipe
+    const node = this.node
+    if (!snap || !pipe || !node) return
+    // 先消费（同步）—— 防连点两下、也防撤销半路又来一次
+    this.undoSnap = null
+    this.setData({ canUndo: false })
+    try {
+      const img = await loadImage(node, snap.photo)
+      if (this.pipe !== pipe) return // 等的这会儿换了照片：撤销作废（别把旧现场盖到新照片上）
+      const box = await queryStage(this)
+      if (this.pipe !== pipe) return
+      // ↓ 同步上屏（同 runGenerate 那条纪律）
+      this.params = { ...snap.params }
+      this.genPhotoSeq++
+      pipe.setImage(img)
+      pipe.resizeToImage()
+      const k = Math.min(1, box.w / img.width, box.h / img.height)
+      this.setData({
+        photo: snap.photo, photoW: img.width, photoH: img.height,
+        stageW: Math.round(img.width * k), stageH: Math.round(img.height * k),
+        activeStyle: activePresetId(this.params, false),
+      })
+      pipe.render(this.params)
+    } catch (e) {
+      console.error('[index] 撤销没走通：', e)
+      this.showBubble('这会儿撤不回去了，再试一次？')
+    }
+  },
+
+  /**
+   * 浮条（spec §4.2）：模型那句话 / 「停了。」/ 失败提示都走它，显示在输入条上方，
+   * **5 秒后自动淡出**。只留一条槽 —— 新的话直接顶掉旧的（计时器重起）。
+   */
+  showBubble(text: string) {
+    this.clearBubble()
+    this.setData({ sayBubble: text })
+    this.bubbleTimer = setTimeout(() => {
+      this.bubbleTimer = null
+      this.setData({ sayBubble: '' })
+    }, BUBBLE_MS)
+  },
+
+  /** 收掉浮条（换照片 / 回空态时连着旧那句话一起清 —— 别让旧照片的话挂到新照片上）。 */
+  clearBubble() {
+    if (this.bubbleTimer !== null) {
+      clearTimeout(this.bubbleTimer)
+      this.bubbleTimer = null
+    }
+    if (this.data.sayBubble) this.setData({ sayBubble: '' })
+  },
+
+  /**
+   * 蒙层秒表：出发时刻记下，250ms 一跳、**文案变了才 setData**（见 GEN_TICK_MS）。
+   * 文案：前 5 秒「正在修…」（电脑版契约：5 秒内不显示秒数 —— 那句假想的"大约 10 秒"
+   * 我们不赌）；之后「正在修…已经等了 N 秒」（结构照电脑版 busyText：秒数每秒在跳，
+   * 本身就是"它还活着"的信号，比任何安抚都硬）。
+   */
+  startGenTicker() {
+    this.stopGenTicker()
+    this.genStartedAt = Date.now()
+    this.genTickTimer = setInterval(() => this.tickGen(), GEN_TICK_MS)
+  },
+
+  tickGen() {
+    const sec = Math.floor((Date.now() - this.genStartedAt) / 1000)
+    const text = sec < GEN_SECONDS_AFTER ? '正在修…' : '正在修…已经等了 ' + sec + ' 秒'
+    if (text !== this.data.genText) this.setData({ genText: text, genSeconds: sec })
+  },
+
+  stopGenTicker() {
+    if (this.genTickTimer !== null) {
+      clearInterval(this.genTickTimer)
+      this.genTickTimer = null
+    }
+  },
+
+  /**
+   * 换照片 / 回空态时收在飞的生成（那一趟回来也一定作废 —— 顺手让服务端也停）。
+   * ⚠️ 只掐请求，**不收界面状态**：忙态/蒙层归 runGenerate 自己的 finally 收
+   * （它认得过令牌，见那边的注释）。
+   */
+  abortGenInFlight() {
+    this.genAbort.aborted = true
+    if (this.genAbort.task) this.genAbort.task.abort()
+  },
+
+  /** 蒙层 / 撤销按钮上的触摸**拦在这里**（catch 不冒泡）—— 别穿到照片区去触发
+   *  「按住看原图」（按在蒙层上按住 150ms 会把照片画回原图，白闪一下）。本身不做任何事。 */
+  onOverlayCatch() {},
+
   /**
    * ★ 冒烟/自动化专用（Task 7）——「全黑哨兵」的探针。**纯读、同步、立即返回**
    * （automator 侧一次 callMethod 就拿走），返回 `{ colors, first, err }`。
@@ -476,6 +949,20 @@ Page({
       }
     }
     return { colors: Object.keys(seen).length, first, err: pipe.getError() }
+  },
+
+  /**
+   * ★ 冒烟/自动化专用（Task 12）——「说一句」的分流哨兵。**纯读、同步、立即返回**，
+   * 给的是当前 15 个参数的一份拷贝。生产路径**没人读它**。
+   *
+   * 为什么需要它：参数存在**实例字段** `this.params` 上（有意不进 data —— 它每帧
+   * 都被渲染读，进 data 会多一趟无谓的 setData 往返），探针从 page.data() 看不到
+   * 它。而「说一句」两条路的核心断言全是"参数叠没叠、撤销有没有还原"（比如
+   * 「亮一点」= exposure 16、拿不准那条 = exposure +6），没有它就只剩"画面变了
+   * 没有"这一条粗判据。
+   */
+  __probeParams(): Adjustments {
+    return { ...this.params }
   },
 
   /**
@@ -658,5 +1145,19 @@ Page({
     }
     console.info('[index] 探针缩图：' + JSON.stringify(this.probePrepare))
     return this.probePrepare
+  },
+
+  /**
+   * ★ 探针专用（Task 12）：「说一句」的 mock 冒烟要在**运行期**把 api 的地址指到
+   * 本地 mock（`mini/scripts/mock-server.cjs`，4399）/ 跑完再指回来。为什么不直接改
+   * `lib/config.ts` 那个常量：动它要触发开发者工具重编译（会话容易坏，见
+   * mini/README 的「半死不活」那条）。传 '' 恢复 config 的值。
+   * 生产路径**没人调它**。
+   */
+  __probeSetApiBase(url: string): string {
+    const v = String(url || '')
+    setApiBaseOverride(v)
+    console.info('[index] 探针换 API 地址：' + (v || '(恢复 config)'))
+    return v
   },
 })

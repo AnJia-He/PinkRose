@@ -30,14 +30,32 @@
          style；绘图缓冲另算（= 照片原尺寸，见 lib/gl/tonePipeline.ts 的 resizeToImage）。
          ★ 四个触摸事件 = 「按住看原图」（Task 8）：按住 150ms 出原图、抬手/被系统
          收走/手指挪走都画回来（契约在 ts 的 PEEK_HOLD_MS）。挂在**整块照片区**上
-         （含照片两侧的留白）—— 没挂在画布上是因为这里要的是"照片区"，别改成单个节点。 -->
+         （含照片两侧的留白）—— 没挂在画布上是因为这里要的是"照片区"，别改成单个节点。
+         ★ Task 12：里面多包一层「正好等于照片显示尺寸」的壳（同款 stageW/stageH）——
+         蒙层和撤销要贴在**照片本身**上（贴整块留白会飘在空处）。 -->
     <view class="stage-area" id="stage-area"
           bindtouchstart="onPhotoTouchStart"
           bindtouchmove="onPhotoTouchMove"
           bindtouchend="onPhotoTouchEnd"
           bindtouchcancel="onPhotoTouchCancel">
-      <canvas type="webgl2" id="stage" class="stage"
-              style="width: {{stageW}}px; height: {{stageH}}px"></canvas>
+      <view class="stage-wrap" style="width: {{stageW}}px; height: {{stageH}}px">
+        <canvas type="webgl2" id="stage" class="stage"
+                style="width: {{stageW}}px; height: {{stageH}}px"></canvas>
+
+        <!-- 生成中蒙层（spec §4.3）：暗化 + 转圈 + 秒表文案（genText，5 秒内不带秒数）
+             + 「停止」（掐断这次请求）。catchtouchstart: 触摸拦在蒙层里，别穿到照片区
+             触发「按住看原图」（按着蒙层 150ms 会把照片画回原图，白闪一下）。 -->
+        <view class="gen-mask" wx:if="{{generating}}" catchtouchstart="onOverlayCatch">
+          <view class="gen-spinner"></view>
+          <view class="gen-text">{{genText}}</view>
+          <view class="gen-stop" bindtap="onStopGen">停止</view>
+        </view>
+
+        <!-- 撤销（spec §4.3）：只对生成有意义、只有一层 —— 生成成功才亮，点完收掉；
+             生成中不显示（蒙层本来就该盖住它，别让它在半透明底下露出来）。 -->
+        <view class="undo-btn" wx:if="{{canUndo && !generating}}"
+              catchtouchstart="onOverlayCatch" bindtap="onUndo">撤销</view>
+      </view>
     </view>
 
     <!-- 风格栏：横滑，一格一张**真渲染**的小图 + 名字（画法见 lib/image/thumbs.ts）。
@@ -53,5 +71,24 @@
         <text class="style-name">{{item.label}}</text>
       </view>
     </scroll-view>
+
+    <!-- 说一句（spec §4.2）：胶囊输入条 + 发送箭头（--accent-400 底、--accent-ink 字）。
+         发送后输入条先换成「在想…」（路由那 1.3~1.6 秒**不弹蒙层**），进生成才轮到蒙层。
+         浮条挂在这一条的**正上方**（绝对定位，出了也不挪下面的版面）：模型那句话 /
+         「停了。」/ 失败提示都走它，5 秒自动淡出。 -->
+    <view class="say-bar">
+      <view class="say-bubble" wx:if="{{sayBubble}}">{{sayBubble}}</view>
+      <view class="say-row">
+        <view class="say-pill">
+          <input wx:if="{{!sayBusy}}" class="say-input" value="{{sayText}}"
+                 bindinput="onSayInput" bindconfirm="onSaySend"
+                 confirm-type="send" placeholder="说一句，比如「把路人去掉」"
+                 placeholder-class="say-ph" />
+          <text wx:else class="say-thinking">{{sayBusyText}}</text>
+        </view>
+        <!-- 忙的时候整颗收掉（不做"看得见点不动"的死按钮）—— 停止在蒙层上 -->
+        <view class="say-send" wx:if="{{!sayBusy}}" bindtap="onSaySend">↑</view>
+      </view>
+    </view>
   </view>
 </view>

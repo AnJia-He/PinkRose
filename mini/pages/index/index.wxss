@@ -187,3 +187,147 @@
 .style-cell.on .style-name {
   color: var(--accent);
 }
+
+/* ── ★ Task 12 · 生成中蒙层 + 撤销 ───────────────────────────────────
+   两个都贴在**照片本身**上 —— 外面那层 .stage-wrap 正好等于照片显示尺寸
+   （inline 的 stageW/stageH，wxml 里包的壳），所以这里全用 inset 0 / 右下角定位。 */
+.stage-wrap {
+  position: relative;
+}
+
+/* 蒙层（spec §4.3）：暗化 + 转圈 + 秒表 + 停止，四样一起摆在照片正中。
+   暗度取 .45：要够文字立得住，又要看得见"还是那张照片"（电脑版生成暗罩
+   .canvas-veil 是 .22、换图浮层 .55，这里是有字有按钮的蒙层，取中间）。 */
+.gen-mask {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* 转圈：一条边亮色的圈，转起来（纯 CSS，不引图标） */
+@keyframes gen-spin {
+  to { transform: rotate(360deg); }
+}
+
+.gen-spinner {
+  width: 56rpx;
+  height: 56rpx;
+  box-sizing: border-box;
+  border: 6rpx solid var(--line-3);
+  border-top-color: var(--accent-400);
+  border-radius: 50%;
+  animation: gen-spin 0.9s linear infinite;
+}
+
+.gen-text {
+  margin-top: 28rpx;
+  color: var(--text);
+  font-size: 28rpx;
+}
+
+/* 「停止」：描边药丸 —— 蒙层上唯一的可点项，做得像按钮但不抢主色
+   （主色留给发送箭头那一颗） */
+.gen-stop {
+  margin-top: 40rpx;
+  padding: 14rpx 56rpx;
+  border: 2rpx solid var(--line-3);
+  border-radius: var(--r-pill);
+  color: var(--text);
+  font-size: 28rpx;
+}
+
+/* 「撤销」：照片右下角（spec §4.3）。实心 --panel 底 —— 不管照片亮暗都立得住 */
+.undo-btn {
+  position: absolute;
+  right: 20rpx;
+  bottom: 20rpx;
+  padding: 14rpx 36rpx;
+  background: var(--panel);
+  border: 2rpx solid var(--line-2);
+  border-radius: var(--r-pill);
+  color: var(--text);
+  font-size: 26rpx;
+}
+
+/* ── ★ Task 12 · 说一句（输入条 + 浮条）────────────────────────────── */
+.say-bar {
+  position: relative; /* 浮条挂它正上方（bottom: 100% + …） */
+  flex: none;
+  padding: 16rpx 32rpx calc(20rpx + env(safe-area-inset-bottom));
+}
+
+/* 浮条（spec §4.2）：模型那句话，输入条正上方一条，5 秒后自动淡出（时序在 ts）。
+   绝对定位 —— 出/没出都不挪下面的版面。 */
+.say-bubble {
+  position: absolute;
+  left: 32rpx;
+  right: 32rpx;
+  bottom: calc(100% + 16rpx);
+  z-index: 10;
+  padding: 20rpx 28rpx;
+  background: var(--raised);
+  border: 2rpx solid var(--line-2);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-size: 26rpx;
+  line-height: 1.5;
+}
+
+.say-row {
+  display: flex;
+  align-items: center;
+}
+
+/* 输入胶囊：和风格栏/大按钮同族的圆角语言（-r-pill） */
+.say-pill {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  height: 80rpx;
+  padding: 0 28rpx;
+  background: var(--panel);
+  border: 2rpx solid var(--line-2);
+  border-radius: var(--r-pill);
+}
+
+.say-input {
+  flex: 1;
+  height: 100%;
+  color: var(--text);
+  font-size: 28rpx;
+}
+
+/* placeholder 要单独一个类喂给 input 的 placeholder-class（inline 的 placeholder
+   文字不吃普通后代选择器） */
+.say-ph {
+  color: var(--muted-2);
+}
+
+/* 忙态那句「在想…」/「正在修…」 */
+.say-thinking {
+  color: var(--muted);
+  font-size: 28rpx;
+}
+
+/* 发送箭头：--accent-400 底、--accent-ink 字（照 mock） */
+.say-send {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80rpx;
+  height: 80rpx;
+  margin-left: 20rpx;
+  background: var(--accent-400);
+  border-radius: 50%;
+  color: var(--accent-ink);
+  font-size: 40rpx;
+  font-weight: 600;
+}

@@ -75,6 +75,21 @@ node mini/scripts/smoke.cjs
 334 KB，离 2 MB 主包上限远得很。
 ⚠️ 冒烟跑的是**模拟器**（电脑显卡）：它筛得掉编不过的着色器，答不了「真机跑不跑得动」。
 
+## 「说一句」冒烟（Task 12）
+
+```bash
+node mini/scripts/smoke-say.cjs
+```
+
+同样是 CLI 起好、automator 连着跑，但**后端换成本地 mock**（`mini/scripts/mock-server.cjs`，
+端口 4399，脚本会自己起、跑完自己杀；4399 上已有别人起着的就直接用）—— 真钱一分不花。
+它把页面上的 API 地址**运行期**指到 mock（`__probeSetApiBase`，收尾指回 config），
+然后跑六段：params（「亮一点」）/ generate（「把路人去掉」+ 撤销）/ both（「亮一点再去掉路人」）/
+degraded（「随便修一下」）/ 拿不准（「把那个人去掉」）/ 停止 + 秒表（mock 延时改 20 秒，
+点「停止」后靠 mock 的 `/mock/stats` 里 `editAborted` 计数证明确实掐断了连接）。
+34 条断言，截图存 `.superpowers/mini/say-*.png`。
+mock 的决策表在 `mock-server.cjs` 的 `decide()` 里，按关键词走；改它只影响冒烟。
+
 ## API 地址怎么改
 
 「说一句」走电脑版后端。地址在 `lib/config.ts` 的 `API_BASE` ——
