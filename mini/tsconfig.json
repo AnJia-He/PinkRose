@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "module": "CommonJS",
+    "strict": true,
+    "noEmit": true,
+    "types": [],
+    "lib": ["ES2017"],
+    "typeRoots": ["./types"]
+  },
+  "include": ["**/*.ts"]
+}

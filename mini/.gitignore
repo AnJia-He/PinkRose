@@ -1,0 +1,6 @@
+# 第三方 typing，不随仓库走 —— 跑一次 mini/scripts/prepare-types.cmd 生成（重建命令见 README）
+types/
+
+# ⚠️ 根 .gitignore 的 `*.png` 会把徽章标也吃掉（和当年 src/assets/logo/ 同一个坑：
+# 换台机器 clone 下来图是残的、而且一声不吭）。它就是空态那一屏的界面本身，放行。
+!assets/emperor-badge.png

@@ -1,0 +1,99 @@
+/* index.wxss —— 空态 / 编辑态（视觉照 spec §4.1；色号一律走 app.wxss 的令牌） */
+
+.page {
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+/* ── 空态 ─────────────────────────────────────────────────────────────
+   小皇帝徽章标（黑圆盘 + 白图）+ 「PinkRose」+ 一句话，下面两颗大按钮。
+   竖中偏上：像电脑版欢迎屏那样，视线自然先落在标上。 */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 0 64rpx;
+  padding-bottom: calc(96rpx + env(safe-area-inset-bottom));
+}
+
+.brand-mark {
+  width: 160rpx;
+  height: 160rpx;
+  margin-top: 30vh;
+}
+
+.brand-name {
+  margin-top: 28rpx;
+  font-size: 56rpx;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.empty-sub {
+  margin-top: 16rpx;
+  color: var(--muted);
+  font-size: 28rpx;
+}
+
+/* ── 那两颗大按钮（空态最要人点的地方）─────────────────────────────
+   药丸形（-r-pill）；主按钮 = 薄荷底 + 深青字（--accent-ink，见 app.wxss 注释）。 */
+.big-btn {
+  width: 100%;
+  margin-top: 88rpx;
+  padding: 26rpx 0;
+  background: var(--accent);
+  border: 2rpx solid var(--accent);
+  border-radius: var(--r-pill);
+  color: var(--accent-ink);
+  font-size: 32rpx;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.big-btn.ghost {
+  margin-top: 24rpx;
+  background: transparent;
+  border-color: var(--line-2);
+  color: var(--text);
+  font-weight: 400;
+}
+
+/* ── 编辑态（任务 4 起才有内容；顶栏先按说好的三格摆好）────────────── */
+.topbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 88rpx;
+  padding: 0 32rpx;
+}
+
+.tb-title {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.tb-left,
+.tb-right {
+  position: relative; /* 压在标题那层上面，可点 */
+  z-index: 1;
+  color: var(--muted);
+  font-size: 30rpx;
+}
+
+.edit {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 88rpx);
+}
+
+.photo {
+  flex: 1;
+  width: 100%;
+}

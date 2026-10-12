@@ -1,0 +1,14 @@
+{
+  "appid": "wx3222d31da4ec7edb",
+  "compileType": "miniprogram",
+  "libVersion": "latest",
+  "projectname": "pinkrose-mini",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "enhance": true,
+    "postcss": false,
+    "minified": false,
+    "useCompilerPlugins": ["typescript"]
+  }
+}
