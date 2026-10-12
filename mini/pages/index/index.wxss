@@ -105,7 +105,18 @@
   height: calc(100% - 88rpx); /* 顶栏那 88rpx 之外剩下的都归照片 */
 }
 
-.photo {
+/* 照片区：照片（画布）等比居中。
+   盒子大小是 ts 里按照片与这块地方算出来的（stageW/stageH，inline style）——
+   这里只管"把它放在正中间"。⚠️ `type="webgl2"` 的画布是正常排版的元素，
+   flex 居中它收得到（老的 type 画布才不吃这套）。 */
+.stage-area {
   flex: 1;
-  width: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stage {
+  display: block;
 }

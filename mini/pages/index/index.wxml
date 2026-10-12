@@ -15,6 +15,12 @@
   </view>
 
   <view class="edit" wx:if="{{stage === 'edit'}}">
-    <image class="photo" src="{{photo}}" mode="aspectFit" />
+    <!-- 照片区：一块**只有照片**的舞台，照片由渲染管线画在画布里。
+         画布的显示尺寸（stageW/stageH，ts 里按照片和这块地方算的等比尺寸）走 inline
+         style；绘图缓冲另算（= 照片原尺寸，见 lib/gl/tonePipeline.ts 的 resizeToImage）。 -->
+    <view class="stage-area" id="stage-area">
+      <canvas type="webgl2" id="stage" class="stage"
+              style="width: {{stageW}}px; height: {{stageH}}px"></canvas>
+    </view>
   </view>
 </view>

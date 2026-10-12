@@ -2,13 +2,22 @@
 //   stage —— 'empty' 空态（选照片）/ 'edit' 编辑态（有照片）
 //   photo —— 当前照片临时路径；空态 null
 //   photoW / photoH —— 照片的像素尺寸（渲染任务按它摆布局）
+//   stageW / stageH —— 画布**显示**尺寸（px）：照片等比装进照片区之后的大小。
+//                      ⚠️ 画布的绘图缓冲是**照片原尺寸**（管线 resizeToImage 设的），
+//                      这俩只管 CSS 盒子 —— 和电脑版同款分工：buffer 一个尺寸、
+//                      显示另一个尺寸，CSS 负责缩放。
 //   statusBar —— 状态栏高度，顶栏自己让位用
 //   topbarPadRight —— 顶栏右侧给微信那颗胶囊（••• | ⊙）让出的宽度
+import { ZERO } from '../../lib/shared/adjustments'
+import { TonePipeline, type CanvasNode } from '../../lib/gl/tonePipeline'
+
 interface IndexData {
   stage: 'empty' | 'edit'
   photo: string | null
   photoW: number
   photoH: number
+  stageW: number
+  stageH: number
   statusBar: number
   topbarPadRight: number
 }
@@ -25,6 +34,46 @@ export async function pickPhoto(source: 'camera' | 'album'): Promise<string> {
   return res.tempFiles[0].tempFilePath
 }
 
+/** 照片区容器尺寸 + 画布节点（建管线用）。 */
+interface StageBox {
+  w: number
+  h: number
+  node: CanvasNode
+}
+
+/**
+ * 一次问两样东西：照片区容器多大（算画布显示尺寸用）、画布节点在哪。
+ *
+ * ⚠️ 链式 API 的返回值必须**接住再 exec** —— 探针 2026-09 踩过：`q.node()` 单写
+ * 一行、拿原来的 q 去 exec，那个查询根本不知道要取节点，画布全报「拿不到节点」。
+ */
+function queryStage(page: WechatMiniprogram.Page.TrivialInstance): Promise<StageBox> {
+  return new Promise((ok, no) => {
+    const q = wx.createSelectorQuery().in(page)
+    const withArea = q.select('#stage-area').fields({ size: true })
+    const withNode = withArea.select('#stage').fields({ node: true })
+    withNode.exec(res => {
+      const area = res && res[0]
+      const node = res && res[1] && res[1].node
+      if (area && area.width > 0 && node) ok({ w: area.width, h: area.height, node })
+      else no(new Error('拿不到照片区的画布节点'))
+    })
+  })
+}
+
+/**
+ * 把临时文件加载成**画布的 Image 对象**（`node.createImage()`）—— 管线只认它，
+ * 不能直接把文件路径给它。等 onload 拿到宽高之后才算好。
+ */
+function loadImage(node: CanvasNode, src: string): Promise<WechatMiniprogram.Image> {
+  return new Promise((ok, no) => {
+    const img = node.createImage()
+    img.onload = () => ok(img)
+    img.onerror = () => no(new Error('这张照片加载不进画布'))
+    img.src = src
+  })
+}
+
 Page({
   data: {
     statusBar: 44,
@@ -33,7 +82,12 @@ Page({
     photo: null,
     photoW: 0,
     photoH: 0,
+    stageW: 0,
+    stageH: 0,
   } as IndexData,
+
+  // 非 data 的实例状态。`as` 是为了让推断出 `TonePipeline | null`（不然收窄成 null）。
+  pipe: null as TonePipeline | null,
 
   onLoad() {
     // 状态栏高度给顶栏让位（navigationStyle 是 custom，页面自己画顶栏）
@@ -53,14 +107,18 @@ Page({
   async onCamera() { await this.loadFrom('camera') },
   async onAlbum() { await this.loadFrom('album') },
 
-  /** 选照片 → 量尺寸 → 进编辑态。取消不提示，真失败才给一句人话。 */
+  /** 选照片 → 量尺寸 → 进编辑态（照片交给渲染管线画上屏）。取消不提示，真失败才给一句人话。 */
   async loadFrom(source: 'camera' | 'album') {
     try {
       const path = await pickPhoto(source)
       const info = await new Promise<WechatMiniprogram.GetImageInfoSuccessCallbackResult>(
         (ok, no) => wx.getImageInfo({ src: path, success: ok, fail: no }))
-      this.setData({ stage: 'edit', photo: path, photoW: info.width, photoH: info.height })
+      // 先进编辑态（画布得在树上才能拿到节点），渲染接在 setData 落地之后
+      await new Promise<void>(ok => this.setData(
+        { stage: 'edit', photo: path, photoW: info.width, photoH: info.height }, ok))
+      await this.startRender(path)
     } catch (e) {
+      console.error('[index] 照片加载/渲染失败：', e)
       // 用户取消（errMsg 含 cancel）不是错，别的才提示
       if (!String((e as { errMsg?: string })?.errMsg).includes('cancel')) {
         wx.showToast({ title: '这张照片打不开，换一张试试', icon: 'none' })
@@ -68,6 +126,47 @@ Page({
     }
   },
 
-  onPickAgain() { this.setData({ stage: 'empty', photo: null, photoW: 0, photoH: 0 }) },
+  /**
+   * 把照片画上屏：拿节点 → 加载图片 → 建管线 → 上传 → 先出一张原图。
+   *
+   * ⚠️ 顺序上**先加载图片、后建管线**（和任务书草稿相反，理由如下）：建出管线之后
+   * 这条路就再没有 await 了，从建出来到挂上 this.pipe、渲染完，一口气做完。
+   * 否则「等图片加载」那段几百毫秒里用户点「换一张」，就会往已经拆掉的舞台上接着
+   * 建东西（画布元素没了，管线却建出来了 —— 一根没人管的 GL 上下文）。
+   */
+  async startRender(path: string) {
+    const box = await queryStage(this)
+    if (this.data.stage !== 'edit') return // 等的这一会儿里用户点了「换一张」
+    const img = await loadImage(box.node, path)
+    if (this.data.stage !== 'edit') return // 加载图片是要等的，回来再核一次
+
+    this.disposePipe() // 万一还挂着一根（正常路径里「换一张」那一步已经收掉了）
+    const pipe = TonePipeline.fromCanvasNode(box.node)
+    this.pipe = pipe
+    try {
+      pipe.setImage(img)
+      pipe.resizeToImage() // 绘图缓冲 = 照片原尺寸（和电脑版一致）
+      // 显示尺寸 = 照片**等比装进**照片区（和 `mode="aspectFit"`、电脑版 `.canvas`
+      // 的 max-width/max-height 是同一条规矩）；小图不放大，最多 1:1。
+      const k = Math.min(1, box.w / img.width, box.h / img.height)
+      this.setData({ stageW: Math.round(img.width * k), stageH: Math.round(img.height * k) })
+      pipe.render(ZERO) // 还没有任何参数，先出一张原图
+    } catch (e) {
+      this.disposePipe() // 半截的管线别留着（GL 上下文是有限资源）
+      throw e
+    }
+  },
+
+  /** 收掉当前管线（「换一张」和重进编辑态前都走这条）。 */
+  disposePipe() {
+    if (this.pipe) this.pipe.dispose()
+    this.pipe = null
+  },
+
+  onPickAgain() {
+    this.disposePipe()
+    this.setData({ stage: 'empty', photo: null, photoW: 0, photoH: 0, stageW: 0, stageH: 0 })
+  },
+
   onSave() {}, // 任务 9
 })
