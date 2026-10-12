@@ -1,17 +1,9 @@
-import { toUnit, type Adjustments } from '../../shared/adjustments.ts'
+import type { Adjustments } from '../../shared/adjustments.ts'
 import type { Cube } from '../../shared/lut.ts'
 import type { DecodedImage } from '../image/decode'
 import { VERTEX_SRC, FRAGMENT_SRC } from './shader'
 import { fitToLimit, readLimit } from './limits'
-
-const UNIFORM_NAMES = [
-  'uExposure', 'uContrast', 'uHighlights', 'uShadows',
-  'uSaturation', 'uTemperature', 'uClarity', 'uVignette',
-  'uVibrance', 'uCbCyanRed', 'uCbMagentaGreen', 'uCbYellowBlue',
-  'uSplitHiHue', 'uSplitLoHue', 'uSplitAmount',
-] as const
-
-type UniformName = typeof UNIFORM_NAMES[number]
+import { UNIFORM_NAMES, uniformValues, type UniformName } from './uniforms'
 
 export class TonePipeline {
   private gl: WebGL2RenderingContext
@@ -178,14 +170,14 @@ export class TonePipeline {
   /**
    * 入参是 `[-100, 100]` 的原始参数，不是 `[-1, 1]` 的 Unit：
    * 两者结构相同，传错了（比如 exposure: 100）类型也过，但画面会算成 2^100。
-   * `toUnit` 是全项目唯一的映射入口，就在这里调用。
+   * 换算（`toUnit` + 名字映射）搬去了 `./uniforms` 的 `uniformValues`
+   * —— 和以后小程序版的管线共用一份，别在这里另写一份映射。
    *
    * `lutAmount` 是 0–100 的原始强度（和 `Adjustments` 同一个量纲习惯）。
    * ⚠️ 这里**不判 cube 在不在** —— 那件事只有 `setLut` 知道（它算 `lutOn`），
    * 两个来源各管各的，调用方拼错了也吵不起来。
    */
   render(a: Adjustments, lutAmount = 0): void {
-    const u = toUnit(a)
     const gl = this.gl
     gl.viewport(0, 0, this.canvas.width, this.canvas.height)
     gl.useProgram(this.program)
@@ -194,23 +186,7 @@ export class TonePipeline {
     gl.bindTexture(gl.TEXTURE_2D, this.texture)
 
     gl.uniform2f(this.uTexel, 1 / this.imageW, 1 / this.imageH)
-    const map: Record<UniformName, number> = {
-      uExposure: u.exposure,
-      uContrast: u.contrast,
-      uHighlights: u.highlights,
-      uShadows: u.shadows,
-      uSaturation: u.saturation,
-      uTemperature: u.temperature,
-      uClarity: u.clarity,
-      uVignette: u.vignette,
-      uVibrance: u.vibrance,
-      uCbCyanRed: u.cbCyanRed,
-      uCbMagentaGreen: u.cbMagentaGreen,
-      uCbYellowBlue: u.cbYellowBlue,
-      uSplitHiHue: u.splitHiHue,
-      uSplitLoHue: u.splitLoHue,
-      uSplitAmount: u.splitAmount,
-    }
+    const map = uniformValues(a)
     for (const n of UNIFORM_NAMES) {
       gl.uniform1f(this.uniforms.get(n) ?? null, map[n])
     }
