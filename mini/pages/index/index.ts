@@ -45,6 +45,22 @@ interface IndexData {
  */
 const DEV_PHOTO = '/assets/test-photo.jpg'
 
+/**
+ * 「按住看原图」要按满这么久才算数（毫秒）—— **电脑版同款契约**
+ * （`src/ui/Canvas.tsx` 的 `PEEK_HOLD_MS`）。
+ * ⚠️ 不能改成"一按就出"：那样手一碰照片（比如滑风格栏时蹭到、以后加拖动平移）
+ * 画面都会先闪一下没调过色的原图。电脑版为此定的是 150ms，两边一个字不差。
+ */
+const PEEK_HOLD_MS = 150
+
+/**
+ * 手指挪动**超过这么多像素**才算"在拖动"（手抖不算）—— 和电脑版 `DRAG_MIN_PX` 同值。
+ * 拖动的活（缩放平移）是以后的事，现在这一下只做一件事：**取消"按住看原图"**。
+ * ⚠️ 要这个容差：真机上按住不动也会报几像素的 touchmove，没它的话原图根本按不出来
+ * （按住看原图直接变成"看运气"）。
+ */
+const MOVE_CANCEL_PX = 5
+
 /** 选一张照片（拍照 / 相册）→ 临时文件路径。
  *  用户点取消时 reject（errMsg 形如「chooseMedia:fail cancel」）—— 调用方别当错误报。 */
 export async function pickPhoto(source: 'camera' | 'album'): Promise<string> {
@@ -118,6 +134,12 @@ Page({
   pipe: null as TonePipeline | null,
   /** 当前这套参数（点风格 = 整组赋值；说一句/滑杆那几个任务接下来也读它） */
   params: { ...ZERO } as Adjustments,
+  /** 「按住看原图」的计时器（null = 没在按）。到点之前谁动一下就清掉。 */
+  peekTimer: null as number | null,
+  /** 现在画面上画的是不是**原图**（按住看原图进行中）。 */
+  peeking: false,
+  /** 这次按下的起点（手指挪没挪动，按它判，见 MOVE_CANCEL_PX）。 */
+  peekStart: { x: 0, y: 0 },
 
   onLoad() {
     // 状态栏高度给顶栏让位（navigationStyle 是 custom，页面自己画顶栏）
@@ -241,8 +263,13 @@ Page({
     }
   },
 
-  /** 收掉当前管线（「换一张」和重进编辑态前都走这条）。 */
+  /** 收掉当前管线（「换一张」和重进编辑态前都走这条）。
+   *  ★ 顺手把「按住看原图」也收干净（**管线都没了，这个手势自然结束**）：
+   *  不收的话 `peeking` 会挂着 true，下一张照片按下去被那个标记挡掉、**永远按不出原图**
+   *  （多指操作或 touchend 没送到时才走得到，但错得不响，所以收在唯一的口上）。 */
   disposePipe() {
+    this.stopPeekTimer()
+    this.peeking = false
     if (this.pipe) this.pipe.dispose()
     this.pipe = null
   },
@@ -250,6 +277,62 @@ Page({
   onPickAgain() {
     this.disposePipe()
     this.setData({ stage: 'empty', photo: null, photoW: 0, photoH: 0, stageW: 0, stageH: 0 })
+  },
+
+  /**
+   * ★ Task 8 · 按住看原图（照片区四个触摸事件在 wxml 上接线）。
+   *
+   * 契约（电脑版同款，见 `PEEK_HOLD_MS`）：按住 **150ms** 到点，画面才切成
+   * **原图**（= 全零参数画一帧，底图没套任何参数的样子）；抬手 → 用**当前参数**
+   * 画回来。**快速点一下（不到 150ms）什么都不发生** —— 不能"一按就出"。
+   *
+   * ⚠️ 三个"松手"出口（`touchend` / `touchcancel` / 挪动出去）**少接一个**，
+   * 用户就会被**永久留在原图上**，而他没有任何办法按回来（电脑版同一课）。
+   */
+  onPhotoTouchStart(e: WechatMiniprogram.TouchEvent) {
+    if (!this.pipe) return
+    // ⚠️ `e &&` 两道：automator 探针用 `page.callMethod('onPhotoTouchStart')` 直接调
+    //    这个处理器时**没有事件对象**（冒烟那条备选路），别在那儿抛。
+    const t = e && e.touches && e.touches[0]
+    this.peekStart = { x: t ? t.clientX : 0, y: t ? t.clientY : 0 }
+    this.stopPeekTimer() // 上一次没清干净（第二根手指、上次 touchend 没送到）先收掉
+    this.peekTimer = setTimeout(() => {
+      this.peekTimer = null
+      const pipe = this.pipe
+      if (!pipe) return // 等的这一会儿里管线没了（换照片），没什么可看的
+      this.peeking = true
+      // 看原图 = 全零参数画一帧。⚠️ `this.params` **一个字不动** —— 它始终是
+      // "用户当前挑的那套"，抬手要照着它画回来。（v1 还没有 Lut，第二个参数默认 0）
+      pipe.render(ZERO)
+    }, PEEK_HOLD_MS)
+  },
+
+  onPhotoTouchEnd() { this.endPeek() },
+  onPhotoTouchCancel() { this.endPeek() },
+
+  /** 手指挪动：小抖动（`MOVE_CANCEL_PX` 之内）不算，挪出去了就不叫"按住"了 —— 取消。 */
+  onPhotoTouchMove(e: WechatMiniprogram.TouchEvent) {
+    const t = e && e.touches && e.touches[0] // 同上：探针直接调处理器时没有事件对象
+    if (!t) return this.endPeek() // 触点是空的（系统收走的怪状态）：按"收场"处理
+    const dx = t.clientX - this.peekStart.x
+    const dy = t.clientY - this.peekStart.y
+    if (dx * dx + dy * dy > MOVE_CANCEL_PX * MOVE_CANCEL_PX) this.endPeek()
+  },
+
+  /** 按住看原图的收场（三个松手出口共用这一份，幂等）：清计时器 + 正在看原图就
+   *  用**当前参数**画回来。 */
+  endPeek() {
+    const wasPeeking = this.peeking
+    this.stopPeekTimer()
+    this.peeking = false
+    if (wasPeeking && this.pipe) this.pipe.render(this.params)
+  },
+
+  stopPeekTimer() {
+    if (this.peekTimer !== null) {
+      clearTimeout(this.peekTimer)
+      this.peekTimer = null
+    }
   },
 
   /**

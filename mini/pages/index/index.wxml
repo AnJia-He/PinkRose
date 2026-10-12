@@ -21,8 +21,15 @@
   <view class="edit" wx:if="{{stage === 'edit'}}">
     <!-- 照片区：一块**只有照片**的舞台，照片由渲染管线画在画布里。
          画布的显示尺寸（stageW/stageH，ts 里按照片和这块地方算的等比尺寸）走 inline
-         style；绘图缓冲另算（= 照片原尺寸，见 lib/gl/tonePipeline.ts 的 resizeToImage）。 -->
-    <view class="stage-area" id="stage-area">
+         style；绘图缓冲另算（= 照片原尺寸，见 lib/gl/tonePipeline.ts 的 resizeToImage）。
+         ★ 四个触摸事件 = 「按住看原图」（Task 8）：按住 150ms 出原图、抬手/被系统
+         收走/手指挪走都画回来（契约在 ts 的 PEEK_HOLD_MS）。挂在**整块照片区**上
+         （含照片两侧的留白）—— 没挂在画布上是因为这里要的是"照片区"，别改成单个节点。 -->
+    <view class="stage-area" id="stage-area"
+          bindtouchstart="onPhotoTouchStart"
+          bindtouchmove="onPhotoTouchMove"
+          bindtouchend="onPhotoTouchEnd"
+          bindtouchcancel="onPhotoTouchCancel">
       <canvas type="webgl2" id="stage" class="stage"
               style="width: {{stageW}}px; height: {{stageH}}px"></canvas>
     </view>
