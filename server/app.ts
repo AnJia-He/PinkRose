@@ -380,7 +380,7 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
      *    票的用法是那边存进 storage、下次以 `Authorization: Bearer` 带回来
      *    （`requireUser` 上那段翻译）。
      *
-     * ⚠️ **没配钥匙 → 503「后端没有配置微信登录」**，和上面那三条 AI 的
+     * ⚠️ **没配钥匙（两把缺任何一把）→ 503「后端没有配置微信登录」**，和上面那三条 AI 的
      *    「后端没有配置模型客户端」同一个口径：**这不是"你的请求有问题"**，
      *    是"我们这边还没配"。所以既不能是 400，也不能是 401
      *    （401 会让小程序那边去重登一次，而重登一百次也不会好）。
@@ -392,7 +392,12 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
      */
     if (req.method === 'POST' && path === '/api/wx-login') {
       const wx = deps.config.wx
-      if (!wx.appid) throw new HttpError('INTERNAL', '后端没有配置微信登录', 503)
+      // ⚠️ **两把钥匙缺任何一把都算没配**（审查 Important，2026-10-12 修）：
+      //   原来只判 `appid`，于是「appid 有、secret 空」这个半配置状态被放行，
+      //   一路走到 code2session 拿上游 errcode、翻成 401「微信登录没成功」——
+      //   而 401 正是小程序"重登一次"的信号，重登一百次也不会好。
+      //   半配置 = **我们这边没配好**，和"你的请求有问题"是两回事；503 才说得清。
+      if (!wx.appid || !wx.secret) throw new HttpError('INTERNAL', '后端没有配置微信登录', 503)
       const body = await readJsonBody(req)
       const gate = `wx:${req.socket.remoteAddress ?? '?'}`
       assertGate(gates.login, gate, '登录')

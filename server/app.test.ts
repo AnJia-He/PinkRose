@@ -517,14 +517,26 @@ describe('账号与鉴权', () => {
     expect((await fetch(`${base}/api/me`, { headers: { cookie } })).status).toBe(200)
   })
 
-  it('★ /api/wx-login 没配 AppID/AppSecret → 503「后端没有配置微信登录」', async () => {
+  it('★ /api/wx-login 没配钥匙 → 503「后端没有配置微信登录」（**缺任何一把都算没配**）', async () => {
     // 照 `后端没有配置模型客户端` 那一条的 503 口径：**503 不是"你请求错了"**，
     // 是"我们这边还没配"。小程序那边按状态码分流，401 会去重登、503 只该报一句人话。
-    // ⚠️ 不用用户的真值：这一条验的是**没配**那一支 —— 传一份 wx 为空的 config。
-    const base = await boot({ config: { ...cfg, wx: { appid: '', secret: '' } } })
-    const r = await post(base, '/api/wx-login', { code: 'whatever' })
-    expect(r.status).toBe(503)
-    expect(r.body.error?.message).toBe('后端没有配置微信登录')
+    //
+    // ⚠️ **三种都走一遍**（审查 Important，2026-10-12 修）：双空、只有 appid、
+    //    只有 secret。半配置（appid 有、secret 空 —— 正是 `.env.example` 引导出来的
+    //    状态）要是被放去 code2session，结局是上游 errcode 翻成 401
+    //    「微信登录没成功，再试一次」—— 而小程序把 401 当"重登一次"的信号，
+    //    重登一百次也不会好。这条原来只钉了双空那一格，所以"只判 appid"的
+    //    坏判据从它眼皮底下溜了过去；半配置那一格才是这条用例真正的靶子。
+    for (const wx of [
+      { appid: '', secret: '' },
+      { appid: 'wx-x', secret: '' },
+      { appid: '', secret: 'wx-secret' },
+    ]) {
+      const base = await boot({ config: { ...cfg, wx } })
+      const r = await post(base, '/api/wx-login', { code: 'whatever' })
+      expect(r.status, `wx=${JSON.stringify(wx)}`).toBe(503)
+      expect(r.body.error?.message).toBe('后端没有配置微信登录')
+    }
   })
 
   it('★ /api/wx-login 配好了就真的走通：拿到 token，用它作 Bearer 能问「我是谁」', async () => {

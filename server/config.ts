@@ -103,8 +103,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     lutDir: env.LUT_DIR?.trim() || resolve(process.cwd(), 'data', 'luts'),
     sessionSecret,
     // ★ 2026-10-12：微信那两把钥匙。**空串 = 没配**（见类型上那段：它是可选入口，
-    //   不拒绝启动）。判"配没配"只认 appid —— 两个都缺才叫没配、只缺一个
-    //   是用户自己填漏了，那种会在微信那边回一个 errcode，走正常失败路。
+    //   不拒绝启动）。⚠️ **两把缺任何一把都算没配**（路由按这个判 503）：
+    //   半配置放去 code2session 只会变成一个看不懂的 401 —— 而小程序把 401
+    //   当"重登一次"的信号，重登一百次也不会好（审查 Important 2026-10-12 修；
+    //   这里原来那句"只缺一个走正常失败路"就是这么想错的）。
     wx: {
       appid: env.WX_APPID?.trim() ?? '',
       secret: env.WX_SECRET?.trim() ?? '',
