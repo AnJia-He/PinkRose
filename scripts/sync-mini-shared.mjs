@@ -60,9 +60,9 @@ export function syncFiles(checkOnly = false) {
       console.log('✓', out)
     }
   }
-  // ★ 与 brief 的差别：同步模式曾经只把 problems 收进数组就丢掉 ——
-  //   一旦某个源头文件 import 了 FILES 表外的共享文件（残留 ../），
-  //   镜像悄悄写坏、屏幕上还全是 ✓。这里的规矩是"坏消息必须出声"。
+  // ★ 坏消息必须出声：problems 攒到这儿统一落地，两种模式都要。
+  //   否则一旦某个源头 import 了 FILES 表外的共享文件（镜像残留 ../），
+  //   镜像悄悄写坏、屏幕上还全是 ✓。
   if (problems.length) { console.error(problems.join('\n')); process.exit(1) }
   if (checkOnly) console.log('✓ 镜像与源头一致')
 }
