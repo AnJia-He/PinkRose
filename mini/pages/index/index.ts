@@ -6,10 +6,15 @@
 //                      ⚠️ 画布的绘图缓冲是**照片原尺寸**（管线 resizeToImage 设的），
 //                      这俩只管 CSS 盒子 —— 和电脑版同款分工：buffer 一个尺寸、
 //                      显示另一个尺寸，CSS 负责缩放。
+//   styles —— 风格栏 13 格（原图 + 12 预设）的视图数据（位置见 lib/image/thumbs.ts）
+//   spritePath / spriteW —— 13 格拼成的那张 sprite 图（临时文件路径 + 显示宽，rpx）
+//   activeStyle —— 当前亮着哪一格（共享 activePresetId 算的；null = 谁都不亮）
 //   statusBar —— 状态栏高度，顶栏自己让位用
 //   topbarPadRight —— 顶栏右侧给微信那颗胶囊（••• | ⊙）让出的宽度
-import { ZERO } from '../../lib/shared/adjustments'
+import { ZERO, type Adjustments } from '../../lib/shared/adjustments'
+import { activePresetId, ORIGINAL_ID, PRESETS } from '../../lib/shared/presets'
 import { TonePipeline, type CanvasNode } from '../../lib/gl/tonePipeline'
+import { renderThumbSprite, type ThumbCell } from '../../lib/image/thumbs'
 
 interface IndexData {
   stage: 'empty' | 'edit'
@@ -18,6 +23,10 @@ interface IndexData {
   photoH: number
   stageW: number
   stageH: number
+  styles: ThumbCell[]
+  spritePath: string
+  spriteW: number
+  activeStyle: string | null
   statusBar: number
   topbarPadRight: number
 }
@@ -84,10 +93,16 @@ Page({
     photoH: 0,
     stageW: 0,
     stageH: 0,
+    styles: [],
+    spritePath: '',
+    spriteW: 0,
+    activeStyle: null,
   } as IndexData,
 
   // 非 data 的实例状态。`as` 是为了让推断出 `TonePipeline | null`（不然收窄成 null）。
   pipe: null as TonePipeline | null,
+  /** 当前这套参数（点风格 = 整组赋值；说一句/滑杆那几个任务接下来也读它） */
+  params: { ...ZERO } as Adjustments,
 
   onLoad() {
     // 状态栏高度给顶栏让位（navigationStyle 是 custom，页面自己画顶栏）
@@ -113,9 +128,14 @@ Page({
       const path = await pickPhoto(source)
       const info = await new Promise<WechatMiniprogram.GetImageInfoSuccessCallbackResult>(
         (ok, no) => wx.getImageInfo({ src: path, success: ok, fail: no }))
-      // 先进编辑态（画布得在树上才能拿到节点），渲染接在 setData 落地之后
+      // 先进编辑态（画布得在树上才能拿到节点），渲染接在 setData 落地之后。
+      // 风格栏三个字段在这里**归零**：上一张照片的 sprite/点亮一律不许带过来
+      // （新照片的 sprite 画好之前，条上宁可先空着，也不能挂旧照片的小图）。
       await new Promise<void>(ok => this.setData(
-        { stage: 'edit', photo: path, photoW: info.width, photoH: info.height }, ok))
+        {
+          stage: 'edit', photo: path, photoW: info.width, photoH: info.height,
+          styles: [], spritePath: '', spriteW: 0, activeStyle: null,
+        }, ok))
       await this.startRender(path)
     } catch (e) {
       console.error('[index] 照片加载/渲染失败：', e)
@@ -150,10 +170,30 @@ Page({
       // 的 max-width/max-height 是同一条规矩）；小图不放大，最多 1:1。
       const k = Math.min(1, box.w / img.width, box.h / img.height)
       this.setData({ stageW: Math.round(img.width * k), stageH: Math.round(img.height * k) })
-      pipe.render(ZERO) // 还没有任何参数，先出一张原图
+      this.params = { ...ZERO } // 新照片 = 什么都没调
+      pipe.render(this.params) // 先出一张原图
     } catch (e) {
       this.disposePipe() // 半截的管线别留着（GL 上下文是有限资源）
       throw e
+    }
+
+    // 风格栏的十几张小图：借主画布画一遍再还回来（见 lib/image/thumbs.ts）。
+    // ⚠️ **单独 catch**：缩略图画不出来只该让这一条空着，照片本身照常看
+    //    （把主渲染带下水的话，用户连照片都没了）。
+    try {
+      const sprite = await renderThumbSprite(box.node, pipe, img, PRESETS, this.params)
+      if (this.pipe !== pipe) return // 等的这一会儿里换了照片/收了工，这趟作废
+      const last = sprite.cells[sprite.cells.length - 1]
+      // 点亮 = 共享 activePresetId 算的（**全等**才亮、全零亮「原图」、都不等谁都不亮），
+      // 不是"点了谁就亮谁"的死记 —— 等「说一句」能改参数了，这里不用再改判据。
+      this.setData({
+        spritePath: sprite.path,
+        spriteW: last.x + last.w,
+        styles: sprite.cells,
+        activeStyle: activePresetId(this.params, false),
+      })
+    } catch (e) {
+      console.error('[index] 风格栏的缩略图没画出来（照片本身不受影响）：', e)
     }
   },
 
@@ -166,6 +206,27 @@ Page({
   onPickAgain() {
     this.disposePipe()
     this.setData({ stage: 'empty', photo: null, photoW: 0, photoH: 0, stageW: 0, stageH: 0 })
+  },
+
+  /**
+   * 点一格风格：参数**整组赋值** → 重画一帧（秒变）→ 按共享判据点亮。
+   *
+   * 「原图」不是预设：它 = 参数全零（`ORIGINAL_ID` 那一格，见共享 presets.ts）。
+   *
+   * 点亮走 `activePresetId(参数, 无滤镜)` —— 和电脑版**同一份**契约：
+   * **全等**才亮、全零亮「原图」、都不等谁都不亮（不搞"接近"）。这里每次点完
+   * 都是拿"刚赋进去的那一套"现算，所以点谁亮谁是结果、不是承诺。
+   * v1 没有滤镜，第二个参数恒 false；Lut 来了要在这里和 thumbs 两边一起看。
+   */
+  onStyleTap(e: WechatMiniprogram.TouchEvent) {
+    const id = String(e.currentTarget.dataset.id)
+    const preset = PRESETS.find(p => p.id === id)
+    const next: Adjustments | undefined = id === ORIGINAL_ID ? ZERO : preset?.adjustments
+    const pipe = this.pipe
+    if (!next || !pipe) return
+    this.params = { ...next } // 存副本：预设那份是模块级常量，谁都不许原地改
+    pipe.render(this.params)
+    this.setData({ activeStyle: activePresetId(this.params, false) })
   },
 
   onSave() {}, // 任务 9

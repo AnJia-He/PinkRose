@@ -120,3 +120,64 @@
 .stage {
   display: block;
 }
+
+/* ── 风格栏（Task 6）─────────────────────────────────────────────────
+   横滑一条，格子 = 真渲染的小图 + 名字（画法见 lib/image/thumbs.ts）。
+   格宽跟着照片比例走（横图宽、竖图窄），所以这条**不许**给格子定死宽度。 */
+.styles {
+  /* 小图高度 —— 渲染那边按 128 物理 px 画（thumbs.ts 的 RENDER_H），375 宽的屏上
+     128rpx = 64px，正好是一半。⚠️ 这个值同时喂给背景切片（wxml 里
+     `background-size: … var(--thumb-h)`），改它一处就够，别在别处再写一遍。 */
+  --thumb-h: 128rpx;
+  /* ⚠️ 高度**必须定死**（= 上下内边距 36 + 小图 128+4 边框 + 名字 8+30，刚好 206）：
+     照片区的尺寸是照这张条子的高度量出来再定画布大小的，而 sprite 要过一会儿才画好 ——
+     条子若按内容撑高，"空着"和"装满了"差出 90px，照片就会盖住这一排
+     （2026-10-12 真机截图抓到过：小图被照片压扁在屏幕底边）。改这里的数，下面
+     三处的和必须还是它，否则又会压扁。 */
+  height: 206rpx;
+  box-sizing: border-box;
+  display: flex; /* 配 enable-flex 才成立（scroll-view 的 flex 布局要两样都写） */
+  flex: none; /* 别被上面照片区挤扁 */
+  padding: 16rpx 32rpx 20rpx;
+}
+
+.style-cell {
+  flex: none; /* 不许收缩 —— 横滑靠的就是它们原宽超出屏幕 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-right: 20rpx;
+}
+
+/* 小图：**外框长在图上、名字露在框外**（和电脑版 `.rail-tile` 的 `.rail-shot` 同款）。
+   底用 `--raised`：图没到位时它就是一块占位，不会像"加载失败"。
+   ⚠️ 留 content-box（默认）：宽/高就是切片尺寸，2rpx 的边框长在外面 ——
+   改 border-box 会把边框那圈从图里吃掉，切片跟着歪。 */
+.style-thumb {
+  height: var(--thumb-h);
+  flex: none; /* 条子高度算进来就这么多，不许被压扁（压扁 = 小图上下被裁一刀） */
+  background-color: var(--raised);
+  background-repeat: no-repeat; /* 尺寸正好等于盒子，防亚像素漏出隔壁格 */
+  border: 2rpx solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+/* 名字：一行、居中，**允许比格子宽**（4 个字的名字比竖图格子宽一点）。
+   溢出那几 rpx 落在格子间距（20rpx）里，撞不到旁边的名字 —— 比截断成
+   「日系通…」强，也比把格子撑宽（那样小图就不等宽了）强。 */
+.style-name {
+  margin-top: 8rpx;
+  color: var(--muted);
+  font-size: 22rpx;
+  line-height: 30rpx; /* 定死行高：条子那 206rpx 是按 30 算的（小数行高会对不上） */
+  white-space: nowrap;
+}
+
+/* 选中：主色只花在这一处（框 + 名字），和电脑版 `.rail-tile.on` 同一身衣服 */
+.style-cell.on .style-thumb {
+  border-color: var(--accent);
+}
+
+.style-cell.on .style-name {
+  color: var(--accent);
+}

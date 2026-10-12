@@ -22,5 +22,19 @@
       <canvas type="webgl2" id="stage" class="stage"
               style="width: {{stageW}}px; height: {{stageH}}px"></canvas>
     </view>
+
+    <!-- 风格栏：横滑，一格一张**真渲染**的小图 + 名字（画法见 lib/image/thumbs.ts）。
+         小图是拼在一张 sprite 里的一次性产物，这里用 background-position 切格 ——
+         一格一个 canvas 节点在小程序里会卡。sprite 没画好时 styles 是空的，
+         这条先空着（版面高度不变，照片区不会跟着跳一下）。 -->
+    <scroll-view class="styles" scroll-x enable-flex="{{true}}">
+      <view wx:for="{{styles}}" wx:key="id"
+            class="style-cell {{activeStyle === item.id ? 'on' : ''}}"
+            data-id="{{item.id}}" bindtap="onStyleTap">
+        <view class="style-thumb"
+              style="width: {{item.w}}rpx; background-image: url({{spritePath}}); background-size: {{spriteW}}rpx var(--thumb-h); background-position: -{{item.x}}rpx 0"></view>
+        <text class="style-name">{{item.label}}</text>
+      </view>
+    </scroll-view>
   </view>
 </view>
