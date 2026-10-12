@@ -4,7 +4,8 @@ import { extname, join, normalize, resolve, sep } from 'node:path'
 import { KEY_REQUIRED } from '../shared/copy.ts'
 import { normalizeUsername } from '../shared/account.ts'
 import {
-  findUserByCookie, handleChangePassword, handleChangeUsername, handleDeleteAccount, handleLogin, handleSignup,
+  findUserByCookie, handleChangePassword, handleChangeUsername, handleDeleteAccount, handleLogin,
+  handleSignup, handleWxLogin,
   type AccountDeps, type PublicUser,
 } from './account.ts'
 import { resolveClients, type ClientDeps } from './clientFor.ts'
@@ -222,6 +223,30 @@ export function createApp(deps: AppDeps): Server {
 }
 
 /**
+ * 「这个人是谁」的凭证从哪来 —— **cookie 和 `Authorization: Bearer` 是同一张票的两个入口**。
+ *
+ * ★ 2026-10-12：小程序没有 cookie（`wx.request` 不会替谁存 `Set-Cookie`），
+ *   那边唯一能带身份的地方是请求头。翻译**只做在这一处**，于是所有要登录的接口
+ *   （作品 / 会话 / 模型 / 滤镜 / 预设 / 两条 AI 路）一起认了这个头 ——
+ *   各写一遍的话，加一个新接口时漏掉的就是"手机上那一个功能永远 401"。
+ *
+ * 规矩：两样都没有 → undefined（= 没登录，不是错误）；两样都给了 → **认 Bearer**
+ * （显式带的东西比浏览器自动附上的更接近本人的意图）。
+ * 畸形头（`Bearer` 后面空着、别的 scheme）**安静地当作没有** ——
+ * 它不该把人变成 500，也不该顺手放行。
+ *
+ * ⚠️ cookie 名以 `SESSION_COOKIE` 常量为准，别在这儿写死 `rx_session`
+ *   （写死的那一刻起，改常量就会让这条路静默失效）。
+ */
+function sessionTokenOf(
+  cookieHeader: string | undefined, authHeader: string | undefined,
+): string | undefined {
+  const m = /^Bearer\s+(.+)$/i.exec((authHeader ?? '').trim())
+  if (m) return m[1]!.trim() || undefined
+  return parseCookies(cookieHeader)[SESSION_COOKIE]
+}
+
+/**
  * 认人。认不出来就 401。
  *
  * ⚠️ **必须在 readJsonBody 之前调用** —— 跟这三个接口原来那句"没接线就立刻失败"
@@ -232,10 +257,15 @@ export function createApp(deps: AppDeps): Server {
  * 三个 AI 接口 + /api/me + /api/password 都从这儿过，续期就不必在五个地方各接一次线。
  */
 function requireUser(deps: AppDeps, req: IncomingMessage, res: ServerResponse): PublicUser {
-  const u = findUserByCookie(req.headers.cookie, deps.auth)
+  const cookie = req.headers.cookie
+  const auth = req.headers.authorization
+  const token = sessionTokenOf(cookie, auth)
+  // findUserByCookie 吃的还是 cookie 头 —— 所以这里把票**翻译回它认的形状**，
+  // 而不是给它加第二个参数（那个函数的形状是审过的：它只回答"这是谁"）。
+  const u = findUserByCookie(token === undefined ? undefined : `${SESSION_COOKIE}=${token}`, deps.auth)
   // 认不出来就到此为止 —— 更不该顺手给一张新票
   if (!u) throw new HttpError('UNAUTHORIZED', '先登录一下', 401)
-  renewSessionIfStale(deps, req.headers.cookie, u, res)
+  renewSessionIfStale(deps, cookie, auth, u, res)
   return { id: u.id, username: u.username, email: u.email }
 }
 
@@ -258,15 +288,20 @@ function requireUser(deps: AppDeps, req: IncomingMessage, res: ServerResponse): 
  * 票读不出过期时间就安静地不续：那张票**已经验过签、已经放行**了，
  * 不该因为一个读不出来的数字把人挡在外面（那是把"没登录"和"我们没看懂"混成一种）。
  *
- * 这里为什么再解析一次 cookie 头（`findUserByCookie` 内部已经解析过）：那个函数的
+ * 这里为什么再解析一次那个头（`findUserByCookie` 内部已经解析过）：那个函数的
  * 形状是 Task 5 定下、已经审过的（它只回答"这是谁"），多吐一个 `expiresAt` 出来
  * 比这里多读一次值几个字节的字符串贵 —— 而且"票长什么样"仍然只有 session.ts 知道。
+ *
+ * ★ 2026-10-12：凭证来源跟着 `requireUser` 的翻译走（cookie / Bearer 都认）。
+ *   小程序那张票也会被续（新票写在 `Set-Cookie` 里，它自己多半不读 ——
+ *   小程序那边是**401 就重登一次**，见设计 §6.2）。这不冲突：
+ *   续期在这里是**顺手**做的，票的寿命从来由签名说了算，不由谁读没读那个头。
  */
 function renewSessionIfStale(
-  deps: AppDeps, cookieHeader: string | undefined,
+  deps: AppDeps, cookieHeader: string | undefined, authHeader: string | undefined,
   u: { id: number; passwordHash: string }, res: ServerResponse,
 ): void {
-  const token = parseCookies(cookieHeader)[SESSION_COOKIE]
+  const token = sessionTokenOf(cookieHeader, authHeader)
   const expiresAt = token === undefined ? null : expiryOf(token)
   if (expiresAt === null) return
 
@@ -331,6 +366,44 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       gates.login.reset(gate)
       res.setHeader('set-cookie', sessionCookie(r.token, r.expiresAt))
       sendJson(res, 200, { user: r.user })
+      return
+    }
+    /**
+     * ★ 2026-10-12：微信静默登录（小程序那一侧的身份）。
+     * 设计：docs/superpowers/specs/2026-10-12-miniprogram-outdoor-quick-edit-design.md §6.1。
+     *
+     * 入参 `{ code }`（`wx.login` 拿的）→ 后端拿 AppID/AppSecret 去换 openid
+     * → 找/建账号 → 发一张**和登录同一套**的票。
+     *
+     * ⚠️ **不走 `set-cookie`**，token 放在正文里 —— 小程序没有 cookie jar：
+     *    `wx.request` 收下 `Set-Cookie` 也不会在下次请求带上（它自己也不会读这个头）。
+     *    票的用法是那边存进 storage、下次以 `Authorization: Bearer` 带回来
+     *    （`requireUser` 上那段翻译）。
+     *
+     * ⚠️ **没配钥匙 → 503「后端没有配置微信登录」**，和上面那三条 AI 的
+     *    「后端没有配置模型客户端」同一个口径：**这不是"你的请求有问题"**，
+     *    是"我们这边还没配"。所以既不能是 400，也不能是 401
+     *    （401 会让小程序那边去重登一次，而重登一百次也不会好）。
+     *    挂在读体**之前**：没配就该立刻失败，不必先缓冲一个请求体。
+     *
+     * 顺序和 /api/login 一致：先（同一张）限流、成功后清零、再进 handler。
+     * 闸门按 **IP** 记 —— 这是"进门"那条路，此刻还没有身份（和注册一样）；
+     * `wx:` 前缀把它和登录那几个名字桶分开。
+     */
+    if (req.method === 'POST' && path === '/api/wx-login') {
+      const wx = deps.config.wx
+      if (!wx.appid) throw new HttpError('INTERNAL', '后端没有配置微信登录', 503)
+      const body = await readJsonBody(req)
+      const gate = `wx:${req.socket.remoteAddress ?? '?'}`
+      assertGate(gates.login, gate, '登录')
+      // ⚠️ **不要写 `{ ...deps.auth, secret: wx.secret }`** —— 那个 `secret` 会把
+      //   `AccountDeps.secret`（签会话票那把）顶掉，腾讯的 AppSecret 会拿去签我们的票。
+      //   微信那把走它自己的名字 `wxSecret`（`WxLoginDeps` 上那段写着这件事）。
+      const r = await handleWxLogin(body, {
+        ...deps.auth, appid: wx.appid, wxSecret: wx.secret,
+      })
+      gates.login.reset(gate)
+      sendJson(res, 200, { user: r.user, token: r.token })
       return
     }
     if (req.method === 'POST' && path === '/api/logout') {

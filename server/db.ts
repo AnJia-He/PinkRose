@@ -161,6 +161,25 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX presets_user ON presets(user_id);
   `,
+  // #8 wechat_openid（★ 2026-10-12，小程序静默登录）。设计：
+  // docs/superpowers/specs/2026-10-12-miniprogram-outdoor-quick-edit-design.md §6.1
+  //
+  // 小程序开工前不问任何信息 —— 身份只有一个来处：`wx.login` 的 code 换成
+  // openid，openid 认人。这一列就是那个"认"字。
+  //
+  // ⚠️ 分两条写（和迁移 2 那种"建表 + 建索引"一条不同）：`ALTER TABLE` 一条、
+  //    `CREATE UNIQUE INDEX` 一条 —— 将来单独推翻索引那半时，已发布的那条
+  //    **一个字都不能改**（见上面那段契约），拆开就省得原地改它。
+  //
+  // ⚠️ 老用户全是 NULL，由下面那条唯一索引放行：**SQLite 的 UNIQUE 索引里
+  //    多个 NULL 不算重复** —— 少了这条性质，这个索引一上去，库里所有电脑版
+  //    账号会在下一次登录时被当成"重复的行"。account.test.ts 有一条专门钉它。
+  `ALTER TABLE users ADD COLUMN wechat_openid TEXT;`,
+  // #9 —— openid 上的唯一索引。**这一条不是加速的，是规矩**：
+  // 一个微信号只能换一个账号。没有它，"找/建账号"那半在两个人同时点进来时
+  // 会各建一个（先查后插的老毛病），而且**一句错都不报** —— 用户只是发现
+  // 自己在小程序里前后是两个人。
+  `CREATE UNIQUE INDEX users_wechat_openid ON users(wechat_openid);`,
 ]
 
 /**

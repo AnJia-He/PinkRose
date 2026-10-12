@@ -33,6 +33,17 @@ export type Config = {
   lutDir: string
   /** 会话签名用的钥匙。**没有默认值** —— 见 loadConfig 里那一抛。 */
   sessionSecret: string
+  /**
+   * ★ 2026-10-12：微信小程序那两把钥匙（`POST /api/wx-login` 用）。
+   *
+   * ⚠️ 和上面两条通道**不一样，缺了也照常启动**（所以是空串、不是抛）：
+   *   缺 chat/image 钥匙是"这个产品缺一半"（对话和出图整个废掉），而缺微信钥匙
+   *   只是"小程序登不进来"—— 电脑版**一个字都不受影响**。为它拒绝启动等于
+   *   让一个可选的入口把整个服务拖死。
+   *   代价是"没配"要由**路由**当场说清楚（503 +「后端没有配置微信登录」），
+   *   而不是变成一个看不懂的 401（app.ts 那条路由上写着这件事）。
+   */
+  wx: { appid: string; secret: string }
 }
 
 export const DEFAULT_CHAT_BASE_URL = 'https://apihub.agnes-ai.com/v1'
@@ -91,6 +102,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     photoDir: env.PHOTO_DIR?.trim() || resolve(process.cwd(), 'data', 'photos'),
     lutDir: env.LUT_DIR?.trim() || resolve(process.cwd(), 'data', 'luts'),
     sessionSecret,
+    // ★ 2026-10-12：微信那两把钥匙。**空串 = 没配**（见类型上那段：它是可选入口，
+    //   不拒绝启动）。判"配没配"只认 appid —— 两个都缺才叫没配、只缺一个
+    //   是用户自己填漏了，那种会在微信那边回一个 errcode，走正常失败路。
+    wx: {
+      appid: env.WX_APPID?.trim() ?? '',
+      secret: env.WX_SECRET?.trim() ?? '',
+    },
   }
 }
 

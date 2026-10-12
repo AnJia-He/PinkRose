@@ -85,6 +85,10 @@ describe('openDb', () => {
     'e2364c7b713dd1bcb314d7e0248f02a2e8a8b2c040a749364fab3bc17032f2d4',
     // 7 —— presets（2026-10-10，我的预设）
     '113cd7a72501e35f5ea2de5fae163e3fc622768942bc6f5bb989c0edbca22df7',
+    // 8 —— users.wechat_openid（2026-10-12，小程序静默登录）
+    'b01c4fa3e411291a6d31873f26b592897c82bdd32984e42beb0ccab42c5bccd0',
+    // 9 —— wechat_openid 唯一索引（同一天。和 #8 拆开的原因见 db.ts 里那段注释）
+    '175875bd0cf4284c4432bab80c9a4a51698977afd58541eac6db34480730c66c',
   ]
 
   it('★ 已发布的迁移一个字都不许改 —— 指纹对不上 = "老库和新库从此是两个形状"', () => {

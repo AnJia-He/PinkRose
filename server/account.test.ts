@@ -6,10 +6,11 @@ import { openDb, type Db } from './db.ts'
 import { createStorage, type Storage } from './storage.ts'
 import {
   handleDeleteAccount, handleSignup, handleLogin, handleChangePassword, handleChangeUsername,
-  findUserByCookie, type AccountDeps,
+  handleWxLogin, findUserByCookie, type AccountDeps,
 } from './account.ts'
 import { createLut } from './luts.ts'
 import { SESSION_COOKIE } from './session.ts'
+import { HttpError } from './http.ts'
 
 /**
  * 这一份测的是**调用点**，不是规则本身。
@@ -343,6 +344,171 @@ describe('★ 密码不能和名字一样 —— 在**调用点**上真的生效
     const user = (await handleLogin({ username: 'abcdefgh', password: 'goodpassword' }, deps)).user
     await expect(handleChangeUsername({ username: 'goodpassword' }, user, deps))
       .rejects.toThrow('名字不能和密码一样')
+  })
+})
+
+/**
+ * ★ 2026-10-12：**微信静默登录**（小程序那侧的身份）。
+ *
+ * 设计：`docs/superpowers/specs/2026-10-12-miniprogram-outdoor-quick-edit-design.md` §6.1。
+ * 小程序的哲学是「开工前不问任何信息」—— 所以它拿到身份的路只有一条：
+ * `wx.login()` 拿一个 code → 我们拿 code 去微信换 openid → 找/建账号 → 发**同一套**票。
+ *
+ * ⚠️ 这一组**不真打微信**：`fetchImpl` 是注入的（照 `probeConnection` 的写法）。
+ *    真连那一步挂在 Task 10 的 Step 5（要 AppSecret），不在这份测试里。
+ */
+describe('微信静默登录', () => {
+  /** 假微信：记下每次请求的 URL，回一个像 `jscode2session` 的正文。 */
+  function wxStub(body: unknown, status = 200) {
+    const urls: string[] = []
+    const fetchImpl = (async (url: any) => {
+      urls.push(String(url))
+      return new Response(typeof body === 'string' ? body : JSON.stringify(body), { status })
+    }) as unknown as typeof fetch
+    return { urls, fetchImpl }
+  }
+
+  /**
+   * ⚠️ 微信那把 key **不许叫 `secret`**：`AccountDeps.secret` 是**签会话票的那把**
+   * （`deps` 里那个 `'test-secret'`）。写成 `{ ...deps, secret: wxKey }` 会把签名钥匙
+   * 悄悄顶掉，而症状是**票照样发得出来、就是查不出人** —— 第一次就踩了。
+   * 所以这里给它自己的名字，和 app.ts 那边（`appid: wx.appid, secret: wx.secret`）
+   * 是同一条纪律：**两把钥匙不许同名**。
+   */
+  const wxDeps = (fetchImpl: typeof fetch) =>
+    ({ ...deps, fetchImpl, appid: 'wx-test-appid', wxSecret: 'wx-test-appsecret' })
+
+  it('拿 code 换 openid → 建号 + 发票 + `wechat_openid` 落库', async () => {
+    const { urls, fetchImpl } = wxStub({ openid: 'oX1abcdef', session_key: 'sk' })
+    const r = await handleWxLogin({ code: 'the-code' }, wxDeps(fetchImpl))
+
+    // ① 发的是**真** jscode2session：appid / secret / code 都得在，grant_type 得对
+    expect(urls).toHaveLength(1)
+    expect(urls[0]).toContain('sns/jscode2session')
+    expect(urls[0]).toContain('appid=wx-test-appid')
+    expect(urls[0]).toContain('js_code=the-code')
+    expect(urls[0]).toContain('grant_type=authorization_code')
+    expect(urls[0]).toContain('secret=wx-test-appsecret')
+
+    // ② 账号：名字带 openid 后 6 位、邮箱是合成值（永不发信）
+    expect(r.user.username).toBe('微信用户_abcdef')
+    expect(r.user.email).toBe('wx-oX1abcdef@wechat.local')
+
+    // ③ openid 真的落库了（这一段靠的就是这一列）
+    const row = db.raw.prepare('SELECT wechat_openid AS o FROM users WHERE id = ?')
+      .get(r.user.id) as { o: string | null }
+    expect(row.o).toBe('oX1abcdef')
+
+    // ④ 票是**和电脑版同一套**的 —— 能过 findUserByCookie，不是另一种形状
+    //    （用的也是普通 `deps`：签票那把钥匙从头到尾只有一把）
+    expect(findUserByCookie(`${SESSION_COOKIE}=${r.token}`, deps)?.id).toBe(r.user.id)
+  })
+
+  it('★ 同一个 openid 再来一次 → 还是**同一个账号**，不建第二个', async () => {
+    const a = await handleWxLogin({ code: 'c1' }, wxDeps(wxStub({ openid: 'oX1same' }).fetchImpl))
+    const b = await handleWxLogin({ code: 'c2' }, wxDeps(wxStub({ openid: 'oX1same' }).fetchImpl))
+
+    expect(b.user.id).toBe(a.user.id)
+    // 也不许顺手再建一行出来（"复用"和"建号前先查一下"是两件事）
+    const n = (db.raw.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n
+    expect(n).toBe(1)
+  })
+
+  it('★ 微信报错（errcode 非 0）→ UNAUTHORIZED，且**不回显上游原文**', async () => {
+    // 真实的 40029 正文里带着 session_key 那种东西 —— 一个字都不许漏出去
+    const { fetchImpl } = wxStub({ errcode: 40029, errmsg: 'SENTINEL-WX-UPSTREAM-40029' })
+    const p = handleWxLogin({ code: 'bad' }, wxDeps(fetchImpl))
+    await expect(p).rejects.toThrow(HttpError)
+    await expect(p).rejects.toMatchObject({ code: 'UNAUTHORIZED', status: 401 })
+    await expect(p).rejects.not.toThrow(/SENTINEL-WX-UPSTREAM/)
+  })
+
+  it('★ 连不上微信 / 上游 5xx / 正文不是 JSON —— 一律 UNAUTHORIZED，不 500', async () => {
+    // 这几条的共同点：**都是别人的问题**，而用户看到的必须是我们自己的话
+    // （和 findUserByCookie "任何不对都返回 null，绝不抛" 是同一条纪律）。
+    const boom = (async () => { throw new Error('SENTINEL-WX-NET') }) as unknown as typeof fetch
+    const cases: (typeof fetch)[] = [
+      boom,
+      wxStub({ errcode: 0, errmsg: 'SENTINEL-WX-5XX' }, 500).fetchImpl,
+      wxStub('SENTINEL-WX-NOTJSON').fetchImpl,
+      wxStub({ errmsg: 'SENTINEL-WX-NOOPENID' }).fetchImpl,   // 200 但没给 openid
+    ]
+    for (const fetchImpl of cases) {
+      await expect(handleWxLogin({ code: 'c' }, wxDeps(fetchImpl)))
+        .rejects.toMatchObject({ code: 'UNAUTHORIZED' })
+    }
+  })
+
+  it('★ openid 后 6 位撞名 → 换一个名字**重试**（数据库才是裁判），不报错', async () => {
+    // 撞名的对手由测试**亲手**摆进去：不带尾巴的名字 = 微信用户_ + 6 位
+    await handleSignup(
+      { username: '微信用户_abcdef', email: 'abc@b.com', password: 'goodpassword' }, deps)
+    const { fetchImpl } = wxStub({ openid: 'oX1abcdef' })
+    const r = await handleWxLogin({ code: 'c' }, wxDeps(fetchImpl))
+
+    expect(r.user.username).not.toBe('微信用户_abcdef')
+    expect(r.user.username.startsWith('微信用户')).toBe(true)
+    // 原来那个账号**一个字节都没动**（重试是"换个名字再插一次"，不是"抢名字"）
+    const kept = db.raw.prepare('SELECT email FROM users WHERE username = ?')
+      .get('微信用户_abcdef') as { email: string }
+    expect(kept.email).toBe('abc@b.com')
+  })
+
+  it('★ 后 6 位里混进怪字符也不会拼出非法名字（后 6 位取自合法字符）', async () => {
+    // openid 是微信给的，但"给的一定是 URL 安全字符"这件事**没有契约保证** ——
+    // 拼进来的名字过不了 `checkUsername` 的话，用户会卡在一个没有出口的报错上。
+    const { fetchImpl } = wxStub({ openid: 'oX1-!!中文' })
+    const r = await handleWxLogin({ code: 'c' }, wxDeps(fetchImpl))
+    expect(r.user.username.startsWith('微信用户')).toBe(true)
+    // 合法字符滤完还剩 `中文`（openid 尾部那两个字）—— 名字得是能过规矩的那种
+    expect(/^微信用户_[\p{Unified_Ideograph}〇a-z0-9_·]+$/u.test(r.user.username)).toBe(true)
+  })
+
+  it('★ 微信用户的 `password_hash` 是随机占位 —— 这个身份**不许**走 /api/login', async () => {
+    // 票是用密码哈希签的（session.ts），所以这一列必须有东西；但它同时必须
+    // **不是一个真密码**：拿空密码、拿 openid、拿用户名去登，一次都不许成功。
+    const { fetchImpl } = wxStub({ openid: 'oX1abcdef' })
+    const r = await handleWxLogin({ code: 'c' }, wxDeps(fetchImpl))
+    const h = (db.raw.prepare('SELECT password_hash AS h FROM users WHERE id = ?')
+      .get(r.user.id) as { h: string }).h
+    // 随机 32 字节的 hex（64 个字符）—— 不是 scrypt 的那种形状
+    expect(h).toMatch(/^[0-9a-f]{64}$/)
+    expect(h.startsWith('scrypt$')).toBe(false)
+
+    for (const pw of ['', 'oX1abcdef', r.user.username, h]) {
+      await expect(handleLogin({ username: r.user.username, password: pw }, deps))
+        .rejects.toThrow('密码不对，再试一次')
+    }
+  })
+
+  it('★ 同一个人**在同一趟里**两次建号不可能：openid 上有唯一索引', async () => {
+    // 这一列是这一整段的支点：少了这个索引，同一个微信号每登一次就多一个账号
+    // —— 而"复用同一个账号"那条用例**照样绿**（它只呼一次查找就撞上了）。
+    // 所以真正在守这件事的是**库**，这条钉的是库。
+    const { fetchImpl } = wxStub({ openid: 'oX1abcdef' })
+    const r = await handleWxLogin({ code: 'c' }, wxDeps(fetchImpl))
+    expect(() => db.raw
+      .prepare('INSERT INTO users (username, email, password_hash, created_at, wechat_openid) VALUES (?, ?, ?, ?, ?)')
+      .run('另一个人', 'x@b.com', 'h', 1, 'oX1abcdef')).toThrow(/UNIQUE/)
+    expect(r.user.id).toBeGreaterThan(0)
+
+    // ★ 反向的那半：**老用户（wechat_openid 是 NULL）不受影响** ——
+    //   SQLite 的 UNIQUE 索引允许多个 NULL，不然这条迁移一上去，
+    //   库里所有电脑版账号都会变成"重复"。
+    await handleSignup({ username: '老甲', email: 'a2@b.com', password: 'goodpassword' }, deps)
+    await handleSignup({ username: '老乙', email: 'b2@b.com', password: 'goodpassword' }, deps)
+    const nulls = (db.raw.prepare('SELECT COUNT(*) AS n FROM users WHERE wechat_openid IS NULL')
+      .get() as { n: number }).n
+    expect(nulls).toBe(2)
+  })
+
+  it('code 不是字符串 / 是空串 → 400，而且**一个字都不发到微信**', async () => {
+    for (const bad of [{}, { code: '' }, { code: 42 }, null, 'x']) {
+      const { urls, fetchImpl } = wxStub({ openid: 'oX1' })
+      await expect(handleWxLogin(bad, wxDeps(fetchImpl)))
+        .rejects.toMatchObject({ code: 'BAD_REQUEST' })
+      expect(urls).toHaveLength(0)
+    }
   })
 })
 

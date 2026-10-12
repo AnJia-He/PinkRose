@@ -18,6 +18,8 @@ const cfg: Config = {
   photoDir: 'unused',
   lutDir: 'unused',
   sessionSecret: 'test-secret',
+  // 微信那两把钥匙（★ 2026-10-12）：空串 = 没配。这个文件碰不到那条路。
+  wx: { appid: '', secret: '' },
 }
 
 // sn.ts 收窄之后，客户端吃的是「一条连接 + 一个模型名」，不再是整份 Config（Task 6）。

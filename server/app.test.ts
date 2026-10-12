@@ -56,6 +56,10 @@ const cfg: Config = {
   lutDir: 'unused',
   // 签名钥匙：测试里随便一串就行，反正网络那头没有别人
   sessionSecret: 'test-session-secret',
+  // ★ 2026-10-12：微信登录那两把钥匙。这里**故意留空** —— 这个文件里的 app
+  //   没有一个要真连微信的用例（真连挂在 Task 10 的 Step 5，要 AppSecret）；
+  //   留空还顺手钉住"没配时 /api/wx-login 回 503"那一条。
+  wx: { appid: '', secret: '' },
 }
 
 // sn.ts 收窄之后，客户端吃的是「一条连接 + 一个模型名」，不再是整份 Config（Task 6）。
@@ -478,6 +482,113 @@ describe('账号与鉴权', () => {
     // 写成确切的 503（brief 原稿是 `not.toBe(401)`）：503 说明它**过了鉴权**、
     // 栽在"后端没接线"那一步。`not.toBe(401)` 连 500 都算过，问不出这件事。
     expect(res.status).toBe(503)
+  })
+
+  /**
+   * ★ 2026-10-12：**`Authorization: Bearer` 和 cookie 是同一张票的两个入口**。
+   *
+   * 小程序没有 cookie（`wx.request` 不会替我们存 `Set-Cookie`），所以那边唯一
+   * 能带身份的地方是请求头。入口翻译写在 `requireUser` 一处 —— 认人只有一个出口，
+   * 于是**所有**要登录的接口（作品/会话/模型/两条 AI 路）一起认了这个头。
+   *
+   * ⚠️ 这条打的是 `/api/me`（不是 AI 那三个）：它回的就是"你是谁"，
+   *    验的是**同一句话**而不是"某个接口顺带没回 401"。
+   */
+  it('★ 带 `Authorization: Bearer <票>` 就能过 —— 和 cookie 那条路等价', async () => {
+    const auth = newAuth()
+    const base = await boot({ auth })
+    const r = await handleSignup({ username: '小程序用户', email: 'm@m.com', password: 'password123' }, auth)
+
+    const me = await fetch(`${base}/api/me`, { headers: { authorization: `Bearer ${r.token}` } })
+    expect(me.status).toBe(200)
+    const body = await me.json() as { user: { username: string } }
+    expect(body.user.username).toBe('小程序用户')
+  })
+
+  it('★ Bearer 那半边和其他错处一个口径：垃圾票 / 空票 / 缺票都是 401', async () => {
+    // 和 cookie 那条路同一套：认不出来就是"先登录一下"，不是 500、也不是放行。
+    // ⚠️ 三种都要走一遍 —— `Bearer ` 后面空着那种最阴（前缀对、票是空的）。
+    const { base, cookie } = await appWithUser()
+    for (const h of ['Bearer garbage', 'Bearer ', 'bogus-scheme abc', '']) {
+      const res = await fetch(`${base}/api/me`, { headers: { authorization: h } })
+      expect(res.status, `authorization: ${JSON.stringify(h)}`).toBe(401)
+    }
+    // 顺带钉住"没有这个头时照旧走 cookie"：翻译不许把 cookie 那条路弄丢
+    expect((await fetch(`${base}/api/me`, { headers: { cookie } })).status).toBe(200)
+  })
+
+  it('★ /api/wx-login 没配 AppID/AppSecret → 503「后端没有配置微信登录」', async () => {
+    // 照 `后端没有配置模型客户端` 那一条的 503 口径：**503 不是"你请求错了"**，
+    // 是"我们这边还没配"。小程序那边按状态码分流，401 会去重登、503 只该报一句人话。
+    // ⚠️ 不用用户的真值：这一条验的是**没配**那一支 —— 传一份 wx 为空的 config。
+    const base = await boot({ config: { ...cfg, wx: { appid: '', secret: '' } } })
+    const r = await post(base, '/api/wx-login', { code: 'whatever' })
+    expect(r.status).toBe(503)
+    expect(r.body.error?.message).toBe('后端没有配置微信登录')
+  })
+
+  it('★ /api/wx-login 配好了就真的走通：拿到 token，用它作 Bearer 能问「我是谁」', async () => {
+    // 这条是**接线**的守卫（上面几条各验一小块，谁都不验"这条路由接起来了没"）：
+    // 换 openid 那一步的假 fetch 挂在**全局** fetch 上（这条路由没有注入点，
+    // 而为了它给 AppDeps 加一个字段是更大的口子）—— 打完就还原。
+    //
+    // 它同时钉着两件不报错就会错的事：
+    //   ① 微信那把 key 走了它自己的名字（`wxSecret`）—— 写错成 `secret` 的话，
+    //      票会拿腾讯的 AppSecret 签，这条用例的 `/api/me` 当场 401；
+    //   ② 响应里回的是 `{user, token}` **且不带 set-cookie**（小程序没有 cookie jar）。
+    const auth = newAuth()
+    const base = await boot({
+      auth,
+      config: { ...cfg, wx: { appid: 'wx-e2e-appid', secret: 'wx-e2e-appsecret' } },
+    })
+    const realFetch = globalThis.fetch
+    // 记下 URL，**打完再断言**：在桩里直接 `expect` 的话，那个异常会被
+    // `codeToOpenid` 的 `catch` 兜走、变成一句 401 —— 红是红了，但红在哪件事上
+    // 看不出来（症状只是一句"微信登录没成功"）。
+    //
+    // ⚠️ 桩必须**只拦微信那一段、其余放行**（`realFetch` 传下去）：
+    //    这个文件里"假的上游"和"真的本地服务器"用的是**同一个**全局 fetch ——
+    //    一刀切替换的话，测试自己的那次 `fetch(base + '/api/wx-login')` 也会被
+    //    拦下来，拿到的是我们写给微信的假应答，`body.user` 直接是 undefined
+    //    （第一次跑就是这么红的：状态 200、但没有 user）。
+    const wxUrls: string[] = []
+    globalThis.fetch = (async (url: any, init: any) => {
+      const u = String(url)
+      if (!u.startsWith('https://api.weixin.qq.com/')) return realFetch(url, init)
+      wxUrls.push(u)
+      return new Response(JSON.stringify({ openid: 'oX1e2e' }), { status: 200 })
+    }) as unknown as typeof fetch
+    try {
+      const r = await fetch(`${base}/api/wx-login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: 'e2e-code' }),
+      })
+      expect(r.status).toBe(200)
+      expect(r.headers.get('set-cookie')).toBeNull()
+      const body = await r.json() as { user: { id: number; username: string }; token: string }
+      // 名字是**滤过一遍的** openid 尾段：合法字符类是小写 a-z（`shared/account.ts`），
+      // 所以大写 `X` 会被滤掉 —— `oX1e2e` 落在名字里就是 `o1e2e`。
+      // 这也正是"真身（wechat_openid）和展示名（username）是两回事"的现场：
+      // 认人永远不会靠这个名字。
+      expect(body.user.username).toBe('微信用户_o1e2e')
+      // id 必须是**数字**（lastInsertRowid 是 BigInt，漏了转换会变成字符串 "1"）
+      expect(typeof body.user.id).toBe('number')
+
+      // 两把钥匙都得真送出去：appid 送错/没送 → 微信不认这个应用；
+      // secret 送错（比如那行写成 `secret: wx.secret`，顶掉了签名钥匙）→
+      // 票照样发，但**下面这个 /api/me 会是 401** —— 那正是这条用例的主断言。
+      expect(wxUrls).toHaveLength(1)
+      expect(wxUrls[0]).toContain('appid=wx-e2e-appid')
+      expect(wxUrls[0]).toContain('secret=wx-e2e-appsecret')
+
+      // 拿这张票当 Bearer 用 —— 这正是小程序接下来的用法
+      const me = await fetch(`${base}/api/me`, { headers: { authorization: `Bearer ${body.token}` } })
+      expect(me.status).toBe(200)
+      expect((await me.json() as { user: { id: number } }).user.id).toBe(body.user.id)
+    } finally {
+      globalThis.fetch = realFetch
+    }
   })
 
   it('注册 → 自动登录（响应里带 Set-Cookie）', async () => {

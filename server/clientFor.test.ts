@@ -15,6 +15,8 @@ const CONFIG = {
   chat: { apiKey: 'sk-chat-default', baseUrl: 'https://apihub.agnes-ai.com/v1', model: 'agnes-2.5-flash' },
   image: { apiKey: 'sk-img-default', baseUrl: 'https://token.sensenova.cn/v1', model: 'sensenova-u1.5-fast' },
   port: 8787, dbPath: ':memory:', photoDir: '/tmp', lutDir: '/tmp/luts', sessionSecret: 's',
+  // 微信那两把钥匙（★ 2026-10-12）。这个文件不碰它 —— 空着就是"没配"，也是默认姿势。
+  wx: { appid: '', secret: '' },
 }
 
 function fresh(lookupHost: HostLookup = async () => ['93.184.216.34']): ClientDeps {

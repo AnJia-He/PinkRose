@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import type { Db } from './db.ts'
 import { nowMs } from './clock.ts'
 import type { Storage } from './storage.ts'
@@ -6,10 +7,20 @@ import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../
 import {
   signSession, verifySession, sessionExpiry, parseCookies, SESSION_COOKIE,
 } from './session.ts'
-import { HttpError, asObject, str } from './http.ts'
+import { HttpError, asObject, readTextCapped, str } from './http.ts'
 
 export type PublicUser = { id: number; username: string; email: string }
-export type AccountDeps = { db: Db; secret: string; now?: () => number }
+/**
+ * `fetchImpl` 是**给测试留的缝**（默认就是全局 fetch）：微信登录那条路要验的
+ * 行为（换 openid、建号、撞名重试、上游报错怎么翻译）全都不该真去出网 ——
+ * 和 `probeConnection(input, fetchImpl = fetch)` 是同一个形状。
+ */
+export type AccountDeps = {
+  db: Db
+  secret: string
+  now?: () => number
+  fetchImpl?: typeof fetch
+}
 
 type Row = { id: number; username: string; email: string; password_hash: string }
 
@@ -152,6 +163,197 @@ export async function handleLogin(body: unknown, deps: AccountDeps) {
   }
 
   return issue({ id: row.id, username: row.username, email: row.email }, row.password_hash, deps)
+}
+
+/**
+ * 微信登录那两把钥匙 + 一个换 openid 的出口。`appid`/`wxSecret` 从 Config 来
+ * （`.env` 的 `WX_APPID` / `WX_SECRET`），**不放进 AppDeps** —— 它们只属于这一条路，
+ * 而别的路拿不到它们，是因为压根没人把它们递过去。
+ *
+ * ⚠️ **微信那把 key 不叫 `secret`，是故意的**：`AccountDeps.secret` 是**签会话票
+ *    那把**。两个都叫 `secret` 的话，调用方任何一次
+ *    `{ ...accountDeps, secret: <微信的> }` 都会把签名钥匙**悄悄顶掉** ——
+ *    症状是"票照发、就是查不出人"（写这条时就踩了一次）。
+ *    两把钥匙不许同名，这一条对调用方（app.ts 那条路由）也成立。
+ *
+ * ⚠️ **没配 AppID/AppSecret 时不是这个函数管**（那是 app.ts 那条路由的事，
+ *    它回 503，见那段注释）：走到这里说明"有没有配"已经判过了。
+ *    这里只认一件事 —— **你带没带 code**。
+ */
+export type WxLoginDeps = AccountDeps & { appid: string; wxSecret: string }
+
+/**
+ * `code2session` 的等时上限。
+ *
+ * 这是**用户按了之后在等**的一次请求（和 chat 那条路同一个量级），不是后台任务 ——
+ * 微信那边没响应时，用户该看到一句"再试一次"，而不是一个无限转的圈。
+ */
+const WX_TIMEOUT_MS = 10_000
+
+/**
+ * code → openid。**任何不对都抛 UNAUTHORIZED，绝不回显上游原文。**
+ *
+ * ⚠️ 这里的 URL 里带着 **AppSecret**（微信的接口就是收 GET 参数的）。所以：
+ *   · 上游的报错正文、URL、状态码**一个字都不许进给用户的响应**（它们可能回显密钥）；
+ *   · 日志那边也不打这个 URL —— 这个函数干脆一句话都不打（见下面那句注释）。
+ *
+ * ⚠️ 响应正文**带上限读**（`readTextCapped`）：地址虽然是我们写死的
+ *    （不是用户填的），但"对面回多少"从来不归我们管。
+ *
+ * ⚠️ 只取 openid，**`session_key` 一律不碰**：它是拿来解小程序加密数据的，
+ *    这一版没有那种需求；收下一个用不上的密钥只会多一处要保管的东西。
+ */
+async function codeToOpenid(code: string, deps: WxLoginDeps): Promise<string> {
+  const fail = () => new HttpError('UNAUTHORIZED', '微信登录没成功，再试一次', 401)
+
+  // URLSearchParams：code 是**从外面来的**，直接拼字符串的话里面一个 `&`
+  // 就能把 secret 那一段顶掉（参数注入）。
+  const url = 'https://api.weixin.qq.com/sns/jscode2session?' + new URLSearchParams({
+    appid: deps.appid,
+    secret: deps.wxSecret,
+    js_code: code,
+    grant_type: 'authorization_code',
+  }).toString()
+
+  let res: Response
+  try {
+    res = await (deps.fetchImpl ?? fetch)(url, { signal: AbortSignal.timeout(WX_TIMEOUT_MS) })
+  } catch {
+    // 连不上 / 超时 / DNS —— 对用户都是"这次没登成，再试一次"
+    throw fail()
+  }
+
+  let body: unknown
+  try {
+    body = JSON.parse(await readTextCapped(res, 1 << 20))
+  } catch {
+    // 不是 JSON、或者一大坨（含上游 5xx 的 HTML 错误页）—— 同一句
+    throw fail()
+  }
+  if (!res.ok) throw fail()
+
+  const openid = (body as { openid?: unknown } | null)?.openid
+  // ⚠️ **失败只在这里判**（和"正文不是 JSON"分开，但结局一样）：
+  //    微信成功时回 `{openid, session_key}`，失败时回 `{errcode, errmsg}`（40029 那些）。
+  //    所以"有没有 openid"这一个判据同时盖住两件事：微信报错了、以及回了个看不懂的东西。
+  if (typeof openid !== 'string' || openid.length === 0) throw fail()
+  return openid
+}
+
+/**
+ * openid → 一个**合规矩**的显示名：`微信用户_` + 后 6 位。
+ *
+ * ⚠️ 分隔符是**下划线**、不是空格 —— `checkUsername` 的字符类里没有空格
+ *    （它只收中文/字母/数字/下划线/中点），用空格拼出来的名字连注册规矩都过不了，
+ *    而那是我们**自己**拼的，用户没有任何办法解决。
+ *
+ * ⚠️ 那 6 位是从 openid 里**先滤出合法字符再取**的，不是直接 `slice(-6)`：
+ *    openid 里出现一个过不了字符类的字符，拼出来的名字同样会让整个登录抛
+ *    「只能用中文、字母…」—— 用户卡在一个自己没有任何办法解决的报错上。
+ *    滤完取不出东西时退回 `user`。
+ *
+ * 名字只是**给人看的**：认人从头到尾靠 `wechat_openid`（`handleWxLogin` 里那段），
+ * 所以这个名字多怪都不影响"还是不是同一个人"。也正因为它只是个展示名，
+ * 撞名时**换一个**是对的（用户可以自己去改）。
+ */
+function wxSuffix(openid: string): string {
+  const legal = openid.replace(/[^\p{Unified_Ideograph}〇a-z0-9_]/gu, '')
+  return legal.slice(-6) || 'user'
+}
+
+/** 撞名重试时的尾巴。4 位十六进制 = 65536 种，重试 20 次还撞等于天塌了。 */
+const wxTail = (): string => randomBytes(2).toString('hex')
+
+/**
+ * ★ 2026-10-12：**微信静默登录**（小程序那侧的身份）。
+ *
+ * 设计：docs/superpowers/specs/2026-10-12-miniprogram-outdoor-quick-edit-design.md §6.1。
+ * 小程序的哲学是「开工前不问任何信息」：没有登录页、没有授权弹窗，
+ * `wx.login()` 拿 code → 这张票就是那个人的全部身份（§6.2）。
+ *
+ * 三条纪律，和 `handleLogin` 是同一条：
+ *   · **认人只认库里那一列** —— 请求里带的只有 code，openid 是我们自己去换的。
+ *   · **上游的一切失败都是 UNAUTHORIZED**，且**不回显上游原文**
+ *     （那句 URL 里躺着 AppSecret，见 `codeToOpenid`）。
+ *   · **发票走 `issue()`** —— 小程序拿到的票和电脑版是**同一套**签名和寿命
+ *     （§6.2 那句"以后小程序的一切都站在这套账号上"）。
+ *
+ * ⚠️ **`password_hash` 存随机 32 字节 hex 占位**，这不是偷懒：
+ *    票是用「密码哈希」签的（`session.ts` 顶上那段），所以这一列必须有东西；
+ *    同时它必须**不是任何真密码** —— 存随机 hex 等于把"这个身份走不了
+ *    `/api/login`"做成一个**事实**而不是一句纪律：`verifyPassword` 只认
+ *    `scrypt$…` 那种形状，拿到 hex 直接判"对不上"（单测里拿空密码/openid/
+ *    用户名各撞了一遍）。
+ *
+ * ⚠️ 建号这里**没有事务**：中途失败（比如 email 撞了）会留下一行没被任何人
+ *    引用的 users —— 它登不进来（没人知道它的密码），也占不了别人的坑。
+ *    为它包一层事务要把 `openDb` 的迁移契约（迁移里不许自带事务控制语句）
+ *    以外的数据库写法搬进来，代价大于收益（最简原则）。
+ *
+ * 建号规则（和 brief 一致，别自创）：名字 `微信用户_` + openid 后 6 位、
+ * 邮箱 `wx-<openid>@wechat.local`（合成值，永不发信）。
+ */
+export async function handleWxLogin(body: unknown, deps: WxLoginDeps) {
+  const o = asObject(body)
+  const code = str(o.code).trim()
+  if (!code) throw new HttpError('BAD_REQUEST', '缺少 code')
+
+  const openid = await codeToOpenid(code, deps)
+
+  // ── 找：这个微信号已经有账号了吗 ────────────────────────────────────────
+  const found = deps.db.raw
+    .prepare('SELECT id, username, email FROM users WHERE wechat_openid = ?')
+    .get(openid) as PublicUser | undefined
+  if (found) {
+    // 老账号：直接发新票。哈希从**库里**取 —— 上面那个 SELECT 没带它，
+    // 而且 PublicUser 本来就**不该**有它（那是要送出去的形状）。
+    const h = (deps.db.raw.prepare('SELECT password_hash AS h FROM users WHERE id = ?')
+      .get(found.id) as { h: string }).h
+    return issue(found, h, deps)
+  }
+
+  // ── 建：带尾巴的名字重试，**唯一裁判是数据库** ─────────────────────────────
+  // 不先 SELECT 一遍"这个名字有没有人用"：两个人同时抢一个名字时，两边都会
+  // 查到"没人用"，然后一个成功一个炸在插入上 —— 而那个才是对的（和 handleSignup 同一套说法）。
+  const base = `微信用户_${wxSuffix(openid)}`
+  // 占位哈希**每建一个人算一次**：不共用一个常量，免得哪天有人把它当成
+  // "所有微信用户共享的密码"。它永远验不过（见上面那段），随机只是多一层确定。
+  const hash = randomBytes(32).toString('hex')
+  const email = `wx-${openid}@wechat.local`
+
+  let lastErr: unknown
+  for (let i = 0; i < 20; i++) {
+    const name = i === 0 ? base : `${base}_${wxTail()}`
+    try {
+      const r = deps.db.raw.prepare(
+        'INSERT INTO users (username, email, password_hash, created_at, wechat_openid) VALUES (?, ?, ?, ?, ?)',
+      ).run(name, email, hash, nowMs(deps), openid)
+      // 回读一次而不是拿拼出来的 `name`：和 handleSignup 一样 —— 存进去的是什么，
+      // 回来的就是什么，中间没有一层"我以为我存的是什么"。
+      //
+      // ⚠️ `lastInsertRowid` 是 **BigInt**（node:sqlite 就是这么回的），
+      //    直接拿它当 id 的话有两个都不会报错的症状：`1n !== 1`（票查不出人），
+      //    以及响应里 `JSON.stringify` 把它变成 `"1"` —— 字符串的 id。
+      //    转成 Number 再进 PublicUser：它上面写的就是 `id: number`。
+      const row = deps.db.raw
+        .prepare('SELECT id, username, email FROM users WHERE id = ?')
+        .get(Number(r.lastInsertRowid)) as PublicUser
+      return issue(row, hash, deps)
+    } catch (err) {
+      lastErr = err
+      const msg = String((err as Error).message)
+      // 只认**名字**那一种撞车，换个尾巴重试。
+      // ⚠️ 别的错误一律原样抛（认不出来的错误不是"你填得不对"）：
+      //    邮箱撞了 = 库里有一条脏数据（这个合成邮箱只可能由这里写），
+      //    openid 撞了 = 有人用别的身份占了这个号，两种都该进日志、不该被吞成"再试一次"。
+      // ⚠️ 匹配串写 `users.username`（点）**不是** `users_wechat`：后者会撞上
+      //    上面那条 openid 唯一索引的全名（`users_wechat_openid`）。
+      if (!msg.includes('users.username')) throw err
+      console.error(`微信建号撞名，换一个重试（第 ${i + 1} 次）：${name}`)
+    }
+  }
+  // 20 次全撞 —— 不是"用户运气不好"，是这里出问题了，别伪装成登录失败
+  throw lastErr
 }
 
 export async function handleChangePassword(body: unknown, user: PublicUser, deps: AccountDeps) {
