@@ -20,9 +20,22 @@ import { putPixelsFlipped } from './pixels'
  *   ① canvas 路 —— `canvasToTempFilePath({ canvas: 画布节点 })`：一步到位、零拷贝；
  *   ② pixels 路 —— `readPixels()`（**翻行**，GL 自下而上）→ 离屏 2D 画布 `putImageData`
  *      → 从那张 2D 画布 `canvasToTempFilePath`。
- * 先 ① 后 ②：① 只在**报错**时才退到 ②。真机/模拟器实际哪条在跑，见
+ * 先 ① 后 ②：① 报错、**或导出的文件是纯色**（见下「两道空白防线」）时退到 ②。
+ * 真机/模拟器实际哪条在跑，见
  * `mini/README.md`「全尺寸导出存相册」那节的实测记录（2026-10-12 模拟器：① 就通）。
  * `ExportedPhoto.via` 把"这趟走的哪条"还给调用方（探针拿它出证据），控制台也打一行。
+ *
+ * ## ★ 两道空白防线（2026-10-12 审查 Critical 后补）
+ * 「① 报错才退 ②」防不住**"没报错、但导出的是一张空白图"** —— webgl 画布认不认
+ * `canvasToTempFilePath` 本来就没文档化，「成功但空白」正是它可能的结局；真发生了
+ * 就是黑图配一声「已存到相册」（这项目记过的"最坏结果"）。所以：
+ *   ① **buffer 断言（两路共用）**：渲染后、**任何导出动作之前** —— 16×16 网格数颜色
+ *      （照 `pages/index.ts` 的 `__probeColors`，不翻行），纯色 = 这张图根本没画出来
+ *      （着色器编不过 / 上下文坏了）→ 抛人话、**绝不进相册**。⚠️ 这时**不落 ②**：
+ *      两路导出去的都会是同一张纯色图，多导一遍没有意义。成本 = 一次全量 readPixels。
+ *   ② **文件级空白检查（只保 ①）**：① 的回调"成功"了也要把文件画进一张 64×64 的
+ *      离屏 2D 画布采样一遍，纯色就当 ① 失败、自动落 ② 重导。这是「① 成功但空白」
+ *      的唯一防线。① 的 success 回调给**空路径**也算失败（同一处判据的收口）。
  *
  * ## 借完要还（和 thumbs.ts 同一条）
  * 导出 = buffer 调目标尺寸 + 用**当前参数** render；导出完必须 `resizeToImage()` +
@@ -57,6 +70,87 @@ export interface ExportPhotoOpts {
  */
 const JPG_QUALITY = 0.92
 
+// ── 两道空白防线（两路共用 / 只保 ① 路；理由见文件头）────────────────────────
+
+/** 采样网格（和 `pages/index.ts` 的 `__probeColors` 同款 16×16） */
+const BLANK_GRID = 16
+
+/**
+ * 文件侧判"纯色"的容差（每通道极差）——**不能像 GL 侧那样用全等**：
+ * 文件过了一趟 JPEG 压缩，一块纯色会被压出几阶差（GL 侧的像素没这一步）。
+ */
+const BLANK_TOLERANCE = 8
+
+/**
+ * 「画面是空白」专门的一个错误类型 —— 唯一的作用是**穿过 exportPhoto 的通用
+ * catch**（那里会把技术错误换成一句通用人话；这条自己就是人话，不能被换掉）。
+ */
+class BlankFrameError extends Error {}
+
+/**
+ * ★ 第一道空白防线（两路共用）：buffer 是不是纯色 —— `render(a)` 之后、任何导出
+ * 动作之前调。纯色 = 这张图根本没画出来（着色器编不过 / 上下文坏了），**抛**：
+ * ① 这时落 ② 没有意义（两路都会导出一张纯色图）；② 抛出去之后**绝不进相册**。
+ *
+ * 采样照 `__probeColors` 的配方：16×16 网格、数**不同颜色数**（GL 侧像素是全等值，
+ * 纯色 = 恰好 1 种）。⚠️ 不翻行 —— 数颜色和行序无关。
+ * 成本：一次全量 readPixels（12MP 约 48MB）—— 两道防线里它更贵，但它是**唯一**
+ * 能拦住"两路都空白"的闸。
+ */
+function assertPainted(pipe: TonePipeline, size: PhotoSize): void {
+  const px = pipe.readPixels()
+  const seen: { [k: string]: true } = {}
+  for (let i = 0; i < BLANK_GRID; i++) {
+    for (let j = 0; j < BLANK_GRID; j++) {
+      const x = Math.floor((i + 0.5) * size.width / BLANK_GRID)
+      const y = Math.floor((j + 0.5) * size.height / BLANK_GRID)
+      const o = (y * size.width + x) * 4
+      seen[px[o] + ',' + px[o + 1] + ',' + px[o + 2]] = true
+      if (Object.keys(seen).length > 1) return // 早就不是纯色了，别白扫完
+    }
+  }
+  const only = Object.keys(seen)[0] || ''
+  console.error('[export] 画面是纯色（' + only + '）—— 渲染没出画面，不导出、不进相册')
+  throw new BlankFrameError('照片没画出来，再点一次试试')
+}
+
+/**
+ * ★ 第二道空白防线（只保 ① 路）：① 导出的**文件**是不是纯色 —— 画进一张 64×64 的
+ * 离屏 2D 画布采一采。① 的"成功"回调给了路径，文件里也可能是空白（见文件头）。
+ *
+ * 判据 = 每通道**极差 ≤ BLANK_TOLERANCE**（理由见那个常量）；读都读不回来
+ * （onerror）按"不可用"抛 —— 调用方当 ① 失败、落 ② 处理。
+ */
+function fileLooksBlank(path: string): Promise<boolean> {
+  const n = 64
+  const canvas = wx.createOffscreenCanvas({ type: '2d', width: n, height: n })
+  const ctx = canvas.getContext('2d') as WechatMiniprogram.IAnyObject
+  const img = canvas.createImage()
+  return new Promise<boolean>((ok, no) => {
+    img.onload = () => {
+      try {
+        ctx.drawImage(img, 0, 0, n, n)
+        const data: Uint8Array = ctx.getImageData(0, 0, n, n).data
+        const lo = [255, 255, 255]
+        const hi = [0, 0, 0]
+        for (let i = 0; i < n * n; i++) {
+          for (let c = 0; c < 3; c++) {
+            const v = data[i * 4 + c]
+            if (v < lo[c]) lo[c] = v
+            if (v > hi[c]) hi[c] = v
+          }
+        }
+        const spread = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2])
+        ok(spread <= BLANK_TOLERANCE)
+      } catch (e) {
+        no(e) // 画不进/读不出（上下文坏了）：当不可用，落 ②
+      }
+    }
+    img.onerror = () => no(new Error('① 导出的文件读不回来'))
+    img.src = path
+  })
+}
+
 /**
  * 把「照片 + 当前参数」按**照片原尺寸**渲染出来，导成一张 JPG 临时文件。
  *
@@ -87,11 +181,18 @@ export async function exportPhoto(
     node.width = size.width
     node.height = size.height
     pipe.render(a)
+    assertPainted(pipe, size) // ★ 第一道空白防线（两路共用；抛出去绝不进相册）
 
     let out: ExportedPhoto | null = null
     if (!opts.forceFallback) {
       try {
-        out = { path: await canvasToFile(node, size), via: 'canvas' }
+        const path = await canvasToFile(node, size)
+        // ★ 第二道空白防线：① 说"成功"也可能给出一张空白（webgl 画布是未文档化的支持）
+        if (await fileLooksBlank(path)) {
+          console.warn('[export] 画布路导出的文件是纯色（这张图没画出来）—— 不当作结果，改走像素兜底')
+        } else {
+          out = { path, via: 'canvas' }
+        }
       } catch (e) {
         // 这一步失败 = 小程序不认 webgl 画布的 canvasToTempFilePath（Ruling 5 防的就是它）
         console.warn('[export] 画布直接导出不行，改走像素兜底：' + reasonOf(e))
@@ -103,6 +204,7 @@ export async function exportPhoto(
       '，' + (Date.now() - t0) + 'ms')
     return out
   } catch (e) {
+    if (e instanceof BlankFrameError) throw e // 它自己就是人话（控制台那一行已经在防线里打过）
     console.error('[export] 导出失败：', e)
     throw new Error('这张照片导出失败了，再点一次试试')
   } finally {
@@ -226,7 +328,9 @@ function canvasToFile(canvas: WechatMiniprogram.IAnyObject, size: PhotoSize): Pr
       destHeight: size.height,
       fileType: 'jpg',
       quality: JPG_QUALITY,
-      success: r => ok(r.tempFilePath),
+      // ⚠️ 空路径当**失败**（同一处"① 成功回调不可信"判据的收口）——让它落 ②，
+      // 别把 undefined 一路喂给 saveImageToPhotosAlbum
+      success: r => (r.tempFilePath ? ok(r.tempFilePath) : no(new Error('画布导成临时文件失败：空路径'))),
       fail: e => no(new Error('画布导成临时文件失败：' + ((e && e.errMsg) || '未知原因'))),
     })
   })
