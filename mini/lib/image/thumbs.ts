@@ -1,6 +1,7 @@
 import { ZERO, type Adjustments } from '../shared/adjustments'
 import { ORIGINAL_ID, type Preset } from '../shared/presets'
 import type { CanvasNode, TonePipeline } from '../gl/tonePipeline'
+import { putPixelsFlipped } from './pixels'
 
 /**
  * 风格栏那一排效果小图 —— **用真渲染管线画出来的**，不是 CSS 滤镜近似
@@ -100,7 +101,8 @@ export async function renderThumbSprite(
       node.width = cells[i].w
       node.height = RENDER_H
       pipe.render(entries[i].adjustments)
-      drawCell(ctx, pipe.readPixels(), cells[i].w, cells[i].x)
+      // GL 读回来的行序自下而上 —— 翻行的规矩只有一份，在 lib/image/pixels.ts
+      putPixelsFlipped(ctx, pipe.readPixels(), cells[i].w, RENDER_H, cells[i].x, 0)
     }
   } finally {
     // ③ 还给屏幕：buffer 回照片原尺寸 + 用当前参数重画一帧。
@@ -112,26 +114,6 @@ export async function renderThumbSprite(
 
   const path = await exportSprite(sprite, spriteW, RENDER_H)
   return { path, cells }
-}
-
-/**
- * 把一格 readPixels 的像素贴进拼图画布的 (x, 0)。
- *
- * ⚠️ GL 读回来的行序**自下而上**（见 tonePipeline.readPixels 的注释），
- * 这里逐行倒着搬 —— 少了这一步整排小图上下颠倒（而且看着像"照片本来就那样"）。
- * 手写逐字节循环（不走 subarray/set）：小图一共几万字节，代价可以忽略，
- * 换来的是不依赖任何 TypedArray 方法在两边实现的差异。
- */
-function drawCell(ctx: WechatMiniprogram.IAnyObject, px: Uint8Array, w: number, x: number): void {
-  const img = ctx.createImageData(w, RENDER_H)
-  const dst: Uint8Array = img.data
-  const row = w * 4
-  for (let y = 0; y < RENDER_H; y++) {
-    const s = (RENDER_H - 1 - y) * row
-    const d = y * row
-    for (let k = 0; k < row; k++) dst[d + k] = px[s + k]
-  }
-  ctx.putImageData(img, x, 0)
 }
 
 /** 拼图 → 临时文件（png）。导出的是**整张 sprite**，格子靠 background-position 切。 */

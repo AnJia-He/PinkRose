@@ -99,6 +99,12 @@
   font-size: 30rpx;
 }
 
+/* 「保存」是这条顶栏上**唯一要人点**的东西 —— 颜色按 mock 给主色；
+   「换一张」保持 muted（它只是退路，别和主按钮抢）。 */
+.tb-right {
+  color: var(--accent-400);
+}
+
 .edit {
   display: flex;
   flex-direction: column;

@@ -17,6 +17,7 @@ import { ZERO, type Adjustments } from '../../lib/shared/adjustments'
 import { activePresetId, ORIGINAL_ID, PRESETS } from '../../lib/shared/presets'
 import { TonePipeline, type CanvasNode } from '../../lib/gl/tonePipeline'
 import { renderThumbSprite, type ThumbCell } from '../../lib/image/thumbs'
+import { exportPhoto, saveToAlbum } from '../../lib/image/export'
 
 interface IndexData {
   stage: 'empty' | 'edit'
@@ -80,6 +81,16 @@ interface StageBox {
   node: CanvasNode
 }
 
+/** `__probeExport` 的回报形状（只有探针读它，见那个方法和 `probeExport` 字段）。 */
+interface ExportProbe {
+  state: 'running' | 'ok' | 'fail'
+  /** 走的那条路（export.ts 的 ExportVia） */
+  via?: string
+  path?: string
+  why?: string
+  ms?: number
+}
+
 /**
  * 一次问两样东西：照片区容器多大（算画布显示尺寸用）、画布节点在哪。
  *
@@ -132,8 +143,18 @@ Page({
 
   // 非 data 的实例状态。`as` 是为了让推断出 `TonePipeline | null`（不然收窄成 null）。
   pipe: null as TonePipeline | null,
+  /** 画布节点（★ Task 9：保存导出要用 —— `wx.canvasToTempFilePath` 认的是节点，不是管线）。
+   *  和 `pipe` 同生同死：startRender 里一起挂上、disposePipe 里一起清掉。 */
+  node: null as CanvasNode | null,
   /** 当前这套参数（点风格 = 整组赋值；说一句/滑杆那几个任务接下来也读它） */
   params: { ...ZERO } as Adjustments,
+  /** ★ Task 9：保存进行中（只防重入，不参与渲染 —— 所以放实例字段、不进 data）。
+   *  点了「保存」到导出+存盘走完之前，再点多少次都被这一条忽略。 */
+  saving: false,
+  /** ★ 探针专用（Task 9）：上一趟 `__probeExport` 的结果（异步结果没法用 callMethod
+   *  直接拿，探针轮询 `getCurrentPages()` 里的这个字段 —— 同 task8 读 peekStart 那招）。
+   *  生产路径**没人读它**。 */
+  probeExport: null as ExportProbe | null,
   /** 「按住看原图」的计时器（null = 没在按）。到点之前谁动一下就清掉。 */
   peekTimer: null as number | null,
   /** 现在画面上画的是不是**原图**（按住看原图进行中）。 */
@@ -229,6 +250,7 @@ Page({
     this.disposePipe() // 万一还挂着一根（正常路径里「换一张」那一步已经收掉了）
     const pipe = TonePipeline.fromCanvasNode(box.node)
     this.pipe = pipe
+    this.node = box.node // 保存导出要用（和 pipe 同生同死，disposePipe 一起清）
     try {
       pipe.setImage(img)
       pipe.resizeToImage() // 绘图缓冲 = 照片原尺寸（和电脑版一致）
@@ -276,6 +298,7 @@ Page({
     this.peeking = false
     if (this.pipe) this.pipe.dispose()
     this.pipe = null
+    this.node = null // 和 pipe 同生同死（保存导出要用它，见 node 字段的注释）
   },
 
   onPickAgain() {
@@ -408,5 +431,78 @@ Page({
     return { colors: Object.keys(seen).length, first, err: pipe.getError() }
   },
 
-  onSave() {}, // 任务 9
+  /**
+   * ★ Task 9 · 保存：**全尺寸导出 → 存进手机相册**（两半的实现在 lib/image/export.ts，
+   * 导出尺寸、双路径、授权引导都在那边；这里只管流程和 toast）。
+   *
+   * 三件事：
+   *   ① **防重复点**：`saving` 一问就早退 —— 导出+存盘这一趟可能要一两秒，
+   *      连点会导出 N 张一样的图、弹 N 个系统框。顺带 `showLoading(mask)` 把页面
+   *      按住（也顺手挡住"导出到一半点「换一张」"—— 管线被拆了这趟就废了）。
+   *   ② **失败分两段报**：导出失败 / 存相册失败，各自一句人话（`e.message` 就是
+   *      给用户看的话，见 export.ts 的文件头）。
+   *   ③ 成功那声「已存到相册」在 saveToAlbum 里面 toast —— 它才知道存盘真的过了。
+   */
+  async onSave() {
+    if (this.saving) return
+    const pipe = this.pipe
+    const node = this.node
+    if (!pipe || !node) return
+    this.saving = true
+    wx.showLoading({ title: '正在保存…', mask: true })
+    try {
+      let exported
+      try {
+        exported = await exportPhoto(
+          node, pipe, { width: this.data.photoW, height: this.data.photoH }, this.params)
+      } catch (e) {
+        // 细节 export.ts 已经打过控制台了（这里不再打第二遍）
+        wx.hideLoading()
+        wx.showToast({ title: (e as Error).message || '这张照片导出失败了，再点一次试试', icon: 'none' })
+        return
+      }
+      // 界面反馈交给 saveToAlbum（成功 toast / 被拒的引导弹窗都在它里面）
+      wx.hideLoading()
+      try {
+        await saveToAlbum(exported.path)
+      } catch (e) {
+        wx.showToast({ title: (e as Error).message || '存相册失败了，再点一次试试', icon: 'none' })
+      }
+    } finally {
+      this.saving = false
+    }
+  },
+
+  /**
+   * ★ 探针专用（Task 9）：跑一遍导出并回报 `{ state, via, path, ms }`，同时把结果
+   * 挂到实例字段 `probeExport` 上 —— **异步结果没法用 `page.callMethod` 直接拿**，
+   * 探针轮询 `getCurrentPages()` 里那个字段（同 task8 读 `peekStart` 那招）。
+   *
+   * `force`='pixels' 时强制走 readPixels 兜底 —— 双路径要**各实测一次**，这是那条的入口。
+   * ⚠️ 它**只导出、不碰相册**（保存那条路另外测）：生产路径没人调它。
+   */
+  async __probeExport(force?: string) {
+    const pipe = this.pipe
+    const node = this.node
+    const running: ExportProbe = { state: 'running' }
+    this.probeExport = running
+    if (!pipe || !node) {
+      this.probeExport = { state: 'fail', why: '没有管线（先载入照片）' }
+      return this.probeExport
+    }
+    const t0 = Date.now()
+    try {
+      const r = await exportPhoto(
+        node, pipe, { width: this.data.photoW, height: this.data.photoH }, this.params,
+        { forceFallback: force === 'pixels' })
+      this.probeExport = { state: 'ok', via: r.via, path: r.path, ms: Date.now() - t0 }
+    } catch (e) {
+      this.probeExport = {
+        state: 'fail',
+        why: e && (e as Error).message ? (e as Error).message : String(e),
+        ms: Date.now() - t0,
+      }
+    }
+    return this.probeExport
+  },
 })

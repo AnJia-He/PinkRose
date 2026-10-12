@@ -229,6 +229,22 @@ export class TonePipeline {
   }
 
   /**
+   * 画布最多能开多大（这台设备的 `MAX_TEXTURE_SIZE` 与 `MAX_VIEWPORT_DIMS` 里最小的
+   * 那个）—— **全尺寸导出对设备上限的兜底**（见 `lib/image/export.ts`）。
+   * 16384 下基本不触发（2026-10-12 模拟器实测：纹理 16384、视口 32767×32767）。
+   * 上限一个都读不出来（上下文坏了）时返回 0 —— 调用方按"不设限"处理，别拿它当尺寸用。
+   */
+  maxCanvasSide(): number {
+    const gl = this.gl
+    const tex = Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 0
+    const dims = gl.getParameter(gl.MAX_VIEWPORT_DIMS)
+    const vw = dims ? Math.abs(Number(dims[0])) || 0 : 0
+    const vh = dims ? Math.abs(Number(dims[1])) || 0 : 0
+    const sides = [tex, vw, vh].filter(n => n >= 1)
+    return sides.length ? Math.min(...sides) : 0
+  }
+
+  /**
    * 入参是 `[-100, 100]` 的原始参数，不是 `[-1, 1]` 的 Unit：
    * 两者结构相同，传错了（比如 exposure: 100）类型也过，但画面会算成 2^100。
    * 换算（`toUnit` + 名字映射）走共享 `uniforms.ts` 的 `uniformValues`

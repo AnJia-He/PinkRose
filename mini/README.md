@@ -99,6 +99,13 @@ CLI + automator 路径的现役版本。⚠️ 本机的网络策略挡住了微
   不是磁盘上 `project.config.json` 的新值——改了文件里的 appid 不重启流程不生效。
 - ⚠️ 探针里别用 `page.callMethod()` 等页面长任务（会超时）；用
   「点按钮 + 轮询 `page.data()`」的写法。
+- ⚠️ **`mockWxMethod` 的 mock 函数要「既回调、又返回结果对象」**（2026-10-12 反混淆
+  devtools 的 shim 确认）：对**非 Sync** 的 API，shim 会把 options 里的
+  `success/fail/complete` **剥掉**再喂给你的 mock，并拿 **mock 的返回值**当 API 结果
+  （`errMsg` 不含 `:ok` → 走 fail，否则走 success）。只管回调、`return undefined`
+  的 mock 在当前构建上会报 `Cannot read properties of undefined (reading 'errMsg')`
+  且调用方 promise **永不 settle**（保存流程会卡死在"保存中"）。写法：
+  `async function (opt) { …; if (opt.fail) opt.fail(res); return res }`。
 - ⚠️ **自动化会话「半死不活」的症状**：`mp.mockWxMethod('chooseMedia', …)` 报
   `wx.chooseMedia not exists`，而且从那以后 `wx.chooseMedia` 直接变成 `undefined`
   （那次失败的 mock 把 API 抹掉了）。这是**会话坏了，不是代码坏了** ——
@@ -110,6 +117,38 @@ CLI + automator 路径的现役版本。⚠️ 本机的网络策略挡住了微
   `pages/index/index.ts` 当空气、报「未找到 pages/index/index.js」。
 - 电脑版改了 `src/styles.css` 的深色令牌时，`app.wxss` 里那份手工镜像
   要跟着看一眼（那边是 `light-dark(浅, 深)` 配对，这边只抄深色那半）。
+
+## 全尺寸导出存相册（2026-10-12 模拟器验收）
+
+顶栏「保存」= **全尺寸导出**（照片原尺寸，不是屏幕上缩过的那张小图）→ 写进手机相册。
+实现在 `lib/image/export.ts`（`exportPhoto` + `saveToAlbum`），页面只管防重入和 toast。
+
+- **导出**：画布 buffer 本来就是照片原尺寸（`resizeToImage` 设的），导出只是**按目标尺寸
+  重画一帧** → `wx.canvasToTempFilePath({canvas: 画布节点, fileType:'jpg', quality:0.92})`。
+  设备上限兜底 = `min(MAX_TEXTURE_SIZE, MAX_VIEWPORT_DIMS)`（管线新方法 `maxCanvasSide()`）+
+  共享 `fitWithin` —— 模拟器 16384，基本不触发；真机老机器超上限时会缩并在控制台说清楚。
+  导出完画布**还回屏幕**（resize 回原尺寸 + 当前参数重画，`finally` 里，失败也还）。
+- **双路径（Ruling 5）**：① canvas 路（上面那条，**默认先走**）；①报错才退 ② pixels 路：
+  `readPixels()` → 翻行（`lib/image/pixels.ts`，风格栏拼图共用同一份）→ 离屏 2D 画布
+  `putImageData` → 从那张 2D 画布导出。
+  **实测（2026-10-12 模拟器）：① 就通，② 也通** —— webgl 画布认 `canvasToTempFilePath`
+  （Ruling 5 担心的"不认"没出现）。两条路各跑一遍，画面逐格 diff = 0。
+  **当前线上走的是 ①**；真机上 ① 若报错会自动落 ②，控制台依次能看到
+  `[export] 画布直接导出不行，改走像素兜底：…` 和 `[export] 导出完成（pixels 路）`。
+- **实测数字**（模拟器，测试图套「黑白」）：
+
+  | 照片尺寸 | ① canvas | ② pixels | 导出的 JPG |
+  |---|---|---|---|
+  | 1080×2048 | 88ms | 154ms | 167 KB |
+  | 4032×3024（12MP） | 322ms | 653ms | 1513 KB |
+
+  两种尺寸导出后 `wx.getImageInfo` 的宽高都 == 照片原尺寸（探针断言过）。
+- **授权**：第一次调 `saveImageToPhotosAlbum` 弹**系统框**（模拟器真机实测，截图在
+  `.superpowers/mini/task9-real-save-*.png`）；被拒过一次后系统框不再弹，接口直接
+  `auth deny` —— 这时弹人话 modal（「去设置 / 算了」）→ 点「去设置」才开
+  `wx.openSetting` → 回来若已允许**自动重存一次**。三条路（拒了→开了→自动重存 /
+  拒了→算了 / 去了设置但没开）探针都走通过。
+- ⏳ **待真机**：真机导出耗时、相册里真的出现照片、首存的系统框样子。
 
 ## 已知平台行为（2026-10-12 模拟器实测；标「待真机」的没验过）
 
@@ -137,8 +176,15 @@ CLI + automator 路径的现役版本。⚠️ 本机的网络策略挡住了微
   再读最稳（本仓库探针都这么做）。行序自下而上（GL 约定，同电脑版注释）。
 - **`mp.screenshot` 在大画布上会超时**：画布是 4928×6560 时，
   `mp.screenshot` 报 `timeout waiting for automator response`（**开发者工具侧**的
-  回复超时；automator 客户端本身没有超时设置）。1440×1152 / 1080×2048 截图正常。
-  渲染本身没问题（同屏 readPixels 249 色、`getError()`=0）—— 大图验收只信
-  readPixels，或先把画布换成小图再截图。
+  回复超时；automator 客户端本身没有超时设置）。1440×1152 / 1080×2048 截图正常；
+  4032×3024（12MP）也会偶发超时（2026-10-12 Task 9 探针：同一张连报两次，重试
+  仍超时就只记一笔接着跑）。渲染本身没问题（同屏 readPixels 249 色、`getError()`=0）
+  —— 大图验收只信 readPixels，或先把画布换成小图再截图。
+- **真·保存（未 mock）在模拟器里弹系统授权框**（`saveImageToPhotosAlbum`，
+  文案是「…希望获取 saveImageToPhotosAlbum 的操作权限」+ 拒绝 / 允许）。⚠️ 这个框
+  **不点掉会一直挂着**（`mp.native().cancelModal()` 收不掉它 —— 那是给 wx.showModal
+  用的），而且它**不挡 automator 的 evaluate / callMethod**：2026-10-12 探针的
+  12MP 那一批 + 后一趟冒烟 43/43 都是在框挂着的情况下跑完的。截图时它会占掉
+  屏幕下半截（要拍底部的东西先手工把它点了）。
 - **参数真的进管线**：readPixels 数颜色只是「画出来了」；探针还量了「参数生效」——
   `exposure 0 → 50` 重渲后 16×16 网格平均亮度 103.2 → 121.4（真照片 1080×2048）。
