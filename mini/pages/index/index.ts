@@ -18,6 +18,9 @@ import { activePresetId, ORIGINAL_ID, PRESETS } from '../../lib/shared/presets'
 import { TonePipeline, type CanvasNode } from '../../lib/gl/tonePipeline'
 import { renderThumbSprite, type ThumbCell } from '../../lib/image/thumbs'
 import { exportPhoto, saveToAlbum } from '../../lib/image/export'
+import { ApiError, apiPost } from '../../lib/api'
+import { getToken } from '../../lib/auth'
+import { prepareForModel, prepareForRouting } from '../../lib/image/prepare'
 
 interface IndexData {
   stage: 'empty' | 'edit'
@@ -91,6 +94,41 @@ interface ExportProbe {
   ms?: number
 }
 
+/** `__probeLogin` / `__probeMe` 的回报形状（Task 11；异步结果同样靠实例字段带出去）。 */
+interface NetProbe {
+  state: 'running' | 'ok' | 'fail'
+  /** 拿到票时只报**长度** —— ★ 票本身绝不 print（探针日志要贴进报告）。 */
+  tokenLen?: number
+  /** 失败时：能直接给人看的那句话（Thrown 的 message 就是那个口径，见 lib/api.ts）。 */
+  message?: string
+  /** ApiError 才有：服务端错误码 + HTTP 状态码（认 503「没配」和 401「重登」用）。 */
+  code?: string
+  status?: number | null
+  ms?: number
+}
+
+/**
+ * `__probePrepare` 的回报形状（Task 11：缩图数字）。
+ * ⚠️ dataURL 本身**不进这里** —— 一条路由 dataURL 就几十 KB、送模型的几百 KB，
+ * 搬过 automator 又慢又没意义。它俩另放两个实例字段，探针在**页面里**现解
+ * JPEG 头拿真实尺寸（见 `.superpowers/mini/task11-probe.cjs`）。
+ */
+interface PrepareProbe {
+  state: 'running' | 'ok' | 'fail'
+  why?: string
+  /** 源照片尺寸（wx.getImageInfo 量的） */
+  srcW?: number
+  srcH?: number
+  /** 路由小图：dataURL 长度 / dataURL 前 23 个字（前缀断言用）/ 耗时 */
+  routeLen?: number
+  routePrefix?: string
+  routeMs?: number
+  /** 送模型的正图：函数返回的目标尺寸 / 耗时（真实文件尺寸由探针解 JPEG 头核） */
+  modelW?: number
+  modelH?: number
+  modelMs?: number
+}
+
 /**
  * 一次问两样东西：照片区容器多大（算画布显示尺寸用）、画布节点在哪。
  *
@@ -155,6 +193,15 @@ Page({
    *  直接拿，探针轮询 `getCurrentPages()` 里的这个字段 —— 同 task8 读 peekStart 那招）。
    *  生产路径**没人读它**。 */
   probeExport: null as ExportProbe | null,
+  /** ★ 探针专用（Task 11）：`__probeLogin` / `__probeMe` / `__probePrepare` 的上一趟
+   *  结果（同 probeExport 那招）。生产路径**没人读它们**。 */
+  probeLogin: null as NetProbe | null,
+  probeMe: null as NetProbe | null,
+  probePrepare: null as PrepareProbe | null,
+  /** ★ 探针专用（Task 11）：两条缩图的 dataURL 原件（几十 KB～几百 KB，别搬过
+   *  automator）—— 探针在页面里解析 JPEG 头，只把小尺寸拿回去。 */
+  prepRouteDataUrl: '',
+  prepModelDataUrl: '',
   /** 「按住看原图」的计时器（null = 没在按）。到点之前谁动一下就清掉。 */
   peekTimer: null as number | null,
   /** 现在画面上画的是不是**原图**（按住看原图进行中）。 */
@@ -504,5 +551,112 @@ Page({
       }
     }
     return this.probeExport
+  },
+
+  /**
+   * ★ Task 11 · dev 通道那颗「试一试登录」—— 走一遍 `getToken()`（stale 有票就直接
+   *  拿、没票就 wx.login → /api/wx-login），把结果 toast 一句人话（真机上人看得见），
+   *  细节留在 `probeLogin` 给自动化读。**只给开发版**（wxml 里 wx:if="{{dev}}"）。
+   */
+  async onDevLogin() {
+    const r = await this.__probeLogin()
+    wx.showToast({
+      title: r.state === 'ok' ? '登录好了（票 ' + r.tokenLen + ' 位）' : (r.message || '登录没成功'),
+      icon: 'none',
+    })
+  },
+
+  /**
+   * ★ Task 11 · 探针专用：走一遍静默登录（`lib/auth.ts` 的 getToken）。
+   *
+   * 不带任何前置：storage 有票就拿（报长度）、没票就 wx.login → POST /api/wx-login。
+   * 后端没配微信钥匙时，这里应当拿到 **503 口径**的那句「后端没有配置微信登录」
+   * （不是 401 —— 401 是"重登一次"的信号，而那件事重登一百次也不会好）。
+   */
+  async __probeLogin(): Promise<NetProbe> {
+    this.probeLogin = { state: 'running' }
+    const t0 = Date.now()
+    try {
+      const token = await getToken()
+      this.probeLogin = { state: 'ok', tokenLen: token.length, ms: Date.now() - t0 }
+    } catch (e) {
+      this.probeLogin = {
+        state: 'fail',
+        message: e && (e as Error).message ? (e as Error).message : String(e),
+        code: e instanceof ApiError ? e.code : undefined,
+        status: e instanceof ApiError ? e.status : undefined,
+        ms: Date.now() - t0,
+      }
+    }
+    console.info('[index] 探针登录：' + JSON.stringify(this.probeLogin))
+    return this.probeLogin
+  },
+
+  /**
+   * ★ Task 11 · 探针专用：打一次**需要登录**的接口（`apiPost` 的常规出口），
+   * 把 401 → 清票 → 重登 → 重试一遍那条路走穿（或在不该继续的地方如实报错）。
+   *
+   * ⚠️ 走的路径是 `/api/me`（"我是谁"——服务端自己那条 Bearer 用例问的也是它），
+   * 但**只该在"wx.request 被 mock 成脚本化响应"的探针里跑**：真服务端的
+   * `/api/me` 是 GET，而 apiPost 是 POST-only，URL 在这条探针里只是个标签。
+   */
+  async __probeMe(): Promise<NetProbe> {
+    this.probeMe = { state: 'running' }
+    const t0 = Date.now()
+    try {
+      const r = await apiPost<{ user?: { username?: string } }>('/api/me', {})
+      const name = r && r.user && r.user.username ? r.user.username : ''
+      this.probeMe = { state: 'ok', message: name, ms: Date.now() - t0 }
+    } catch (e) {
+      this.probeMe = {
+        state: 'fail',
+        message: e && (e as Error).message ? (e as Error).message : String(e),
+        code: e instanceof ApiError ? e.code : undefined,
+        status: e instanceof ApiError ? e.status : undefined,
+        ms: Date.now() - t0,
+      }
+    }
+    console.info('[index] 探针 apiPost：' + JSON.stringify(this.probeMe))
+    return this.probeMe
+  },
+
+  /**
+   * ★ Task 11 · 探针专用：对这一张照片各跑一遍两条缩图（640 / 2048），
+   * 结果写进 `probePrepare`；两张 dataURL 原件另挂两个字段（探针在页面里解 JPEG 头）。
+   *
+   * 照片用**当前正编辑的那张**，没有就用 dev 测试图 —— 缩图只看文件路径 + 尺寸，
+   * 不需要真的进编辑态（这也让这条探针在空态就能跑）。
+   */
+  async __probePrepare(): Promise<PrepareProbe> {
+    this.probePrepare = { state: 'running' }
+    try {
+      const path = this.data.photo || DEV_PHOTO
+      const info = await new Promise<WechatMiniprogram.GetImageInfoSuccessCallbackResult>(
+        (ok, no) => wx.getImageInfo({ src: path, success: ok, fail: no }))
+
+      const t0 = Date.now()
+      const route = await prepareForRouting(path, info.width, info.height)
+      const routeMs = Date.now() - t0
+
+      const t1 = Date.now()
+      const model = await prepareForModel(path, info.width, info.height)
+      const modelMs = Date.now() - t1
+
+      this.prepRouteDataUrl = route
+      this.prepModelDataUrl = model.dataUrl
+      this.probePrepare = {
+        state: 'ok',
+        srcW: info.width, srcH: info.height,
+        routeLen: route.length, routePrefix: route.slice(0, 23), routeMs,
+        modelW: model.width, modelH: model.height, modelMs,
+      }
+    } catch (e) {
+      this.probePrepare = {
+        state: 'fail',
+        why: e && (e as Error).message ? (e as Error).message : String(e),
+      }
+    }
+    console.info('[index] 探针缩图：' + JSON.stringify(this.probePrepare))
+    return this.probePrepare
   },
 })

@@ -16,6 +16,12 @@
          见 index.ts 的 onLoad）。点了把打进包的 assets/test-photo.jpg 走「选完照片」
          的同一条路 —— 绕开系统选图弹窗，automator 才点得动。别改名成看不出用途的词。 -->
     <button class="big-btn ghost dev-btn" wx:if="{{dev}}" bindtap="onDevPhoto">载入测试照片</button>
+    <!-- ★ Task 11 的 dev 通道：跑一遍静默登录（getToken：有票就拿、没票就 wx.login →
+         换票），成功/失败都 toast 一句人话。给冒烟/真机验收一个"只测登录"的入口
+         （「说一句」那条路要等 Task 12）。
+         ⚠️ class **故意不叫 dev-btn**：冒烟的哨兵按 `.dev-btn` 找的是上面那颗
+         「载入测试照片」（$ 取第一个命中）——别给这颗也挂上，也别调换两行顺序。 -->
+    <button class="big-btn ghost dev-login" wx:if="{{dev}}" bindtap="onDevLogin">试一试登录</button>
   </view>
 
   <view class="edit" wx:if="{{stage === 'edit'}}">
