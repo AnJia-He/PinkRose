@@ -181,7 +181,9 @@ async function shot(mp, name) {
     const a = probe.original, b = probe.bw
     if (a && b) check('  ③ 「原图」与「黑白」first 不相同', a.first !== b.first, 'original=' + a.first + '  bw=' + b.first)
     else check('  ③ 「原图」与「黑白」两档都取到了', false, 'original=' + JSON.stringify(a) + ' bw=' + JSON.stringify(b))
-    await shot(mp, 'smoke-ok')
+    // 收尾这一张按**成败**命名：红跑（比如全黑变异）不许再叫 smoke-ok
+    // （2026-10-12 自审抓到：M2 全红那次截图被存成了 smoke-ok-*.png）
+    await shot(mp, results.some(r => !r.ok) ? 'smoke-fail' : 'smoke-ok')
   }
 
   // ── 收尾：汇总 + 退出码 ──────────────────────────────────────────────────
