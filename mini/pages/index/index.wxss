@@ -1,7 +1,10 @@
 /* index.wxss —— 空态 / 编辑态（视觉照 spec §4.1；色号一律走 app.wxss 的令牌） */
 
+/* 一屏到底、不滚：height 固定 100vh、状态栏的 padding（wxml 里那行 inline style）
+   算在这 100vh 里（box-sizing），里面两态再用 100% 填满 ——
+   否则「100vh + 状态栏」会比屏幕高出一截（空态多出一条能滚的空白、编辑态照片底边出屏）。 */
 .page {
-  min-height: 100vh;
+  height: 100vh;
   box-sizing: border-box;
 }
 
@@ -13,7 +16,7 @@
   flex-direction: column;
   align-items: center;
   box-sizing: border-box;
-  min-height: 100vh;
+  height: 100%; /* 填满 .page 的内容盒（已扣掉状态栏那截） */
   padding: 0 64rpx;
   padding-bottom: calc(96rpx + env(safe-area-inset-bottom));
 }
@@ -61,6 +64,8 @@
 }
 
 /* ── 编辑态（任务 4 起才有内容；顶栏先按说好的三格摆好）────────────── */
+/* 右边距不写死：wxml 里 inline 的那条 padding-right 是给微信胶囊让位的量
+   （页面数据 topbarPadRight 算出来的），胶囊右槽不让人就看不见。 */
 .topbar {
   position: relative;
   display: flex;
@@ -79,10 +84,17 @@
   font-weight: 600;
 }
 
+/* 触控面：文字本身太小（「保存」才 60rpx 宽），撑到和顶栏一样高、再加一圈横向内边距
+   （左边 44pt 那条线），再用负 margin 把多出来的边距拉回去 —— 文字位置不动。 */
 .tb-left,
 .tb-right {
   position: relative; /* 压在标题那层上面，可点 */
   z-index: 1;
+  display: flex;
+  align-items: center;
+  height: 88rpx;
+  padding: 0 20rpx;
+  margin: 0 -20rpx;
   color: var(--muted);
   font-size: 30rpx;
 }
@@ -90,7 +102,7 @@
 .edit {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 88rpx);
+  height: calc(100% - 88rpx); /* 顶栏那 88rpx 之外剩下的都归照片 */
 }
 
 .photo {

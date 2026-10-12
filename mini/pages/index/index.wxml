@@ -1,5 +1,6 @@
 <view class="page" style="padding-top: {{statusBar}}px">
-  <view class="topbar" wx:if="{{stage === 'edit'}}">
+  <!-- padding-right 让给微信那颗胶囊（••• | ⊙，它画在页面之上）—— 不让位「保存」就被它整个盖住。左边距仍在 wxss 里。 -->
+  <view class="topbar" wx:if="{{stage === 'edit'}}" style="padding-right: {{topbarPadRight}}px">
     <view class="tb-left" bindtap="onPickAgain">换一张</view>
     <view class="tb-title">PinkRose</view>
     <view class="tb-right" bindtap="onSave">保存</view>
