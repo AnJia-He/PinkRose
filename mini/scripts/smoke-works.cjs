@@ -17,11 +17,13 @@
  *       （长边 ≤256，getImageInfo 量的）、目录里恰好两个文件
  *   [6] 回作品页：网格 1 格、格子是正方（两列量级）、点格 → previewImage 收到
  *       全部全尺寸路径 + current 是这张（mock 记的账）、截图
- *   [7] 长按删：mock showModal 自动确认（**既回调又返回结果对象**那条铁律）→
- *       清单 0、两个文件都没了、空态回来了（截图）
- *   [8] cap 满了：往清单灌一条「快满」的夹具（别真存 150MB）→ add 拒绝、文案就是
+ *   [7] 「我的」页：1 张 → 数值行对得上（页面 data 对清单现算）、截图、点「清空」
+ *       （mock showModal 自动确认）→ 清单 / 目录 / 数字全归零 + 0 张置灰标记（截图）
+ *   [8] 重存一张（[7] 清掉后给长按删当靶子）→ 长按删：清单 0、两个文件都没了、
+ *       空态回来了（截图）
+ *   [9] cap 满了：往清单灌一条「快满」的夹具（别真存 150MB）→ add 拒绝、文案就是
  *       那条专属 toast 的原话、目录里没被写半张
- *   [9] 收尾：还原两个 mock、回修图页
+ *   [10] 收尾：还原 mock、回修图页
  *
  * ⚠️ 防挂死纪律（和 smoke.cjs / smoke-say.cjs 同款）：每个 automator 调用套 rpc()
  *    上限、每处轮询有上限、整条有看门狗。截图是**证据不是判据**。
@@ -39,8 +41,9 @@ const ENDPOINT = process.env.WS ?? 'ws://127.0.0.1:9420'
 /** 清单的 storage key —— 必须和 mini/lib/works.ts 的 `KEY` 一致（那边改了这跟着改）。 */
 const WORKS_KEY = 'works:v1'
 const RPC_MS = 30000
-/** 整条冒烟的保险丝（正常 1~2 分钟；防"某个 await 没被套上"，防挂死）。 */
-const WATCHDOG_MS = 240000
+/** 整条冒烟的保险丝（正常 1.5~2 分钟；Task 18 加了「我的」段 + 一张重存——
+ *  截图偶发 30s 超时最多吃两回，余量给够；防"某个 await 没被套上"，防挂死）。 */
+const WATCHDOG_MS = 300000
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const withTimeout = (p, ms, name) =>
@@ -94,6 +97,26 @@ async function restoreMocks() {
   }
   mocked.length = 0
 }
+
+/** showModal 的 mock：自动确认（**既回调、又返回结果对象** —— 铁律；记账给断言读）。
+ *  幂等：两处（我的页清空 / 作品页长按删）共用，别重复挂。 */
+async function ensureModalMock() {
+  if (mocked.includes('showModal')) return
+  await rpc(mp.mockWxMethod('showModal', function (opt) {
+    globalThis.__modalCalls = (globalThis.__modalCalls || 0) + 1
+    globalThis.__modalTitle = opt.title || ''
+    const res = { confirm: true, cancel: false, errMsg: 'showModal:ok' }
+    if (opt.success) opt.success(res)
+    return res
+  }), 'mock showModal')
+  mocked.push('showModal')
+}
+/** 清掉弹框记账（每段开测前先归零）。 */
+const resetModalLog = () => rpc(mp.evaluate(function () {
+  globalThis.__modalCalls = 0
+  globalThis.__modalTitle = ''
+  return JSON.stringify(true)
+}), 'clear modal log')
 
 ;(async () => {
   // 保险丝：整条超过上限直接退（码 2）—— 不傻等；先把 mock 还原了再退
@@ -323,23 +346,96 @@ async function restoreMocks() {
     !!pv && pv.calls === 1 && pv.urls.length === 1 && pv.urls[0] === e0.file && pv.current === e0.file,
     JSON.stringify(pv))
 
-  // ── [7] 长按删（mock showModal 自动确认）────────────────────────────────
-  log('\n[7] 长按删：mock showModal 自动确认')
-  await rpc(mp.mockWxMethod('showModal', function (opt) {
-    globalThis.__modalCalls = (globalThis.__modalCalls || 0) + 1
-    globalThis.__modalTitle = opt.title || ''
-    const res = { confirm: true, cancel: false, errMsg: 'showModal:ok' }
-    if (opt.success) opt.success(res)
-    return res
-  }), 'mock showModal')
-  mocked.push('showModal')
+  // ── [7] 「我的」页：1 张 → 数字对账 → 清空（mock showModal 自动确认）────────
+  log('\n[7] 「我的」页：1 张的数字 → 清空 → 0 张置灰')
+  page = await rpc(mp.switchTab('/pages/me/me'), 'switchTab me')
+  let dMe = await waitData(page, x => x.count === 1, 8000)
+  check('我的①：数值行含「1 张」与「MB」',
+    typeof dMe.usageText === 'string' && dMe.usageText.indexOf('1 张') >= 0 && dMe.usageText.indexOf('MB') >= 0,
+    'usageText=' + dMe.usageText)
+  const manMe = await readManifest()
+  const usageNow = { count: manMe.length, bytes: manMe.reduce((s, e) => s + e.bytes, 0) }
+  check('我的②：页面 data 与 usage() 一致（对清单现算）',
+    dMe.count === usageNow.count && dMe.bytes === usageNow.bytes,
+    JSON.stringify({ page: { count: dMe.count, bytes: dMe.bytes }, usage: usageNow }))
+  check('我的③：1 张时可清（canClear 标记）', dMe.canClear === true)
+  await shot(mp, 'me-one') // ★ 交付截图：我的页有 1 张作品时（清空前）
+
+  await ensureModalMock()
+  await resetModalLog()
+  const clearBtn = await rpc(page.$('.clear-btn'), '$ .clear-btn')
+  if (!clearBtn) throw new Error('我的页上没有 .clear-btn（wxml 改了？选择器跟着改）')
+  await rpc(clearBtn.tap(), 'tap .clear-btn')
+  // ⚠️ tap() 只把事件推进去、不 await handler（实测效果 ~300ms 后落地）—— 读之前先轮询，
+  // 别一拍定生死（Task 18 第一轮就栽在这上面：④⑤⑥ 全读到点击前的世界）。
+  let modalMe = null
+  {
+    const t0 = Date.now()
+    while (Date.now() - t0 < 8000) {
+      modalMe = await evalJson(function () {
+        return JSON.stringify({ calls: globalThis.__modalCalls || 0, title: globalThis.__modalTitle || '' })
+      })
+      if (modalMe.calls > 0) break
+      await sleep(200)
+    }
+  }
+  check('我的④：点「清空」弹的是「清空本地作品？」确认框',
+    !!modalMe && modalMe.calls === 1 && modalMe.title === '清空本地作品？', JSON.stringify(modalMe))
+  let manCleared = await readManifest()
+  {
+    const t0 = Date.now()
+    while (Date.now() - t0 < 8000 && manCleared.length !== 0) { await sleep(200); manCleared = await readManifest() }
+  }
+  const usageCleared = { count: manCleared.length, bytes: manCleared.reduce((s, e) => s + e.bytes, 0) }
+  check('我的⑤：清空后 usage 归零（0 张 / 0 字节）',
+    usageCleared.count === 0 && usageCleared.bytes === 0, JSON.stringify(usageCleared))
+  let namesCleared = await dirList()
+  {
+    const t0 = Date.now()
+    while (Date.now() - t0 < 8000 && namesCleared.length !== 0) { await sleep(200); namesCleared = await dirList() }
+  }
+  check('我的⑥：works 目录里的文件没了', namesCleared.length === 0, 'files=' + JSON.stringify(namesCleared))
+  dMe = await waitData(page, x => x.count === 0, 8000)
+  check('我的⑦：清完页面数字自己刷新（0 张 + 置灰数据标记 canClear=false）',
+    dMe.count === 0 && dMe.usageText === '0 张' && dMe.canClear === false,
+    'count=' + dMe.count + ' text=' + dMe.usageText + ' canClear=' + dMe.canClear)
+  await shot(mp, 'me-empty')
+
+  // ── [8] 重存一张（[7] 清掉后给长按删当靶子）→ 长按删（mock showModal 自动确认）──
+  log('\n[8] 重存一张 → 长按删：mock showModal 自动确认')
+  page = await rpc(mp.switchTab('/pages/index/index'), 'switchTab index')
   await rpc(mp.evaluate(function () {
-    globalThis.__modalCalls = 0
-    globalThis.__modalTitle = ''
+    const ps = getCurrentPages()
+    const p = ps[ps.length - 1]
+    p.probeSaveWork = null
     return JSON.stringify(true)
-  }), 'clear modal mock')
+  }), 'clear probeSaveWork')
+  page.callMethod('__probeSaveWork').catch(() => { /* 结果看字段，不看这个 promise */ })
+  let probeAgain = null
+  {
+    const t0 = Date.now()
+    while (Date.now() - t0 < 60000) {
+      probeAgain = await evalJson(function () {
+        const ps = getCurrentPages()
+        const p = ps[ps.length - 1]
+        return JSON.stringify(p && p.probeSaveWork ? p.probeSaveWork : null)
+      })
+      if (probeAgain && probeAgain.state !== 'running') break
+      await sleep(250)
+    }
+  }
+  check('重存①：再次收进 1 张（长按删的靶子就位）', !!probeAgain && probeAgain.state === 'ok', JSON.stringify(probeAgain))
+  if (!probeAgain || probeAgain.state !== 'ok') {
+    await shot(mp, 'smoke-works-fail')
+    throw new Error('重存没成功，长按删那一排断言没法跑（why 见上）')
+  }
+  page = await rpc(mp.switchTab('/pages/works/works'), 'switchTab works')
+  await waitData(page, x => x.items.length === 1, 8000) // 等 onShow 刷出来（下面删除⑤还要看它回 0）
+  const e0r = (await readManifest())[0] // 重存这一张的条目（e0 那批文件已在 [7] 清掉了）
+  await ensureModalMock()
+  await resetModalLog()
   // 直接调页面的长按 handler（automator 模拟长按不稳，brief 口径）—— 事件对象只要它读的字段
-  await rpc(page.callMethod('onLongPressItem', { currentTarget: { dataset: { id: e0.id } } }), 'callMethod onLongPressItem')
+  await rpc(page.callMethod('onLongPressItem', { currentTarget: { dataset: { id: e0r.id } } }), 'callMethod onLongPressItem')
   const modal = await evalJson(function () {
     return JSON.stringify({ calls: globalThis.__modalCalls || 0, title: globalThis.__modalTitle || '' })
   })
@@ -350,8 +446,8 @@ async function restoreMocks() {
     while (Date.now() - t0 < 8000 && man2.length !== 0) { await sleep(200); man2 = await readManifest() }
   }
   check('删除②：清单回到 0', man2.length === 0, 'len=' + man2.length)
-  const stGone1 = await fsStat(e0.file)
-  const stGone2 = await fsStat(e0.thumb)
+  const stGone1 = await fsStat(e0r.file)
+  const stGone2 = await fsStat(e0r.thumb)
   check('删除③：全尺寸文件没了', stGone1.ok === false, JSON.stringify(stGone1))
   check('删除④：缩略图没了', stGone2.ok === false, JSON.stringify(stGone2))
   const dAfter = await waitData(page, x => x.items.length === 0, 8000)
@@ -360,8 +456,8 @@ async function restoreMocks() {
     dAfter.items.length === 0 && emptyAgain !== null, 'items=' + dAfter.items.length)
   await shot(mp, 'works-deleted')
 
-  // ── [8] cap 满了：拒绝 + 不写半张（往清单灌一条"快满"的夹具，别真存 150MB）────
-  log('\n[8] cap 满了：拒绝 + 不写半张')
+  // ── [9] cap 满了：拒绝 + 不写半张（往清单灌一条"快满"的夹具，别真存 150MB）────
+  log('\n[9] cap 满了：拒绝 + 不写半张')
   await rpc(mp.evaluate(function (payload) {
     wx.setStorageSync(payload.key, [
       { id: 'cap-fixture', file: '(fixture)', thumb: '(fixture)', w: 1, h: 1, bytes: payload.near, at: 1 },
@@ -400,8 +496,8 @@ async function restoreMocks() {
   }, WORKS_KEY), 'remove cap fixture')
   check('cap③：清掉夹具后清单干净（收尾）', (await readManifest()).length === 0)
 
-  // ── [9] 收尾 ─────────────────────────────────────────────────────────────
-  log('\n[9] 收尾：还原 mock、回修图页')
+  // ── [10] 收尾 ─────────────────────────────────────────────────────────────
+  log('\n[10] 收尾：还原 mock、回修图页')
   await restoreMocks()
   page = await rpc(mp.switchTab('/pages/index/index'), 'switchTab index')
   log('    已回：', page.path)
@@ -411,7 +507,7 @@ async function restoreMocks() {
   log('\n══════ 汇总：' + (results.length - fail.length) + '/' + results.length + ' 过 ══════')
   if (fail.length) {
     fail.forEach(f => log('  ❌ ' + f.name))
-    log('（截图见 .superpowers/mini/works-*.png / smoke-works-fail-*.png）')
+    log('（截图见 .superpowers/mini/works-*.png / me-*.png / smoke-works-fail-*.png）')
     process.exit(1)
   }
   process.exit(0)

@@ -1,26 +1,91 @@
-/* me.wxss —— 骨架（Task 16）。占位居中；字号先查 app.wxss 顶上的映射表：
-   .ph-title 32rpx = 电脑版 17 档；.ph-sub 24rpx = 电脑版 12 档。 */
+/* me.wxss —— 「我的」页（Task 18 起是真页面）。字号先查 app.wxss 顶上的映射表：
+   .brand-name 56rpx = 电脑版 30 档（修图页空态品牌名同档）；.brand-sub / .card-row
+   28rpx = 14 档；.clear-btn 32rpx = 17 档（空态两颗大按钮同档）；.footer 24rpx = 12 档。 */
+
+/* 一屏到底（内容短，正常不滚）——min-height 是"字放大也不裁"的退路。
+   ⚠️ 底部不加 env(safe-area-inset-bottom)：tab 页，视口底 = tabBar 顶
+   （同修图/作品页 Task 16 那条）。 */
 .page {
-  height: 100vh; /* 同 index 页的口径：一屏到底 */
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
   box-sizing: border-box;
 }
 
-.ph {
+/* ── 品牌区：这页的头牌（没有「我的」标题栏）───────────────────────── */
+.brand {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: 0 64rpx; /* 与空态同宽的安全边距 */
+  margin-top: 96rpx;
 }
 
-.ph-title {
-  font-size: 32rpx;
+.brand-mark {
+  width: 112rpx;
+  height: 112rpx;
+}
+
+.brand-name {
+  margin-top: 28rpx;
+  font-size: 56rpx;
   font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
-.ph-sub {
-  margin-top: 16rpx;
+.brand-sub {
+  margin-top: 20rpx;
   color: var(--muted);
+  font-size: 28rpx;
+}
+
+/* ── 数据卡：一张分组卡（--panel 底 + --r-md 圆角；行高 88rpx、左右内距 28rpx）── */
+.card {
+  margin: 96rpx 32rpx 0;
+  background: var(--panel);
+  border-radius: var(--r-md);
+}
+
+.card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 88rpx;
+  padding: 0 28rpx;
+}
+
+.row-label {
+  font-size: 28rpx;
+}
+
+.row-value {
+  color: var(--muted);
+  font-size: 28rpx;
+}
+
+/* ── 清空：幽灵胶囊（和空态「从相册选」同族 —— 透明底 + 线描边 + 常规字重）── */
+.clear-btn {
+  margin: 48rpx 32rpx 0;
+  padding: 22rpx 0;
+  background: transparent;
+  border: 2rpx solid var(--line-2);
+  border-radius: var(--r-pill);
+  color: var(--text);
+  font-size: 32rpx;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* 0 张：灰描边 + 灰字（--muted-2）——**别用 opacity**（整颗糊掉连形状都虚） */
+.clear-btn.off {
+  border-color: var(--muted-2);
+  color: var(--muted-2);
+}
+
+/* ── 页脚：一行小字沉到最底（flex 里 margin-top:auto = 把上面的空白全吃掉）── */
+.footer {
+  margin: auto 0 40rpx;
+  text-align: center;
+  color: var(--muted-2);
   font-size: 24rpx;
 }

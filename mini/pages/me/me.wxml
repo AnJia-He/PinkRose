@@ -1,8 +1,23 @@
-<!-- 我的页（Task 16 骨架，spec §13.3）—— 内容 = Task 18：小皇帝徽章 + PinkRose +
-     版本 + 本地作品统计 / 清空。现在只有居中占位；色号 / 字号走 app.wxss 令牌与字号表。 -->
-<view class="page">
-  <view class="ph">
-    <view class="ph-title">我的</view>
-    <view class="ph-sub">本地作品 · 版本</view>
+<!-- me.wxml —— 「我的」页（Task 18 起是真页面，spec §13.3）：品牌区（徽章 + 字标 +
+     定位句）+ 本地作品数据卡 + 清空 + 版本页脚。这页**没有「我的」标题栏**（品牌区
+     自己就是头牌）；数字全走 lib/works 的 usage()。色号 / 字号走 app.wxss。 -->
+<view class="page" style="padding-top: {{statusBar}}px">
+  <view class="brand">
+    <image class="brand-mark" src="/assets/emperor-badge.png" />
+    <view class="brand-name">PinkRose</view>
+    <view class="brand-sub">拍完随手修，30 秒发出去</view>
   </view>
+
+  <view class="card">
+    <view class="card-row">
+      <view class="row-label">本地作品</view>
+      <view class="row-value">{{usageText}}</view>
+    </view>
+  </view>
+
+  <!-- 清空：0 张时 .off 置灰（灰描边 + 灰字，**不用 opacity** 把整颗糊掉）；
+       canClear 同时是冒烟要读的数据标记（比对颜色稳）。 -->
+  <view class="clear-btn {{canClear ? '' : 'off'}}" aria-role="button" bindtap="onClear">清空本地作品</view>
+
+  <view class="footer">PinkRose v{{version}}</view>
 </view>
