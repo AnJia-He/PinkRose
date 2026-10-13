@@ -413,7 +413,9 @@ C:\Users\Administrator\anaconda3\python.exe mini/scripts/build-font-subset.py
 woff2 会 ImportError）。字符集 = mini/ 全部 ts+wxml 剥注释后取唯一字符（快照
 `mini/scripts/font-subset-chars.txt`）——**改了固定文案（按钮 / 顶栏 / 风格名 / 系统
 小字…）就要重跑**，否则新字掉系统字体。woff2 原件**不进 mini/**（只落系统 temp）。
-唯一已知缺口：全角「？」（U+FF1F）不在 MiSans 任何切片里 —— 两三处掉系统字体。
+唯一已知缺口：「？」（U+FF1F）与「删」（U+5220）不在 MiSans 任何切片里（电脑版 MiSans
+同样缺这两个）。「？」在界面上有两三处，掉系统字体；「删」只出现在原生 modal 的文案里
+（清空确认 / 删除确认 —— modal 本来就渲染系统字体），**无可见影响**。
 
 **滚动条那条值得单独记一笔**（F5）：`show-scrollbar` **单独写不生效** —— 官方文档原文
 「滚动条显隐控制 **(同时开启 enhanced 属性后生效)**」（开发者工具自带的属性元数据同句）。

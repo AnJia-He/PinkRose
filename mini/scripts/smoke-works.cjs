@@ -18,10 +18,11 @@
  *   [6] 回作品页：网格 1 格、格子是正方（两列量级）、点格 → previewImage 收到
  *       全部全尺寸路径 + current 是这张（mock 记的账）、截图；再塞第 2 条夹具量
  *       两列（两格 top 相等 / left 不同）→ 清夹具（T18 复审 M4）
- *   [7] 「我的」页：1 张 → 数值行对得上（页面 data 对清单现算）、截图、点「清空」
- *       （mock showModal 自动确认）→ 清单 / 目录 / 数字全归零 + 0 张置灰标记（截图）
- *   [8] 重存一张（[7] 清掉后给长按删当靶子）→ 长按删：清单 0、两个文件都没了、
- *       空态回来了（截图）
+ *   [7] 「我的」页：1 张 → 数值行**格式钉死**（`1 张 · X.X MB`，数值对清单现算）、截图、
+ *       点「清空」（mock showModal 自动确认，四件套记账：标题/内容/确认键/确认色）→
+ *       清单 / 目录 / 数字全归零 + 0 张置灰标记（截图）
+ *   [8] 重存一张（[7] 清掉后给长按删当靶子）→ 长按删：确认框四件套对、清单 0、
+ *       两个文件都没了、空态回来了（截图）
  *   [9] cap 满了：往清单灌一条「快满」的夹具（别真存 150MB）→ add 拒绝、文案就是
  *       那条专属 toast 的原话、目录里没被写半张
  *   [10] 清单写失败（mock setStorageSync 抛一次）：add 拒绝 + 人话文案、刚 copy 的
@@ -101,23 +102,30 @@ async function restoreMocks() {
   mocked.length = 0
 }
 
-/** showModal 的 mock：自动确认（**既回调、又返回结果对象** —— 铁律；记账给断言读）。
+/** showModal 的 mock：自动确认（**既回调、又返回结果对象** —— 铁律；四件套（标题 /
+ *  内容 / 确认键 / 确认色）都记账给断言读 —— 断言不只看弹了没，还看弹得对不对）。
  *  幂等：两处（我的页清空 / 作品页长按删）共用，别重复挂。 */
 async function ensureModalMock() {
   if (mocked.includes('showModal')) return
   await rpc(mp.mockWxMethod('showModal', function (opt) {
     globalThis.__modalCalls = (globalThis.__modalCalls || 0) + 1
     globalThis.__modalTitle = opt.title || ''
+    globalThis.__modalContent = opt.content || ''
+    globalThis.__modalConfirmText = opt.confirmText || ''
+    globalThis.__modalConfirmColor = opt.confirmColor || ''
     const res = { confirm: true, cancel: false, errMsg: 'showModal:ok' }
     if (opt.success) opt.success(res)
     return res
   }), 'mock showModal')
   mocked.push('showModal')
 }
-/** 清掉弹框记账（每段开测前先归零）。 */
+/** 清掉弹框记账（每段开测前先归零 —— 四件套一个别漏，漏一个就是读上一条弹窗的账）。 */
 const resetModalLog = () => rpc(mp.evaluate(function () {
   globalThis.__modalCalls = 0
   globalThis.__modalTitle = ''
+  globalThis.__modalContent = ''
+  globalThis.__modalConfirmText = ''
+  globalThis.__modalConfirmColor = ''
   return JSON.stringify(true)
 }), 'clear modal log')
 
@@ -390,11 +398,14 @@ const resetModalLog = () => rpc(mp.evaluate(function () {
   log('\n[7] 「我的」页：1 张的数字 → 清空 → 0 张置灰')
   page = await rpc(mp.switchTab('/pages/me/me'), 'switchTab me')
   let dMe = await waitData(page, x => x.count === 1, 8000)
-  check('我的①：数值行含「1 张」与「MB」',
-    typeof dMe.usageText === 'string' && dMe.usageText.indexOf('1 张') >= 0 && dMe.usageText.indexOf('MB') >= 0,
-    'usageText=' + dMe.usageText)
   const manMe = await readManifest()
   const usageNow = { count: manMe.length, bytes: manMe.reduce((s, e) => s + e.bytes, 0) }
+  // 格式钉死：`1 张 · X.X MB` —— 中点分隔 + **恰好一位**小数，数值再和清单现算逐字对上
+  //（Task 18 复审收尾：原来只查「含 1 张 / 含 MB」，格式跑了也看不出来）
+  const wantUsage = '1 张 · ' + (usageNow.bytes / 1048576).toFixed(1) + ' MB'
+  check('我的①：数值行格式钉死（「1 张 · X.X MB」· 分隔 / 一位小数 / 数值对清单）',
+    dMe.usageText === wantUsage && /^1 张 · \d+\.\d MB$/.test(dMe.usageText),
+    'usageText=' + dMe.usageText + ' want=' + wantUsage)
   check('我的②：页面 data 与 usage() 一致（对清单现算）',
     dMe.count === usageNow.count && dMe.bytes === usageNow.bytes,
     JSON.stringify({ page: { count: dMe.count, bytes: dMe.bytes }, usage: usageNow }))
@@ -413,14 +424,26 @@ const resetModalLog = () => rpc(mp.evaluate(function () {
     const t0 = Date.now()
     while (Date.now() - t0 < 8000) {
       modalMe = await evalJson(function () {
-        return JSON.stringify({ calls: globalThis.__modalCalls || 0, title: globalThis.__modalTitle || '' })
+        return JSON.stringify({
+          calls: globalThis.__modalCalls || 0,
+          title: globalThis.__modalTitle || '',
+          content: globalThis.__modalContent || '',
+          confirmText: globalThis.__modalConfirmText || '',
+          confirmColor: globalThis.__modalConfirmColor || '',
+        })
       })
       if (modalMe.calls > 0) break
       await sleep(200)
     }
   }
-  check('我的④：点「清空」弹的是「清空本地作品？」确认框',
-    !!modalMe && modalMe.calls === 1 && modalMe.title === '清空本地作品？', JSON.stringify(modalMe))
+  // 弹窗四件套逐字钉：标题 / 内容（含张数）/ 确认键 / 确认色 = --danger 的十六进制
+  //（modal 只吃十六进制色；改令牌时这条会红 —— 就是要它红）
+  check('我的④：清空确认框四件套对（标题 / 内容含张数 / 确认键「清空」/ confirmColor=#ff9a8f）',
+    !!modalMe && modalMe.calls === 1 &&
+      modalMe.title === '清空本地作品？' &&
+      modalMe.content === '1 张照片会一起删掉，删了就找不回了。' &&
+      modalMe.confirmText === '清空' &&
+      modalMe.confirmColor === '#ff9a8f', JSON.stringify(modalMe))
   let manCleared = await readManifest()
   {
     const t0 = Date.now()
@@ -477,9 +500,21 @@ const resetModalLog = () => rpc(mp.evaluate(function () {
   // 直接调页面的长按 handler（automator 模拟长按不稳，brief 口径）—— 事件对象只要它读的字段
   await rpc(page.callMethod('onLongPressItem', { currentTarget: { dataset: { id: e0r.id } } }), 'callMethod onLongPressItem')
   const modal = await evalJson(function () {
-    return JSON.stringify({ calls: globalThis.__modalCalls || 0, title: globalThis.__modalTitle || '' })
+    return JSON.stringify({
+      calls: globalThis.__modalCalls || 0,
+      title: globalThis.__modalTitle || '',
+      content: globalThis.__modalContent || '',
+      confirmText: globalThis.__modalConfirmText || '',
+      confirmColor: globalThis.__modalConfirmColor || '',
+    })
   })
-  check('删除①：弹的是「删除这张作品吗？」确认框', modal.calls === 1 && modal.title === '删除这张作品吗？', JSON.stringify(modal))
+  // 同款四件套：删除框**没有**内容、确认键「删除」、**没设** confirmColor（跟系统默认走）
+  check('删除①：删除确认框四件套对（标题 / 无内容 / 确认键「删除」/ 未设 confirmColor）',
+    modal.calls === 1 &&
+      modal.title === '删除这张作品吗？' &&
+      modal.content === '' &&
+      modal.confirmText === '删除' &&
+      modal.confirmColor === '', JSON.stringify(modal))
   let man2 = await readManifest()
   {
     const t0 = Date.now()
