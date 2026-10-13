@@ -215,7 +215,9 @@
   margin-bottom: 16rpx; /* 条目间距 */
 }
 
-/* 「我说的」：右对齐气泡，--accent-400 底 + --accent-ink 字（和发送箭头同族） */
+/* 「我说的」：右对齐气泡，★ 修复轮 F5 **降调**——--accent-tint 底 + --accent-300 字
+   （满血薄荷 --accent-400 留给"可点/选中"：发送箭头、点亮的小图；气泡抢同一颜色会
+   分不清谁可点）。右对齐 + AI 徽章照旧。 */
 .msg.me {
   justify-content: flex-end;
 }
@@ -223,9 +225,9 @@
 .msg.me .msg-body {
   max-width: 78%;
   padding: 12rpx 24rpx;
-  background: var(--accent-400);
+  background: var(--accent-tint);
   border-radius: var(--r-md);
-  color: var(--accent-ink);
+  color: var(--accent-300);
   font-size: 28rpx;
   line-height: 1.5;
 }
@@ -270,15 +272,20 @@
   animation: msg-spin 0.9s linear infinite;
 }
 
-/* 气泡里的「停止」：小胶囊、muted 描边风（和「撤销」同族，不抢主色） */
+/* 气泡里的「停止」：胶囊、muted 描边风（和「撤销」同族，不抢主色）。
+   ★ 修复轮 F2：加大到 80rpx 高（≈41.6px，和发送箭头同尺寸档）——
+   停止出现时气泡略胀，那正是"停止可用"的时刻，可接受。 */
 .msg-stop {
   flex: none;
+  display: flex;
+  align-items: center;
+  height: 80rpx;
   margin-left: 20rpx;
-  padding: 4rpx 20rpx;
+  padding: 0 28rpx;
   border: 2rpx solid var(--line-2);
   border-radius: var(--r-pill);
   color: var(--muted);
-  font-size: 24rpx;
+  font-size: 26rpx;
 }
 
 /* 系统小字：居中的一行（点风格「套用了「…」」、结果作废这类通报） */
@@ -342,18 +349,19 @@
   font-size: 28rpx;
 }
 
-/* ★ 2026-10-13 真机修复 + Task 14：输入条那行的「撤销」—— 从画布层（照片右下角）
-   搬来这里（真机上叠 webgl canvas 的可点 view 收不到点击，见 README「已知平台
-   行为」）。muted 描边风、不抢发送箭头的主色；高 64rpx < 行高 80rpx，
-   出现/消失不会让这一行跳高。
+/* ★ 2026-10-13 真机修复 + Task 14 + 修复轮 F3：输入条那行的「撤销」—— 从画布层
+   （照片右下角）搬来这里（真机上叠 webgl canvas 的可点 view 收不到点击，见 README
+   「已知平台行为」）。**破坏性动作放左侧**（wxml 里它在 .say-pill 前面，离右手拇指
+   主路径最远）。muted 描边风、不抢发送箭头的主色；★ 修复轮 F2：高 80rpx = 输入
+   胶囊等高（和发送箭头同尺寸档），出现/消失不会让这一行跳高。
    （「停止」的样式在对话区那段 —— .msg-stop，它跟着生成那颗气泡走。） */
 .say-act-undo {
   flex: none;
   display: flex;
   align-items: center;
-  height: 64rpx;
-  margin-left: 16rpx;
-  padding: 0 24rpx;
+  height: 80rpx;
+  margin-right: 16rpx;
+  padding: 0 28rpx;
   border: 2rpx solid var(--line-2);
   border-radius: var(--r-pill);
   color: var(--muted);

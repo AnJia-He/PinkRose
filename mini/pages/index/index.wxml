@@ -64,18 +64,24 @@
          定位叠到照片/画布上**（真机上叠 webgl canvas 的可点 view 收不到点击，见
          README「已知平台行为」）；「停止」跟着生成那颗气泡走，也就同样在画布外。
          没消息时整条不渲染（wx:if），不占地方。
-         条目 id="m{{item.id}}" 配 scroll-into-view 把新消息拉进视野；
-         封顶 50 条（ts 的 MAX_MSGS，超了从头部丢最老的）。 -->
+         滚到底：靠条目自己的 id="m{{item.id}}" + ts 的 scrollBottom（它指到最后
+         一条；值没变过时先清再指逼出一次值变 —— thinking→done 同一颗气泡长高的
+         那个病根）。★ 修复轮试过"交替 id 哨兵"，真运行时滚不动（探针 + 冒烟截图
+         钉死），别再改回去。
+         封顶 50 条（ts 的 MAX_MSGS，超了从头部丢最老的）。
+         点 `.msg-body` = 回填那句话进输入框（★ 修复轮 F4，只有 me 气泡吃这个手势）。 -->
     <scroll-view class="msgs" wx:if="{{msgs.length}}" scroll-y scroll-into-view="{{scrollTo}}">
       <view wx:for="{{msgs}}" wx:key="id" id="m{{item.id}}" class="msg {{item.kind}}">
-        <image wx:if="{{item.kind === 'ai'}}" class="msg-badge" src="/assets/emperor-badge.png" />
-        <view class="msg-body">
+        <image wx:if="{{item.kind === 'ai'}}" class="msg-badge" src="/assets/emperor-badge.png"
+               aria-hidden="true" />
+        <view class="msg-body" bindtap="onRecallMsg" data-kind="{{item.kind}}" data-text="{{item.text}}">
           <!-- 生成期那颗气泡就地显示转圈 + 秒表 + 停止（生成中不用改 state ——
                按页面那个 generating 现算；路由那 1.3~1.6 秒显示「在想…」） -->
           <block wx:if="{{item.kind === 'ai' && item.state === 'thinking'}}">
             <view class="msg-spinner"></view>
             <text class="msg-text">{{generating ? genText : '在想…'}}</text>
-            <view wx:if="{{generating}}" class="msg-stop" bindtap="onStopGen">停止</view>
+            <view wx:if="{{generating}}" class="msg-stop"
+                  aria-role="button" aria-label="停止" bindtap="onStopGen">停止</view>
           </block>
           <text wx:else class="msg-text">{{item.text}}</text>
         </view>
@@ -87,6 +93,14 @@
          过程在对话区），进生成才轮到那颗气泡转起来。 -->
     <view class="say-bar">
       <view class="say-row">
+        <!-- ★ 2026-10-13 真机修复 + Task 14 + 修复轮 F3：破坏性动作放左侧 ——
+             「撤销」留在这一行、但挪到最左（离右手拇指的主路径/右端发送键最远，防误触）。
+             它当初从照片角搬来 —— 真机上叠在 webgl canvas 之上的 view 收不到点击，
+             模拟器不复现。忙时（在想…/正在修…）连它一起收 —— 防"点了没反应"
+             （ts 里 onUndo 开头还有一条同样的保险）。「停止」已跟着生成那颗气泡搬进
+             对话区（.msg-stop）。**别再往回挪**（照片区/蒙层那边真机点不动）。 -->
+        <view wx:if="{{canUndo && !sayBusy}}" class="say-act-undo"
+              aria-role="button" bindtap="onUndo">撤销</view>
         <view class="say-pill">
           <input wx:if="{{!sayBusy}}" class="say-input" value="{{sayText}}"
                  bindinput="onSayInput" bindconfirm="onSaySend"
@@ -94,14 +108,9 @@
                  placeholder-class="say-ph" />
           <text wx:else class="say-thinking">{{sayBusyText}}</text>
         </view>
-        <!-- ★ 2026-10-13 真机修复 + Task 14：「撤销」留在这一行（它当初从照片角搬来
-             —— 真机上叠在 webgl canvas 之上的 view 收不到点击，模拟器不复现）。
-             忙时（在想…/正在修…）连它一起收 —— 防"点了没反应"（ts 里 onUndo 开头
-             还有一条同样的保险）。「停止」已跟着生成那颗气泡搬进对话区（.msg-stop）。
-             **别再往回挪**（照片区/蒙层那边真机点不动）。 -->
-        <view wx:if="{{canUndo && !sayBusy}}" class="say-act-undo" bindtap="onUndo">撤销</view>
         <!-- 忙的时候整颗收掉（不做"看得见点不动"的死按钮） -->
-        <view class="say-send" wx:if="{{!sayBusy}}" bindtap="onSaySend">↑</view>
+        <view class="say-send" wx:if="{{!sayBusy}}" aria-role="button" aria-label="发送"
+              bindtap="onSaySend">↑</view>
       </view>
     </view>
   </view>

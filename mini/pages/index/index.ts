@@ -607,6 +607,9 @@ Page({
     const next: Adjustments | undefined = id === ORIGINAL_ID ? ZERO : preset?.adjustments
     const pipe = this.pipe
     if (!next || !pipe) return
+    // ★ 修复轮 F7：连点同一档不再刷屏 —— 点亮是**全等**判据，"已亮着" = params 就是
+    //   这一套、点下去画面不会有任何变化；那就连 note 也不留（0 条）、render 也不空跑。
+    if (activePresetId(this.params, false) === id) return
     this.params = { ...next } // 存副本：预设那份是模块级常量，谁都不许原地改
     pipe.render(this.params)
     this.setData({ activeStyle: activePresetId(this.params, false) })
@@ -622,6 +625,18 @@ Page({
   /** 输入条打字（受控值）。 */
   onSayInput(e: WechatMiniprogram.Input) {
     this.setData({ sayText: e.detail.value })
+  },
+
+  /**
+   * ★ 修复轮 F4：点「我说的」那颗气泡 → 那句话**回填输入框**（说错/失败不用重打）。
+   * **只回填、不发送**；输入框里已有字也直接覆盖（就一条路，不加分支）。
+   * 挂在 `.msg-body` 上（wxml），AI 气泡 / note 的点击也会冒泡到这来 —— kind 不是
+   * 'me' 直接走人；AI 气泡里「停止」的点击同样冒泡到这里，也被这一条挡住，互不打扰。
+   */
+  onRecallMsg(e: WechatMiniprogram.TouchEvent) {
+    const { kind, text } = e.currentTarget.dataset as { kind: string; text: string }
+    if (kind !== 'me') return
+    this.setData({ sayText: text })
   },
 
   /**
@@ -762,7 +777,10 @@ Page({
     // （finally 里别把**下一次**生成的忙态/秒表清掉）。
     const abort = { task: null as WechatMiniprogram.RequestTask | null, aborted: false }
     this.genAbort = abort
-    this.setData({ sayBusy: true, sayBusyText: '正在修…', generating: true, genText: '正在修…', genSeconds: 0 })
+    // ★ 修复轮 F8(b)：这拍会让那颗气泡**胀**（「停止」出现、转圈多一行）—— 照片区的
+    //   高度跟着变，画布显示尺寸要重算（回调里量，渲染落定之后 —— 同 F8(a)）。
+    this.setData({ sayBusy: true, sayBusyText: '正在修…', generating: true, genText: '正在修…', genSeconds: 0 },
+      () => this.fitStage())
     this.startGenTicker()
     try {
       // 送模型的是**当前底图**（2048 + align32 的缩图），不是屏幕那张带效果的画面（铁律）
@@ -831,7 +849,8 @@ Page({
       if (this.genAbort === abort) {
         this.genAbort = { task: null, aborted: false }
         this.stopGenTicker()
-        this.setData({ generating: false, sayBusy: false })
+        // ★ 修复轮 F8(b)：收忙态这拍气泡**缩**回去（「停止」消失）—— 也要重算照片区。
+        this.setData({ generating: false, sayBusy: false }, () => this.fitStage())
       }
     }
   },
@@ -951,18 +970,49 @@ Page({
 
   /**
    * 往对话区加一条：发 id（`msgSeq` 自增，整页不重置）→ 封顶（超了从**头部**丢最老的，
-   * 丢头不影响撤销裁剪 —— 裁剪按 id 比、不比长度）→ 把滚动条拉到新条目（`scrollTo`）。
+   * 丢头不影响撤销裁剪 —— 裁剪按 id 比、不比长度）→ `scrollBottom()` 把滚动条拉到底
+   * （★ 修复轮 F1：原来 set `'m'+id`，thinking→done 同 id 长高时"同值不触发"）。
    * 返回新条目的 id（撤销的锚、AI 气泡的身份都是它）。
    * ⚠️ **整条数组重建 + 一次 setData**（≤50 条，开销可忽略）——别玩 `msgs[3].text`
    *    那种路径 setData：小程序只支持一层路径，写不对还会**静默不生效**。
+   * ⚠️ `scrollBottom` / `fitStage` 都放进 setData 的**回调**里（★ 修复轮 F8：渲染
+   *    落定后再量/再滚 —— 别信"查询排在我后面"那道假设，applyPickedPhoto 先例同款）。
    */
   pushMsg(draft: SayMsgDraft): number {
     const id = ++this.msgSeq
     let msgs = this.data.msgs.concat([{ ...draft, id } as SayMsg])
     if (msgs.length > MAX_MSGS) msgs = msgs.slice(msgs.length - MAX_MSGS)
-    this.setData({ msgs, scrollTo: 'm' + id })
-    this.fitStage()
+    this.setData({ msgs }, () => {
+      this.scrollBottom()
+      this.fitStage()
+    })
     return id
+  },
+
+  /**
+   * ★ 修复轮 F1：把对话区滚到底 —— 落点是**最后一条自己的 id**（`m{{item.id}}`）。
+   * 为什么不用 `'m'+最后一条的 id` 直接写死一版就完事：thinking→done 是**同一颗
+   * 气泡长高**，id 一个字符没变，`scroll-into-view` **同值不触发**（小程序契约）
+   * —— 内容超封顶后，新回复的尾巴（常是"换个说法"这类行动指令）就停在折叠线
+   * 下面（brief 引的 `say-E-disambig` 旧截图）。同值时**先清再指**（`''` 是惰性
+   * 值、不会把画面拽走，探针截图钉过）逼出一次值变，才真的滚。
+   * ⚠️ 试过再花哨的"两个交替 id 哨兵"（brief 的原始修法）：**实测滚不动** ——
+   * 哨兵节点就在 DOM 里、值也确实在交替，画面纹丝不动（`probe-scroll-mech*.cjs`
+   * 两组探针 + 冒烟 E4 截图三头对质；稳定 id 的 `m<id>` 同样条件下次次滚到底）。
+   * 别再改回哨兵。
+   */
+  scrollBottom() {
+    const msgs = this.data.msgs
+    const last = msgs.length ? msgs[msgs.length - 1] : null
+    if (!last) return
+    const target = 'm' + last.id
+    if (this.data.scrollTo === target) {
+      this.setData({ scrollTo: '' }, () => {
+        this.setData({ scrollTo: target })
+      })
+    } else {
+      this.setData({ scrollTo: target })
+    }
   },
 
   /**
@@ -978,23 +1028,25 @@ Page({
       return { id: m.id, kind: 'ai' as const, state, text }
     })
     if (!hit) return
-    this.setData({ msgs })
-    this.fitStage()
+    this.setData({ msgs }, () => {
+      this.scrollBottom()
+      this.fitStage()
+    })
   },
 
-  /** 撤销：把那次生成留下的条目一起收走（只留 id **比锚更早**的）；`scrollTo` 指到最后一条。 */
+  /** 撤销：把那次生成留下的条目一起收走（只留 id **比锚更早**的）；收完滚到底（★ F1）。 */
   trimMsgsAt(fromMsgId: number) {
     const kept = this.data.msgs.filter(m => m.id < fromMsgId)
-    const last = kept.length ? kept[kept.length - 1] : null
-    this.setData({ msgs: kept, scrollTo: last ? 'm' + last.id : '' })
-    this.fitStage()
+    this.setData({ msgs: kept }, () => {
+      this.scrollBottom()
+      this.fitStage()
+    })
   },
 
   /** 换照片 / 回空态时清空（`msgSeq` **不重置** —— 见字段注释：撤销按 id 裁剪）。 */
   clearMsgs() {
     if (!this.data.msgs.length) return
-    this.setData({ msgs: [], scrollTo: '' })
-    this.fitStage()
+    this.setData({ msgs: [], scrollTo: '' }, () => this.fitStage())
   },
 
   /**

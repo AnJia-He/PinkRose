@@ -1,34 +1,37 @@
 #!/usr/bin/env node
 /**
- * 「说一句」全流程的冒烟（Task 12；**Task 14 起按「对话留痕」重写**）—— 对着**本地
- * mock 后端**（mock-server.cjs，4399）跑，真钱一分不花。和 smoke.cjs（全黑哨兵）
- * **分开两个文件**：那条链测的是"渲染出没出画"，这条测的是"一句话怎么分流、怎么等、
- * 怎么停、怎么撤，说过的话有没有留在屏幕上" —— 混在一个文件里，任何一边红了都看不出
- * 是哪条链断的，还互相拖时间。
+ * 「说一句」全流程的冒烟（Task 12；**Task 14 起按「对话留痕」重写**；同日修复轮
+ * F1–F10 加固）—— 对着**本地 mock 后端**（mock-server.cjs，4399）跑，真钱一分不花。
+ * 和 smoke.cjs（全黑哨兵）**分开两个文件**：那条链测的是"渲染出没出画"，这条测的是
+ * "一句话怎么分流、怎么等、怎么停、怎么撤，说过的话有没有留在屏幕上" —— 混在一个
+ * 文件里，任何一边红了都看不出是哪条链断的，还互相拖时间。
  *
  * 前置（和 smoke.cjs 同款）：
  *   1) 微信开发者工具已用 CLI 起着（mini/README.md「冒烟」那节有命令）；
  *   2) mock 服务器**不用手动起** —— 脚本自己 spawn（4399 已有别人起着的就直接用，
  *      跑完也不杀它）；环境里 MOCK_ROUTE_MS=1200 / MOCK_EDIT_MS=800 是起它的参数。
  *
- * 故事线（六个场景，四种决策路 + 停止；断言全部读 `page.data().msgs` —— Task 14 起
- * 对话区取代了 5 秒浮条 + 照片蒙层）：
+ * 故事线（六个场景，四种决策路 + 停止；断言大多读 `page.data().msgs` —— Task 14 起
+ * 对话区取代了 5 秒浮条 + 照片蒙层；**加粗的检查点是修复轮 F1–F10 补的**）：
  *   A params   「亮一点」      —— 发送立刻留痕（我说的 + 在想的）→ 参数叠加 + 点亮
  *                                「通透提亮」+ reply 落进气泡；**再等 6 秒那条 reply 仍在**
- *                                （留痕本体 —— 浮条时代这里必然已淡出）
+ *                                （留痕本体 —— 浮条时代这里必然已淡出）；
+ *                                **点一下「我说的」气泡 → 原文回填输入框**（F4）
  *   B generate 「把路人去掉」   —— 气泡里转圈（秒数前 5 秒不带数字）→ 新图（尺寸换成
  *                                mock 那张）→ reply 落进气泡 + 撤销 → 点撤销 → 画面和
- *                                参数都回到发前 + **那次生成的两条对话一起收走**
+ *                                参数都回到发前 + **那次生成的两条对话一起收走**；
+ *                                **气泡「停止」/ 输入条「撤销」量盒子 ≥39px**（F2）
  *   C both     「亮一点再去掉路人」—— 转圈**期间**就能读到参数已生效（contrast +20），
  *                                生成完 → 撤销把"参数+底图+对话"一起还原（一层）
  *   D degraded 「随便修一下」   —— 气泡里拼上"拿不太准"提醒（电脑版口径）
  *   E 拿不准   「把那个人去掉」 —— 参数照收（exposure +6）、生成拦住、没有转圈、
- *                                撤销没被动过
+ *                                撤销没被动过；**多行 reply 落地后自动滚到底 —— 尾巴
+ *                                在折叠线之上**（F1，读盒子；修前它停在折叠线下）
  *   F 停止     改 mock 延时到 20s —— 秒表 5 秒内不带数字、5 秒后「已经等了 N 秒」；
  *                                点**气泡里**的「停止」→ 请求真掐断（mock 的
  *                                editAborted 计数为证）、画面/参数/撤销原样、气泡「停了。」
- *   G 补充（Task 14 新增的两条）点一格风格 → 留一条系统小字；换一张 → 对话流清空、
- *                                重载一张仍空。
+ *   G 补充（Task 14 新增的两条）点一格风格 → 留一条系统小字（**连点同档 0 条**，F7）；
+ *                                换一张 → 对话流清空、重载一张仍空。
  *
  * 用法（CLI 已起着）：node mini/scripts/smoke-say.cjs
  *
@@ -272,6 +275,24 @@ async function mockUp() {
       !('sayBubble' in dStill),
       'msgs=' + msgCount(dStill) + '，旧浮条字段已退役=' + !('sayBubble' in dStill))
 
+    // ★ 修复轮 F4：点「我说的」气泡 → 那句话**回填输入框**（只回填、不发送；
+    //   输入框里已有字也直接覆盖 —— 就一条路）。先故意写上别的字验证"覆盖"。
+    //   找气泡：$$('.msg-body') 的顺序 = msgs 的顺序（一条一个），按数据里第一条
+    //   me 的位次取元素 —— 别用 `.msg.me .msg-body` 这种复合选择器（automator 的
+    //   选择器支持没必要赌）。
+    await rpc(page.setData({ sayText: '先擦掉' }), 'setData sayText（占位）')
+    const dNow = await rpc(page.data(), 'page.data')
+    const meIdx = dNow.msgs.findIndex(m => m.kind === 'me' && m.text === '亮一点')
+    const bodies = await rpc(page.$$('.msg-body'), '$$ .msg-body')
+    const meBubble = meIdx >= 0 && bodies && bodies[meIdx] ? bodies[meIdx] : null
+    if (!meBubble) throw new Error('找不到「我说的」气泡（.msg-body 第 ' + meIdx + ' 个）')
+    await rpc(meBubble.tap(), 'tap me bubble')
+    const dRecall = await waitData(page, x => x.sayText === '亮一点', 3000)
+    check('A9 点「我说的」气泡 → 原文回填输入框（覆盖旧字、不发送；修复轮 F4）',
+      dRecall.sayText === '亮一点' && msgCount(dRecall) === aCount && dRecall.sayBusy === false,
+      'sayText=' + JSON.stringify(dRecall.sayText) + ' msgs=' + msgCount(dRecall) + '（' + aCount + ' 条没变，没发送）')
+    await shot(mp, 'say-fix-me-bubble') // ← 修复轮证据②：F5 新配色的用户气泡
+
     // ── [B] generate：「把路人去掉」→ 气泡转圈 → 新图 → 撤销（连对话一起收）──────
     log('\n[B] generate 路：「把路人去掉」')
     const bColors0 = await colors()
@@ -288,15 +309,25 @@ async function mockUp() {
     // ★ Task 14：「停止」搬进气泡了 —— 输入条那行再没有它，气泡里有
     const oldStop = await rpc(page.$('.say-act-stop'), '$ .say-act-stop')
     const bubbleStop = await rpc(page.$('.msg-stop'), '$ .msg-stop')
-    check('B3 「停止」在气泡里（.msg-stop 在、输入条那行的 .say-act-stop 已退役）',
-      oldStop === null && !!bubbleStop,
-      'say-act-stop=' + (oldStop === null ? '无' : '还在') + ' msg-stop=' + (bubbleStop ? '有' : '无'))
+    // ★ 修复轮 F2：停止键加大（80rpx ≈ 41.6px，44pt 基准的 39px 线）—— 顺手在
+    //   它出现着的这一刻量盒子（生成中才存在，别处量不到）。
+    const stopSize = bubbleStop ? await rpc(bubbleStop.size(), 'msg-stop.size') : null
+    check('B3 「停止」在气泡里（.say-act-stop 已退役）+ 加大到 ≥39px（修复轮 F2）',
+      oldStop === null && !!bubbleStop && !!stopSize && Number(stopSize.height) >= 39,
+      'say-act-stop=' + (oldStop === null ? '无' : '还在') + ' msg-stop 盒 ' +
+      (stopSize ? stopSize.width + '×' + stopSize.height + 'px' : '量不到'))
     await shot(mp, 'say-B-thinking')
     const dBdone = await waitData(page, x => x.generating === false && x.canUndo === true, 9000)
     check('B4 生成完直接换图（尺寸换成 mock 那张）',
       dBdone.photoW === mockW && dBdone.photoH === mockH,
       'photoW×H=' + dBdone.photoW + '×' + dBdone.photoH + '（mock 那张 ' + mockW + '×' + mockH + '）')
     check('B5 输入条那行「撤销」亮了', dBdone.canUndo === true, 'canUndo=' + dBdone.canUndo)
+    // ★ 修复轮 F2：「撤销」也加大到同一档（80rpx = 输入胶囊等高，≳39px）
+    const undoEarly = await rpc(page.$('.say-act-undo'), '$ .say-act-undo')
+    const undoSize = undoEarly ? await rpc(undoEarly.size(), 'say-act-undo.size') : null
+    check('B5b 「撤销」胶囊加大到 ≥39px（修复轮 F2）',
+      !!undoSize && Number(undoSize.height) >= 39,
+      undoSize ? '撤销盒 ' + undoSize.width + '×' + undoSize.height + 'px' : '量不到 .say-act-undo')
     const dReply = await waitData(page, x => doneText(x) !== '', 4000)
     check('B6 reply 和图片一起落进对话区（原文，不自动消失）',
       doneText(dReply) === '好，这就把背景里的路人去掉。', JSON.stringify(doneText(dReply)))
@@ -389,7 +420,35 @@ async function mockUp() {
     check('E3 生成被拦住了：没转圈、忙态已收、撤销没被动过',
       dE.generating === false && dE.sayBusy === false && dE.canUndo === eBefore.canUndo,
       'generating=' + dE.generating + ' canUndo=' + dE.canUndo + '（前值 ' + eBefore.canUndo + '）')
-    await shot(mp, 'say-E-disambig')
+    // ★ 修复轮 F1 的冒烟 + 证据①：刚落下的这条 reply 是**多行**（E 这句就是修前
+    //   停在折叠线下的那条）—— 断言末尾 .msg 的底 ≤ 对话区 .msgs 的底 + 2px。
+    //   ⚠️ 量法必须是小程序自己的 boundingClientRect（相对视口、**认得滚动位置**）：
+    //   automator 的 element.offset() 是布局位、不认 scrollTop（探针钉过）——用它
+    //   量，"滚没滚"的数字一模一样。此刻 6 条消息撑过 400rpx 封顶（~300px > 208px），
+    //   没滚到底会差出上百 px —— 不存在"内容不满、蒙混过关"的窗口。
+    const rects = await rpc(mp.evaluate(() => new Promise(resolve => {
+      wx.createSelectorQuery()
+        .select('.msgs').boundingClientRect()
+        .selectAll('.msg').boundingClientRect()
+        .exec(res => {
+          const box = res && res[0]
+          const all = res && res[1]
+          const tail = all && all.length ? all[all.length - 1] : null
+          resolve({
+            msgsBottom: box ? box.bottom : null,
+            tailBottom: tail ? tail.bottom : null,
+            count: all ? all.length : -1,
+          })
+        })
+    })), 'eval boundingClientRect（E4）')
+    const okRect = !!rects && typeof rects.msgsBottom === 'number' && typeof rects.tailBottom === 'number'
+    check('E4 多行回复落地后自动滚到底：尾巴在折叠线之上（末尾 .msg 底 ≤ .msgs 底 + 2px；修复轮 F1）',
+      okRect && rects.tailBottom <= rects.msgsBottom + 2,
+      okRect
+        ? '末尾 .msg 底 ' + rects.tailBottom.toFixed(1) + 'px vs 对话区底 ' + rects.msgsBottom.toFixed(1) +
+          'px（差 ' + (rects.msgsBottom - rects.tailBottom).toFixed(1) + 'px，正数=尾巴可见；共 ' + rects.count + ' 条）'
+        : '量不到（evaluate 返回 ' + JSON.stringify(rects) + '）')
+    await shot(mp, 'say-fix-tail-visible') // ← 修复轮证据①：多行回复尾巴可见
 
     // ── [F] 停止 + 秒表换挡：「把路人去掉」（mock 延时改成 20 秒）─────────────
     log('\n[F] 停止 + 秒表：把 mock 的生成延时改成 ' + (EDIT_MS_LONG / 1000) + ' 秒（慢响应）')
@@ -452,8 +511,10 @@ async function mockUp() {
       log('  [量] 对话区 ' + msgCount(dFStop) + ' 条时：.msgs 盒子 ' +
         box.width + '×' + box.height + 'px（封顶 ' + capPx.toFixed(1) + 'px）；' +
         '#stage-area 剩余 ' + sbox.width + '×' + sbox.height + 'px；屏 ' + win.w + '×' + win.h)
-      check('F8 对话区封顶生效（max-height 400rpx 真的夹住了 —— 内容再多也不长）',
-        Number(box.height) <= capPx + 2, '盒子高 ' + box.height + 'px ≤ ' + capPx.toFixed(1) + 'px')
+      check('F8 对话区封顶生效（max-height 400rpx 真的夹住了：内容超了，盒子恰在封顶高度）',
+        Math.abs(Number(box.height) - capPx) <= 2,
+        '盒子高 ' + box.height + 'px vs 封顶 ' + capPx.toFixed(1) + 'px（差 ' +
+        Math.abs(Number(box.height) - capPx).toFixed(1) + 'px；双边 —— 没到封顶也判挂）')
     } else {
       check('F8 对话区封顶生效（max-height 400rpx 真的夹住了）', false, '量不到 .msgs / #stage-area 的盒子')
     }
@@ -472,17 +533,28 @@ async function mockUp() {
       JSON.stringify(lastMsg(dG1)) + '（期望 label：' + label1 + '）')
     check('G2 点风格不动撤销（canUndo 一个字没变 —— 它不进撤销）',
       dG1.canUndo === gBefore.canUndo, 'canUndo=' + dG1.canUndo + '（前值 ' + gBefore.canUndo + '）')
+    // ★ 修复轮 F7：这格**已亮着**，再点一下 = 画面不会有任何变化 —— 连小字都不留
+    //   （修前每点一下多一条 note）。早退没有正向信号可等，给足渲染窗口直接读。
+    await rpc(cell1.tap(), 'tap style[1] 连点')
+    await sleep(800)
+    const dG2b = await rpc(page.data(), 'page.data')
+    check('G2b 连点同一档风格不再刷屏（0 条新小字、条数不动；修复轮 F7）',
+      msgCount(dG2b) === msgCount(dG1) && lastMsg(dG2b).text === lastMsg(dG1).text,
+      '条数 ' + msgCount(dG1) + ' → ' + msgCount(dG2b) + '，末条仍是 ' + JSON.stringify(lastMsg(dG2b).text))
     // 换一张 → 回空态：对话流应当清空
     const backBtn = await rpc(page.$('.tb-left'), '$ .tb-left')
     await rpc(backBtn.tap(), 'tap 换一张')
     const dG3 = await waitData(page, x => x.stage === 'empty', 8000)
     check('G3 换一张 → 回空态、对话流清空', dG3.stage === 'empty' && dG3.msgs.length === 0,
       'stage=' + dG3.stage + ' msgs=' + dG3.msgs.length)
-    // 再载入一张（applyPickedPhoto 那条清空线）：也不许把上一张的话带回来
+    // 再载入一张（applyPickedPhoto 那条清空线）：也不许把上一张的话带回来。
+    // ★ 修复轮 F9：断言名改成它**真正证明的** —— 进空态那一步（onPickAgain）已经把
+    //   对话流清过一道，这条量的是"重新载入也不会把上一张的对话带回来"；
+    //   applyPickedPhoto 里那行 clearMsgs 是**防御**（保留不动），不是这条的机制。
     const devBtn2 = await rpc(page.$('.dev-btn'), '$ .dev-btn')
     await rpc(devBtn2.tap(), 'tap dev（再次载入）')
     const dG4 = await waitData(page, x => x.stage === 'edit' && x.styles.length === 13, 60000)
-    check('G4 重新载入一张：对话流还是空的（applyPickedPhoto 的清理生效）',
+    check('G4 重新载入不会把上一张的对话带回来（清空发生在进空态那一步；这条兜的是重载后仍空）',
       dG4.msgs.length === 0 && dG4.stage === 'edit', 'stage=' + dG4.stage + ' msgs=' + dG4.msgs.length)
     await shot(mp, 'say-G-reloaded')
 
