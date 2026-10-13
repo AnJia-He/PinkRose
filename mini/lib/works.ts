@@ -231,7 +231,16 @@ async function add(srcPath: string): Promise<WorkEntry> {
     bytes: sizeOf(file) + sizeOf(thumb),
     at: Date.now(),
   }
-  writeManifest([entry, ...readManifest()])
+  try {
+    writeManifest([entry, ...readManifest()])
+  } catch (e) {
+    // 清单没写下来 = 刚 copy 的两个文件没人记得住 —— 清掉，别当孤儿留在盘上
+    //（T18 复审 M2；storage 写炸了都走这）
+    unlinkQuietly(file)
+    unlinkQuietly(thumb)
+    console.error('[works] 清单没能写下来：' + reasonOf(e))
+    throw new Error('收进作品集失败：清单没能写下来')
+  }
   return entry
 }
 

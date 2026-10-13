@@ -16,14 +16,17 @@
  *   [5] 落盘事实：清单 +1、字段齐、宽高 = 照片实测、两个文件都在且缩略图真缩过
  *       （长边 ≤256，getImageInfo 量的）、目录里恰好两个文件
  *   [6] 回作品页：网格 1 格、格子是正方（两列量级）、点格 → previewImage 收到
- *       全部全尺寸路径 + current 是这张（mock 记的账）、截图
+ *       全部全尺寸路径 + current 是这张（mock 记的账）、截图；再塞第 2 条夹具量
+ *       两列（两格 top 相等 / left 不同）→ 清夹具（T18 复审 M4）
  *   [7] 「我的」页：1 张 → 数值行对得上（页面 data 对清单现算）、截图、点「清空」
  *       （mock showModal 自动确认）→ 清单 / 目录 / 数字全归零 + 0 张置灰标记（截图）
  *   [8] 重存一张（[7] 清掉后给长按删当靶子）→ 长按删：清单 0、两个文件都没了、
  *       空态回来了（截图）
  *   [9] cap 满了：往清单灌一条「快满」的夹具（别真存 150MB）→ add 拒绝、文案就是
  *       那条专属 toast 的原话、目录里没被写半张
- *   [10] 收尾：还原 mock、回修图页
+ *   [10] 清单写失败（mock setStorageSync 抛一次）：add 拒绝 + 人话文案、刚 copy 的
+ *        孤儿文件被清掉、清单没留半条（T18 复审 M2 的靶子）
+ *   [11] 收尾：还原 mock、回修图页
  *
  * ⚠️ 防挂死纪律（和 smoke.cjs / smoke-say.cjs 同款）：每个 automator 调用套 rpc()
  *    上限、每处轮询有上限、整条有看门狗。截图是**证据不是判据**。
@@ -154,7 +157,7 @@ const resetModalLog = () => rpc(mp.evaluate(function () {
   }
 
   // devtools 侧读文件的三个小工具（都在页面运行时里量，回 bring JSON 字符串）
-  const evalJson = (fn, ...args) => mp.evaluate(fn, ...args).then(s => JSON.parse(String(s)))
+  const evalJson = (fn, ...args) => rpc(mp.evaluate(fn, ...args), 'evaluate').then(s => JSON.parse(String(s)))
   const readManifest = () => evalJson(function (key) {
     const v = wx.getStorageSync(key)
     return JSON.stringify(Array.isArray(v) ? v : [])
@@ -346,6 +349,43 @@ const resetModalLog = () => rpc(mp.evaluate(function () {
     !!pv && pv.calls === 1 && pv.urls.length === 1 && pv.urls[0] === e0.file && pv.current === e0.file,
     JSON.stringify(pv))
 
+  // 两列布局：塞第 2 条夹具（file/thumb 就指现有那张 —— 只量版面，别真存第二张；
+  // 照 [9] cap 段灌夹具的先例）→ 量两格 → 清夹具回到 1 格（T18 复审 M4）
+  await rpc(mp.evaluate(function (payload) {
+    const v = wx.getStorageSync(payload.key)
+    const arr = Array.isArray(v) ? v : []
+    arr.unshift({ id: 'grid-fixture', file: payload.file, thumb: payload.thumb, w: payload.w, h: payload.h, bytes: 1, at: 1 })
+    wx.setStorageSync(payload.key, arr)
+    return JSON.stringify(true)
+  }, { key: WORKS_KEY, file: e0.file, thumb: e0.thumb, w: e0.w, h: e0.h }), 'inject grid fixture')
+  await rpc(page.callMethod('refresh'), 'refresh works page')
+  const dTwo = await waitData(page, x => x.items.length === 2, 8000)
+  await sleep(300) // 等一帧版面（setData 落地到渲染层有缝）
+  const rects2 = await rpc(evalJson(function () {
+    return new Promise(function (res) {
+      const q = wx.createSelectorQuery()
+      q.selectAll('.cell').boundingClientRect()
+      q.exec(function (r) {
+        const cells = (r && r[0]) || []
+        res(JSON.stringify(cells.map(x => ({ top: x.top, left: x.left }))))
+      })
+    })
+  }), 'measure two cells')
+  check('相册墙⑥：两列同排（两格 top 相等 ±1px、left 不同）',
+    dTwo.items.length === 2 && Array.isArray(rects2) && rects2.length === 2 &&
+      Math.abs(rects2[0].top - rects2[1].top) <= 1 &&
+      Math.abs(rects2[0].left - rects2[1].left) > 50,
+    JSON.stringify(rects2))
+  await rpc(mp.evaluate(function (key) {
+    const v = wx.getStorageSync(key)
+    const arr = Array.isArray(v) ? v : []
+    wx.setStorageSync(key, arr.filter(e => !e || e.id !== 'grid-fixture'))
+    return JSON.stringify(true)
+  }, WORKS_KEY), 'remove grid fixture')
+  await rpc(page.callMethod('refresh'), 'refresh works page')
+  const dBack = await waitData(page, x => x.items.length === 1, 8000)
+  check('相册墙⑦：清掉夹具回到 1 格（别把版面证据留在清单里）', dBack.items.length === 1, 'len=' + dBack.items.length)
+
   // ── [7] 「我的」页：1 张 → 数字对账 → 清空（mock showModal 自动确认）────────
   log('\n[7] 「我的」页：1 张的数字 → 清空 → 0 张置灰')
   page = await rpc(mp.switchTab('/pages/me/me'), 'switchTab me')
@@ -496,8 +536,55 @@ const resetModalLog = () => rpc(mp.evaluate(function () {
   }, WORKS_KEY), 'remove cap fixture')
   check('cap③：清掉夹具后清单干净（收尾）', (await readManifest()).length === 0)
 
-  // ── [10] 收尾 ─────────────────────────────────────────────────────────────
-  log('\n[10] 收尾：还原 mock、回修图页')
+  // ── [10] 清单写失败：刚 copy 的两个文件要被清掉（mock setStorageSync 抛）────────
+  // T18 复审 M2 的靶子：文件已 copy 进目录、清单却写不下来的那一步。mock 里直接
+  // throw —— setStorageSync 是 Sync API，调用方（works.ts 的 writeManifest）会当场
+  // 吃到异常（同步 API 的 mock 语义就得是这样的"照面即炸"）。
+  log('\n[10] 清单写失败：孤儿文件要清掉（mock setStorageSync 抛）')
+  await rpc(mp.mockWxMethod('setStorageSync', function () {
+    throw new Error('mock: storage boom')
+  }), 'mock setStorageSync (throw)')
+  mocked.push('setStorageSync')
+  await rpc(mp.evaluate(function () {
+    const ps = getCurrentPages()
+    const p = ps[ps.length - 1]
+    p.probeSaveWork = null
+    return JSON.stringify(true)
+  }), 'clear probeSaveWork')
+  page.callMethod('__probeSaveWork').catch(() => { /* 结果看字段，不看这个 promise */ })
+  let probeOrphan = null
+  {
+    const t0 = Date.now()
+    while (Date.now() - t0 < 60000) {
+      probeOrphan = await evalJson(function () {
+        const ps = getCurrentPages()
+        const p = ps[ps.length - 1]
+        return JSON.stringify(p && p.probeSaveWork ? p.probeSaveWork : null)
+      })
+      if (probeOrphan && probeOrphan.state !== 'running') break
+      await sleep(250)
+    }
+  }
+  check('清单写失败①：add 拒绝、人话文案（「收进作品集失败：清单没能写下来」）',
+    !!probeOrphan && probeOrphan.state === 'fail' && probeOrphan.why === '收进作品集失败：清单没能写下来',
+    JSON.stringify(probeOrphan))
+  const namesOrphan = await dirList()
+  check('清单写失败②：刚 copy 的孤儿文件被清掉（目录 0 文件）', namesOrphan.length === 0, 'files=' + JSON.stringify(namesOrphan))
+  check('清单写失败③：清单没留下半条（0 条）', (await readManifest()).length === 0)
+  // 先还原一遍（留着也行 —— [11] 的 restoreMocks 还会幂等再兜一次；这里先还原是
+  // 为了万一后面还有要写 storage 的动作不被这 mock 咬）。失败不 FATAL：防御性清理
+  // 用的都不是 setStorageSync（rmdirSync / removeStorageSync），不依赖它先活过来。
+  try { await rpc(mp.restoreWxMethod('setStorageSync'), 'restore setStorageSync', 8000) } catch (e) { log('  [restore setStorageSync 失败]', e && e.message) }
+  // 不管成败都清干净（万一 mock 没炸穿、真存下了一张，别把脏状态留给 [11]）
+  await rpc(mp.evaluate(function (key) {
+    const fsm = wx.getFileSystemManager()
+    try { fsm.rmdirSync(wx.env.USER_DATA_PATH + '/works', true) } catch (e) { /* 没有就罢 */ }
+    try { wx.removeStorageSync(key) } catch (e) { /* 同上 */ }
+    return JSON.stringify(true)
+  }, WORKS_KEY), 'cleanup after orphan test')
+
+  // ── [11] 收尾 ─────────────────────────────────────────────────────────────
+  log('\n[11] 收尾：还原 mock、回修图页')
   await restoreMocks()
   page = await rpc(mp.switchTab('/pages/index/index'), 'switchTab index')
   log('    已回：', page.path)

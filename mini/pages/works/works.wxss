@@ -11,16 +11,23 @@
   box-sizing: border-box;
 }
 
-/* 顶栏：粘在状态栏下面（top 是 wxml 里 inline 的）。吸顶要有一块**不透明的底**，
-   滚过去的缩略图从它下面穿（半透明会把两张照片叠在一起）。 */
+/* 顶栏：粘在屏幕最顶（top: 0）—— 状态栏那截由自己的内 padding 吃（wxml 里 inline），
+   吸顶块**连状态栏一起**盖住：滚过去的缩略图从它下面穿，不会再从时钟/电量底下过
+   （T18 复审 M1）。吸顶要有一块**不透明的底**（半透明会把两张照片叠在一起）。 */
 .topbar {
   position: sticky;
+  top: 0;
   z-index: 1;
+  box-sizing: border-box;
+  background: var(--bg);
+}
+
+/* 标题行：88rpx（不随状态栏变高变矮） */
+.tb-row {
   display: flex;
   align-items: center;
   justify-content: center;
   height: 88rpx;
-  background: var(--bg);
 }
 
 .tb-title {

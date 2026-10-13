@@ -1,12 +1,16 @@
 <!-- 「作品」页（Task 17 起是真页面，spec §13.2）：本地作品集的缩略图墙。
      数据 / 删除全走 lib/works；点格原生 previewImage，长按删（modal 二次确认）。
      色号 / 字号一律走 app.wxss 的令牌与字号映射表。 -->
-<view class="page" style="padding-top: {{statusBar}}px">
-  <!-- 顶栏：状态栏让位 + 88rpx、标题居中、**无按钮**（右上角的微信胶囊盖不到谁，
-       不用像修图页那样算让位宽度）。吸顶尽力而为：sticky 不生效的环境退化成
-       普通块，版面照常；top 用 inline 跟状态栏走，滚起来不会被状态栏压住。 -->
-  <view class="topbar" style="top: {{statusBar}}px">
-    <view class="tb-title">作品</view>
+<view class="page">
+  <!-- 顶栏：**自己吃掉状态栏那截**（sticky top:0 + 内 padding = 状态栏让位）——
+       页面不再 padding-top，吸顶块连状态栏一起盖住：滚过去的缩略图从它下面穿，
+       不会从时钟/电量底下过（T18 复审 M1）。标题行固定 88rpx、无按钮（右上角的
+       微信胶囊盖不到谁，不用像修图页那样算让位宽度）。吸顶尽力而为：sticky 不生效
+       的环境退化成普通块，版面照常（那时这截刚好还给页面顶端）。 -->
+  <view class="topbar" style="padding-top: {{statusBar}}px">
+    <view class="tb-row">
+      <view class="tb-title">作品</view>
+    </view>
   </view>
 
   <view class="empty" wx:if="{{!items.length}}">
