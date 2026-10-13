@@ -28,14 +28,14 @@
 }
 
 .brand-name {
-  margin-top: 28rpx;
+  margin-top: 32rpx; /* ★ Task 15（F6）：28→32rpx（≈16.6px），对齐电脑版 .welcome-mark 的 16px */
   font-size: 56rpx;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
 
 .empty-sub {
-  margin-top: 16rpx;
+  margin-top: 24rpx; /* ★ Task 15（F6）：16→24rpx（≈12.5px），对齐电脑版 .welcome-lede 的 12px */
   color: var(--muted);
   font-size: 28rpx;
 }
@@ -129,8 +129,20 @@
   justify-content: center;
 }
 
+/* 照片本身（画布）—— ★ Task 15 照片舞台感（评审 P1-1）：给它"相纸边 + 影子"，
+   让照片读起来是**压在卡纸上的相纸**，不是直接坐在黑底上的色块。
+   两处值都是**镜像电脑版**的（`src/styles.css` 的 `.canvas` 与 `--photo-shadow`，
+   不是自造）：那边是 `0 0 0 1px var(--photo-edge)` + `0 4px 14px rgba(0,0,0,.5)`
+   （深色半）—— 1px→2rpx、4px→8rpx、14px→28rpx（×1.922 取偶）。
+   ⚠️ 深底上那圈浅边治的是"夜景/暗调照片糊进底里"（正是这个产品的常客）。
+   ⚠️ 上下那两道 24rpx 呼吸**不在这里**——那是 ts 的 fitK 按可用高扣出来的
+   （CSS padding 会被量盒吃进去，见 index.ts 的 STAGE_GAP_RPX 注释）。
+   ⚠️ 真机验收项：webgl2 画布上 border-radius 裁不裁得动、box-shadow 生不生效
+   （模拟器看不准；不裁就撤 radius、只留边+影）——见 README「设计打磨轮」那节。 */
 .stage {
   display: block;
+  border-radius: 16rpx;
+  box-shadow: 0 0 0 2rpx var(--photo-edge), 0 8rpx 28rpx rgba(0, 0, 0, .5);
 }
 
 /* ── 风格栏（Task 6）─────────────────────────────────────────────────
@@ -180,8 +192,8 @@
 .style-name {
   margin-top: 8rpx;
   color: var(--muted);
-  font-size: 22rpx;
-  line-height: 30rpx; /* 定死行高：条子那 206rpx 是按 30 算的（小数行高会对不上） */
+  font-size: 24rpx; /* ★ Task 15（F4）：22→24rpx（12.5px ≈ 电脑版 12 档）；之前是全页唯一"梯子外"的字号 */
+  line-height: 30rpx; /* 定死行高：条子那 206rpx 是按 30 算的（小数行高会对不上）—— 字号改了它也**不许动** */
   white-space: nowrap;
 }
 
@@ -212,7 +224,7 @@
 .msg {
   display: flex;
   align-items: flex-start;
-  margin-bottom: 16rpx; /* 条目间距 */
+  margin-bottom: 32rpx; /* 条目间距 —— ★ Task 15（F3）：16→32rpx，对齐电脑版节奏表「对话块与块 16px」 */
 }
 
 /* 「我说的」：右对齐气泡，★ 修复轮 F5 **降调**——--accent-tint 底 + --accent-300 字
@@ -224,7 +236,7 @@
 
 .msg.me .msg-body {
   max-width: 78%;
-  padding: 12rpx 24rpx;
+  padding: 22rpx 28rpx; /* ★ Task 15（F3）：12/24→22/28rpx（≈11.4/14.6px），对齐电脑版 .bubble 的 11/15px */
   background: var(--accent-tint);
   border-radius: var(--r-md);
   color: var(--accent-300);
@@ -237,7 +249,7 @@
   display: flex;
   align-items: center;
   max-width: 78%;
-  padding: 12rpx 24rpx;
+  padding: 22rpx 28rpx; /* ★ Task 15（F3）：同 .msg.me 那档 */
   background: var(--raised);
   border: 2rpx solid var(--line-2);
   border-radius: var(--r-md);

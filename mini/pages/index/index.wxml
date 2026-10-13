@@ -47,8 +47,10 @@
     <!-- 风格栏：横滑，一格一张**真渲染**的小图 + 名字（画法见 lib/image/thumbs.ts）。
          小图是拼在一张 sprite 里的一次性产物，这里用 background-position 切格 ——
          一格一个 canvas 节点在小程序里会卡。sprite 没画好时 styles 是空的，
-         这条先空着（版面高度不变，照片区不会跟着跳一下）。 -->
-    <scroll-view class="styles" scroll-x enable-flex="{{true}}">
+         这条先空着（版面高度不变，照片区不会跟着跳一下）。
+         ★ Task 15：show-scrollbar="{{false}}" —— 别让系统滚动条画出来（竖条见下方
+         对话区那条的注释）。 -->
+    <scroll-view class="styles" scroll-x enable-flex="{{true}}" show-scrollbar="{{false}}">
       <view wx:for="{{styles}}" wx:key="id"
             class="style-cell {{activeStyle === item.id ? 'on' : ''}}"
             data-id="{{item.id}}" bindtap="onStyleTap">
@@ -69,8 +71,16 @@
          那个病根）。★ 修复轮试过"交替 id 哨兵"，真运行时滚不动（探针 + 冒烟截图
          钉死），别再改回去。
          封顶 50 条（ts 的 MAX_MSGS，超了从头部丢最老的）。
-         点 `.msg-body` = 回填那句话进输入框（★ 修复轮 F4，只有 me 气泡吃这个手势）。 -->
-    <scroll-view class="msgs" wx:if="{{msgs.length}}" scroll-y scroll-into-view="{{scrollTo}}">
+         点 `.msg-body` = 回填那句话进输入框（★ 修复轮 F4，只有 me 气泡吃这个手势）。
+         ★ Task 15（F5）：show-scrollbar="{{false}}" —— 修复轮留的"那条竖线"就是
+         滚动条（Task 15 评审像素扫描钉死：对话区内容盒右缘、纵贯整条）。
+         ⚠️ **show-scrollbar 单独写不生效**：官方文档原文「滚动条显隐控制
+         (同时开启 enhanced 属性后生效)」（开发者工具自带的属性元数据里同一句；
+         2026-10-13 只看 show-scrollbar 时像素扫描前后完全一致，证实如此）——
+         所以这里一并开 enhanced="{{true}}"（scroll-view 增强特性；scroll-into-view
+         照常支持，冒烟 E4「尾巴在折叠线之上」盯着滚动行为）。 -->
+    <scroll-view class="msgs" wx:if="{{msgs.length}}" scroll-y scroll-into-view="{{scrollTo}}"
+                 enhanced="{{true}}" show-scrollbar="{{false}}">
       <view wx:for="{{msgs}}" wx:key="id" id="m{{item.id}}" class="msg {{item.kind}}">
         <image wx:if="{{item.kind === 'ai'}}" class="msg-badge" src="/assets/emperor-badge.png"
                aria-hidden="true" />

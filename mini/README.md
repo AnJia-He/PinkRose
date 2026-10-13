@@ -75,8 +75,8 @@ node mini/scripts/smoke.cjs
 `packOptions.ignore`**（2026-10-12 试过、又撤了）：那条实测**连本地模拟器编译
 也一起生效**，同一个包里徽章标读得到、它读不到（`getImageInfo` 报
 `getImageInfo:fail file not found`、`statSync` 报 `permission denied`），
-而冒烟恰恰要在模拟器里读它。不 ignore 也没事：整个小程序包（含这张图）才
-334 KB，离 2 MB 主包上限远得很。
+而冒烟恰恰要在模拟器里读它。不 ignore 也没事：mini/ 全部文件加起来（不含本机生成的
+`types/`）才 ~590 KB —— 其中测试图 159 KB + 本轮内嵌字体 119 KB —— 离 2 MB 主包上限远得很。
 ⚠️ **发布前要摘掉 dev 通道的两样**：包里的测试图 `assets/test-photo.jpg`、和
 「载入测试照片」那颗按钮（wxml `.dev-btn` + onLoad 算的 `dev` 判据 + index.ts 的
 `DEV_PHOTO` / `onDevPhoto`）—— **只能改代码 / 删文件**（给图加 `packOptions.ignore`
@@ -304,6 +304,48 @@ CLI + automator 路径的现役版本。⚠️ 本机的网络策略挡住了微
 | 14 | API_BASE 改成实际 IP | 开工前第 3 条改完，真机能连上（连不上先查这条） | |
 | 15 | 微信登录真 code | 不弹登录页、能出图；若蹦「微信登录没成功，再试一次」那类错 = 这条没通 | |
 | 16 | 系统框 | 相机 / 相册 / 存相册三类系统框：文案与首拒后的行为对得上 | |
-| 17 | 对话留痕 | 说两句 → 两条问答都在屏上、6 秒后不消失；点风格有系统小字；上滑能看更早的；**上滑时目验对话区右侧有没有一条不该有的竖线**（模拟器截图里疑似开发者工具画的滚动条 —— 真机确认，有的话另记一笔）；**回复落地那一刻看一眼有没有闪一下**（补滚是"先清再指"两步做的，一闪就是有问题，记一笔） | |
+| 17 | 对话留痕 | 说两句 → 两条问答都在屏上、6 秒后不消失；点风格有系统小字；上滑能看更早的；**上滑时目验对话区右侧有没有一条不该有的竖线**（模拟器那条已钉死=滚动条，Task 15 用 `enhanced` + `show-scrollbar` 收掉 —— 真机只看「还在不在」，在就记一笔）；**回复落地那一刻看一眼有没有闪一下**（补滚是"先清再指"两步做的，一闪就是有问题，记一笔） | |
 
 **失败现场**（机型 / 微信版本 / 截图路径 / 控制台原话）—— 13b 跑的时候往下写。
+
+## 设计打磨轮（Task 15）· 这轮改了什么 + 真机看这几样
+
+2026-10-13。七件：照片舞台感（圆角 + 相纸边 + 上下呼吸 / F1）/ MiSans 子集 + 字标（F2）/
+对话节奏与字号对齐电脑版尺子（F3 F4）/ 对话区滚动条收口（F5）/ 空态两处间距（F6）。
+模拟器已验完（两个冒烟 43/43 + 48/48、照片上下间隙实测 24.4rpx、截图像素级前后对比）；
+逐条数值与证据在 `.superpowers/sdd/2026-10-12-miniprogram-outdoor-quick-edit/task-15-report.md`。
+
+**字体是内嵌的（`mini/styles/fonts.wxss`，自动生成物、勿手改）** —— MiSans 静态子集
+400/600 + Playfair 的「PinkRose」字标，全部 base64 进包（wxss 的 @font-face 不吃本地
+文件 url，只认 base64 / https）。重建命令：
+
+```bash
+C:\Users\Administrator\anaconda3\python.exe mini/scripts/build-font-subset.py
+```
+
+⚠️ 必须用**带 brotli 的 python**（anaconda 那份；`D:\python314` 那份 fontTools 读写
+woff2 会 ImportError）。字符集 = mini/ 全部 ts+wxml 剥注释后取唯一字符（快照
+`mini/scripts/font-subset-chars.txt`）——**改了固定文案（按钮 / 顶栏 / 风格名 / 系统
+小字…）就要重跑**，否则新字掉系统字体。woff2 原件**不进 mini/**（只落系统 temp）。
+唯一已知缺口：全角「？」（U+FF1F）不在 MiSans 任何切片里 —— 两三处掉系统字体。
+
+**滚动条那条值得单独记一笔**（F5）：`show-scrollbar` **单独写不生效** —— 官方文档原文
+「滚动条显隐控制 **(同时开启 enhanced 属性后生效)**」（开发者工具自带的属性元数据同句）。
+2026-10-13 实测：只加 show-scrollbar 时像素扫描前后**完全一致**（竖线还在），补上
+`enhanced="{{true}}"` 后同一位置竖线消失。所以对话区那条 scroll-view 开了 enhanced；
+滚到底的两步 `scroll-into-view` 照常（冒烟 E4「尾巴在折叠线之上」盯着）。
+
+**真机看这几样**（前两条是模拟器看不准的）：
+
+1. 照片的**圆角**裁不裁得动（webgl2 画布上的 `border-radius`）—— 不裁就撤 radius、
+   只留相纸边 + 影子；
+2. 同一张照片的 **`box-shadow`**（相纸影）真机生不生效 —— 和 1 一起构成「相纸边 +
+   影子」；模拟器上 computed 已是 `0 0 0 1px + 0 4px 14px`；
+3. 字体形状：按钮 / 风格名 / 顶栏动作是 MiSans、顶栏和空态的「PinkRose」是衬线
+   （Playfair）—— base64 woff2 在老 iOS 微信上若不生效，备胎是 TTF 子集
+   （构建脚本把 `--flavor=woff2` 换掉重出）；
+4. 对话上滑时右侧**不再有竖线**（靠上面那条 enhanced 组合）—— 若某机型还露，
+   记机型 + 微信版本；
+5. 对话变长、照片缩到 ~278px 的手感（满对话时照片仍是屏上最大单块）—— 真机嫌挤的
+   后手是 `max-height` 从 400rpx 收到 320rpx，不是改结构；
+6. 「？」掉系统字体那两三处（如「…再试一次？」）真机不显眼就行。

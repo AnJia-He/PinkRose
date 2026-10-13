@@ -281,6 +281,34 @@ function loadImage(node: CanvasNode, src: string): Promise<WechatMiniprogram.Ima
   })
 }
 
+/**
+ * 照片上下各留多少空隙（rpx）—— ★ Task 15 照片舞台感：照片不贴死顶栏和风格栏。
+ * ⚠️ 这道空隙是**算出来的**、**不是** CSS padding：照片区的量法
+ * （`queryStage` 的 `fields({size:true})`）是 border-box，给 `.stage-area` 加
+ * padding 会被**量进盒子**、空隙等于没加（Task 15 评审 P1-1 钉过）。
+ */
+const STAGE_GAP_RPX = 24
+
+/** 窗口逻辑宽度（px）—— STAGE_GAP_RPX 换 px 的唯一口径（×windowWidth/750）。 */
+function windowWidthPx(): number {
+  const info = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync()
+  return info.windowWidth
+}
+
+/**
+ * ★ Task 15：照片等比装进照片区的比例 —— 原来四处各写一遍（startRender /
+ * runGenerate / onUndo / fitStage），收成这一份。
+ *
+ * `k = min(1, 宽够不够, 高够不够)`；其中**高那一项先扣掉上下两道
+ * `STAGE_GAP_RPX`** —— `.stage-area` 是 flex 居中，扣完以后照片上下就各落
+ * 一道空隙（"呼吸"就是它）。小图不放大（上限 1）。
+ * `Math.max(…, 1)` 是兜底：盒子小到扣完不剩正数时也不算出负比例。
+ */
+function fitK(boxW: number, boxH: number, w: number, h: number): number {
+  const gap = STAGE_GAP_RPX * windowWidthPx() / 750
+  return Math.min(1, boxW / w, Math.max(boxH - 2 * gap, 1) / h)
+}
+
 Page({
   data: {
     statusBar: 44,
@@ -472,7 +500,8 @@ Page({
       pipe.resizeToImage() // 绘图缓冲 = 照片原尺寸（和电脑版一致）
       // 显示尺寸 = 照片**等比装进**照片区（和 `mode="aspectFit"`、电脑版 `.canvas`
       // 的 max-width/max-height 是同一条规矩）；小图不放大，最多 1:1。
-      const k = Math.min(1, box.w / img.width, box.h / img.height)
+      // ★ Task 15：比例走共享 fitK（垂直扣掉上下呼吸，见它的注释）。
+      const k = fitK(box.w, box.h, img.width, img.height)
       this.setData({ stageW: Math.round(img.width * k), stageH: Math.round(img.height * k) })
       this.params = { ...ZERO } // 新照片 = 什么都没调
       pipe.render(this.params) // 先出一张原图
@@ -814,7 +843,7 @@ Page({
       }
       pipe.setImage(img)
       pipe.resizeToImage()
-      const k = Math.min(1, box.w / img.width, box.h / img.height)
+      const k = fitK(box.w, box.h, img.width, img.height)
       this.genPhotoSeq++ // 从这一刻起这张就是"当前"（在飞的旧任务全作废）
       this.setData({
         photo: path, photoW: img.width, photoH: img.height,
@@ -939,7 +968,7 @@ Page({
       this.genPhotoSeq++
       pipe.setImage(img)
       pipe.resizeToImage()
-      const k = Math.min(1, box.w / img.width, box.h / img.height)
+      const k = fitK(box.w, box.h, img.width, img.height)
       this.setData({
         photo: snap.photo, photoW: img.width, photoH: img.height,
         stageW: Math.round(img.width * k), stageH: Math.round(img.height * k),
@@ -1073,7 +1102,7 @@ Page({
       return
     }
     if (seq !== this.fitSeq || this.data.photo !== photo || !this.pipe) return
-    const k = Math.min(1, box.w / w, box.h / h)
+    const k = fitK(box.w, box.h, w, h)
     this.setData({ stageW: Math.round(w * k), stageH: Math.round(h * k) })
   },
 

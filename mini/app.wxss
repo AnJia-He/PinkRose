@@ -1,7 +1,21 @@
+@import "styles/fonts.wxss"; /* ★ Task 15：内嵌字体（MiSans 子集 + 字标）—— 自动生成物，见该文件头注释；wxss 的 @import 必须放最前 */
+
 /* app.wxss —— 全局深色令牌 + 页面底
    ⚠️ 这是电脑版 `src/styles.css` 深色那半的手工镜像（2026-10-12 抄的，
      每一档都是从那边的 `light-dark(浅, 深)` 里取的**深色那半**）——
      电脑版改色时这里要跟着看一眼，别让它悄悄过期。 */
+
+/* ── 字号映射表（★ Task 15 补，纯注释；改任何字号前先看它）────────────────
+   映射口径 = 电脑版九档 × 1.922（750rpx = 390.4px）取偶（评审报告 §3.2）：
+     电脑版 30px → 56rpx  空态品牌名
+     电脑版 17px → 32rpx  空态两颗大按钮
+     电脑版 15px → 30rpx  顶栏三处（换一张 / PinkRose / 保存）
+     电脑版 14px → 28rpx  气泡、输入格、空态副句
+     电脑版 13px → 26rpx  停止、撤销
+     电脑版 12px → 24rpx  系统小字、风格名
+     （图标字号，非文字档）→ 40rpx  发送箭头 ↑
+   全页字号都应落在这七行里；新字号先有依据（电脑版哪一档），再进样式。 */
+
 page {
   /* ── 中性六档（越抬越亮）───────────────────────────── */
   --bg: #151517;
@@ -42,5 +56,24 @@ page {
 
   background: var(--bg);
   color: var(--text);
+  font-family: "MiSans Mini", -apple-system, "PingFang SC", sans-serif;
+  /* ★ Task 15（spec §7）：固定文案全吃 MiSans 子集（上面 @import 那份）——
+     子集外的字自动掉系统字体（回退链送的，不出豆腐块）。 */
+}
+
+/* ── ★ Task 15 · 字体的两处口径（spec §7）─────────────────────────────
+   ① **动态内容显式回系统栈**：用户输入 / 模型回话（`.msg-body`——气泡、系统
+      小字都在它里面）和输入格（`.say-pill`，连 placeholder 一起：整格一个
+      字体，不会在「placeholder / 打字 / 在想…」之间闪面孔）。「停止」生在
+      `.msg-body` 里，跟着一起走系统字体（免得同一行两副面孔）。
+   ② **「PinkRose」两处 = 字标**（Playfair Display 子集，和落地页顶栏同一个
+      写法）：空态 lockup 的 `.brand-name` 和顶栏的 `.tb-title` —— 同一个品牌名
+      渲染成两种字体才是味道不对。 */
+.msg-body,
+.say-pill {
   font-family: -apple-system, "PingFang SC", sans-serif;
+}
+.brand-name,
+.tb-title {
+  font-family: "PinkRose Wordmark", "MiSans Mini", -apple-system, "PingFang SC", sans-serif;
 }
