@@ -347,6 +347,9 @@
   height: 100%;
   color: var(--text);
   font-size: 28rpx;
+  /* ⚠️ <input> 不吃父级（.say-pill）的字体（UA 默认），显式 inherit 跟上 ——
+     整格（placeholder / 打字）一个字体，不和气泡闪面孔（Task 15 复审 M1）。 */
+  font-family: inherit;
 }
 
 /* placeholder 要单独一个类喂给 input 的 placeholder-class（inline 的 placeholder

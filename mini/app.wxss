@@ -63,9 +63,11 @@ page {
 
 /* ── ★ Task 15 · 字体的两处口径（spec §7）─────────────────────────────
    ① **动态内容显式回系统栈**：用户输入 / 模型回话（`.msg-body`——气泡、系统
-      小字都在它里面）和输入格（`.say-pill`，连 placeholder 一起：整格一个
-      字体，不会在「placeholder / 打字 / 在想…」之间闪面孔）。「停止」生在
-      `.msg-body` 里，跟着一起走系统字体（免得同一行两副面孔）。
+      小字都在它里面）和输入格（`.say-pill` + `.say-input`）。⚠️ `<input>` **不吃
+      父级字体**（UA 默认），光靠 `.say-pill` 声明到不了它 —— 靠 `.say-input` 里那条
+      `font-family: inherit` 跟上（整格一个字体，不会在「placeholder / 打字 /
+      在想…」之间闪面孔）。「停止」生在 `.msg-body` 里，跟着一起走系统字体
+      （免得同一行两副面孔）。
    ② **「PinkRose」两处 = 字标**（Playfair Display 子集，和落地页顶栏同一个
       写法）：空态 lockup 的 `.brand-name` 和顶栏的 `.tb-title` —— 同一个品牌名
       渲染成两种字体才是味道不对。 */

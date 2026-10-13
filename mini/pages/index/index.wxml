@@ -48,9 +48,10 @@
          小图是拼在一张 sprite 里的一次性产物，这里用 background-position 切格 ——
          一格一个 canvas 节点在小程序里会卡。sprite 没画好时 styles 是空的，
          这条先空着（版面高度不变，照片区不会跟着跳一下）。
-         ★ Task 15：show-scrollbar="{{false}}" —— 别让系统滚动条画出来（竖条见下方
-         对话区那条的注释）。 -->
-    <scroll-view class="styles" scroll-x enable-flex="{{true}}" show-scrollbar="{{false}}">
+         ⚠️ **别给它加 show-scrollbar / enhanced**：横滑条本来就没出现过（实测）；
+         show-scrollbar 单写是惰性的（要配 enhanced 才生效），而 enhanced 会带来别的
+         渲染变化、不值当（Task 15 复审 M2；下面对话区那条是真有竖线才开的那一套）。 -->
+    <scroll-view class="styles" scroll-x enable-flex="{{true}}">
       <view wx:for="{{styles}}" wx:key="id"
             class="style-cell {{activeStyle === item.id ? 'on' : ''}}"
             data-id="{{item.id}}" bindtap="onStyleTap">
