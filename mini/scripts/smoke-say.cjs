@@ -257,16 +257,16 @@ async function mockUp() {
     check('B3 生成完直接换图（尺寸换成 mock 那张）',
       dBdone.photoW === mockW && dBdone.photoH === mockH,
       'photoW×H=' + dBdone.photoW + '×' + dBdone.photoH + '（mock 那张 ' + mockW + '×' + mockH + '）')
-    check('B4 右下角「撤销」亮了', dBdone.canUndo === true, 'canUndo=' + dBdone.canUndo)
+    check('B4 输入条那行「撤销」亮了', dBdone.canUndo === true, 'canUndo=' + dBdone.canUndo)
     const dBubble = await waitData(page, x => x.sayBubble !== '', 4000)
     check('B5 reply 和图片一起到（浮条原文）', dBubble.sayBubble === '好，这就把背景里的路人去掉。',
       JSON.stringify(dBubble.sayBubble))
     const bColors1 = await colors()
     check('B6 新图的像素真的不一样', bColors1.first !== bColors0.first, bColors0.first + ' → ' + bColors1.first)
     await shot(mp, 'say-B-done')
-    // 点撤销
-    const undoBtn = await rpc(page.$('.undo-btn'), '$ .undo-btn')
-    if (!undoBtn) throw new Error('找不到「撤销」（.undo-btn）')
+    // 点撤销（★ 2026-10-13 真机修复后它在输入条那行：.say-act-undo）
+    const undoBtn = await rpc(page.$('.say-act-undo'), '$ .say-act-undo')
+    if (!undoBtn) throw new Error('找不到「撤销」（.say-act-undo）')
     await rpc(undoBtn.tap(), 'tap 撤销')
     const dUndo = await waitData(page, x => x.canUndo === false && x.photo === photo0, 6000)
     check('B7 撤销：底图回到发前那张', dUndo.photo === photo0 && dUndo.photoW === photoW0,
@@ -301,7 +301,7 @@ async function mockUp() {
     const dCBubble = await waitData(page, x => x.sayBubble !== '', 4000)
     check('C4 浮条是 both 那句原文', dCBubble.sayBubble === '好，先加深一点对比，再把路人去掉。',
       JSON.stringify(dCBubble.sayBubble))
-    const undoBtnC = await rpc(page.$('.undo-btn'), '$ .undo-btn')
+    const undoBtnC = await rpc(page.$('.say-act-undo'), '$ .say-act-undo')
     await rpc(undoBtnC.tap(), 'tap 撤销')
     const dCUndo = await waitData(page, x => x.canUndo === false && x.photo === photo0, 6000)
     const cParamsAfter = await params()
@@ -355,8 +355,8 @@ async function mockUp() {
       dF2.genText === '正在修…已经等了 ' + dF2.genSeconds + ' 秒' && dF2.genSeconds >= 5,
       'genText=' + JSON.stringify(dF2.genText) + ' genSeconds=' + dF2.genSeconds)
     await shot(mp, 'say-F-seconds')
-    const stopBtn = await rpc(page.$('.gen-stop'), '$ .gen-stop')
-    if (!stopBtn) throw new Error('蒙层上找不到「停止」（.gen-stop）')
+    const stopBtn = await rpc(page.$('.say-act-stop'), '$ .say-act-stop')
+    if (!stopBtn) throw new Error('输入条那行找不到「停止」（.say-act-stop）')
     await rpc(stopBtn.tap(), 'tap 停止')
     const dF3 = await waitData(page, x => x.generating === false, 6000)
     check('F3 停止：蒙层收掉、浮条「停了。」', dF3.generating === false && dF3.sayBusy === false,

@@ -20,10 +20,12 @@
 //                            路由那 1.3~1.6 秒显示「在想…」（spec §4.2：这段不弹蒙层）；
 //                            生成期间显示「正在修…」（秒数在蒙层上，这条不跟秒）
 //   sayBubble —— 输入条上方那条浮条的字（'' = 收着不显示）；5 秒后自动淡出
-//   generating / genText / genSeconds —— 生成中蒙层（暗化 + 转圈 + 秒表文案 + 停止）。
+//   generating / genText / genSeconds —— 生成中蒙层（暗化 + 转圈 + 秒表文案；
+//                **纯视觉**：「停止」2026-10-13 真机修复后挪进输入条那行）。
 //                genText 是**算好的整句**（页面里唯一的文案口径，冒烟按它断言）；
 //                5 秒内不带秒数（电脑版契约），之后「正在修…已经等了 N 秒」
-//   canUndo —— 照片右下角「撤销」亮不亮（一次生成 = 一层，只对生成有意义）
+//   canUndo —— 输入条那行「撤销」亮不亮（一次生成 = 一层，只对生成有意义；
+//                2026-10-13 从照片右下角搬来，勿挪回画布层）
 import { applyDeltas, ZERO, type Adjustments } from '../../lib/shared/adjustments'
 import { activePresetId, ORIGINAL_ID, PRESETS } from '../../lib/shared/presets'
 import { TonePipeline, type CanvasNode } from '../../lib/gl/tonePipeline'
@@ -502,6 +504,10 @@ Page({
    */
   onPhotoTouchStart(e: WechatMiniprogram.TouchEvent) {
     if (!this.pipe) return
+    // ★ 2026-10-13 真机修复：生成中**不开「按住看原图」** —— 真机上蒙层收不到触摸
+    //    （触摸被画布吃掉 / 从这里穿过来），压在照片区会真触发这里、150ms 后把照片
+    //    白闪回原图。蒙层的 catchtouchstart 在真机上指望不上（见 wxml 注释）。
+    if (this.data.generating) return
     // ⚠️ `e &&` 两道：automator 探针用 `page.callMethod('onPhotoTouchStart')` 直接调
     //    这个处理器时**没有事件对象**（冒烟那条备选路），别在那儿抛。
     const t = e && e.touches && e.touches[0]
@@ -674,7 +680,8 @@ Page({
   },
 
   /**
-   * 生成那半：蒙层（暗化 + 转圈 + 秒表 + 停止）→ 新图落盘 → 换图 + 一句 reply + 撤销。
+   * 生成那半：蒙层（暗化 + 转圈 + 秒表）→ 新图落盘 → 换图 + 一句 reply + 撤销。
+   * （「停止」/「撤销」两颗按钮在输入条那行 —— 2026-10-13 真机修复，见 wxml。）
    *
    * @param reply 成功那一刻**和图片一起**说的话（电脑版契约：不在出发时先承诺）
    * @param snap 出发时拍好的「撤销」现场（见 UndoSnap —— 别在这里拍）
@@ -811,7 +818,9 @@ Page({
   },
 
   /**
-   * 蒙层的「停止」（spec §4.3：停止掐断连接 —— 电脑版同款契约）。
+   * 输入条那行的「停止」（spec §4.3：停止掐断连接 —— 电脑版同款契约）。
+   * ⚠️ 2026-10-13 真机修复前它在蒙层上 —— 真机上叠 webgl canvas 的 view 收不到
+   * 点击，搬进了 .say-bar 行（.say-act-stop）。别挪回画布层去。
    * `RequestTask.abort()` 让在飞的那次 wx.request 走 fail（errMsg 含 abort）——
    * api 层把它单独译成 ABORTED，runGenerate 的 catch 收尾说「停了。」。
    * ⚠️ 缩图那一两百毫秒里 task 还没交出来：先记 aborted，onTask 到的时候补掐。
@@ -928,8 +937,10 @@ Page({
     if (this.genAbort.task) this.genAbort.task.abort()
   },
 
-  /** 蒙层 / 撤销按钮上的触摸**拦在这里**（catch 不冒泡）—— 别穿到照片区去触发
-   *  「按住看原图」（按在蒙层上按住 150ms 会把照片画回原图，白闪一下）。本身不做任何事。 */
+  /** 蒙层上的触摸**拦在这里**（catch 不冒泡）—— 别穿到照片区去触发「按住看原图」。
+   *  ⚠️ 2026-10-13 真机实测：真机上它其实**收不到触摸**（叠在 webgl canvas 之上的
+   *  view 会被画布吃掉、模拟器不犯），拦手势**别指望它** —— 真机那侧的兜底在
+   *  onPhotoTouchStart（生成中直接 return）。本身不做任何事。 */
   onOverlayCatch() {},
 
   /**

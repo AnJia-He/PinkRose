@@ -32,7 +32,8 @@
          收走/手指挪走都画回来（契约在 ts 的 PEEK_HOLD_MS）。挂在**整块照片区**上
          （含照片两侧的留白）—— 没挂在画布上是因为这里要的是"照片区"，别改成单个节点。
          ★ Task 12：里面多包一层「正好等于照片显示尺寸」的壳（同款 stageW/stageH）——
-         蒙层和撤销要贴在**照片本身**上（贴整块留白会飘在空处）。 -->
+         蒙层要贴在**照片本身**上（贴整块留白会飘在空处）。（「撤销」原先也在这层，
+         2026-10-13 真机修复挪进了输入条那行 —— 见下面的注释。） -->
     <view class="stage-area" id="stage-area"
           bindtouchstart="onPhotoTouchStart"
           bindtouchmove="onPhotoTouchMove"
@@ -42,19 +43,16 @@
         <canvas type="webgl2" id="stage" class="stage"
                 style="width: {{stageW}}px; height: {{stageH}}px"></canvas>
 
-        <!-- 生成中蒙层（spec §4.3）：暗化 + 转圈 + 秒表文案（genText，5 秒内不带秒数）
-             + 「停止」（掐断这次请求）。catchtouchstart: 触摸拦在蒙层里，别穿到照片区
-             触发「按住看原图」（按着蒙层 150ms 会把照片画回原图，白闪一下）。 -->
+        <!-- 生成中蒙层（spec §4.3）：**纯视觉** —— 暗化 + 转圈 + 秒表文案（genText，
+             5 秒内不带秒数）。★ 2026-10-13 真机 bug 修复：叠在 webgl canvas 之上的
+             view **真机上收不到点击**（触摸被画布吃掉，模拟器不复现）——「停止」
+             已挪到输入条那行（.say-act-stop）。catchtouchstart 只为模拟器上的防穿帮，
+             **真机上它其实也收不到触摸、别指望它拦手势**（真机那侧的兜底在 ts 的
+             onPhotoTouchStart：生成中直接 return，不开「按住看原图」）。 -->
         <view class="gen-mask" wx:if="{{generating}}" catchtouchstart="onOverlayCatch">
           <view class="gen-spinner"></view>
           <view class="gen-text">{{genText}}</view>
-          <view class="gen-stop" bindtap="onStopGen">停止</view>
         </view>
-
-        <!-- 撤销（spec §4.3）：只对生成有意义、只有一层 —— 生成成功才亮，点完收掉；
-             生成中不显示（蒙层本来就该盖住它，别让它在半透明底下露出来）。 -->
-        <view class="undo-btn" wx:if="{{canUndo && !generating}}"
-              catchtouchstart="onOverlayCatch" bindtap="onUndo">撤销</view>
       </view>
     </view>
 
@@ -86,7 +84,13 @@
                  placeholder-class="say-ph" />
           <text wx:else class="say-thinking">{{sayBusyText}}</text>
         </view>
-        <!-- 忙的时候整颗收掉（不做"看得见点不动"的死按钮）—— 停止在蒙层上 -->
+        <!-- ★ 2026-10-13 真机修复：「停止」/「撤销」从画布层（蒙层 / 照片角）搬到这一行
+             —— 真机上叠在 webgl canvas 之上的 view 收不到点击（触摸被画布吃掉，
+             模拟器不复现）。两颗共用这一个右槽、时段互斥：生成中 =「停止」，
+             生成完可撤销 =「撤销」。**别再挪回照片区/蒙层**（那边真机点不动）。 -->
+        <view wx:if="{{generating}}" class="say-act-stop" bindtap="onStopGen">停止</view>
+        <view wx:elif="{{canUndo}}" class="say-act-undo" bindtap="onUndo">撤销</view>
+        <!-- 忙的时候整颗收掉（不做"看得见点不动"的死按钮） -->
         <view class="say-send" wx:if="{{!sayBusy}}" bindtap="onSaySend">↑</view>
       </view>
     </view>

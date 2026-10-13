@@ -201,9 +201,11 @@
   position: relative;
 }
 
-/* 蒙层（spec §4.3）：暗化 + 转圈 + 秒表 + 停止，四样一起摆在照片正中。
+/* 蒙层（spec §4.3）：暗化 + 转圈 + 秒表，三样一起摆在照片正中。**纯视觉** ——
+   2026-10-13 真机 bug 后「停止」搬去了输入条那行（.say-act-stop）：真机上叠在
+   webgl canvas 之上的 view 收不到点击，这颗蒙层上已经没有任何可点项了。
    暗度取 .45：要够文字立得住，又要看得见"还是那张照片"（电脑版生成暗罩
-   .canvas-veil 是 .22、换图浮层 .55，这里是有字有按钮的蒙层，取中间）。 */
+   .canvas-veil 是 .22、换图浮层 .55，这里是有字的蒙层，取中间）。 */
 .gen-mask {
   position: absolute;
   left: 0;
@@ -238,29 +240,9 @@
   font-size: 28rpx;
 }
 
-/* 「停止」：描边药丸 —— 蒙层上唯一的可点项，做得像按钮但不抢主色
-   （主色留给发送箭头那一颗） */
-.gen-stop {
-  margin-top: 40rpx;
-  padding: 14rpx 56rpx;
-  border: 2rpx solid var(--line-3);
-  border-radius: var(--r-pill);
-  color: var(--text);
-  font-size: 28rpx;
-}
-
-/* 「撤销」：照片右下角（spec §4.3）。实心 --panel 底 —— 不管照片亮暗都立得住 */
-.undo-btn {
-  position: absolute;
-  right: 20rpx;
-  bottom: 20rpx;
-  padding: 14rpx 36rpx;
-  background: var(--panel);
-  border: 2rpx solid var(--line-2);
-  border-radius: var(--r-pill);
-  color: var(--text);
-  font-size: 26rpx;
-}
+/* 「停止」（.gen-stop）和「撤销」（.undo-btn）两个块 2026-10-13 真机修复时删掉 ——
+   按钮搬去输入条那行，样式见下面的 .say-act-stop / .say-act-undo。别加回来：
+   真机上叠在 webgl canvas 之上的可点控件收不到点击（README「已知平台行为」）。 */
 
 /* ── ★ Task 12 · 说一句（输入条 + 浮条）────────────────────────────── */
 .say-bar {
@@ -320,6 +302,24 @@
 .say-thinking {
   color: var(--muted);
   font-size: 28rpx;
+}
+
+/* ★ 2026-10-13 真机修复：「停止」/「撤销」两颗小胶囊 —— 从画布层（蒙层 / 照片角）
+   搬到输入条这一行（真机上叠 webgl canvas 的可点 view 收不到点击，见 README
+   「已知平台行为」）。muted 描边风、不抢发送箭头的主色；高 64rpx < 行高 80rpx，
+   出现/消失不会让这一行跳高。 */
+.say-act-stop,
+.say-act-undo {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 64rpx;
+  margin-left: 16rpx;
+  padding: 0 24rpx;
+  border: 2rpx solid var(--line-2);
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font-size: 26rpx;
 }
 
 /* 发送箭头：--accent-400 底、--accent-ink 字（照 mock） */
