@@ -10,7 +10,7 @@
  * 怎么改（`ipconfig` 看 IPv4 + 防火墙脚本 + 起服务）写在 mini/README.md 的
  * 「API 地址怎么改」。
  */
-export const API_BASE = 'http://192.168.1.6:5173'
+export const API_BASE = 'http://192.168.20.245:5173'
 
 /**
  * 调试 / 冒烟用的临时覆盖 —— **默认空 = 不覆盖**。api.ts 取地址时优先取它。
