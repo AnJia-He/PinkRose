@@ -1,26 +1,102 @@
-/* works.wxss —— 骨架（Task 16）。占位居中；字号先查 app.wxss 顶上的映射表：
-   .ph-title 32rpx = 电脑版 17 档；.ph-sub 24rpx = 电脑版 12 档。 */
+/* works.wxss —— 「作品」页（Task 17 起是真页面）。字号先查 app.wxss 顶上的映射表：
+   .tb-title / .go-btn 30~32rpx = 电脑版 15/17 档；.empty-sub 28rpx = 电脑版 14 档。 */
+
+/* 一屏到底、页面自己滚（这页内容会长）；flex 竖排让空态吃到顶栏以下的全部高度。
+   ⚠️ 底部不加 env(safe-area-inset-bottom)：这页是 tab 页，页面视口底 = tabBar 顶，
+   底部安全区归 tabBar 管（同修图页 Task 16 那条）。 */
 .page {
-  height: 100vh; /* 同 index 页的口径：一屏到底，状态栏那截不在这一页 */
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
   box-sizing: border-box;
 }
 
-.ph {
+/* 顶栏：粘在状态栏下面（top 是 wxml 里 inline 的）。吸顶要有一块**不透明的底**，
+   滚过去的缩略图从它下面穿（半透明会把两张照片叠在一起）。 */
+.topbar {
+  position: sticky;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 88rpx;
+  background: var(--bg);
+}
+
+.tb-title {
+  font-size: 30rpx; /* 电脑版 15 档（和修图页顶栏同档） */
+  font-weight: 600;
+}
+
+/* ── 空态：居中一句 + 一颗按钮 ──────────────────────────────────────── */
+.empty {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100%;
-  padding: 0 64rpx; /* 与空态同宽的安全边距 */
+  padding: 0 64rpx 96rpx; /* 和修图页空态同宽的安全边距；底部留一口气，别贴 tabBar */
 }
 
-.ph-title {
-  font-size: 32rpx;
+.empty-title {
+  font-size: 32rpx; /* 电脑版 17 档 */
   font-weight: 600;
 }
 
-.ph-sub {
+.empty-sub {
   margin-top: 16rpx;
   color: var(--muted);
-  font-size: 24rpx;
+  font-size: 28rpx; /* 电脑版 14 档（修图页空态副句同档） */
+}
+
+/* 主按钮：和修图页 .big-btn 同一身衣服（wxss 不跨页，这里抄一份最小的 ——
+   那页的按钮还有 width:100% / 幽灵款等空态外的东西，这页只要这一颗）。 */
+.go-btn {
+  margin-top: 56rpx;
+  padding: 20rpx 64rpx;
+  background: var(--accent);
+  border: 2rpx solid var(--accent);
+  border-radius: var(--r-pill);
+  color: var(--accent-ink);
+  font-size: 32rpx;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* 微信 <button> 自带 ::after 灰描边，清掉（同修图页 .big-btn::after 那行） */
+.go-btn::after {
+  border: none;
+}
+
+/* ── 网格：两列、flex wrap（brief 口径：别赌 grid 兼容性）──────────────
+   三个数一套账：页边距 32×2 + 格距 20 + 格宽 333×2 = 750rpx，正好一屏宽。
+   rpx 随屏宽线性缩放，格宽写常数 333rpx 就行（不用 %）。
+   ⚠️ box-sizing: border-box（和 .style-thumb 的 content-box 相反）—— 2rpx 的框
+   必须在 333 里面，长在外面这行账就多算 4rpx、两列直接换行。 */
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 8rpx 32rpx 32rpx;
+}
+
+.cell {
+  width: 333rpx;
+  height: 333rpx;
+  box-sizing: border-box;
+  margin: 0 20rpx 20rpx 0;
+  overflow: hidden; /* 图自己吃掉圆角 */
+  background: var(--raised); /* 图和风格栏同一身衣服：没到位时是占位块，不像「裂图」 */
+  border: 2rpx solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+/* 右列的格不要右外边距（格距只活在两列之间 + 页边距 32 管两边） */
+.cell:nth-child(2n) {
+  margin-right: 0;
+}
+
+.shot {
+  display: block;
+  width: 100%;
+  height: 100%;
 }

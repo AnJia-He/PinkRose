@@ -36,6 +36,7 @@ import { activePresetId, ORIGINAL_ID, PRESETS } from '../../lib/shared/presets'
 import { TonePipeline, type CanvasNode } from '../../lib/gl/tonePipeline'
 import { renderThumbSprite, type ThumbCell } from '../../lib/image/thumbs'
 import { exportPhoto, saveToAlbum } from '../../lib/image/export'
+import { works, WorksFullError } from '../../lib/works'
 import { ApiError, apiPost, isAbortError, setApiBaseOverride } from '../../lib/api'
 import { getToken } from '../../lib/auth'
 import { prepareForModel, prepareForRouting } from '../../lib/image/prepare'
@@ -213,6 +214,19 @@ interface ExportProbe {
   ms?: number
 }
 
+/** `__probeSaveWork` 的回报形状（Task 17；异步结果同样靠实例字段带出去）。 */
+interface SaveWorkProbe {
+  state: 'running' | 'ok' | 'fail'
+  /** ok 时：收进作品集之后的那条清单条目（文件都落好了才有它） */
+  file?: string
+  thumb?: string
+  bytes?: number
+  w?: number
+  h?: number
+  why?: string
+  ms?: number
+}
+
 /** `__probeLogin` / `__probeMe` 的回报形状（Task 11；异步结果同样靠实例字段带出去）。 */
 interface NetProbe {
   state: 'running' | 'ok' | 'fail'
@@ -349,6 +363,9 @@ Page({
    *  直接拿，探针轮询 `getCurrentPages()` 里的这个字段 —— 同 task8 读 peekStart 那招）。
    *  生产路径**没人读它**。 */
   probeExport: null as ExportProbe | null,
+  /** ★ 探针专用（Task 17）：上一趟 `__probeSaveWork` 的结果（同 probeExport 那招）。
+   *  生产路径**没人读它**。 */
+  probeSaveWork: null as SaveWorkProbe | null,
   /** ★ 探针专用（Task 11）：`__probeLogin` / `__probeMe` / `__probePrepare` 的上一趟
    *  结果（同 probeExport 那招）。生产路径**没人读它们**。 */
   probeLogin: null as NetProbe | null,
@@ -1246,6 +1263,21 @@ Page({
       wx.hideLoading()
       try {
         await saveToAlbum(exported.path)
+        // ★ Task 17：相册成完了，**顺带**收一份进本地作品集（spec §13.2）——
+        //    火忘（不 await）：别挡 UI 收尾（saving 马上放开）；成败都不动上面那声
+        //    「已存到相册」—— 相册是主承诺，作品是顺带。**唯一例外**：cap 满了补一条
+        //    专属 toast（会把前一条顶掉 —— 有意为之：用户已看到过「已存到相册」、
+        //    相册里也确实有图）。`.catch` 挂上：绝不让它变成未处理 rejection。
+        works
+          .add(exported.path)
+          .then(w => console.info('[index] 已收进本地作品集：' + w.file + '（' + w.bytes + 'B）'))
+          .catch((e: unknown) => {
+            if (e instanceof WorksFullError) {
+              wx.showToast({ title: e.message, icon: 'none' })
+            } else {
+              console.error('[index] 写本地作品失败（不影响相册那条）：', e)
+            }
+          })
       } catch (e) {
         wx.showToast({ title: (e as Error).message || '存相册失败了，再点一次试试', icon: 'none' })
       }
@@ -1285,6 +1317,43 @@ Page({
       }
     }
     return this.probeExport
+  },
+
+  /**
+   * ★ 探针专用（Task 17）：跑一遍**真导出**（复用 `__probeExport` 那条 exportPhoto
+   * 调用，**不碰相册**）+ `works.add`，结果挂实例字段 `probeSaveWork`（同 probeExport
+   * 那招）。冒烟/自动化专用，生产路径**没人调它**。
+   */
+  async __probeSaveWork() {
+    const pipe = this.pipe
+    const node = this.node
+    this.probeSaveWork = { state: 'running' }
+    if (!pipe || !node) {
+      this.probeSaveWork = { state: 'fail', why: '没有管线（先载入照片）' }
+      return this.probeSaveWork
+    }
+    const t0 = Date.now()
+    try {
+      const r = await exportPhoto(
+        node, pipe, { width: this.data.photoW, height: this.data.photoH }, this.params)
+      const w = await works.add(r.path)
+      this.probeSaveWork = {
+        state: 'ok',
+        file: w.file,
+        thumb: w.thumb,
+        bytes: w.bytes,
+        w: w.w,
+        h: w.h,
+        ms: Date.now() - t0,
+      }
+    } catch (e) {
+      this.probeSaveWork = {
+        state: 'fail',
+        why: e && (e as Error).message ? (e as Error).message : String(e),
+        ms: Date.now() - t0,
+      }
+    }
+    return this.probeSaveWork
   },
 
   /**

@@ -1,8 +1,24 @@
-<!-- 作品页（Task 16 骨架，spec §13.2）—— 内容 = Task 17：存本地的作品照片墙。
-     现在只有居中占位；色号 / 字号一律走 app.wxss 的令牌与字号映射表。 -->
-<view class="page">
-  <view class="ph">
-    <view class="ph-title">作品</view>
-    <view class="ph-sub">还没有作品 —— 去修一张</view>
+<!-- 「作品」页（Task 17 起是真页面，spec §13.2）：本地作品集的缩略图墙。
+     数据 / 删除全走 lib/works；点格原生 previewImage，长按删（modal 二次确认）。
+     色号 / 字号一律走 app.wxss 的令牌与字号映射表。 -->
+<view class="page" style="padding-top: {{statusBar}}px">
+  <!-- 顶栏：状态栏让位 + 88rpx、标题居中、**无按钮**（右上角的微信胶囊盖不到谁，
+       不用像修图页那样算让位宽度）。吸顶尽力而为：sticky 不生效的环境退化成
+       普通块，版面照常；top 用 inline 跟状态栏走，滚起来不会被状态栏压住。 -->
+  <view class="topbar" style="top: {{statusBar}}px">
+    <view class="tb-title">作品</view>
+  </view>
+
+  <view class="empty" wx:if="{{!items.length}}">
+    <view class="empty-title">还没有作品</view>
+    <view class="empty-sub">修好的照片会存在这里</view>
+    <button class="go-btn" bindtap="onGoEdit">去修一张</button>
+  </view>
+
+  <view class="grid" wx:else>
+    <view class="cell" wx:for="{{items}}" wx:key="id" data-id="{{item.id}}"
+          bindtap="onTapItem" bindlongpress="onLongPressItem">
+      <image class="shot" src="{{item.thumb}}" mode="aspectFill" lazy-load="{{true}}" />
+    </view>
   </view>
 </view>
