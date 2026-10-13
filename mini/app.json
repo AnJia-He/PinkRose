@@ -1,9 +1,35 @@
 {
-  "pages": ["pages/index/index"],
+  "pages": ["pages/index/index", "pages/works/works", "pages/me/me"],
   "window": {
     "navigationStyle": "custom",
     "navigationBarTextStyle": "white",
     "backgroundColor": "#151517"
+  },
+  "tabBar": {
+    "color": "#b9b9c3",
+    "selectedColor": "#2dd4bf",
+    "backgroundColor": "#151517",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "修图",
+        "iconPath": "assets/tab/edit.png",
+        "selectedIconPath": "assets/tab/edit-on.png"
+      },
+      {
+        "pagePath": "pages/works/works",
+        "text": "作品",
+        "iconPath": "assets/tab/works.png",
+        "selectedIconPath": "assets/tab/works-on.png"
+      },
+      {
+        "pagePath": "pages/me/me",
+        "text": "我的",
+        "iconPath": "assets/tab/me.png",
+        "selectedIconPath": "assets/tab/me-on.png"
+      }
+    ]
   },
   "sitemapLocation": "sitemap.json"
 }

@@ -12,3 +12,8 @@ types/
 # 才 ~590KB（Task 15 内嵌字体后口径，见 README「冒烟 + 全黑哨兵」），离 2MB 主包
 # 上限远得很。证据与结论见 README「冒烟 + 全黑哨兵」。）
 !assets/test-photo.jpg
+
+# 同理放行 tabBar 的 6 张图标（★ 2026-10-13 Task 16）：app.json 的 iconPath 直接指它们，
+# 少了它们 tabBar 那一排**图标位是空的**（不报错、静默少一块）—— 换台机器 clone 下来
+# 必须原样在。重建命令见 README「tabBar」那节（node mini/scripts/build-tab-icons.mjs）。
+!assets/tab/*.png

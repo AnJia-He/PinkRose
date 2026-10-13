@@ -1,0 +1,26 @@
+/* works.wxss —— 骨架（Task 16）。占位居中；字号先查 app.wxss 顶上的映射表：
+   .ph-title 32rpx = 电脑版 17 档；.ph-sub 24rpx = 电脑版 12 档。 */
+.page {
+  height: 100vh; /* 同 index 页的口径：一屏到底，状态栏那截不在这一页 */
+  box-sizing: border-box;
+}
+
+.ph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 64rpx; /* 与空态同宽的安全边距 */
+}
+
+.ph-title {
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+.ph-sub {
+  margin-top: 16rpx;
+  color: var(--muted);
+  font-size: 24rpx;
+}

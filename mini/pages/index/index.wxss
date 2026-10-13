@@ -18,7 +18,11 @@
   box-sizing: border-box;
   height: 100%; /* 填满 .page 的内容盒（已扣掉状态栏那截） */
   padding: 0 64rpx;
-  padding-bottom: calc(96rpx + env(safe-area-inset-bottom));
+  /* ★ Task 16：这里**不再**加 env(safe-area-inset-bottom)。底部安全区让给 tabBar ——
+     v1.1 起这页是 tab 页，页面视口底 = tabBar 顶（原生 tabBar 自己压在 home
+     indicator 上），页面再补 env() 就是往 tabBar 上方凭空多留 34px 死区
+     （实测量法见下面 .say-bar 那条）。 */
+  padding-bottom: 96rpx;
 }
 
 .brand-mark {
@@ -322,7 +326,12 @@
 /* ── ★ Task 12 · 说一句（输入条）───────────────────────────────────── */
 .say-bar {
   flex: none;
-  padding: 16rpx 32rpx calc(20rpx + env(safe-area-inset-bottom));
+  /* ★ Task 16（tabBar 视口逼出的适配）：原来底部是 calc(20rpx + env(safe-area-inset-bottom))，
+     那是给"页面底 = 手机屏幕底"算的（清 home indicator）。v1.1 起页面视口底 = tabBar 顶，
+     安全区由原生 tabBar 自己处理 —— 再补 env() 实测多留 34.3px 死区（say-bar 高 94.6，
+     本应 60.2；照片因此矮了 34px）。去掉 env 后输入条离 tabBar 恰好 20rpx，
+     和原设计"离屏底 20rpx"是同一条规矩。 */
+  padding: 16rpx 32rpx 20rpx;
 }
 
 .say-row {

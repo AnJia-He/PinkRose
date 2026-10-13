@@ -1,0 +1,8 @@
+<!-- 我的页（Task 16 骨架，spec §13.3）—— 内容 = Task 18：小皇帝徽章 + PinkRose +
+     版本 + 本地作品统计 / 清空。现在只有居中占位；色号 / 字号走 app.wxss 令牌与字号表。 -->
+<view class="page">
+  <view class="ph">
+    <view class="ph-title">我的</view>
+    <view class="ph-sub">本地作品 · 版本</view>
+  </view>
+</view>

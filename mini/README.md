@@ -32,6 +32,36 @@ $d = (Get-ChildItem 'D:\' -Directory | Where-Object { $_.Name -match '开发者�
 `WX_APPID`/`WX_SECRET`、`config.ts` 换 IP 这几步缺一不可 —— 照着文末
 「验收记录」的**开工前四件事**走。
 
+## 页面结构 · 底部 tabBar（Task 16）
+
+v1.1 起是三页 + 原生 tabBar（spec §13）：**修图**（`pages/index/index`，第一个 = 启动页）/
+**作品**（`pages/works/works`，壳 —— 内容 = Task 17）/ **我的**（`pages/me/me`，壳 ——
+内容 = Task 18）。配置在 `app.json` 的 `tabBar` 段 —— ⚠️ **四个颜色值是 app.wxss
+令牌的手抄**（json 写不了注释）：`color #b9b9c3` = `--muted` / `selectedColor #2dd4bf`
+= `--accent-400` / `backgroundColor #151517` = `--bg` / `borderStyle black`（只有
+black/white 两值）—— **改令牌时这里跟着改**。
+
+图标 = `mini/assets/tab/{edit,works,me}{,-on}.png`（6 张 81×81 透明底，各 ~2KB）。
+源 SVG（lucide 线性语言，线宽 1.5@24，和全站图标同一套规矩）在 `mini/scripts/tab-icons/`，
+**改了源就跑**（出图 = Playwright + 系统 Edge，同 logo 徽章那条管线）：
+
+```bash
+node mini/scripts/build-tab-icons.mjs
+```
+
+⚠️ 图标 PNG 会被根 `.gitignore` 的 `*.png` 吃掉 —— 已放行（`mini/.gitignore` 的
+`!assets/tab/*.png`），别删那条（少了它们 tabBar 图标位是**空的**，不报错、静默少一块）。
+
+**真机看什么**：三 tab 来回切、选中变色；**切走再回修图页，现场还在**（tab 页不销毁，
+模拟器已验：切回后 stage/照片盒子逐项一致）；tabBar 和底部 home indicator 不打架；
+照片仍然完整、不被 tabBar 压住（tabBar 占掉屏底一条、窗口矮了 82px —— 布局是按实测
+算的自适应，模拟器已量过：间隙 23.8rpx×2、`.page` 高 = 视口高，真机再眼睛过一遍）。
+
+⚠️ 对修图页的**唯一触碰**（Task 16）：`index.wxss` 两处撤掉 `env(safe-area-inset-bottom)`
+（`.empty` / `.say-bar` 的底部 padding）—— 底部安全区归 tabBar 管了，页面再补就是往
+tabBar 上方多留 34px 死区（实测：say-bar 高 94.6→60.6、照片因此 +34px 高）。逐行理由
+在 `task-16-report.md`。
+
 ## 类型检查
 
 ```bash
@@ -305,6 +335,8 @@ CLI + automator 路径的现役版本。⚠️ 本机的网络策略挡住了微
 | 15 | 微信登录真 code | 不弹登录页、能出图；若蹦「微信登录没成功，再试一次」那类错 = 这条没通 | |
 | 16 | 系统框 | 相机 / 相册 / 存相册三类系统框：文案与首拒后的行为对得上 | |
 | 17 | 对话留痕 | 说两句 → 两条问答都在屏上、6 秒后不消失；点风格有系统小字；上滑能看更早的；**上滑时目验对话区右侧有没有一条不该有的竖线**（模拟器那条已钉死=滚动条，Task 15 用 `enhanced` + `show-scrollbar` 收掉 —— 真机只看「还在不在」，在就记一笔）；**回复落地那一刻看一眼有没有闪一下**（补滚是"先清再指"两步做的，一闪就是有问题，记一笔） | |
+| 18 | 三 tab 切换 | 修图/作品/我的来回切正常、选中变色；**切走再回修图页，编辑现场（照片/对话）还在**（tab 页不销毁） | |
+| 19 | tabBar 让位 | 修图页照片仍完整、不被底部 tabBar 压住（tabBar 占掉屏底一条后窗口矮了 82px；★ Task 16 把原来给 home indicator 的底部安全区 padding 让给了 tabBar —— 输入条就贴在它上方 20rpx，看这个间距自不自然）；tabBar 不与 home indicator 打架 | |
 
 **失败现场**（机型 / 微信版本 / 截图路径 / 控制台原话）—— 13b 跑的时候往下写。
 

@@ -1,0 +1,8 @@
+<!-- 我的 tab 图标 —— lucide「user」（v1.49.0，ISC 许可）。
+     唯一真相：改它就跑 node mini/scripts/build-tab-icons.mjs 重出 mini/assets/tab/me*.png。
+     线宽 1.5@24 = 全站图标规矩；颜色留给构建脚本替换 currentColor
+     （未选中 #b9b9c3 = --muted / 选中 #2dd4bf = --accent-400，与 app.json 手抄一致）。 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+  <circle cx="12" cy="7" r="4"/>
+</svg>

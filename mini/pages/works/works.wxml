@@ -1,0 +1,8 @@
+<!-- 作品页（Task 16 骨架，spec §13.2）—— 内容 = Task 17：存本地的作品照片墙。
+     现在只有居中占位；色号 / 字号一律走 app.wxss 的令牌与字号映射表。 -->
+<view class="page">
+  <view class="ph">
+    <view class="ph-title">作品</view>
+    <view class="ph-sub">还没有作品 —— 去修一张</view>
+  </view>
+</view>
