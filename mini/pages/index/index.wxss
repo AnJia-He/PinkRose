@@ -194,78 +194,116 @@
   color: var(--accent);
 }
 
-/* ── ★ Task 12 · 生成中蒙层 + 撤销 ───────────────────────────────────
-   两个都贴在**照片本身**上 —— 外面那层 .stage-wrap 正好等于照片显示尺寸
-   （inline 的 stageW/stageH，wxml 里包的壳），所以这里全用 inset 0 / 右下角定位。 */
-.stage-wrap {
-  position: relative;
-}
-
-/* 蒙层（spec §4.3）：暗化 + 转圈 + 秒表，三样一起摆在照片正中。**纯视觉** ——
-   2026-10-13 真机 bug 后「停止」搬去了输入条那行（.say-act-stop）：真机上叠在
-   webgl canvas 之上的 view 收不到点击，这颗蒙层上已经没有任何可点项了。
-   暗度取 .45：要够文字立得住，又要看得见"还是那张照片"（电脑版生成暗罩
-   .canvas-veil 是 .22、换图浮层 .55，这里是有字的蒙层，取中间）。 */
-.gen-mask {
-  position: absolute;
-  left: 0;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
-}
-
-/* 转圈：一条边亮色的圈，转起来（纯 CSS，不引图标） */
-@keyframes gen-spin {
-  to { transform: rotate(360deg); }
-}
-
-.gen-spinner {
-  width: 56rpx;
-  height: 56rpx;
-  box-sizing: border-box;
-  border: 6rpx solid var(--line-3);
-  border-top-color: var(--accent-400);
-  border-radius: 50%;
-  animation: gen-spin 0.9s linear infinite;
-}
-
-.gen-text {
-  margin-top: 28rpx;
-  color: var(--text);
-  font-size: 28rpx;
-}
-
-/* 「停止」（.gen-stop）和「撤销」（.undo-btn）两个块 2026-10-13 真机修复时删掉 ——
-   按钮搬去输入条那行，样式见下面的 .say-act-stop / .say-act-undo。别加回来：
-   真机上叠在 webgl canvas 之上的可点控件收不到点击（README「已知平台行为」）。 */
-
-/* ── ★ Task 12 · 说一句（输入条 + 浮条）────────────────────────────── */
-.say-bar {
-  position: relative; /* 浮条挂它正上方（bottom: 100% + …） */
+/* ── ★ Task 14 · 对话区（spec §4.2 的 2026-10-13 修订块）───────────────
+   说过的话（me）/ 小皇帝回的（ai）/ 系统小字（note）都留在这条消息流里 ——
+   wxml 里排在风格栏和输入条**之间**，**正常排版流**的一条 scroll-view。
+   ⚠️ 绝不许 absolute 叠到照片/画布上：真机上叠 webgl canvas 的可点 view 收不到
+   点击（README「已知平台行为」）——「停止」跟着生成那颗气泡走也就同样在画布外。
+   高度：max-height 封顶（照片必须仍是屏幕上最大的一块 —— 照片区是 flex:1，
+   对话区长高它就矮；画布的显示尺寸由 ts 的 fitStage() 跟着重算）。
+   **不做入场动画**（整体要"安静"，别抢照片）。 */
+.msgs {
   flex: none;
-  padding: 16rpx 32rpx calc(20rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  max-height: 400rpx;
+  padding: 8rpx 32rpx 0; /* 左右与全页对齐（32rpx） */
 }
 
-/* 浮条（spec §4.2）：模型那句话，输入条正上方一条，5 秒后自动淡出（时序在 ts）。
-   绝对定位 —— 出/没出都不挪下面的版面。 */
-.say-bubble {
-  position: absolute;
-  left: 32rpx;
-  right: 32rpx;
-  bottom: calc(100% + 16rpx);
-  z-index: 10;
-  padding: 20rpx 28rpx;
+.msg {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 16rpx; /* 条目间距 */
+}
+
+/* 「我说的」：右对齐气泡，--accent-400 底 + --accent-ink 字（和发送箭头同族） */
+.msg.me {
+  justify-content: flex-end;
+}
+
+.msg.me .msg-body {
+  max-width: 78%;
+  padding: 12rpx 24rpx;
+  background: var(--accent-400);
+  border-radius: var(--r-md);
+  color: var(--accent-ink);
+  font-size: 28rpx;
+  line-height: 1.5;
+}
+
+/* 「小皇帝回的」：左对齐气泡 + 徽章标，--raised 底 + 2rpx --line-2 描边 */
+.msg.ai .msg-body {
+  display: flex;
+  align-items: center;
+  max-width: 78%;
+  padding: 12rpx 24rpx;
   background: var(--raised);
   border: 2rpx solid var(--line-2);
   border-radius: var(--r-md);
   color: var(--text);
-  font-size: 26rpx;
+  font-size: 28rpx;
   line-height: 1.5;
+}
+
+/* 徽章标：小皇帝黑圆盘。40~48rpx 的小圆，别喧宾夺主（和气泡首行对齐） */
+.msg-badge {
+  flex: none;
+  width: 44rpx;
+  height: 44rpx;
+  margin: 4rpx 12rpx 0 0;
+  border-radius: 50%;
+}
+
+/* 转圈：一条边亮色的圈，转起来（纯 CSS，不引图标；从旧蒙层的生成转圈挪来改的名） */
+@keyframes msg-spin {
+  to { transform: rotate(360deg); }
+}
+
+.msg-spinner {
+  flex: none;
+  width: 40rpx;
+  height: 40rpx;
+  box-sizing: border-box;
+  margin-right: 16rpx;
+  border: 5rpx solid var(--line-3);
+  border-top-color: var(--accent-400);
+  border-radius: 50%;
+  animation: msg-spin 0.9s linear infinite;
+}
+
+/* 气泡里的「停止」：小胶囊、muted 描边风（和「撤销」同族，不抢主色） */
+.msg-stop {
+  flex: none;
+  margin-left: 20rpx;
+  padding: 4rpx 20rpx;
+  border: 2rpx solid var(--line-2);
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font-size: 24rpx;
+}
+
+/* 系统小字：居中的一行（点风格「套用了「…」」、结果作废这类通报） */
+.msg.note {
+  justify-content: center;
+  margin: 8rpx 0;
+}
+
+.msg.note .msg-body {
+  padding: 0 8rpx;
+  color: var(--muted);
+  font-size: 24rpx;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* 长文本兜底断行（说过的话里可能有长英文 / 链接，别把气泡撑出屏幕） */
+.msg-text {
+  word-break: break-word;
+}
+
+/* ── ★ Task 12 · 说一句（输入条）───────────────────────────────────── */
+.say-bar {
+  flex: none;
+  padding: 16rpx 32rpx calc(20rpx + env(safe-area-inset-bottom));
 }
 
 .say-row {
@@ -304,11 +342,11 @@
   font-size: 28rpx;
 }
 
-/* ★ 2026-10-13 真机修复：「停止」/「撤销」两颗小胶囊 —— 从画布层（蒙层 / 照片角）
-   搬到输入条这一行（真机上叠 webgl canvas 的可点 view 收不到点击，见 README
-   「已知平台行为」）。muted 描边风、不抢发送箭头的主色；高 64rpx < 行高 80rpx，
-   出现/消失不会让这一行跳高。 */
-.say-act-stop,
+/* ★ 2026-10-13 真机修复 + Task 14：输入条那行的「撤销」—— 从画布层（照片右下角）
+   搬来这里（真机上叠 webgl canvas 的可点 view 收不到点击，见 README「已知平台
+   行为」）。muted 描边风、不抢发送箭头的主色；高 64rpx < 行高 80rpx，
+   出现/消失不会让这一行跳高。
+   （「停止」的样式在对话区那段 —— .msg-stop，它跟着生成那颗气泡走。） */
 .say-act-undo {
   flex: none;
   display: flex;

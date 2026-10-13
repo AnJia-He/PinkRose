@@ -31,29 +31,17 @@
          ★ 四个触摸事件 = 「按住看原图」（Task 8）：按住 150ms 出原图、抬手/被系统
          收走/手指挪走都画回来（契约在 ts 的 PEEK_HOLD_MS）。挂在**整块照片区**上
          （含照片两侧的留白）—— 没挂在画布上是因为这里要的是"照片区"，别改成单个节点。
-         ★ Task 12：里面多包一层「正好等于照片显示尺寸」的壳（同款 stageW/stageH）——
-         蒙层要贴在**照片本身**上（贴整块留白会飘在空处）。（「撤销」原先也在这层，
-         2026-10-13 真机修复挪进了输入条那行 —— 见下面的注释。） -->
+         ★ Task 14：外面那层 `.stage-wrap` 壳删了（它当初是给生成蒙层/撤销用的，蒙层
+         整个搬进了对话区）—— 画布直接留在 stage-area 里，flex 居中照旧。
+         ⚠️ 生成中照片上**没有任何蒙层/浮层**（真机上叠 webgl canvas 的可点 view
+         收不到点击，见 README「已知平台行为」）；可点的「停止」在对话区那颗气泡里。 -->
     <view class="stage-area" id="stage-area"
           bindtouchstart="onPhotoTouchStart"
           bindtouchmove="onPhotoTouchMove"
           bindtouchend="onPhotoTouchEnd"
           bindtouchcancel="onPhotoTouchCancel">
-      <view class="stage-wrap" style="width: {{stageW}}px; height: {{stageH}}px">
-        <canvas type="webgl2" id="stage" class="stage"
-                style="width: {{stageW}}px; height: {{stageH}}px"></canvas>
-
-        <!-- 生成中蒙层（spec §4.3）：**纯视觉** —— 暗化 + 转圈 + 秒表文案（genText，
-             5 秒内不带秒数）。★ 2026-10-13 真机 bug 修复：叠在 webgl canvas 之上的
-             view **真机上收不到点击**（触摸被画布吃掉，模拟器不复现）——「停止」
-             已挪到输入条那行（.say-act-stop）。catchtouchstart 只为模拟器上的防穿帮，
-             **真机上它其实也收不到触摸、别指望它拦手势**（真机那侧的兜底在 ts 的
-             onPhotoTouchStart：生成中直接 return，不开「按住看原图」）。 -->
-        <view class="gen-mask" wx:if="{{generating}}" catchtouchstart="onOverlayCatch">
-          <view class="gen-spinner"></view>
-          <view class="gen-text">{{genText}}</view>
-        </view>
-      </view>
+      <canvas type="webgl2" id="stage" class="stage"
+              style="width: {{stageW}}px; height: {{stageH}}px"></canvas>
     </view>
 
     <!-- 风格栏：横滑，一格一张**真渲染**的小图 + 名字（画法见 lib/image/thumbs.ts）。
@@ -70,12 +58,34 @@
       </view>
     </scroll-view>
 
+    <!-- 对话区（★ Task 14 / spec §4.2 修订块）：说过的话（me）/ 小皇帝回的（ai）/
+         系统小字（note）都留在这，**一律不自动消失**。
+         位置：风格栏和输入条**之间**、正常排版流里的一条 scroll-view —— **绝不绝对
+         定位叠到照片/画布上**（真机上叠 webgl canvas 的可点 view 收不到点击，见
+         README「已知平台行为」）；「停止」跟着生成那颗气泡走，也就同样在画布外。
+         没消息时整条不渲染（wx:if），不占地方。
+         条目 id="m{{item.id}}" 配 scroll-into-view 把新消息拉进视野；
+         封顶 50 条（ts 的 MAX_MSGS，超了从头部丢最老的）。 -->
+    <scroll-view class="msgs" wx:if="{{msgs.length}}" scroll-y scroll-into-view="{{scrollTo}}">
+      <view wx:for="{{msgs}}" wx:key="id" id="m{{item.id}}" class="msg {{item.kind}}">
+        <image wx:if="{{item.kind === 'ai'}}" class="msg-badge" src="/assets/emperor-badge.png" />
+        <view class="msg-body">
+          <!-- 生成期那颗气泡就地显示转圈 + 秒表 + 停止（生成中不用改 state ——
+               按页面那个 generating 现算；路由那 1.3~1.6 秒显示「在想…」） -->
+          <block wx:if="{{item.kind === 'ai' && item.state === 'thinking'}}">
+            <view class="msg-spinner"></view>
+            <text class="msg-text">{{generating ? genText : '在想…'}}</text>
+            <view wx:if="{{generating}}" class="msg-stop" bindtap="onStopGen">停止</view>
+          </block>
+          <text wx:else class="msg-text">{{item.text}}</text>
+        </view>
+      </view>
+    </scroll-view>
+
     <!-- 说一句（spec §4.2）：胶囊输入条 + 发送箭头（--accent-400 底、--accent-ink 字）。
-         发送后输入条先换成「在想…」（路由那 1.3~1.6 秒**不弹蒙层**），进生成才轮到蒙层。
-         浮条挂在这一条的**正上方**（绝对定位，出了也不挪下面的版面）：模型那句话 /
-         「停了。」/ 失败提示都走它，5 秒自动淡出。 -->
+         发送后输入条先换成「在想…」（路由那 1.3~1.6 秒照片上不弹任何东西；
+         过程在对话区），进生成才轮到那颗气泡转起来。 -->
     <view class="say-bar">
-      <view class="say-bubble" wx:if="{{sayBubble}}">{{sayBubble}}</view>
       <view class="say-row">
         <view class="say-pill">
           <input wx:if="{{!sayBusy}}" class="say-input" value="{{sayText}}"
@@ -84,12 +94,12 @@
                  placeholder-class="say-ph" />
           <text wx:else class="say-thinking">{{sayBusyText}}</text>
         </view>
-        <!-- ★ 2026-10-13 真机修复：「停止」/「撤销」从画布层（蒙层 / 照片角）搬到这一行
-             —— 真机上叠在 webgl canvas 之上的 view 收不到点击（触摸被画布吃掉，
-             模拟器不复现）。两颗共用这一个右槽、时段互斥：生成中 =「停止」，
-             生成完可撤销 =「撤销」。**别再挪回照片区/蒙层**（那边真机点不动）。 -->
-        <view wx:if="{{generating}}" class="say-act-stop" bindtap="onStopGen">停止</view>
-        <view wx:elif="{{canUndo}}" class="say-act-undo" bindtap="onUndo">撤销</view>
+        <!-- ★ 2026-10-13 真机修复 + Task 14：「撤销」留在这一行（它当初从照片角搬来
+             —— 真机上叠在 webgl canvas 之上的 view 收不到点击，模拟器不复现）。
+             忙时（在想…/正在修…）连它一起收 —— 防"点了没反应"（ts 里 onUndo 开头
+             还有一条同样的保险）。「停止」已跟着生成那颗气泡搬进对话区（.msg-stop）。
+             **别再往回挪**（照片区/蒙层那边真机点不动）。 -->
+        <view wx:if="{{canUndo && !sayBusy}}" class="say-act-undo" bindtap="onUndo">撤销</view>
         <!-- 忙的时候整颗收掉（不做"看得见点不动"的死按钮） -->
         <view class="say-send" wx:if="{{!sayBusy}}" bindtap="onSaySend">↑</view>
       </view>

@@ -18,14 +18,19 @@
 //   sayText —— 输入条里的字（受控值）
 //   sayBusy / sayBusyText —— 输入条的忙态（忙碌期间输入框换成一句话，不再收字）：
 //                            路由那 1.3~1.6 秒显示「在想…」（spec §4.2：这段不弹蒙层）；
-//                            生成期间显示「正在修…」（秒数在蒙层上，这条不跟秒）
-//   sayBubble —— 输入条上方那条浮条的字（'' = 收着不显示）；5 秒后自动淡出
-//   generating / genText / genSeconds —— 生成中蒙层（暗化 + 转圈 + 秒表文案；
-//                **纯视觉**：「停止」2026-10-13 真机修复后挪进输入条那行）。
-//                genText 是**算好的整句**（页面里唯一的文案口径，冒烟按它断言）；
-//                5 秒内不带秒数（电脑版契约），之后「正在修…已经等了 N 秒」
+//                            生成期间显示「正在修…」（秒数在对话区那颗气泡里，这条不跟秒）
+//   generating / genText / genSeconds —— 生成中的状态（转圈 + 秒表，都画在对话区那颗
+//                AI 气泡里）。genText 是**算好的整句**（页面里唯一的文案口径，冒烟按它
+//                断言）；5 秒内不带秒数（电脑版契约），之后「正在修…已经等了 N 秒」
 //   canUndo —— 输入条那行「撤销」亮不亮（一次生成 = 一层，只对生成有意义；
 //                2026-10-13 从照片右下角搬来，勿挪回画布层）
+// ★ Task 14（对话留痕）新增的一簇（spec §4 的 2026-10-13 修订块）：
+//   msgs —— 对话区那条消息流（三类条目见 SayMsg）：说过的话 / 模型的回复 /
+//            转圈秒表加停止 / 系统小字，**一律不自动消失**（取代了 5 秒浮条）。
+//            ⚠️ 它活在**正常排版流**里（风格栏和输入条之间）—— 绝不许改成 absolute
+//            叠到照片/画布上（真机触摸 bug：叠 webgl canvas 的可点 view 点不动，
+//            见 mini/README「已知平台行为」）。
+//   scrollTo —— scroll-view 的 scroll-into-view（'m' + 最后一条的 id）：新条上屏就拉到它
 import { applyDeltas, ZERO, type Adjustments } from '../../lib/shared/adjustments'
 import { activePresetId, ORIGINAL_ID, PRESETS } from '../../lib/shared/presets'
 import { TonePipeline, type CanvasNode } from '../../lib/gl/tonePipeline'
@@ -34,6 +39,30 @@ import { exportPhoto, saveToAlbum } from '../../lib/image/export'
 import { ApiError, apiPost, isAbortError, setApiBaseOverride } from '../../lib/api'
 import { getToken } from '../../lib/auth'
 import { prepareForModel, prepareForRouting } from '../../lib/image/prepare'
+
+/** AI 气泡的四个阶段（SayMsg / setAi 共用；四段见 SayMsg 的注释）。 */
+type AiState = 'thinking' | 'done' | 'stopped' | 'failed'
+
+/**
+ * 对话区的三类消息条目（spec §4.2 的 2026-10-13 修订块；Task 14）——**全部不自动消失**：
+ *   me   我说的：右对齐气泡，发出去的每一句原话（trim 后）
+ *   ai   小皇帝回的：左对齐气泡 + 徽章标；state 四个阶段：
+ *          thinking —— 就地在模板里显示转圈 / 秒表 / 停止（路由那 1.3~1.6 秒显示「在想…」）
+ *          done     —— 成功 / 纯参数 / 退化：显示 text（模型那句 reply）
+ *          stopped  —— 人按了停止：「停了。」
+ *          failed   —— 失败：ApiError.message 或「出了点问题，再试一次？」
+ *   note 系统小字（居中小字）：点风格留一行、结果作废这类通报
+ */
+type SayMsg =
+  | { id: number; kind: 'me'; text: string }
+  | { id: number; kind: 'ai'; state: AiState; text: string }
+  | { id: number; kind: 'note'; text: string }
+
+/** `pushMsg` 收的形状 = SayMsg 去掉 id（id 由 pushMsg 自己发号）。 */
+type SayMsgDraft =
+  | { kind: 'me'; text: string }
+  | { kind: 'ai'; state: AiState; text: string }
+  | { kind: 'note'; text: string }
 
 interface IndexData {
   stage: 'empty' | 'edit'
@@ -53,11 +82,13 @@ interface IndexData {
   sayText: string
   sayBusy: boolean
   sayBusyText: string
-  sayBubble: string
   generating: boolean
   genText: string
   genSeconds: number
   canUndo: boolean
+  // ── ★ Task 14（对话留痕）────────────────────────────────────────────
+  msgs: SayMsg[]
+  scrollTo: string
 }
 
 /**
@@ -87,9 +118,9 @@ const PEEK_HOLD_MS = 150
  */
 const MOVE_CANCEL_PX = 5
 
-/** 浮条停留时长（毫秒）—— spec §4.2「几秒后淡出」；5 秒是电脑版忙文案换挡用的坎，
- *  这里取它当"一眼看得完"的量。 */
-const BUBBLE_MS = 5000
+/** 对话区封顶（条数）：超了从**头部**丢最老的 —— 丢头不影响撤销裁剪（裁剪按 id 比、
+ *  不比长度）。50 条足够一屏"说过的话"的记忆，再多也没人回头看。 */
+const MAX_MSGS = 50
 
 /**
  * 生成那条路的 `wx.request` 超时（毫秒）—— **不吃平台默认的 60 秒**（Task 11 审查
@@ -147,6 +178,10 @@ interface EditResult {
 interface UndoSnap {
   photo: string
   params: Adjustments
+  /** ★ Task 14：这一趟**用户气泡**的 id —— 撤销时把 `id >= fromMsgId` 的对话条目
+   *  一起收走（只裁这一次生成的问答，更早的留着）。锚是用户气泡而不是 AI 气泡：
+   *  用户气泡一定在、AI 气泡可能已被裁掉（见 trimMsgsAt）。 */
+  fromMsgId: number
 }
 
 /** 选一张照片（拍照 / 相册）→ 临时文件路径。
@@ -264,11 +299,12 @@ Page({
     sayText: '',
     sayBusy: false,
     sayBusyText: '',
-    sayBubble: '',
     generating: false,
     genText: '',
     genSeconds: 0,
     canUndo: false,
+    msgs: [] as SayMsg[],
+    scrollTo: '',
   } as IndexData,
 
   // 非 data 的实例状态。`as` 是为了让推断出 `TonePipeline | null`（不然收窄成 null）。
@@ -301,8 +337,11 @@ Page({
   /** 这次按下的起点（手指挪没挪动，按它判，见 MOVE_CANCEL_PX）。 */
   peekStart: { x: 0, y: 0 },
 
-  /** ★ Task 12：浮条 5 秒淡出的计时器（null = 没有浮条在屏上）。 */
-  bubbleTimer: null as number | null,
+  /** ★ Task 14：对话区条目的自增 id。**整页生命周期不重置** —— 撤销按 id 裁剪
+   *  （`id < fromMsgId`），重置会和旧条目撞号、裁错地方。放实例字段（不进 data）。 */
+  msgSeq: 0,
+  /** ★ Task 14：`fitStage` 的重入令牌 —— 两次量盒子并发时会互相写旧值，后一次把前一次作废。 */
+  fitSeq: 0,
   /**
    * ★ Task 12：这一次生成的「停止」把手。**一个对象、不是单个 task**：
    * 「停止」可能按在 task 交出来**之前**（缩图那一两百毫秒里）—— 那时先记
@@ -313,7 +352,7 @@ Page({
     task: WechatMiniprogram.RequestTask | null
     aborted: boolean
   },
-  /** ★ Task 12：蒙层秒表（genStartedAt = 出发时刻，文案变了才 setData）。 */
+  /** ★ Task 12：对话区那颗气泡里的秒表（genStartedAt = 出发时刻，文案变了才 setData）。 */
   genTickTimer: null as number | null,
   genStartedAt: 0,
   /**
@@ -374,12 +413,12 @@ Page({
   async applyPickedPhoto(path: string) {
     const info = await new Promise<WechatMiniprogram.GetImageInfoSuccessCallbackResult>(
       (ok, no) => wx.getImageInfo({ src: path, success: ok, fail: no }))
-    // ★ Task 12：照片要换了 —— 在飞的生成/路由/浮条/撤销从这一刻起全部翻篇：
-    // 生成掐掉（那一趟回来也一定作废，顺手让服务端也停），旧照片的撤销和浮条清掉。
+    // ★ Task 12：照片要换了 —— 在飞的生成/路由/撤销从这一刻起全部翻篇：
+    // 生成掐掉（那一趟回来也一定作废，顺手让服务端也停），旧照片的撤销和对话记录清掉。
     // ⚠️ 代数 **+1 要赶在 setData 之前**（同步）—— setData 的落地要等一个来回，
     //    在飞的那趟生成万一在这个缝里回来，看到的就是"画面已经变了"该有的样子。
     this.abortGenInFlight()
-    this.clearBubble()
+    this.clearMsgs()
     this.undoSnap = null
     this.genPhotoSeq++
     // 先进编辑态（画布得在树上才能拿到节点），渲染接在 setData 落地之后。
@@ -404,7 +443,7 @@ Page({
       // ★ M3（2026-10-12 全支大审）：渲染失败会停在 `stage='edit'` —— 那是个
       //    **没有管线的死壳**（按钮都在，点「保存」「说一句」全是静默 no-op，
       //    用户觉得点了没反应）。回空态（走 onPickAgain 那一套：拆管线、掐在飞
-      //    的生成、清浮条/撤销、代数 +1），让按钮都回到能用的地方。
+      //    的生成、清对话记录/撤销、代数 +1），让按钮都回到能用的地方。
       //    已经在空态时调它是无副作用的重置（要写的值本来就一样）。
       this.onPickAgain()
     }
@@ -480,10 +519,10 @@ Page({
 
   onPickAgain() {
     this.disposePipe()
-    // ★ Task 12：回空态 = 一切归零 —— 在飞的生成掐掉、浮条收掉、撤销作废、
+    // ★ Task 12：回空态 = 一切归零 —— 在飞的生成掐掉、对话记录清掉、撤销作废、
     // 代数 +1（在飞的"回来"看到它就知道画面没了）。
     this.abortGenInFlight()
-    this.clearBubble()
+    this.clearMsgs()
     this.undoSnap = null
     this.genPhotoSeq++
     this.setData({
@@ -504,9 +543,9 @@ Page({
    */
   onPhotoTouchStart(e: WechatMiniprogram.TouchEvent) {
     if (!this.pipe) return
-    // ★ 2026-10-13 真机修复：生成中**不开「按住看原图」** —— 真机上蒙层收不到触摸
-    //    （触摸被画布吃掉 / 从这里穿过来），压在照片区会真触发这里、150ms 后把照片
-    //    白闪回原图。蒙层的 catchtouchstart 在真机上指望不上（见 wxml 注释）。
+    // ★ 2026-10-13 真机修复 + Task 14：生成中**不开「按住看原图」** —— 那时照片
+    //    很快就要被换掉，按下去了 150ms 后把照片白闪回原图毫无意义（蒙层时代它是
+    //    真机上"拦不住手势"的兜底；现在照片上没有任何蒙层了，这条仍是唯一的闸）。
     if (this.data.generating) return
     // ⚠️ `e &&` 两道：automator 探针用 `page.callMethod('onPhotoTouchStart')` 直接调
     //    这个处理器时**没有事件对象**（冒烟那条备选路），别在那儿抛。
@@ -571,9 +610,14 @@ Page({
     this.params = { ...next } // 存副本：预设那份是模块级常量，谁都不许原地改
     pipe.render(this.params)
     this.setData({ activeStyle: activePresetId(this.params, false) })
+    // ★ Task 14：点风格在对话区留一行**系统小字**（spec §4.2 修订块：「点风格留一行
+    //   『套用了「日系」』」）。名字取那格自己的 label；「原图」那格是另一句话。
+    //   ⚠️ 点风格**不进撤销**（canUndo 一个字不动）—— 撤销只有一层、只对生成有意义
+    //   （点错风格点「原图」就回去了）。
+    this.pushMsg({ kind: 'note', text: preset ? '套用了「' + preset.label + '」' : '回到原图' })
   },
 
-  // ── ★ Task 12 · 说一句（输入 → 路由 → 分流 → 蒙层/停止 → 换图/撤销）─────────
+  // ── ★ Task 12 · 说一句（输入 → 路由 → 分流 → 过程/停止 → 换图/撤销）─────────
 
   /** 输入条打字（受控值）。 */
   onSayInput(e: WechatMiniprogram.Input) {
@@ -583,8 +627,9 @@ Page({
   /**
    * 按下发送箭头 / 键盘上的发送键 —— 「说一句」的起点。
    *
-   * 顺序（和电脑版 App.tsx 的 `send` 同一条流水）：**先挂号**（sayBusy = 输入条换成
-   * 「在想…」，这 1.3~1.6 秒不弹蒙层，spec §4.2）→ 640 缩图 → `/api/route`（带当前
+   * 顺序（和电脑版 App.tsx 的 `send` 同一条流水）：**先上屏再出发**（用户气泡 +
+   * 「在想…」那颗 AI 气泡，Task 14）→ 输入条换成「在想…」（这 1.3~1.6 秒照片上
+   * 不弹任何东西，spec §4.2）→ 640 缩图 → `/api/route`（带当前
    * 15 参数当上下文）→ 决策回来先过一道**代数闸门**（等这一会儿里换了照片/撤销了，
    * 决策作废、一个字不动 —— 电脑版同款守卫与话术）→ applyDecision 分流。
    */
@@ -595,11 +640,17 @@ Page({
     const pipe = this.pipe
     const photo = this.data.photo
     if (!pipe || !photo) return
-    // ★ 撤销的现场**在发送这一刻**拍好（'both' 那条参数马上要落地，晚了就拍到
-    //   "落过参数"的了）—— 但只在生成**成功**那刻才写进 undoSnap（见 runGenerate）。
-    const snap: UndoSnap = { photo, params: { ...this.params } }
     const seqAtStart = this.genPhotoSeq
     this.setData({ sayText: '', sayBusy: true, sayBusyText: '在想…' })
+    // ★ Task 14：先上屏再出发 —— 「我说的」那颗气泡 + 「小皇帝回的」那颗（thinking）。
+    //   用户气泡的 id 是这一趟的**身份**（撤销按它裁对话记录，见 UndoSnap.fromMsgId）；
+    //   AI 气泡的 id 一路**显式传**给 applyDecision / runGenerate（别塞共享字段 ——
+    //   同 snap 那条纪律：同一时刻只该有一趟在飞，显式传参让"哪颗气泡是哪趟的"永远清楚）。
+    const fromMsgId = this.pushMsg({ kind: 'me', text })
+    const aiId = this.pushMsg({ kind: 'ai', state: 'thinking', text: '' })
+    // ★ 撤销的现场**在发送这一刻**拍好（'both' 那条参数马上要落地，晚了就拍到
+    //   "落过参数"的了）—— 但只在生成**成功**那刻才写进 undoSnap（见 runGenerate）。
+    const snap: UndoSnap = { photo, params: { ...this.params }, fromMsgId }
     let decision: RouteDecision
     try {
       // 路由看的是**用户此刻看到的画面**（640 小图；这条故意不做 align32，见 prepare.ts）
@@ -612,14 +663,14 @@ Page({
       console.error('[index] 路由没走通：', e)
       this.setData({ sayBusy: false })
       // ★ Task 12 审查 Minor：失败也查代数 —— 等这一会儿里换了照片 / 回空态，这句
-      // 失败只该烂在控制台里，别挂到新照片的浮条上（同下面成功路径那道闸门的处置）。
+      // 失败只该烂在控制台里，别挂到新照片的气泡上（同下面成功路径那道闸门的处置）。
       if (this.genPhotoSeq !== seqAtStart || this.pipe !== pipe) {
         console.error('[index] 路由失败回来时画面已经变了，这一趟丢掉（这句不提）')
         return
       }
       // ApiError 的 message 就是能直接给人看的话（lib/api.ts 的文件头）；
       // 兜底那句和电脑版路由失败一字不差。
-      this.showBubble(e instanceof ApiError ? e.message : '出了点问题，再试一次？')
+      this.setAi(aiId, 'failed', e instanceof ApiError ? e.message : '出了点问题，再试一次？')
       return
     }
     // 等这 1.3~1.6 秒里画面变了（换了照片 / 撤销了）：决策作废，一个字不动。
@@ -628,11 +679,13 @@ Page({
       console.error('[index] 决策回来时画面已经变了，这一趟丢掉（钱没花，参数也没动）')
       this.setData({ sayBusy: false })
       if (this.data.stage === 'edit') {
-        this.showBubble('刚才那句话还没算完，画面已经变了 —— 这边没动它。要的话，再说一遍。')
+        // ★ Task 14：原来挂浮条的通报，现在落成**新照片**对话流上的一条系统小字
+        //   （原句一字不改）。对话流刚随换照片清空过，所以这一条就是新流的开头。
+        this.pushMsg({ kind: 'note', text: '刚才那句话还没算完，画面已经变了 —— 这边没动它。要的话，再说一遍。' })
       }
       return
     }
-    await this.applyDecision(decision, snap)
+    await this.applyDecision(decision, snap, aiId)
   },
 
   /**
@@ -644,9 +697,12 @@ Page({
    *     小程序第一版没有"在图上点一下"那条路，话术尾巴改成"换个说法"（不许承诺点选）。
    *   · degraded：拼上电脑版一字不差的提醒（只拼给**生成**那两条 —— 纯参数免费可逆，
    *     不值当报一次警）。
-   *   · generate / both：进 runGenerate（蒙层 → … → 换图 + 撤销）。
+   *   · generate / both：进 runGenerate（那颗 AI 气泡 → … → 换图 + 撤销 + reply 落进对话区）。
+   *
+   * @param snap 出发时拍好的「撤销」现场（别在这里拍）
+   * @param aiId 这一趟那颗 AI 气泡的 id（台词全落在它身上；显式传，见 onSaySend）
    */
-  async applyDecision(d: RouteDecision, snap: UndoSnap) {
+  async applyDecision(d: RouteDecision, snap: UndoSnap, aiId: number) {
     const isParams = d.route === 'params' || d.route === 'both'
     if (isParams) {
       this.params = applyDeltas(this.params, d.paramDeltas || {})
@@ -662,7 +718,7 @@ Page({
     }
     if (d.needsDisambiguation) {
       this.setData({ sayBusy: false })
-      this.showBubble((d.reply || '好了。') + '我不太确定你指的是哪个 —— 换个说法再试试。')
+      this.setAi(aiId, 'done', (d.reply || '好了。') + '我不太确定你指的是哪个 —— 换个说法再试试。')
       return
     }
     const isGen = d.route === 'generate' || d.route === 'both'
@@ -673,20 +729,22 @@ Page({
     // ⚠️ 退化那条必须落在这里 —— 进 runGenerate 会撞上开头的空 prompt 闸门，一声不吭。
     if (!isGen || !d.editPrompt) {
       this.setData({ sayBusy: false })
-      this.showBubble(replyText)
+      this.setAi(aiId, 'done', replyText)
       return
     }
-    await this.runGenerate(d.editPrompt, replyText, snap)
+    await this.runGenerate(d.editPrompt, replyText, snap, aiId)
   },
 
   /**
-   * 生成那半：蒙层（暗化 + 转圈 + 秒表）→ 新图落盘 → 换图 + 一句 reply + 撤销。
-   * （「停止」/「撤销」两颗按钮在输入条那行 —— 2026-10-13 真机修复，见 wxml。）
+   * 生成那半：那颗 AI 气泡转起来（转圈 + 秒表 + 停止都在它里面）→ 新图落盘 →
+   * 换图 + 一句 reply + 撤销。（「撤销」在输入条那行；「停止」跟着气泡走 ——
+   * 2026-10-13 真机修复 + Task 14，见 wxml。）
    *
    * @param reply 成功那一刻**和图片一起**说的话（电脑版契约：不在出发时先承诺）
    * @param snap 出发时拍好的「撤销」现场（见 UndoSnap —— 别在这里拍）
+   * @param aiId 这一趟那颗 AI 气泡的 id（成功/停止/失败三句话都落在它身上）
    */
-  async runGenerate(editPrompt: string, reply: string, snap: UndoSnap) {
+  async runGenerate(editPrompt: string, reply: string, snap: UndoSnap, aiId: number) {
     const pipe = this.pipe
     const node = this.node
     const photo = this.data.photo
@@ -747,25 +805,25 @@ Page({
       })
       this.undoSnap = snap
       pipe.render(this.params) // 参数原封不动继续生效（铁律：生成只换底图）
-      this.showBubble(reply)
+      this.setAi(aiId, 'done', reply) // ★ Task 14：reply 落进那颗气泡（不自动消失）
     } catch (e) {
       if (isAbortError(e)) {
         if (this.genPhotoSeq !== seqAtStart) {
           // 是**换照片**顺手掐的（见 abortGenInFlight）—— 画面都换了，这一趟不出声，
-          // 更不许把「停了。」挂到新照片头上
+          // 更不许把「停了。」挂到新照片头上（那颗气泡也早随清空没了）
           console.info('[index] 换照片时掐掉了在飞的生成，这一趟不作声')
         } else {
           // 人按的「停止」——不是失败：只说一句收尾（电脑版一字不差），
           // 画面和参数**一个字没动过**（也正因此不许说"没修成功"）
-          this.showBubble('停了。')
+          this.setAi(aiId, 'stopped', '停了。')
         }
       } else if (gone()) {
         // ★ Task 12 审查 Minor：画面已经翻篇（换了照片 / 撤销了）时，迟到的失败
-        // 只留控制台 —— 别把「没修成功」挂到新照片的浮条上（同上面 abort 分支的闸）。
+        // 只留控制台 —— 别把「没修成功」挂到新照片的气泡上（同上面 abort 分支的闸）。
         console.error('[index] 生成失败回来时画面已经变了，这一句不提：', e)
       } else {
         console.error('[index] 生成没走通：', e)
-        this.showBubble(e instanceof ApiError ? e.message : '这次没修成功，再试一次？')
+        this.setAi(aiId, 'failed', e instanceof ApiError ? e.message : '这次没修成功，再试一次？')
       }
     } finally {
       // 只收拾**我这一趟**的东西 —— 别把下一次生成的忙态/秒表清掉（换照片掐断
@@ -779,11 +837,11 @@ Page({
   },
 
   /** 生成回来时画面已经变了：结果作废。钱花了，但写进别的画面更坏 —— 电脑版同款
-   *  通报（留痕 + 说清"没写进去、可以再说一遍"）。 */
+   *  通报（Task 14 起落成对话区的一条**系统小字**：留痕 + 说清"没写进去、可以再说一遍"）。 */
   dropLateGen() {
     console.error('[index] 生成回来时画面已经变了（换照片 / 撤销），这一版不写进去')
     if (this.data.stage === 'edit') {
-      this.showBubble('刚才那次生成回来时，画面已经变了 —— 结果没写进去。要的话，再说一遍。')
+      this.pushMsg({ kind: 'note', text: '刚才那次生成回来时，画面已经变了 —— 结果没写进去。要的话，再说一遍。' })
     }
   },
 
@@ -818,9 +876,10 @@ Page({
   },
 
   /**
-   * 输入条那行的「停止」（spec §4.3：停止掐断连接 —— 电脑版同款契约）。
-   * ⚠️ 2026-10-13 真机修复前它在蒙层上 —— 真机上叠 webgl canvas 的 view 收不到
-   * 点击，搬进了 .say-bar 行（.say-act-stop）。别挪回画布层去。
+   * 生成那颗气泡里的「停止」（spec §4.3：停止掐断连接 —— 电脑版同款契约）。
+   * ⚠️ 它在**画布外**：2026-10-13 真机修复发现叠 webgl canvas 的 view 收不到点击，
+   * 先进了输入条那行；Task 14 起跟着「正在修…」那颗气泡走（对话区在正常排版流里，
+   * 一样在画布外）。**别再挪回照片/蒙层上** —— 那边真机点不动。
    * `RequestTask.abort()` 让在飞的那次 wx.request 走 fail（errMsg 含 abort）——
    * api 层把它单独译成 ABORTED，runGenerate 的 catch 收尾说「停了。」。
    * ⚠️ 缩图那一两百毫秒里 task 还没交出来：先记 aborted，onTask 到的时候补掐。
@@ -836,8 +895,13 @@ Page({
    * （点错风格点「原图」就回去了）。撤销完按钮收掉（消费掉 undoSnap）；生成**成功**
    * 才会再亮。撤销**没走通**时（画面一个字没动）现场放回、按钮重新亮 —— 那句
    * 「再试一次？」才有个真能点的出口（Task 12 审查 Minor）。
+   * ★ Task 14：成功那一步顺带把**那次生成在对话区的问答一起收走**（锚 = 出发时那句
+   *   用户气泡的 id，见 UndoSnap.fromMsgId）—— 撤销 = 当没说过那句话。
    */
   async onUndo() {
+    // ★ Task 14 保险：忙的时候不接（忙时「撤销」本来就收着 —— 见 wxml 的
+    //   `canUndo && !sayBusy`，留着这条防"点了没反应"的其余入口）。
+    if (this.data.sayBusy) return
     const snap = this.undoSnap
     const pipe = this.pipe
     const node = this.node
@@ -863,6 +927,9 @@ Page({
         activeStyle: activePresetId(this.params, false),
       })
       pipe.render(this.params)
+      // ★ Task 14：那次生成在对话区的**问答一起收走**（只留 id 比锚更早的）——
+      //   撤销 = "当没说那句话"。放上屏之后做：画面先回，记录紧跟着收。
+      this.trimMsgsAt(snap.fromMsgId)
     } catch (e) {
       console.error('[index] 撤销没走通：', e)
       // ★ Task 12 审查 Minor：撤销失败时画面和参数**一个字没动**（所有改动都在最后
@@ -873,37 +940,93 @@ Page({
       if (this.pipe === pipe && this.genPhotoSeq === seqAtStart) {
         this.undoSnap = snap
         this.setData({ canUndo: true })
-        this.showBubble('这会儿撤不回去了，再试一次？')
+        this.pushMsg({ kind: 'note', text: '这会儿撤不回去了，再试一次？' })
       } else {
         console.info('[index] 撤销失败回来时画面已经变了，这句不提（不挂到新照片上）')
       }
     }
   },
 
+  // ── ★ Task 14 · 对话区（spec §4.2 修订块：说过的话 / 回复 / 过程全留在这）──────
+
   /**
-   * 浮条（spec §4.2）：模型那句话 / 「停了。」/ 失败提示都走它，显示在输入条上方，
-   * **5 秒后自动淡出**。只留一条槽 —— 新的话直接顶掉旧的（计时器重起）。
+   * 往对话区加一条：发 id（`msgSeq` 自增，整页不重置）→ 封顶（超了从**头部**丢最老的，
+   * 丢头不影响撤销裁剪 —— 裁剪按 id 比、不比长度）→ 把滚动条拉到新条目（`scrollTo`）。
+   * 返回新条目的 id（撤销的锚、AI 气泡的身份都是它）。
+   * ⚠️ **整条数组重建 + 一次 setData**（≤50 条，开销可忽略）——别玩 `msgs[3].text`
+   *    那种路径 setData：小程序只支持一层路径，写不对还会**静默不生效**。
    */
-  showBubble(text: string) {
-    this.clearBubble()
-    this.setData({ sayBubble: text })
-    this.bubbleTimer = setTimeout(() => {
-      this.bubbleTimer = null
-      this.setData({ sayBubble: '' })
-    }, BUBBLE_MS)
-  },
-
-  /** 收掉浮条（换照片 / 回空态时连着旧那句话一起清 —— 别让旧照片的话挂到新照片上）。 */
-  clearBubble() {
-    if (this.bubbleTimer !== null) {
-      clearTimeout(this.bubbleTimer)
-      this.bubbleTimer = null
-    }
-    if (this.data.sayBubble) this.setData({ sayBubble: '' })
+  pushMsg(draft: SayMsgDraft): number {
+    const id = ++this.msgSeq
+    let msgs = this.data.msgs.concat([{ ...draft, id } as SayMsg])
+    if (msgs.length > MAX_MSGS) msgs = msgs.slice(msgs.length - MAX_MSGS)
+    this.setData({ msgs, scrollTo: 'm' + id })
+    this.fitStage()
+    return id
   },
 
   /**
-   * 蒙层秒表：出发时刻记下，250ms 一跳、**文案变了才 setData**（见 GEN_TICK_MS）。
+   * 把某条 AI 气泡改成新状态 / 新文案（成功、停止、失败、纯参数那三条 reply 都走它）。
+   * **找不到 id 就安静跳过** —— 条目已被撤销裁掉 / 换照片清空时这是**正常路径**
+   * （在飞的生成迟到回来正是这么个场景），不是错误、更不许往别的气泡头上写。
+   */
+  setAi(id: number, state: AiState, text: string) {
+    let hit = false
+    const msgs = this.data.msgs.map(m => {
+      if (m.id !== id || m.kind !== 'ai') return m
+      hit = true
+      return { id: m.id, kind: 'ai' as const, state, text }
+    })
+    if (!hit) return
+    this.setData({ msgs })
+    this.fitStage()
+  },
+
+  /** 撤销：把那次生成留下的条目一起收走（只留 id **比锚更早**的）；`scrollTo` 指到最后一条。 */
+  trimMsgsAt(fromMsgId: number) {
+    const kept = this.data.msgs.filter(m => m.id < fromMsgId)
+    const last = kept.length ? kept[kept.length - 1] : null
+    this.setData({ msgs: kept, scrollTo: last ? 'm' + last.id : '' })
+    this.fitStage()
+  },
+
+  /** 换照片 / 回空态时清空（`msgSeq` **不重置** —— 见字段注释：撤销按 id 裁剪）。 */
+  clearMsgs() {
+    if (!this.data.msgs.length) return
+    this.setData({ msgs: [], scrollTo: '' })
+    this.fitStage()
+  },
+
+  /**
+   * ★ Task 14：对话区一长，照片区（flex:1）就矮了 —— 画布的**显示尺寸**是照片载入
+   * 那一刻按**当时**的盒子定的，不跟着重算的话照片会从盒子里冒出去（overflow 默认
+   * 可见）盖住风格栏/对话区。这里按当前盒子重算一遍显示尺寸。
+   *
+   * ⚠️ 只动 CSS 盒子（stageW/stageH 那对 inline style）——**绘图缓冲一个字不动**
+   *    （缓冲归 `pipe.resizeToImage()`，渲染与显示尺寸无关，和电脑版同款分工）。
+   * ⚠️ 两次量盒子并发会互相写旧值：`fitSeq` 令牌让后一次把前一次作废；量完再核
+   *    照片路径 —— 量盒子这一会儿里换了照片，这一趟就作废（新照片自己会算尺寸）。
+   * 拿不到盒子（页面正在拆）、没管线、没照片：安静跳过（下一次有变化时还会再算）。
+   */
+  async fitStage() {
+    const seq = ++this.fitSeq
+    const photo = this.data.photo
+    const w = this.data.photoW
+    const h = this.data.photoH
+    if (!photo || !w || !h || !this.pipe) return
+    let box: StageBox
+    try {
+      box = await queryStage(this)
+    } catch (e) {
+      return
+    }
+    if (seq !== this.fitSeq || this.data.photo !== photo || !this.pipe) return
+    const k = Math.min(1, box.w / w, box.h / h)
+    this.setData({ stageW: Math.round(w * k), stageH: Math.round(h * k) })
+  },
+
+  /**
+   * 对话区那颗气泡里的秒表：出发时刻记下，250ms 一跳、**文案变了才 setData**（见 GEN_TICK_MS）。
    * 文案：前 5 秒「正在修…」（电脑版契约：5 秒内不显示秒数 —— 那句假想的"大约 10 秒"
    * 我们不赌）；之后「正在修…已经等了 N 秒」（结构照电脑版 busyText：秒数每秒在跳，
    * 本身就是"它还活着"的信号，比任何安抚都硬）。
@@ -929,19 +1052,13 @@ Page({
 
   /**
    * 换照片 / 回空态时收在飞的生成（那一趟回来也一定作废 —— 顺手让服务端也停）。
-   * ⚠️ 只掐请求，**不收界面状态**：忙态/蒙层归 runGenerate 自己的 finally 收
+   * ⚠️ 只掐请求，**不收界面状态**：忙态归 runGenerate 自己的 finally 收
    * （它认得过令牌，见那边的注释）。
    */
   abortGenInFlight() {
     this.genAbort.aborted = true
     if (this.genAbort.task) this.genAbort.task.abort()
   },
-
-  /** 蒙层上的触摸**拦在这里**（catch 不冒泡）—— 别穿到照片区去触发「按住看原图」。
-   *  ⚠️ 2026-10-13 真机实测：真机上它其实**收不到触摸**（叠在 webgl canvas 之上的
-   *  view 会被画布吃掉、模拟器不犯），拦手势**别指望它** —— 真机那侧的兜底在
-   *  onPhotoTouchStart（生成中直接 return）。本身不做任何事。 */
-  onOverlayCatch() {},
 
   /**
    * ★ 冒烟/自动化专用（Task 7）——「全黑哨兵」的探针。**纯读、同步、立即返回**
@@ -1022,7 +1139,7 @@ Page({
     //    画布缓冲：生成若在导出的 0.1~0.8 秒窗口里回来，`setImage/resizeToImage`
     //    就把缓冲换掉了，`canvasToFile` 读的是旧尺寸区域（新图被裁 / 黑边），
     //    还配一声「已存到相册」。触发只要"转圈时顺手点一下保存"（户外很自然）。
-    //    蒙层已经示意在忙，这里静默忽略成本最低（和 `saving` 那条防重入一个出口）。
+    //    对话区那颗气泡已经示意在忙，这里静默忽略成本最低（和 `saving` 那条防重入一个出口）。
     //    `endPeek()` 顺手收掉：**按住看原图**的到点定时器是同类"导出中途有人往
     //    缓冲里画"的来源（到点重画一帧 / 抬手画回来）。⚠️ 放在守卫**后面** ——
     //    按住的手指还压着时不该动他的画面。
