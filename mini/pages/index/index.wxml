@@ -101,7 +101,10 @@
 
     <!-- 说一句（spec §4.2）：胶囊输入条 + 发送箭头（--accent-400 底、--accent-ink 字）。
          发送后输入条先换成「在想…」（路由那 1.3~1.6 秒照片上不弹任何东西；
-         过程在对话区），进生成才轮到那颗气泡转起来。 -->
+         过程在对话区），进生成才轮到那颗气泡转起来。
+         ★ Task 19：placeholder 走 data 的 sayPh（默认「说一句，比如「天空再蓝一点」」；
+         每轮收场后按现行画面拉 /api/suggest 换新）—— **wxml 里就这一个口径**，
+         别在模板/别处再拼一套句子（句式框架只有 ts 的 sayPhOf 一份）。 -->
     <view class="say-bar">
       <view class="say-row">
         <!-- ★ 2026-10-13 真机修复 + Task 14 + 修复轮 F3：破坏性动作放左侧 ——
@@ -115,7 +118,7 @@
         <view class="say-pill">
           <input wx:if="{{!sayBusy}}" class="say-input" value="{{sayText}}"
                  bindinput="onSayInput" bindconfirm="onSaySend"
-                 confirm-type="send" placeholder="说一句，比如「把路人去掉」"
+                 confirm-type="send" placeholder="{{sayPh}}"
                  placeholder-class="say-ph" />
           <text wx:else class="say-thinking">{{sayBusyText}}</text>
         </view>

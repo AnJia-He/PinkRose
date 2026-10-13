@@ -13,12 +13,13 @@
 // 端点：
 //   POST /api/wx-login    假票一张（apiPost → getToken 的静默登录会打到这里）
 //   POST /api/route       按**文本关键词**给四种决策（见下面 DECISION 表）
+//   POST /api/suggest     固定 2 张卡（Task 19 输入框提示语用；`suggestFail=1` 时回 500）
 //   POST /api/edit        回一张本地测试照片的 dataURL（默认 test-photos/e2e_after_generate.jpg，
 //                         1216×800 —— 故意和 dev 测试图 1080×2048 尺寸不同，
 //                         冒烟才能断言「照片真换了」）
 //   GET  /mock/health     {ok:true,...}，冒烟等它就绪
-//   GET  /mock/set        ?editMs=800&routeMs=200 运行期改延时（冒烟控节奏用）
-//   GET  /mock/stats      {route,edit,editAborted,wxLogin} —— editAborted>0 是
+//   GET  /mock/set        ?editMs=800&routeMs=200&suggestFail=1 运行期改延时 / suggest 失败开关
+//   GET  /mock/stats      {route,edit,editAborted,wxLogin,suggest} —— editAborted>0 是
 //                         「停止」真的掐断了服务端连接（不是只改了界面）的**证据**
 //
 // 环境变量：MOCK_PORT（默认 4399）、MOCK_EDIT_MS（默认 3000）、MOCK_ROUTE_MS（默认 300）
@@ -35,6 +36,9 @@ const PORT = Number(process.env.MOCK_PORT || 4399)
 let editMs = Number(process.env.MOCK_EDIT_MS || 3000)
 /** `/api/route` 的延时 —— 冒烟把它调大（~1.2s）来看输入条的「在想…」 */
 let routeMs = Number(process.env.MOCK_ROUTE_MS || 300)
+/** `/api/suggest` 的失败开关（`/mock/set?suggestFail=1|0`）—— 冒烟验"提示语失败静默"用；
+ *  默认关（回固定 2 张卡，见下面的 SUGGEST_CARDS）。 */
+let suggestFail = false
 
 // ── 那张"生成结果"照片：候选按顺序取第一张存在的 ────────────────────────────
 const REPO = path.join(__dirname, '..', '..')
@@ -78,6 +82,16 @@ function jpegSize(buf) {
 const WANT_PARAMS = /亮|提亮|暖|鲜艳|通透/
 const WANT_GEN = /路人|去掉|修掉|背景|痘痘/
 const EDIT_PROMPT = 'remove the passers-by in the background, keep the person and the composition unchanged'
+
+/** `/api/suggest` 固定回的 2 张卡（Task 19 输入框提示语）—— label 是 `smoke-say.cjs`
+ *  断言钉着的**字面量**（一轮收场后提示语要变成「说一句，比如「天空更蓝一点」」），
+ *  改它冒烟就红，别随手改。
+ *  ⚠️ 第一条的「更」是故意的：和默认句里的「再」（说一句，比如「天空再蓝一点」）
+ *  只差一个字 —— 断言才分得清"提示是 mock 给的"还是"根本没换、还是默认句"。 */
+const SUGGEST_CARDS = [
+  { label: '天空更蓝一点', route: 'params', paramDeltas: { saturation: 8 }, editPrompt: '' },
+  { label: '把背景虚化', route: 'generate', paramDeltas: {}, editPrompt: EDIT_PROMPT },
+]
 
 /** 决策的返回体（`RouteResponse`）：所有字段都按 shared/protocol.ts，一个字母别改 */
 function decide(text) {
@@ -123,7 +137,7 @@ function dec(route, paramDeltas, reply, extra = {}) {
 }
 
 // ── HTTP ────────────────────────────────────────────────────────────────────
-const stats = { route: 0, edit: 0, editAborted: 0, wxLogin: 0 }
+const stats = { route: 0, edit: 0, editAborted: 0, wxLogin: 0, suggest: 0 }
 
 function sendJson(res, status, obj) {
   const body = JSON.stringify(obj)
@@ -152,8 +166,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/mock/set') {
     if (url.searchParams.has('editMs')) editMs = Number(url.searchParams.get('editMs'))
     if (url.searchParams.has('routeMs')) routeMs = Number(url.searchParams.get('routeMs'))
-    console.log(`[mock] 改延时：editMs=${editMs} routeMs=${routeMs}`)
-    return sendJson(res, 200, { ok: true, editMs, routeMs })
+    if (url.searchParams.has('suggestFail')) suggestFail = url.searchParams.get('suggestFail') === '1'
+    console.log(`[mock] 改延时：editMs=${editMs} routeMs=${routeMs} suggestFail=${suggestFail}`)
+    return sendJson(res, 200, { ok: true, editMs, routeMs, suggestFail })
   }
   if (req.method === 'GET' && url.pathname === '/mock/stats') {
     return sendJson(res, 200, stats)
@@ -180,6 +195,20 @@ const server = http.createServer(async (req, res) => {
     return setTimeout(() => {
       if (!res.destroyed && !res.writableEnded) sendJson(res, 200, { decision })
     }, routeMs)
+  }
+
+  // Task 19：输入框提示语 —— 每轮收场后拉一次，**不等**（拉不回来不影响任何事）。
+  // 回体形状照 server/suggest.ts（cards + degraded），小程序只取 cards[0].label。
+  if (req.method === 'POST' && url.pathname === '/api/suggest') {
+    const body = await readBody(req)
+    if (!body) return sendJson(res, 400, { error: { code: 'BAD_REQUEST', message: '正文不是 JSON' } })
+    stats.suggest++
+    if (suggestFail) {
+      console.log('[mock] suggest：suggestFail=1，故意回 500（冒烟在验失败静默）')
+      return sendJson(res, 500, { error: { code: 'INTERNAL', message: 'mock: suggest 故意失败' } })
+    }
+    console.log(`[mock] suggest：回 2 张卡（图 ${String(body.imageDataUrl || '').slice(0, 30)}…）`)
+    return sendJson(res, 200, { cards: SUGGEST_CARDS, degraded: false })
   }
 
   if (req.method === 'POST' && url.pathname === '/api/edit') {

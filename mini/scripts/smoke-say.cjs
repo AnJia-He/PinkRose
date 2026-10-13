@@ -11,12 +11,13 @@
  *   2) mock 服务器**不用手动起** —— 脚本自己 spawn（4399 已有别人起着的就直接用，
  *      跑完也不杀它）；环境里 MOCK_ROUTE_MS=1200 / MOCK_EDIT_MS=800 是起它的参数。
  *
- * 故事线（六个场景，四种决策路 + 停止；断言大多读 `page.data().msgs` —— Task 14 起
- * 对话区取代了 5 秒浮条 + 照片蒙层；**加粗的检查点是修复轮 F1–F10 补的**）：
+ * 故事线（A~H 八个场景：四种决策路 + 停止 + 提示语；断言大多读 `page.data().msgs` ——
+ * Task 14 起对话区取代了 5 秒浮条 + 照片蒙层；**加粗的检查点是修复轮 F1–F10 补的**）：
  *   A params   「亮一点」      —— 发送立刻留痕（我说的 + 在想的）→ 参数叠加 + 点亮
  *                                「通透提亮」+ reply 落进气泡；**再等 6 秒那条 reply 仍在**
  *                                （留痕本体 —— 浮条时代这里必然已淡出）；
- *                                **点一下「我说的」气泡 → 原文回填输入框**（F4）
+ *                                **点一下「我说的」气泡 → 原文回填输入框**（F4）；
+ *                                **A8b：一轮收场后提示语换成 mock 卡片 label**（Task 19）
  *   B generate 「把路人去掉」   —— 气泡里转圈（秒数前 5 秒不带数字）→ 新图（尺寸换成
  *                                mock 那张）→ reply 落进气泡 + 撤销 → 点撤销 → 画面和
  *                                参数都回到发前 + **那次生成的两条对话一起收走**；
@@ -31,7 +32,10 @@
  *                                点**气泡里**的「停止」→ 请求真掐断（mock 的
  *                                editAborted 计数为证）、画面/参数/撤销原样、气泡「停了。」
  *   G 补充（Task 14 新增的两条）点一格风格 → 留一条系统小字（**连点同档 0 条**，F7）；
- *                                换一张 → 对话流清空、重载一张仍空。
+ *                                换一张 → 对话流清空、重载一张仍空（**G3b/G4b：提示语
+ *                                也回默认**，Task 19）。
+ *   H 提示语失败路径（Task 19）mock 的 /api/suggest 故意 500（suggestFail=1）——
+ *                                这轮对话照常收场；sayPh **静默保持**默认句（不换没报错）。
  *
  * 用法（CLI 已起着）：node mini/scripts/smoke-say.cjs
  *
@@ -50,7 +54,7 @@ const ENDPOINT = process.env.WS ?? 'ws://127.0.0.1:9420'
 const MOCK_PORT = 4399
 const MOCK = 'http://127.0.0.1:' + MOCK_PORT
 const RPC_MS = 30000
-/** 整条冒烟的保险丝（七个场景正常 2~4 分钟；只是兜底，防"某个 await 没被套上"）。 */
+/** 整条冒烟的保险丝（八个场景正常 2~4 分钟；只是兜底，防"某个 await 没被套上"）。 */
 const WATCHDOG_MS = 420000
 /** 路由阶段的 mock 延时 —— 调大到 1200ms 才看得见「在想…」（真后端 1.3~1.6s 同量级） */
 const ROUTE_MS = 1200
@@ -62,6 +66,12 @@ const EDIT_MS_LONG = 20000
 /** 「留痕本体」要等的时长（毫秒）——**必须大于旧浮条的 5 秒**：浮条时代等这么久
  *  那条回复必然已经淡出，现在它得还在。 */
 const KEEP_MS = 6500
+/** ★ Task 19：提示语的默认句（和 `mini/pages/index/index.ts` 的 DEFAULT_SAY_PH 同一个
+ *  字面量；改了那边这里就红 —— 那正是守卫该有的样子）。 */
+const DEFAULT_SAY_PH = '说一句，比如「天空再蓝一点」'
+/** ★ Task 19：mock 卡片 label 填进同一句式后的期望值 —— 注意是「**更**蓝一点」，
+ *  和默认句的「再」差一个字：断言才分得清"提示真换了"还是"根本没换、还是默认"。 */
+const MOCK_SAY_PH = '说一句，比如「天空更蓝一点」'
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const withTimeout = (p, ms, name) =>
@@ -164,8 +174,9 @@ async function mockUp() {
     for (let i = 0; i < 40 && !up; i++) { await sleep(250); up = await mockUp() }
     if (!up) throw new Error('mock 起不来（' + MOCK + '）—— 端口被别的程序占了？')
   }
-  // 两种延时**每趟都归一**：复用别人起着的 mock 时，它身上的延时可能是上一趟留下的
-  await getJson('/mock/set?routeMs=' + ROUTE_MS + '&editMs=' + EDIT_MS)
+  // 延时和 suggestFail 开关**每趟都归一**：复用别人起着的 mock 时，它身上的
+  // 延时/开关可能是上一趟留下的（suggestFail 留着的话 A8b 会红，症状很绕）。
+  await getJson('/mock/set?routeMs=' + ROUTE_MS + '&editMs=' + EDIT_MS + '&suggestFail=0')
   const health = await getJson('/mock/health')
   const mockW = health.width
   const mockH = health.height
@@ -212,6 +223,9 @@ async function mockUp() {
     const ready = d.stage === 'edit' && d.styles.length === 13 && !!d.spritePath
     check('前置：渲染 + 风格栏就绪 + 对话流是空的（说一句的起点）', ready && d.msgs.length === 0,
       'photoW×H=' + d.photoW + '×' + d.photoH + ' styles=' + d.styles.length + ' msgs=' + d.msgs.length)
+    // ★ Task 19：刚载入照片 = 还没跑过任何一轮 —— 提示语必须是默认句（data 的 sayPh）。
+    check('前置b 输入条 placeholder 是 Task 19 的默认句（data 的 sayPh，wxml 只认它）',
+      d.sayPh === DEFAULT_SAY_PH, 'sayPh=' + JSON.stringify(d.sayPh))
     if (!ready) {
       await shot(mp, 'smoke-say-fail')
       throw new Error('风格栏没就绪，后面的场景没法跑')
@@ -274,6 +288,14 @@ async function mockUp() {
       dStill.msgs.some(m => m.kind === 'ai' && m.state === 'done' && m.text === '好，我把照片调成了通透提亮的样子。') &&
       !('sayBubble' in dStill),
       'msgs=' + msgCount(dStill) + '，旧浮条字段已退役=' + !('sayBubble' in dStill))
+
+    // ★ Task 19：「一轮收场后提示语按现行画面换新」—— A 这轮（params 路）收场时页面
+    //   拉过一次 /api/suggest（mock 固定卡片），cards[0].label 填进**同一句式**。
+    //   期望值里的「更」不是默认句的「再」：mock 真被用上了才拼得出这个字。
+    const dPh = await waitData(page, x => x.sayPh === MOCK_SAY_PH, 8000)
+    check('A8b 提示语（Task 19）：一轮收场后 sayPh =「说一句，比如「天空更蓝一点」」（mock 卡片 label 进了同一句式）',
+      dPh.sayPh === MOCK_SAY_PH, 'sayPh=' + JSON.stringify(dPh.sayPh))
+    await shot(mp, 'say-T19-hint') // ← Task 19 证据：提示已变的那格（此刻输入框是空的，placeholder 可见）
 
     // ★ 修复轮 F4：点「我说的」气泡 → 那句话**回填输入框**（只回填、不发送；
     //   输入框里已有字也直接覆盖 —— 就一条路）。先故意写上别的字验证"覆盖"。
@@ -547,6 +569,10 @@ async function mockUp() {
     const dG3 = await waitData(page, x => x.stage === 'empty', 8000)
     check('G3 换一张 → 回空态、对话流清空', dG3.stage === 'empty' && dG3.msgs.length === 0,
       'stage=' + dG3.stage + ' msgs=' + dG3.msgs.length)
+    // ★ Task 19：换照片 → 提示语回默认（此刻它本来是 mock 卡片那句 —— F 那轮停止也是
+    //   一轮收场、也换过 —— 所以这条有真牙齿，不是"本来就是默认"混过去的）。
+    check('G3b 提示语（Task 19）：换一张之后 sayPh 回默认句（不带上一张的建议）',
+      dG3.sayPh === DEFAULT_SAY_PH, 'sayPh=' + JSON.stringify(dG3.sayPh))
     // 再载入一张（applyPickedPhoto 那条清空线）：也不许把上一张的话带回来。
     // ★ 修复轮 F9：断言名改成它**真正证明的** —— 进空态那一步（onPickAgain）已经把
     //   对话流清过一道，这条量的是"重新载入也不会把上一张的对话带回来"；
@@ -556,7 +582,33 @@ async function mockUp() {
     const dG4 = await waitData(page, x => x.stage === 'edit' && x.styles.length === 13, 60000)
     check('G4 重新载入不会把上一张的对话带回来（清空发生在进空态那一步；这条兜的是重载后仍空）',
       dG4.msgs.length === 0 && dG4.stage === 'edit', 'stage=' + dG4.stage + ' msgs=' + dG4.msgs.length)
+    // ★ Task 19：重新载入（applyPickedPhoto 那条线）也把提示语归回默认。
+    check('G4b 提示语（Task 19）：重新载入后 sayPh 仍是默认句（applyPickedPhoto 的归位）',
+      dG4.sayPh === DEFAULT_SAY_PH, 'sayPh=' + JSON.stringify(dG4.sayPh))
     await shot(mp, 'say-G-reloaded')
+
+    // ── [H] Task 19：suggest 失败路径 —— 「锦上添花」的品性钉死 ────────────────
+    //    mock 的 /api/suggest 回 500（suggestFail=1）：这轮对话必须**照常收场**
+    //    （reply 照落、忙态全收），sayPh **静默保持**默认句 —— 不换别的、不冒错 UI。
+    log('\n[H] 提示语失败路径：suggestFail=1（mock 的 /api/suggest 故意 500）')
+    await getJson('/mock/set?suggestFail=1')
+    const hStats0 = await getJson('/mock/stats')
+    await say('亮一点')
+    const dH = await waitData(page, x => doneText(x) === '好，我把照片调成了通透提亮的样子。', 9000)
+    check('H1 失败路径（Task 19）：这轮对话照常收场（reply 照落、忙态全收 —— 不卡不弹）',
+      doneText(dH) === '好，我把照片调成了通透提亮的样子。' && dH.sayBusy === false && dH.generating === false,
+      'reply=' + JSON.stringify(doneText(dH)) + ' busy=' + dH.sayBusy + ' generating=' + dH.generating)
+    await sleep(1000) // 给这趟 refreshSuggest 落地（500 回得快；这一拍只是保险）
+    const dHph = await rpc(page.data(), 'page.data')
+    check('H2 失败路径（Task 19）：sayPh 静默保持默认句（没换、没报错、没忙态残留）',
+      dHph.sayPh === DEFAULT_SAY_PH && dHph.sayBusy === false && dHph.generating === false,
+      'sayPh=' + JSON.stringify(dHph.sayPh))
+    const hStats1 = await getJson('/mock/stats')
+    check('H3 失败路径（Task 19）：suggest 真被拉过一趟（mock 记到 suggest+1）—— 不是"根本没发"',
+      hStats1.suggest >= hStats0.suggest + 1,
+      'suggest ' + hStats0.suggest + ' → ' + hStats1.suggest + '（这一趟回的是 500）')
+    await getJson('/mock/set?suggestFail=0')
+    await shot(mp, 'say-H-suggest-fail')
 
     // ── 收尾 ─────────────────────────────────────────────────────────────────
     await shot(mp, results.some(r => !r.ok) ? 'smoke-say-fail' : 'smoke-say-ok')
@@ -568,8 +620,9 @@ async function mockUp() {
     // 收尾三件事都要尽最大努力做（每一步失败只记一笔，别盖住真正的错）——
     // 尤其 **API 地址必须指回 config**：它是运行期的全局开关，留着就把模拟器
     // 之后的一切请求都打到 mock 上（症状只有"连不上"，很难查）。
-    // 顺带把 mock 的生成延时改回短的（复用别人起着的 mock 时别把 20 秒留给下一趟）。
-    try { await getJson('/mock/set?editMs=' + EDIT_MS) } catch (e) { /* mock 没了也就算了 */ }
+    // 顺带把 mock 的生成延时改回短的、suggestFail 归零（复用别人起着的 mock 时别把
+    // 20 秒延时/失败开关留给下一趟 —— suggestFail 留着的话下一趟 A8b 会红，症状很绕）。
+    try { await getJson('/mock/set?editMs=' + EDIT_MS + '&suggestFail=0') } catch (e) { /* mock 没了也就算了 */ }
     try { if (page) await rpc(page.callMethod('__probeSetApiBase', ''), 'reset api base', 8000) } catch (e) { log('  [warn] API 地址没能指回 config：', e && e.message) }
     try { if (mp) await rpc(mp.disconnect(), 'disconnect', 10000) } catch (e) { /* 没连上也就算了 */ }
     if (mockProc) mockProc.kill()

@@ -24,6 +24,10 @@
 //                断言）；5 秒内不带秒数（电脑版契约），之后「正在修…已经等了 N 秒」
 //   canUndo —— 输入条那行「撤销」亮不亮（一次生成 = 一层，只对生成有意义；
 //                2026-10-13 从照片右下角搬来，勿挪回画布层）
+//   sayPh —— 输入条 placeholder 的**整句话**（★ Task 19）：默认 DEFAULT_SAY_PH；
+//            每轮对话收场后拉 /api/suggest，把卡片 label 填进**同一句式**换新
+//            （见 refreshSuggest；换照片 / 回空态回默认）。wxml 里 placeholder
+//            只有这一个口径 —— 别在别处再拼句子
 // ★ Task 14（对话留痕）新增的一簇（spec §4 的 2026-10-13 修订块）：
 //   msgs —— 对话区那条消息流（三类条目见 SayMsg）：说过的话 / 模型的回复 /
 //            转圈秒表加停止 / 系统小字，**一律不自动消失**（取代了 5 秒浮条）。
@@ -83,6 +87,8 @@ interface IndexData {
   sayText: string
   sayBusy: boolean
   sayBusyText: string
+  /** ★ Task 19：输入条 placeholder 的整句话（默认 DEFAULT_SAY_PH，每轮收场换新） */
+  sayPh: string
   generating: boolean
   genText: string
   genSeconds: number
@@ -133,6 +139,23 @@ const MAX_MSGS = 50
  */
 const EDIT_TIMEOUT_MS = 120000
 
+/**
+ * `/api/suggest`（提示语）的 `wx.request` 超时（毫秒）—— **显式给 30 秒**，别吃平台
+ * 默认的 60 秒（Task 19）。它和路由同机部署，正常一两秒就回；30 秒不回来就当它没有 ——
+ * 提示语是锦上添花，不拦任何人（见 refreshSuggest）。
+ */
+const SUGGEST_TIMEOUT_MS = 30000
+
+/**
+ * ★ Task 19：输入条提示语 —— **只有一个句式框架**（spec §4.2「提示语」修订块）：
+ * 默认 `sayPhOf('天空再蓝一点')`（参数路、秒出的示范），每轮收场拉回来的卡片 label
+ * 也填进同一句（`refreshSuggest`）。别出第二套话术。
+ */
+function sayPhOf(label: string): string {
+  return '说一句，比如「' + label + '」'
+}
+const DEFAULT_SAY_PH = sayPhOf('天空再蓝一点')
+
 /** 生成结果的落盘槽（ping-pong，见 `writeGenImage`）：写"当前没在显示"的那个，
  *  撤销要还原的那张文件绝不会被覆盖。 */
 const GEN_SLOT_0 = 'pr-gen-0.jpg'
@@ -169,6 +192,14 @@ interface EditResult {
   imageDataUrl: string
   width: number
   height: number
+}
+
+/** `POST /api/suggest` 的回体（`server/suggest.ts`；web 的「帮我想想」同一条接口）——
+ *  小程序只取第一张卡的 label（填进提示句式），其余字段（route/paramDeltas/editPrompt）
+ *  照收即弃。协议口径：最多 3 张卡、label ≤12 字（软限）。 */
+interface SuggestResponse {
+  cards: { label: string }[]
+  degraded: boolean
 }
 
 /**
@@ -341,6 +372,7 @@ Page({
     sayText: '',
     sayBusy: false,
     sayBusyText: '',
+    sayPh: DEFAULT_SAY_PH,
     generating: false,
     genText: '',
     genSeconds: 0,
@@ -406,6 +438,13 @@ Page({
    * 结果作废只留一句通报 —— 电脑版 `baseSeqRef` 的同类（那边追过串会话那个大坑）。
    */
   genPhotoSeq: 0,
+  /**
+   * ★ Task 19：提示语（`/api/suggest`）的**作废令牌** —— 单调递增，回来时只认
+   * 最新一趟：每轮收场拉一次会 ++，换照片 / 回空态也 ++（把在飞的那趟作废 ——
+   * 迟到的不许写到新画面的提示上）。出发时再抄一份 `genPhotoSeq`，兜住"画面
+   * 翻了篇但不算换照片"的变化（撤销）。
+   */
+  suggestSeq: 0,
   /** ★ Task 12：「撤销」还原的现场（见 UndoSnap）。生成**成功**那刻才写；撤销消费掉。 */
   undoSnap: null as UndoSnap | null,
 
@@ -466,6 +505,8 @@ Page({
     this.clearMsgs()
     this.undoSnap = null
     this.genPhotoSeq++
+    // ★ Task 19：提示语也随照片翻篇 —— 回默认；在飞的那趟 suggest 作废（见 setData）。
+    this.suggestSeq++
     // 先进编辑态（画布得在树上才能拿到节点），渲染接在 setData 落地之后。
     // 风格栏三个字段在这里**归零**：上一张照片的 sprite/点亮一律不许带过来
     // （新照片的 sprite 画好之前，条上宁可先空着，也不能挂旧照片的小图）。
@@ -473,6 +514,7 @@ Page({
       {
         stage: 'edit', photo: path, photoW: info.width, photoH: info.height,
         styles: [], spritePath: '', spriteW: 0, activeStyle: null, canUndo: false,
+        sayPh: DEFAULT_SAY_PH,
       }, ok))
     await this.startRender(path)
   },
@@ -571,9 +613,10 @@ Page({
     this.clearMsgs()
     this.undoSnap = null
     this.genPhotoSeq++
+    this.suggestSeq++ // ★ Task 19：在飞的 suggest 作废（提示语回默认，见 setData）
     this.setData({
       stage: 'empty', photo: null, photoW: 0, photoH: 0, stageW: 0, stageH: 0,
-      canUndo: false, sayBusy: false, generating: false,
+      canUndo: false, sayBusy: false, generating: false, sayPh: DEFAULT_SAY_PH,
     })
   },
 
@@ -732,6 +775,8 @@ Page({
       // ApiError 的 message 就是能直接给人看的话（lib/api.ts 的文件头）；
       // 兜底那句和电脑版路由失败一字不差。
       this.setAi(aiId, 'failed', e instanceof ApiError ? e.message : '出了点问题，再试一次？')
+      // ★ Task 19：说一声失败也是**一轮收场** —— 照拉提示（提示语不该因一次失败冻住）。
+      await this.refreshSuggest()
       return
     }
     // 等这 1.3~1.6 秒里画面变了（换了照片 / 撤销了）：决策作废，一个字不动。
@@ -747,6 +792,10 @@ Page({
       return
     }
     await this.applyDecision(decision, snap, aiId)
+    // ★ Task 19：一轮收场（成功 / 拿不准 / 纯参数 / 停止 / 失败都从 applyDecision
+    //   回来）—— 按**现行画面**拉一次"下一步可以试什么"换提示语。锦上添花：
+    //   不碰任何忙态、失败静默（见 refreshSuggest）。
+    await this.refreshSuggest()
   },
 
   /**
@@ -794,6 +843,48 @@ Page({
       return
     }
     await this.runGenerate(d.editPrompt, replyText, snap, aiId)
+  },
+
+  /**
+   * ★ Task 19：每轮对话收场后拉一次「下一步可以试什么」，填进输入条提示语
+   * （spec §4.2 的「提示语（2026-10-13 修订）」；接口 = 电脑版「帮我想想」那条）。
+   *
+   * 品性 = **锦上添花**：不拦人、**失败静默**（拿不到就保持当前提示）、
+   * **不碰任何忙态**（sayBusy / generating 一个字不动）、不弹任何 UI。
+   *
+   * 两道闸：
+   *   ① 出去前：stage==='edit' && photo 在（不在编辑态就没有"现行画面"可看）；
+   *   ② 回来时：`suggestSeq` 和 `genPhotoSeq` 都还得和出发时对上 —— 换照片 /
+   *      回空态 / 撤销 / 又收场了一轮，哪一样都让这一趟丢掉（旧的迟到不许写上去）。
+   * 图像走**和路由同一条**的 640 小图（`prepareForRouting`；这条故意不做
+   * align32 —— 照抄 prepare.ts 给路由那条的理由）。
+   */
+  async refreshSuggest() {
+    // 每次想拉先把上一趟作废（不管这一趟走不走得下去）—— 令牌单调递增
+    const seq = ++this.suggestSeq
+    const photo = this.data.photo
+    if (this.data.stage !== 'edit' || !photo) return
+    const seqAtPhoto = this.genPhotoSeq
+    try {
+      const small = await prepareForRouting(photo, this.data.photoW, this.data.photoH)
+      const res = await apiPost<SuggestResponse>(
+        '/api/suggest', { imageDataUrl: small }, { timeoutMs: SUGGEST_TIMEOUT_MS })
+      if (seq !== this.suggestSeq || this.genPhotoSeq !== seqAtPhoto) {
+        console.error('[index] suggest 回来时画面已经变了，这一趟丢掉')
+        return
+      }
+      const first = Array.isArray(res.cards) ? res.cards[0] : undefined
+      const label = first && typeof first.label === 'string' ? first.label.trim() : ''
+      if (!label || res.degraded) {
+        // cards 空 / label 空 / degraded（卡片不是照这张照片给的）：宁可不说
+        console.info('[index] suggest 这趟没有可用的建议（保持当前提示）')
+        return
+      }
+      this.setData({ sayPh: sayPhOf(label) })
+    } catch (e) {
+      // 30 秒超时 / 断网 / 服务端 5xx……全是"没这趟"：一行控制台，提示语保持原样
+      console.info('[index] suggest 没拉回来（保持当前提示，别的照旧）：', e)
+    }
   },
 
   /**
