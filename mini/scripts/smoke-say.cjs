@@ -20,7 +20,8 @@
  *                                **A8b：一轮收场后提示语换成 mock 卡片 label**（Task 19）
  *   B generate 「把路人去掉」   —— 气泡里转圈（秒数前 5 秒不带数字）→ 新图（尺寸换成
  *                                mock 那张）→ reply 落进气泡 + 撤销 → 点撤销 → 画面和
- *                                参数都回到发前 + **那次生成的两条对话一起收走**；
+ *                                参数都回到发前 + **那次生成的两条对话一起收走** +
+ *                                **B13：提示语也归位默认**（T19 复审 M2）；
  *                                **气泡「停止」/ 输入条「撤销」量盒子 ≥39px**（F2）
  *   C both     「亮一点再去掉路人」—— 转圈**期间**就能读到参数已生效（contrast +20），
  *                                生成完 → 撤销把"参数+底图+对话"一起还原（一层）
@@ -33,7 +34,8 @@
  *                                editAborted 计数为证）、画面/参数/撤销原样、气泡「停了。」
  *   G 补充（Task 14 新增的两条）点一格风格 → 留一条系统小字（**连点同档 0 条**，F7）；
  *                                换一张 → 对话流清空、重载一张仍空（**G3b/G4b：提示语
- *                                也回默认**，Task 19）。
+ *                                也回默认**，Task 19；**复审 M1 加牙**：两条线换图前
+ *                                先把 sayPh 弄脏再断言 —— 不弄脏删了实现也照样绿）。
  *   H 提示语失败路径（Task 19）mock 的 /api/suggest 故意 500（suggestFail=1）——
  *                                这轮对话照常收场；sayPh **静默保持**默认句（不换没报错）。
  *
@@ -377,6 +379,11 @@ async function mockUp() {
       JSON.stringify(dUndo.msgs.map(m => m.text)) === JSON.stringify(bMsgsBefore.map(m => m.text)),
       '撤销后 ' + msgCount(dUndo) + ' 条：' + JSON.stringify(dUndo.msgs.map(m => m.kind + ':' + m.text)))
     check('B12 撤销完按钮收掉（一层）', dUndo.canUndo === false, 'canUndo=' + dUndo.canUndo)
+    // ★ T19 复审 M2：撤销会让画面翻篇 —— 已上屏的 sayPh（上一轮按生成后画面给的）也要
+    //   归回默认，别挂在被撤掉的画面上（spec §4.2「提示随照片走」）。有牙齿：前置b/A8b
+    //   钉过这趟一路是"默认 → mock 那句"、中途没有别的归位点 —— 删了 onUndo 那行必红。
+    check('B13 撤销后提示语归位默认（Task 19 复审 M2：提示随照片走）',
+      dUndo.sayPh === DEFAULT_SAY_PH, 'sayPh=' + JSON.stringify(dUndo.sayPh))
     await shot(mp, 'say-B-undone')
 
     // ── [C] both：「亮一点再去掉路人」→ 参数先落地（转圈期间就能读到）→ 一起撤销 ──
@@ -564,13 +571,16 @@ async function mockUp() {
       msgCount(dG2b) === msgCount(dG1) && lastMsg(dG2b).text === lastMsg(dG1).text,
       '条数 ' + msgCount(dG1) + ' → ' + msgCount(dG2b) + '，末条仍是 ' + JSON.stringify(lastMsg(dG2b).text))
     // 换一张 → 回空态：对话流应当清空
+    // ★ T19 复审 M1：先把提示语**弄脏** —— 不弄脏 G3b 钉不住（前一刻它本来就已经是默认句、
+    //   且删了实现那行也照样绿）。弄脏后 G3b/G4b 两条"回默认"断言就各有了无条件牙齿。
+    await rpc(page.setData({ sayPh: '脏值（冒烟 M1：换一张前故意写的，不该留）' }), 'setData sayPh 弄脏（G3b）')
     const backBtn = await rpc(page.$('.tb-left'), '$ .tb-left')
     await rpc(backBtn.tap(), 'tap 换一张')
     const dG3 = await waitData(page, x => x.stage === 'empty', 8000)
     check('G3 换一张 → 回空态、对话流清空', dG3.stage === 'empty' && dG3.msgs.length === 0,
       'stage=' + dG3.stage + ' msgs=' + dG3.msgs.length)
-    // ★ Task 19：换照片 → 提示语回默认（此刻它本来是 mock 卡片那句 —— F 那轮停止也是
-    //   一轮收场、也换过 —— 所以这条有真牙齿，不是"本来就是默认"混过去的）。
+    // ★ Task 19：换照片 → 提示语回默认（复审 M1 起：上面先把 sayPh 弄脏，这条是
+    //   "从脏值归回默认"的无条件牙齿 —— 删了 onPickAgain 那行这里必红）。
     check('G3b 提示语（Task 19）：换一张之后 sayPh 回默认句（不带上一张的建议）',
       dG3.sayPh === DEFAULT_SAY_PH, 'sayPh=' + JSON.stringify(dG3.sayPh))
     // 再载入一张（applyPickedPhoto 那条清空线）：也不许把上一张的话带回来。
@@ -578,6 +588,8 @@ async function mockUp() {
     //   对话流清过一道，这条量的是"重新载入也不会把上一张的对话带回来"；
     //   applyPickedPhoto 里那行 clearMsgs 是**防御**（保留不动），不是这条的机制。
     const devBtn2 = await rpc(page.$('.dev-btn'), '$ .dev-btn')
+    // ★ T19 复审 M1：再弄脏一次 —— G4b 断的是 applyPickedPhoto 那条线的归位（空态重载）。
+    await rpc(page.setData({ sayPh: '脏值（冒烟 M1：重载前故意写的，不该留）' }), 'setData sayPh 弄脏（G4b）')
     await rpc(devBtn2.tap(), 'tap dev（再次载入）')
     const dG4 = await waitData(page, x => x.stage === 'edit' && x.styles.length === 13, 60000)
     check('G4 重新载入不会把上一张的对话带回来（清空发生在进空态那一步；这条兜的是重载后仍空）',

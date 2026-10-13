@@ -1074,6 +1074,7 @@ Page({
       // ↓ 同步上屏（同 runGenerate 那条纪律）
       this.params = { ...snap.params }
       this.genPhotoSeq++
+      this.suggestSeq++ // ★ Task 19 复审 M2：画面翻篇了，在飞的 suggest 作废（提示语回默认，见 setData）
       pipe.setImage(img)
       pipe.resizeToImage()
       const k = fitK(box.w, box.h, img.width, img.height)
@@ -1081,6 +1082,9 @@ Page({
         photo: snap.photo, photoW: img.width, photoH: img.height,
         stageW: Math.round(img.width * k), stageH: Math.round(img.height * k),
         activeStyle: activePresetId(this.params, false),
+        // ★ Task 19 复审 M2：已上屏的 sayPh 是上一轮按生成后画面给的 —— 画面被撤销翻篇，
+        //   提示语也要跟着回默认（spec §4.2「提示随照片走」原则）。
+        sayPh: DEFAULT_SAY_PH,
       })
       pipe.render(this.params)
       // ★ Task 14：那次生成在对话区的**问答一起收走**（只留 id 比锚更早的）——
