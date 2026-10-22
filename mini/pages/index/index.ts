@@ -50,6 +50,8 @@ import {
 } from '../../lib/editor'
 import { draft } from '../../lib/draft'
 import { cropToFile, type CropRatio } from '../../lib/image/crop'
+import { consumePendingEdit } from '../../lib/editBridge'
+import { getDefaultStyle } from '../../lib/prefs'
 
 /** AI 气泡的四个阶段（SayMsg / setAi 共用；四段见 SayMsg 的注释）。 */
 type AiState = 'thinking' | 'done' | 'stopped' | 'failed'
@@ -512,6 +514,12 @@ Page({
     )
   },
 
+  onShow() {
+    const work = consumePendingEdit()
+    if (!work) return
+    void this.applyPickedPhoto(work.file).catch(e => this.reportPhotoFailure(e))
+  },
+
   async onCamera() { await this.loadFrom('camera') },
   async onAlbum() { await this.loadFrom('album') },
 
@@ -572,6 +580,25 @@ Page({
       }, ok))
     void this.prepareDraft(path)
     await this.startRender(path)
+    this.applyDefaultStyle()
+  },
+
+  /** 默认风格只影响新选照片；手动调整和生成不动用户已经选过的起点。 */
+  applyDefaultStyle() {
+    const id = getDefaultStyle([ORIGINAL_ID, ...PRESETS.map(item => item.id)])
+    if (!id || id === ORIGINAL_ID || !this.pipe) return
+    const preset = PRESETS.find(item => item.id === id)
+    if (!preset) return
+    this.params = { ...preset.adjustments }
+    this.stylePresetId = id
+    this.pipe.render(this.params)
+    this.setData({
+      activeStyle: id,
+      stylePresetId: id,
+      styleAmount: 100,
+      sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
+    })
+    this.saveDraft()
   },
 
   /** 照片没走通的统一出口：用户取消（errMsg 含 cancel）不是错，别的才提示一句人话。

@@ -93,11 +93,17 @@ export function isAbortError(e: unknown): boolean {
  *
  * @param token 非空就带 `Authorization: Bearer <token>`；登录那一次传 null。
  */
-function post<T>(path: string, body: unknown, token: string | null, opts?: PostOptions): Promise<T> {
+function request<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  body: unknown,
+  token: string | null,
+  opts?: PostOptions,
+): Promise<T> {
   return new Promise<T>((ok, no) => {
     const task = wx.request({
       url: baseUrl() + path,
-      method: 'POST',
+      method,
       // 不传就是平台默认（60 秒）——只在调用方显式要的时候才写进去
       ...(opts && opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
       header: {
@@ -105,7 +111,7 @@ function post<T>(path: string, body: unknown, token: string | null, opts?: PostO
         ...(token ? { Authorization: 'Bearer ' + token } : {}),
       },
       // 自己 stringify：发出去的正文长什么样只由这一行决定，不赌平台的默认序列化
-      data: JSON.stringify(body),
+      ...(method === 'GET' ? {} : { data: JSON.stringify(body) }),
       success: res => {
         const status = res.statusCode
         const data: unknown = res.data
@@ -140,6 +146,10 @@ function post<T>(path: string, body: unknown, token: string | null, opts?: PostO
   })
 }
 
+function post<T>(path: string, body: unknown, token: string | null, opts?: PostOptions): Promise<T> {
+  return request('POST', path, body, token, opts)
+}
+
 /**
  * **不带票**的那一次 POST —— 只给 auth.ts 的登录调用用（名字把这件事写在脸上）。
  * 别的任何地方都不该调它：绕开票就等于绕开身份。
@@ -164,5 +174,16 @@ export async function apiPost<T>(path: string, body: unknown, opts?: PostOptions
     clearToken()
     // opts 两次都传：重试那一次也要有超时和 onTask（abort 要能掐到**正在飞的那一个**）
     return await post<T>(path, body, await getToken(), opts)
+  }
+}
+
+/** 带票 GET；401 清票重登并重试一次，和 apiPost 同一条会话纪律。 */
+export async function apiGet<T>(path: string, opts?: PostOptions): Promise<T> {
+  try {
+    return await request<T>('GET', path, null, await getToken(), opts)
+  } catch (e) {
+    if (!(e instanceof ApiError) || e.status !== 401) throw e
+    clearToken()
+    return await request<T>('GET', path, null, await getToken(), opts)
   }
 }

@@ -2,6 +2,7 @@
 // 数据与删除全走 lib/works（USER_DATA_PATH 里 works 目录 + storage 清单），改名、
 // 自动布局一律不碰。
 import { works, type WorkEntry } from '../../lib/works'
+import { requestEdit } from '../../lib/editBridge'
 
 interface WorksData {
   /** 状态栏高度（navigationStyle custom，顶栏自己让位；同修图页 onLoad 那行） */
@@ -57,6 +58,18 @@ Page({
         works.remove([id])
         this.refresh()
       },
+    })
+  },
+
+  /** 用已经烘焙的成片作为新底图继续精修，参数归零。 */
+  onEditAgain(e: WechatMiniprogram.TouchEvent) {
+    const id = String(e.currentTarget.dataset.id || '')
+    const work = this.data.items.find(item => item.id === id)
+    if (!work) return
+    requestEdit(work)
+    wx.switchTab({
+      url: '/pages/index/index',
+      fail: () => wx.showToast({ title: '没能打开修图页，再试一次', icon: 'none' }),
     })
   },
 

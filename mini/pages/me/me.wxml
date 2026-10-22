@@ -15,6 +15,40 @@
     </view>
   </view>
 
+  <view class="card">
+    <picker mode="selector" range="{{styleOptions}}" range-key="label"
+            value="{{styleIndex}}" bindchange="onDefaultStyleChange">
+      <view class="card-row">
+        <view class="row-label">默认风格</view>
+        <view class="row-value">{{defaultStyleLabel}}  ›</view>
+      </view>
+    </picker>
+  </view>
+
+  <view class="card status-card">
+    <view class="card-row">
+      <view class="row-label">服务状态</view>
+      <view class="row-value status-{{serviceState}}">{{serviceText}}</view>
+    </view>
+    <view class="card-row sub-row">
+      <view class="row-label">账号</view>
+      <view class="row-value">{{accountText}}</view>
+    </view>
+    <view class="card-row sub-row">
+      <view class="row-label">图片模型</view>
+      <view class="row-value">{{modelText}}</view>
+    </view>
+    <view class="check-service {{serviceState === 'checking' ? 'off' : ''}}"
+          aria-role="button" bindtap="onCheckServices">
+      {{serviceState === 'checking' ? '正在检查…' : '重新检查'}}
+    </view>
+  </view>
+
+  <view class="privacy-note">
+    相机和相册权限只用于拍摄、选图和保存。使用一句话 AI 时，当前预览会发送到服务端；
+    本地作品不会自动云同步。
+  </view>
+
   <!-- 清空：0 张时 .off 置灰（灰描边 + 灰字，**不用 opacity** 把整颗糊掉）；
        canClear 同时是冒烟要读的数据标记（比对颜色稳）。 -->
   <view class="clear-btn {{canClear ? '' : 'off'}}" aria-role="button" bindtap="onClear">清空本地作品</view>

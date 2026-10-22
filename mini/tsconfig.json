@@ -8,5 +8,6 @@
     "lib": ["ES2017"],
     "typeRoots": ["./types"]
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  "exclude": ["tests", "vitest.config.ts"]
 }

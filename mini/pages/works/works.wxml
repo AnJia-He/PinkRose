@@ -23,6 +23,7 @@
     <view class="cell" wx:for="{{items}}" wx:key="id" data-id="{{item.id}}"
           bindtap="onTapItem" bindlongpress="onLongPressItem">
       <image class="shot" src="{{item.thumb}}" mode="aspectFill" lazy-load="{{true}}" />
+      <view class="edit-again" data-id="{{item.id}}" catchtap="onEditAgain">再次精修</view>
     </view>
   </view>
 </view>

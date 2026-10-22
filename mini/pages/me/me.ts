@@ -1,6 +1,11 @@
 // me.ts —— 「我的」页（Task 18 起是真页面，spec §13.3）：品牌区 + 本地作品统计 /
 // 清空 + 版本页脚。数据只**消费** lib/works 的 usage() / clear() —— 那一半不动。
 import { works } from '../../lib/works'
+import { ORIGINAL_ID, PRESETS } from '../../lib/shared/presets'
+import { getDefaultStyle, setDefaultStyle } from '../../lib/prefs'
+import { apiGet } from '../../lib/api'
+import { clearToken, getToken } from '../../lib/auth'
+import { modelLabelOf, type ModelStatus } from '../../lib/status'
 
 /** 结构版本（spec §13.3 页脚那行）—— 发布后再接平台版本号（从平台/发布配置读）。 */
 const VERSION = '1.1'
@@ -16,6 +21,13 @@ interface MeData {
   /** 0 张 = 清空按钮置灰（wxml 挂 class、冒烟读它 —— 别去比颜色） */
   canClear: boolean
   version: string
+  styleOptions: { id: string; label: string }[]
+  styleIndex: number
+  defaultStyleLabel: string
+  serviceState: 'idle' | 'checking' | 'ok' | 'fail'
+  serviceText: string
+  accountText: string
+  modelText: string
 }
 
 /** 数值行显示：「N 张 · X.X MB」；0 张只留「0 张」（spec §13.3 的原话）。 */
@@ -32,6 +44,16 @@ Page({
     usageText: '0 张',
     canClear: false,
     version: VERSION,
+    styleOptions: [
+      { id: ORIGINAL_ID, label: '原图起手' },
+      ...PRESETS.map(item => ({ id: item.id, label: item.label })),
+    ],
+    styleIndex: 0,
+    defaultStyleLabel: '原图起手',
+    serviceState: 'idle',
+    serviceText: '尚未检查',
+    accountText: '未登录',
+    modelText: '尚未检查',
   } as MeData,
 
   onLoad() {
@@ -43,6 +65,68 @@ Page({
   onShow() {
     // tab 页不销毁 —— 每次露脸都重拉一遍（从修图/作品页切回来数字要对）
     this.refresh()
+    this.refreshPrefs()
+    void this.checkServices(false)
+  },
+
+  refreshPrefs() {
+    const id = getDefaultStyle(this.data.styleOptions.map(item => item.id))
+    const index = id ? this.data.styleOptions.findIndex(item => item.id === id) : 0
+    const safeIndex = index >= 0 ? index : 0
+    this.setData({
+      styleIndex: safeIndex,
+      defaultStyleLabel: this.data.styleOptions[safeIndex].label,
+    })
+  },
+
+  onDefaultStyleChange(e: WechatMiniprogram.PickerChange) {
+    const index = Number(e.detail.value)
+    const option = this.data.styleOptions[index]
+    if (!option) return
+    try {
+      setDefaultStyle(option.id === ORIGINAL_ID ? null : option.id)
+      this.setData({ styleIndex: index, defaultStyleLabel: option.label })
+      wx.showToast({ title: '下一张照片会按这个风格起手', icon: 'none' })
+    } catch (err) {
+      console.error('[me] 默认风格没保存下来：', err)
+      wx.showToast({ title: '没保存下来，再试一次', icon: 'none' })
+    }
+  },
+
+  onCheckServices() {
+    void this.checkServices(true)
+  },
+
+  /** 检查登录、接口和图片模型状态；force 会清掉旧票，真正重走微信登录。 */
+  async checkServices(force: boolean) {
+    if (this.data.serviceState === 'checking') return
+    if (force) clearToken()
+    this.setData({
+      serviceState: 'checking',
+      serviceText: '正在检查…',
+      accountText: force ? '正在重新登录…' : '正在确认微信登录…',
+    })
+    try {
+      await getToken()
+      const [me, models] = await Promise.all([
+        apiGet<{ user: { username: string } }>('/api/me'),
+        apiGet<{ configs: ModelStatus[] }>('/api/models'),
+      ])
+      this.setData({
+        serviceState: 'ok',
+        serviceText: '服务连接正常',
+        accountText: me.user.username ? '微信登录正常：' + me.user.username : '微信登录正常',
+        modelText: modelLabelOf(models.configs),
+      })
+    } catch (e) {
+      console.error('[me] 服务检查没通过：', e)
+      this.setData({
+        serviceState: 'fail',
+        serviceText: e && (e as Error).message ? (e as Error).message : '连不上服务器，检查网络',
+        accountText: '登录状态不可用',
+        modelText: '暂时无法确认',
+      })
+    }
   },
 
   /** 重拉统计（onShow / 清空后各来一发）。 */

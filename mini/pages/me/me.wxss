@@ -40,9 +40,13 @@
 
 /* ── 数据卡：一张分组卡（--panel 底 + --r-md 圆角；行高 88rpx、左右内距 28rpx）── */
 .card {
-  margin: 96rpx 32rpx 0;
+  margin: 20rpx 32rpx 0;
   background: var(--panel);
   border-radius: var(--r-md);
+}
+
+.brand + .card {
+  margin-top: 72rpx;
 }
 
 .card-row {
@@ -60,6 +64,51 @@
 .row-value {
   color: var(--muted);
   font-size: 28rpx;
+}
+
+.privacy-note {
+  margin: 24rpx 40rpx 0;
+  color: var(--muted);
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+.status-card {
+  overflow: hidden;
+}
+
+.status-card .card-row {
+  border-bottom: 2rpx solid var(--line);
+}
+
+.status-card .sub-row .row-label,
+.status-card .sub-row .row-value {
+  font-size: 24rpx;
+}
+
+.status-ok {
+  color: var(--accent);
+}
+
+.status-fail {
+  color: var(--danger);
+}
+
+.status-checking {
+  color: var(--muted);
+}
+
+.check-service {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 76rpx;
+  color: var(--accent);
+  font-size: 26rpx;
+}
+
+.check-service.off {
+  color: var(--muted-2);
 }
 
 /* ── 清空：幽灵胶囊（和空态「从相册选」同族 —— 透明底 + 线描边 + 常规字重）── */

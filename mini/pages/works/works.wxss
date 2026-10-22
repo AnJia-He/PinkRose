@@ -87,6 +87,7 @@
 }
 
 .cell {
+  position: relative;
   width: 333rpx;
   height: 333rpx;
   box-sizing: border-box;
@@ -106,4 +107,20 @@
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.edit-again {
+  position: absolute;
+  right: 12rpx;
+  bottom: 12rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 64rpx;
+  padding: 0 20rpx;
+  background: rgba(17, 17, 20, .86);
+  border: 2rpx solid rgba(255, 255, 255, .18);
+  border-radius: var(--r-pill);
+  color: var(--text);
+  font-size: 24rpx;
 }
