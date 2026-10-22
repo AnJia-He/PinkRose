@@ -61,6 +61,57 @@
       </view>
     </scroll-view>
 
+    <!-- 工具行永远在画布外。工具面板走正常排版流，不覆盖照片，避免真机上
+         WebGL 画布吞掉覆盖层里的点击。 -->
+    <view class="tool-row" role="group" aria-label="修图工具">
+      <view class="tool-cell {{tool === 'ai' ? 'on' : ''}}" data-tool="ai"
+            aria-role="button" bindtap="onToolTap">AI</view>
+      <view class="tool-cell {{tool === 'tone' ? 'on' : ''}}" data-tool="tone"
+            aria-role="button" bindtap="onToolTap">调色</view>
+      <view class="tool-cell {{tool === 'portrait' ? 'on' : ''}}" data-tool="portrait"
+            aria-role="button" bindtap="onToolTap">人像</view>
+      <view class="tool-cell compare" aria-role="button"
+            bindtouchstart="onCompareStart" bindtouchend="onCompareEnd"
+            bindtouchcancel="onCompareEnd">对比</view>
+    </view>
+
+    <view wx:if="{{tool === 'tone'}}" class="edit-panel" aria-label="手动调色">
+      <view class="panel-tabs">
+        <view class="panel-tab {{toneGroup === 'basic' ? 'on' : ''}}"
+              data-group="basic" bindtap="onToneGroup">基础</view>
+        <view class="panel-tab {{toneGroup === 'light' ? 'on' : ''}}"
+              data-group="light" bindtap="onToneGroup">光线</view>
+        <view class="panel-tab {{toneGroup === 'color' ? 'on' : ''}}"
+              data-group="color" bindtap="onToneGroup">色彩</view>
+      </view>
+      <view class="adjust-row" wx:for="{{sliders}}" wx:key="key">
+        <view class="adjust-head">
+          <text>{{item.label}}</text>
+          <text class="adjust-value">{{item.value}}</text>
+        </view>
+        <slider class="adjust-slider" min="{{item.min}}" max="{{item.max}}" step="1"
+                value="{{item.value}}" data-key="{{item.key}}"
+                activeColor="#2dd4bf" backgroundColor="#303037" block-size="20"
+                bindchanging="onSliderChanging" bindchange="onSliderChange" />
+      </view>
+      <view class="panel-reset" aria-role="button" bindtap="onResetTool">重置本组</view>
+    </view>
+
+    <view wx:if="{{tool === 'portrait'}}" class="edit-panel" aria-label="人像微调">
+      <view class="panel-title">肤色与质感</view>
+      <view class="adjust-row" wx:for="{{sliders}}" wx:key="key">
+        <view class="adjust-head">
+          <text>{{item.label}}</text>
+          <text class="adjust-value">{{item.value}}</text>
+        </view>
+        <slider class="adjust-slider" min="{{item.min}}" max="{{item.max}}" step="1"
+                value="{{item.value}}" data-key="{{item.key}}"
+                activeColor="#2dd4bf" backgroundColor="#303037" block-size="20"
+                bindchanging="onSliderChanging" bindchange="onSliderChange" />
+      </view>
+      <view class="panel-reset" aria-role="button" bindtap="onResetTool">重置人像</view>
+    </view>
+
     <!-- 对话区（★ Task 14 / spec §4.2 修订块）：说过的话（me）/ 小皇帝回的（ai）/
          系统小字（note）都留在这，**一律不自动消失**。
          位置：风格栏和输入条**之间**、正常排版流里的一条 scroll-view —— **绝不绝对
@@ -80,7 +131,7 @@
          2026-10-13 只看 show-scrollbar 时像素扫描前后完全一致，证实如此）——
          所以这里一并开 enhanced="{{true}}"（scroll-view 增强特性；scroll-into-view
          照常支持，冒烟 E4「尾巴在折叠线之上」盯着滚动行为）。 -->
-    <scroll-view class="msgs" wx:if="{{msgs.length}}" scroll-y scroll-into-view="{{scrollTo}}"
+    <scroll-view class="msgs" wx:if="{{tool === 'ai' && msgs.length}}" scroll-y scroll-into-view="{{scrollTo}}"
                  enhanced="{{true}}" show-scrollbar="{{false}}">
       <view wx:for="{{msgs}}" wx:key="id" id="m{{item.id}}" class="msg {{item.kind}}">
         <image wx:if="{{item.kind === 'ai'}}" class="msg-badge" src="/assets/emperor-badge.png"
@@ -105,7 +156,7 @@
          ★ Task 19：placeholder 走 data 的 sayPh（默认「说一句，比如「天空再蓝一点」」；
          每轮收场后按现行画面拉 /api/suggest 换新）—— **wxml 里就这一个口径**，
          别在模板/别处再拼一套句子（句式框架只有 ts 的 sayPhOf 一份）。 -->
-    <view class="say-bar">
+    <view class="say-bar" wx:if="{{tool === 'ai'}}">
       <view class="say-row">
         <!-- ★ 2026-10-13 真机修复 + Task 14 + 修复轮 F3：破坏性动作放左侧 ——
              「撤销」留在这一行、但挪到最左（离右手拇指的主路径/右端发送键最远，防误触）。

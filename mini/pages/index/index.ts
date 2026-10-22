@@ -44,6 +44,10 @@ import { works, WorksFullError } from '../../lib/works'
 import { ApiError, apiPost, isAbortError, setApiBaseOverride } from '../../lib/api'
 import { getToken } from '../../lib/auth'
 import { prepareForModel, prepareForRouting } from '../../lib/image/prepare'
+import {
+  PORTRAIT_KEYS, TONE_GROUPS, resetKeys, rowsForTool, setAdjustment,
+  type AdjustmentRow, type EditorTool, type ToneGroup,
+} from '../../lib/editor'
 
 /** AI 气泡的四个阶段（SayMsg / setAi 共用；四段见 SayMsg 的注释）。 */
 type AiState = 'thinking' | 'done' | 'stopped' | 'failed'
@@ -93,6 +97,12 @@ interface IndexData {
   genText: string
   genSeconds: number
   canUndo: boolean
+  /** 当前展开的编辑工具；null = 所有工具面板收起。 */
+  tool: EditorTool
+  /** 手动调色当前参数组。 */
+  toneGroup: ToneGroup
+  /** 当前面板显示的滑杆行。 */
+  sliders: AdjustmentRow[]
   // ── ★ Task 14（对话留痕）────────────────────────────────────────────
   msgs: SayMsg[]
   scrollTo: string
@@ -377,6 +387,9 @@ Page({
     genText: '',
     genSeconds: 0,
     canUndo: false,
+    tool: 'ai',
+    toneGroup: 'basic',
+    sliders: [],
     msgs: [] as SayMsg[],
     scrollTo: '',
   } as IndexData,
@@ -447,6 +460,8 @@ Page({
   suggestSeq: 0,
   /** ★ Task 12：「撤销」还原的现场（见 UndoSnap）。生成**成功**那刻才写；撤销消费掉。 */
   undoSnap: null as UndoSnap | null,
+  /** 对比按钮按住期间为 true；只改屏幕渲染，不动参数。 */
+  comparing: false,
 
   onLoad() {
     // 状态栏高度给顶栏让位（navigationStyle 是 custom，页面自己画顶栏）
@@ -514,7 +529,7 @@ Page({
       {
         stage: 'edit', photo: path, photoW: info.width, photoH: info.height,
         styles: [], spritePath: '', spriteW: 0, activeStyle: null, canUndo: false,
-        sayPh: DEFAULT_SAY_PH,
+        sayPh: DEFAULT_SAY_PH, tool: 'ai', toneGroup: 'basic', sliders: [],
       }, ok))
     await this.startRender(path)
   },
@@ -617,6 +632,7 @@ Page({
     this.setData({
       stage: 'empty', photo: null, photoW: 0, photoH: 0, stageW: 0, stageH: 0,
       canUndo: false, sayBusy: false, generating: false, sayPh: DEFAULT_SAY_PH,
+      tool: 'ai', toneGroup: 'basic', sliders: [],
     })
   },
 
@@ -701,12 +717,92 @@ Page({
     if (activePresetId(this.params, false) === id) return
     this.params = { ...next } // 存副本：预设那份是模块级常量，谁都不许原地改
     pipe.render(this.params)
-    this.setData({ activeStyle: activePresetId(this.params, false) })
+    this.setData({
+      activeStyle: activePresetId(this.params, false),
+      sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
+    })
     // ★ Task 14：点风格在对话区留一行**系统小字**（spec §4.2 修订块：「点风格留一行
     //   『套用了「日系」』」）。名字取那格自己的 label；「原图」那格是另一句话。
     //   ⚠️ 点风格**不进撤销**（canUndo 一个字不动）—— 撤销只有一层、只对生成有意义
     //   （点错风格点「原图」就回去了）。
     this.pushMsg({ kind: 'note', text: preset ? '套用了「' + preset.label + '」' : '回到原图' })
+  },
+
+  /** 展开 / 收起工具面板。生成中不切工具，避免换底图与参数面板抢状态。 */
+  onToolTap(e: WechatMiniprogram.TouchEvent) {
+    const raw = String(e.currentTarget.dataset.tool || '')
+    if (!raw) return
+    if (this.data.generating) {
+      wx.showToast({ title: '照片正在修，等这一张完成再换工具', icon: 'none' })
+      return
+    }
+    const tool = raw as Exclude<EditorTool, null>
+    const next = this.data.tool === tool ? null : tool
+    const sliders = rowsForTool(next, this.data.toneGroup, this.params)
+    this.setData({ tool: next, sliders }, () => this.fitStage())
+  },
+
+  onToneGroup(e: WechatMiniprogram.TouchEvent) {
+    const group = String(e.currentTarget.dataset.group || 'basic') as ToneGroup
+    if (!(group in TONE_GROUPS)) return
+    this.setData({
+      toneGroup: group,
+      sliders: rowsForTool('tone', group, this.params),
+    }, () => this.fitStage())
+  },
+
+  /** 拖滑杆时实时预览；值变化只写当前参数，不重建管线。 */
+  onSliderChanging(e: WechatMiniprogram.SliderChanging) {
+    this.applySliderValue(e)
+  },
+
+  /** 松手后完成一次值落定；与拖动共用同一条写参数路径。 */
+  onSliderChange(e: WechatMiniprogram.SliderChange) {
+    this.applySliderValue(e)
+  },
+
+  applySliderValue(e: WechatMiniprogram.SliderChange) {
+    if (this.data.generating) return
+    const key = e.currentTarget.dataset.key as keyof Adjustments | undefined
+    if (!key) return
+    this.endPeek()
+    this.params = setAdjustment(this.params, key, Number(e.detail.value))
+    const pipe = this.pipe
+    if (pipe) pipe.render(this.params)
+    this.setData({
+      activeStyle: activePresetId(this.params, false),
+      sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
+    })
+  },
+
+  /** 重置当前工具：调色只清当前组，人像清三项；别的参数不动。 */
+  onResetTool() {
+    const tool = this.data.tool
+    const keys = tool === 'tone'
+      ? TONE_GROUPS[this.data.toneGroup]
+      : tool === 'portrait' ? PORTRAIT_KEYS : []
+    if (!keys.length || this.data.generating) return
+    this.params = resetKeys(this.params, keys)
+    const pipe = this.pipe
+    if (pipe) pipe.render(this.params)
+    this.setData({
+      activeStyle: activePresetId(this.params, false),
+      sliders: rowsForTool(tool, this.data.toneGroup, this.params),
+    })
+  },
+
+  /** 对比：按住画原图，抬手恢复当前成片；参数一个字不动。 */
+  onCompareStart() {
+    if (!this.pipe || this.data.generating) return
+    this.endPeek()
+    this.comparing = true
+    this.pipe.render(ZERO)
+  },
+
+  onCompareEnd() {
+    if (!this.comparing) return
+    this.comparing = false
+    if (this.pipe) this.pipe.render(this.params)
   },
 
   // ── ★ Task 12 · 说一句（输入 → 路由 → 分流 → 过程/停止 → 换图/撤销）─────────
@@ -819,7 +915,10 @@ Page({
       const pipe = this.pipe
       if (pipe) pipe.render(this.params)
       // 点亮 = 共享判据算的（和点风格那条同一个函数、同一条规矩：全等才亮）
-      this.setData({ activeStyle: activePresetId(this.params, false) })
+      this.setData({
+        activeStyle: activePresetId(this.params, false),
+        sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
+      })
     }
     // lut / preset 在协议里必填，但小程序第一版还没有那两块（没有用户滤镜/预设）——
     // 收下即弃。真后端给了非 null 时留一行警告，别静默。
@@ -1311,6 +1410,24 @@ Page({
    * 「亮一点」= exposure 16、拿不准那条 = exposure +6），没有它就只剩"画面变了
    * 没有"这一条粗判据。
    */
+  __probeEditor(): { tool: EditorTool; toneGroup: ToneGroup; params: Adjustments } {
+    return {
+      tool: this.data.tool,
+      toneGroup: this.data.toneGroup,
+      params: { ...this.params },
+    }
+  },
+
+  __probeSetAdjustment(key: keyof Adjustments, value: number): Adjustments {
+    this.params = setAdjustment(this.params, key, value)
+    if (this.pipe) this.pipe.render(this.params)
+    this.setData({
+      activeStyle: activePresetId(this.params, false),
+      sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
+    })
+    return { ...this.params }
+  },
+
   __probeParams(): Adjustments {
     return { ...this.params }
   },

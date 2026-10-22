@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  PORTRAIT_KEYS, TONE_GROUPS, mixPreset, resetKeys,
+  PORTRAIT_KEYS, TONE_GROUPS, mixPreset, resetKeys, rowsForTool, setAdjustment,
 } from '../lib/editor.ts'
 
 const zero = {
@@ -40,4 +40,30 @@ test('mixPreset clamps amount and scales all preset fields', () => {
   assert.equal(mixPreset(50, preset).skinSmooth, 30)
   assert.equal(mixPreset(150, preset).exposure, 40)
   assert.equal(mixPreset(-20, preset).exposure, 0)
+})
+
+test('tone rows expose labels and current values', () => {
+  const rows = rowsForTool('tone', 'basic', { ...zero, exposure: 24 })
+  assert.deepEqual(rows.map(row => [row.key, row.label, row.value]), [
+    ['exposure', '亮度', 24],
+    ['contrast', '对比度', 0],
+    ['saturation', '饱和度', 0],
+  ])
+})
+
+test('portrait rows expose the three skin controls', () => {
+  const rows = rowsForTool('portrait', 'basic', {
+    ...zero, skinSmooth: 35, skinBrighten: 20, skinRosy: 12,
+  })
+  assert.deepEqual(rows.map(row => [row.key, row.label, row.value]), [
+    ['skinSmooth', '磨皮', 35],
+    ['skinBrighten', '美白', 20],
+    ['skinRosy', '红润', 12],
+  ])
+})
+
+test('setAdjustment clamps to the shared parameter range', () => {
+  assert.equal(setAdjustment(zero, 'exposure', 160).exposure, 100)
+  assert.equal(setAdjustment(zero, 'exposure', -160).exposure, -100)
+  assert.equal(setAdjustment(zero, 'skinSmooth', 160).skinSmooth, 100)
 })

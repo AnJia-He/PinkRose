@@ -210,6 +210,115 @@
   color: var(--accent);
 }
 
+/* ── 工具行：AI / 调色 / 人像 / 对比 ─────────────────────────────── */
+.tool-row {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 10rpx 20rpx 0;
+}
+
+.tool-cell {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 88rpx;
+  margin: 0 4rpx;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  font-size: 26rpx;
+}
+
+.tool-cell.on {
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.tool-cell.compare {
+  border: 2rpx solid var(--line-2);
+}
+
+/* ── 手动调色 / 人像面板 ─────────────────────────────────────────── */
+.edit-panel {
+  flex: none;
+  box-sizing: border-box;
+  max-height: 500rpx;
+  overflow-y: auto;
+  margin: 8rpx 24rpx 0;
+  padding: 18rpx 24rpx 20rpx;
+  background: var(--panel);
+  border: 2rpx solid var(--line);
+  border-radius: 20rpx;
+}
+
+.panel-tabs {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8rpx;
+}
+
+.panel-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 112rpx;
+  min-height: 64rpx;
+  margin-right: 8rpx;
+  padding: 0 16rpx;
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font-size: 24rpx;
+}
+
+.panel-tab.on {
+  color: var(--accent-ink);
+  background: var(--accent-400);
+}
+
+.panel-title {
+  min-height: 64rpx;
+  color: var(--text);
+  font-size: 26rpx;
+  line-height: 64rpx;
+}
+
+.adjust-row {
+  padding: 6rpx 0 10rpx;
+}
+
+.adjust-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 24rpx;
+}
+
+.adjust-value {
+  min-width: 72rpx;
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.adjust-slider {
+  margin: 0 0 -4rpx;
+}
+
+.panel-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 72rpx;
+  margin-top: 4rpx;
+  padding: 0 24rpx;
+  border: 2rpx solid var(--line-2);
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font-size: 24rpx;
+}
+
 /* ── ★ Task 14 · 对话区（spec §4.2 的 2026-10-13 修订块）───────────────
    说过的话（me）/ 小皇帝回的（ai）/ 系统小字（note）都留在这条消息流里 ——
    wxml 里排在风格栏和输入条**之间**，**正常排版流**的一条 scroll-view。
