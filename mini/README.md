@@ -1,7 +1,32 @@
 # PinkRose 小程序（mini/）
 
-「户外快速修图」微信原生小程序。**选照片 → 挑风格 / 说一句 → 按住对比 → 存相册。**
+微信原生修图小程序。**选照片 → 挑风格 / 说一句 / 手动微调 → 裁剪 → 对比 → 存相册。**
 设计文档：`docs/superpowers/specs/2026-10-12-miniprogram-outdoor-quick-edit-design.md`。
+
+2026-10-22 起新增常用修图版：
+
+- 工具行：AI / 调色 / 人像 / 裁剪 / 对比。
+- 调色：亮度、对比度、饱和度、高光、阴影、色温。
+- 人像：磨皮、美白、红润。
+- 裁剪：左右旋转、水平翻转、1:1 / 4:5 / 3:4 / 16:9。
+- 风格强度 0–100；手动调整后退出预设点亮。
+- 最近草稿恢复；作品页可直接再次精修。
+- “我的”页可设默认风格，并检查登录、服务和图片模型状态。
+
+设计与实施计划：
+`docs/superpowers/specs/2026-10-22-mini-common-editor-design.md`、
+`docs/superpowers/plans/2026-10-22-mini-common-editor.md`。
+
+本地静态测试不依赖微信工具：
+
+```powershell
+npx tsc -p mini --noEmit
+node --test mini/tests/*.test.mjs
+npx vitest run --config mini/vitest.config.ts
+node scripts/sync-mini-shared.mjs --check
+```
+
+交互冒烟仍使用下方微信开发者工具 CLI；模拟器通过不代表真机 GPU 和手势已通过。
 
 ## 怎么跑
 

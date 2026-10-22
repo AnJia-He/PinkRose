@@ -181,6 +181,43 @@ async function shot(mp, name) {
     const a = probe.original, b = probe.bw
     if (a && b) check('  ③ 「原图」与「黑白」first 不相同', a.first !== b.first, 'original=' + a.first + '  bw=' + b.first)
     else check('  ③ 「原图」与「黑白」两档都取到了', false, 'original=' + JSON.stringify(a) + ' bw=' + JSON.stringify(b))
+
+    log('[6] 工具行：调色 / 人像 / 裁剪')
+    let tools = await rpc(page.$$('.tool-cell'), '$$ .tool-cell')
+    check('工具行有 5 个入口', tools.length === 5, 'count=' + tools.length)
+    tools = await rpc(page.$$('.tool-cell'), '$$ .tool-cell')
+    await rpc(tools[1].tap(), 'tap 调色')
+    let toolData = await waitData(page, x => x.tool === 'tone' && x.sliders.length === 3, 8000)
+    check('调色面板展开并显示 3 根基础滑杆',
+      toolData.tool === 'tone' && toolData.sliders.length === 3,
+      'tool=' + toolData.tool + ' sliders=' + toolData.sliders.length)
+    const adjusted = await rpc(
+      page.callMethod('__probeSetAdjustment', 'exposure', 20),
+      'callMethod __probeSetAdjustment')
+    check('调色参数写入共享 Adjustments', adjusted.exposure === 20, 'exposure=' + adjusted.exposure)
+    const adjustedColors = await rpc(page.callMethod('__probeColors'), 'callMethod __probeColors')
+    check('手动调色后画面不是纯色', adjustedColors.colors > 1 && adjustedColors.err === 0,
+      'colors=' + adjustedColors.colors + ' err=' + adjustedColors.err)
+    await rpc(page.callMethod('onResetTool'), 'callMethod onResetTool')
+    const reset = await rpc(page.callMethod('__probeEditor'), 'callMethod __probeEditor')
+    check('重置本组只清当前调色参数', reset.params.exposure === 0, 'exposure=' + reset.params.exposure)
+
+    tools = await rpc(page.$$('.tool-cell'), '$$ .tool-cell')
+    await rpc(tools[2].tap(), 'tap 人像')
+    toolData = await waitData(page, x => x.tool === 'portrait' && x.sliders.length === 3, 8000)
+    check('人像面板显示磨皮 / 美白 / 红润',
+      toolData.tool === 'portrait'
+        && toolData.sliders.map(item => item.label).join(',') === '磨皮,美白,红润',
+      toolData.sliders.map(item => item.label).join(','))
+
+    tools = await rpc(page.$$('.tool-cell'), '$$ .tool-cell')
+    await rpc(tools[3].tap(), 'tap 裁剪')
+    toolData = await waitData(page, x => x.tool === 'crop', 8000)
+    const cropChips = await rpc(page.$$('.crop-chip'), '$$ .crop-chip')
+    check('裁剪面板提供旋转、翻转和画幅',
+      toolData.tool === 'crop' && cropChips.length >= 8,
+      'tool=' + toolData.tool + ' chips=' + cropChips.length)
+
     // 收尾这一张按**成败**命名：红跑（比如全黑变异）不许再叫 smoke-ok
     // （2026-10-12 自审抓到：M2 全红那次截图被存成了 smoke-ok-*.png）
     await shot(mp, results.some(r => !r.ok) ? 'smoke-fail' : 'smoke-ok')

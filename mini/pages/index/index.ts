@@ -915,15 +915,15 @@ Page({
 
   /** 拖滑杆时实时预览；值变化只写当前参数，不重建管线。 */
   onSliderChanging(e: WechatMiniprogram.SliderChanging) {
-    this.applySliderValue(e)
+    this.applySliderValue(e, false)
   },
 
   /** 松手后完成一次值落定；与拖动共用同一条写参数路径。 */
   onSliderChange(e: WechatMiniprogram.SliderChange) {
-    this.applySliderValue(e)
+    this.applySliderValue(e, true)
   },
 
-  applySliderValue(e: WechatMiniprogram.SliderChange) {
+  applySliderValue(e: WechatMiniprogram.SliderChange, persist: boolean) {
     if (this.data.generating || this.data.cropping) return
     const key = e.currentTarget.dataset.key as keyof Adjustments | undefined
     if (!key) return
@@ -938,7 +938,7 @@ Page({
       styleAmount: 100,
       sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
     })
-    this.saveDraft()
+    if (persist) this.saveDraft()
   },
 
   /** 重置当前工具：调色只清当前组，人像清三项；别的参数不动。 */
