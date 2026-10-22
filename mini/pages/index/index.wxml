@@ -61,6 +61,14 @@
       </view>
     </scroll-view>
 
+    <view wx:if="{{stylePresetId}}" class="style-strength">
+      <text>风格强度</text>
+      <slider class="style-strength-slider" min="0" max="100" step="1"
+              value="{{styleAmount}}" activeColor="#2dd4bf" backgroundColor="#303037"
+              block-size="20" bindchange="onStyleAmount" />
+      <text class="style-strength-value">{{styleAmount}}</text>
+    </view>
+
     <!-- 工具行永远在画布外。工具面板走正常排版流，不覆盖照片，避免真机上
          WebGL 画布吞掉覆盖层里的点击。 -->
     <view class="tool-row" role="group" aria-label="修图工具">

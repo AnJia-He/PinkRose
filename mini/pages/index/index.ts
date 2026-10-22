@@ -45,9 +45,10 @@ import { ApiError, apiPost, isAbortError, setApiBaseOverride } from '../../lib/a
 import { getToken } from '../../lib/auth'
 import { prepareForModel, prepareForRouting } from '../../lib/image/prepare'
 import {
-  PORTRAIT_KEYS, TONE_GROUPS, resetKeys, rowsForTool, setAdjustment,
+  PORTRAIT_KEYS, TONE_GROUPS, mixPreset, resetKeys, rowsForTool, setAdjustment,
   type AdjustmentRow, type EditorTool, type ToneGroup,
 } from '../../lib/editor'
+import { draft } from '../../lib/draft'
 
 /** AI 气泡的四个阶段（SayMsg / setAi 共用；四段见 SayMsg 的注释）。 */
 type AiState = 'thinking' | 'done' | 'stopped' | 'failed'
@@ -84,6 +85,10 @@ interface IndexData {
   spritePath: string
   spriteW: number
   activeStyle: string | null
+  /** 当前风格 id；手调参数后清空。 */
+  stylePresetId: string | null
+  /** 当前风格强度 0–100。 */
+  styleAmount: number
   dev: boolean
   statusBar: number
   topbarPadRight: number
@@ -220,6 +225,8 @@ interface SuggestResponse {
 interface UndoSnap {
   photo: string
   params: Adjustments
+  presetId: string | null
+  styleAmount: number
   /** ★ Task 14：这一趟**用户气泡**的 id —— 撤销时把 `id >= fromMsgId` 的对话条目
    *  一起收走（只裁这一次生成的问答，更早的留着）。锚是用户气泡而不是 AI 气泡：
    *  用户气泡一定在、AI 气泡可能已被裁掉（见 trimMsgsAt）。 */
@@ -378,6 +385,8 @@ Page({
     spritePath: '',
     spriteW: 0,
     activeStyle: null,
+    stylePresetId: null,
+    styleAmount: 100,
     dev: false,
     sayText: '',
     sayBusy: false,
@@ -401,6 +410,12 @@ Page({
   node: null as CanvasNode | null,
   /** 当前这套参数（点风格 = 整组赋值；说一句/滑杆那几个任务接下来也读它） */
   params: { ...ZERO } as Adjustments,
+  /** 当前风格 id；和 data.stylePresetId 同步，供纯逻辑读取。 */
+  stylePresetId: null as string | null,
+  /** 草稿专用照片路径（异步复制）；还没准备好时只保留参数，不写可恢复草稿。 */
+  draftPath: null as string | null,
+  /** 草稿复制令牌：换照片后旧复制结果必须作废。 */
+  draftSeq: 0,
   /** ★ Task 9：保存进行中（只防重入，不参与渲染 —— 所以放实例字段、不进 data）。
    *  点了「保存」到导出+存盘走完之前，再点多少次都被这一条忽略。 */
   saving: false,
@@ -480,7 +495,10 @@ Page({
     // ⚠️ 拿不到账号信息（个别环境会抛）就当不是开发版 —— 宁可没按钮，不能崩在 onLoad。
     let dev = false
     try { dev = wx.getAccountInfoSync().miniProgram.envVersion === 'develop' } catch (e) { /* 见上 */ }
-    this.setData({ statusBar: info.statusBarHeight ?? 44, topbarPadRight, dev })
+    this.setData(
+      { statusBar: info.statusBarHeight ?? 44, topbarPadRight, dev },
+      () => { void this.restoreDraft() },
+    )
   },
 
   async onCamera() { await this.loadFrom('camera') },
@@ -520,6 +538,14 @@ Page({
     this.clearMsgs()
     this.undoSnap = null
     this.genPhotoSeq++
+    this.draftSeq++
+    this.draftPath = null
+    this.stylePresetId = null
+    draft.clear()
+    this.draftSeq++
+    this.draftPath = null
+    this.stylePresetId = null
+    draft.clear()
     // ★ Task 19：提示语也随照片翻篇 —— 回默认；在飞的那趟 suggest 作废（见 setData）。
     this.suggestSeq++
     // 先进编辑态（画布得在树上才能拿到节点），渲染接在 setData 落地之后。
@@ -528,9 +554,11 @@ Page({
     await new Promise<void>(ok => this.setData(
       {
         stage: 'edit', photo: path, photoW: info.width, photoH: info.height,
-        styles: [], spritePath: '', spriteW: 0, activeStyle: null, canUndo: false,
+        styles: [], spritePath: '', spriteW: 0, activeStyle: null,
+        stylePresetId: null, styleAmount: 100, canUndo: false,
         sayPh: DEFAULT_SAY_PH, tool: 'ai', toneGroup: 'basic', sliders: [],
       }, ok))
+    void this.prepareDraft(path)
     await this.startRender(path)
   },
 
@@ -559,7 +587,7 @@ Page({
    * 否则「等图片加载」那段几百毫秒里用户点「换一张」，就会往已经拆掉的舞台上接着
    * 建东西（画布元素没了，管线却建出来了 —— 一根没人管的 GL 上下文）。
    */
-  async startRender(path: string) {
+  async startRender(path: string, resetParams = true) {
     const box = await queryStage(this)
     if (this.data.stage !== 'edit') return // 等的这一会儿里用户点了「换一张」
     const img = await loadImage(box.node, path)
@@ -577,7 +605,11 @@ Page({
       // ★ Task 15：比例走共享 fitK（垂直扣掉上下呼吸，见它的注释）。
       const k = fitK(box.w, box.h, img.width, img.height)
       this.setData({ stageW: Math.round(img.width * k), stageH: Math.round(img.height * k) })
-      this.params = { ...ZERO } // 新照片 = 什么都没调
+      if (resetParams) {
+        this.params = { ...ZERO } // 新照片 = 什么都没调
+        this.stylePresetId = null
+        this.setData({ stylePresetId: null, styleAmount: 100 })
+      }
       pipe.render(this.params) // 先出一张原图
     } catch (e) {
       this.disposePipe() // 半截的管线别留着（GL 上下文是有限资源）
@@ -598,6 +630,7 @@ Page({
         spriteW: last.x + last.w,
         styles: sprite.cells,
         activeStyle: activePresetId(this.params, false),
+        sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
       })
     } catch (e) {
       console.error('[index] 风格栏的缩略图没画出来（照片本身不受影响）：', e)
@@ -633,7 +666,75 @@ Page({
       stage: 'empty', photo: null, photoW: 0, photoH: 0, stageW: 0, stageH: 0,
       canUndo: false, sayBusy: false, generating: false, sayPh: DEFAULT_SAY_PH,
       tool: 'ai', toneGroup: 'basic', sliders: [],
+      activeStyle: null, stylePresetId: null, styleAmount: 100,
     })
+  },
+
+  onHide() {
+    this.saveDraft()
+  },
+
+  /** 把当前底图复制成草稿文件；复制失败只影响草稿，不影响正在编辑的照片。 */
+  async prepareDraft(photo: string) {
+    const seq = ++this.draftSeq
+    this.draftPath = null
+    try {
+      const path = await draft.preparePhoto(photo)
+      if (seq !== this.draftSeq || this.data.photo !== photo) return
+      this.draftPath = path
+      this.saveDraft()
+    } catch (e) {
+      console.warn('[index] 草稿照片没存下来（当前编辑不受影响）：', e)
+    }
+  },
+
+  /** 参数草稿同步写；草稿文件未准备好、正在生成或不在编辑态时不写半份。 */
+  saveDraft() {
+    const photo = this.data.photo
+    if (this.data.stage !== 'edit' || !photo || !this.draftPath || this.data.generating) return
+    try {
+      draft.save({
+        photoPath: this.draftPath,
+        width: this.data.photoW,
+        height: this.data.photoH,
+        params: { ...this.params },
+        presetId: this.stylePresetId,
+        styleAmount: this.data.styleAmount,
+      })
+    } catch (e) {
+      console.warn('[index] 草稿参数没写下来（当前编辑不受影响）：', e)
+    }
+  },
+
+  /** 启动时恢复最近草稿；坏文件 / 超期草稿由 draft.load 清掉并返回 null。 */
+  async restoreDraft() {
+    if (this.data.stage !== 'empty') return
+    const seqAtStart = this.genPhotoSeq
+    const saved = draft.load(ZERO)
+    if (!saved || this.data.stage !== 'empty' || this.genPhotoSeq !== seqAtStart) return
+    this.params = { ...saved.params }
+    this.stylePresetId = saved.presetId
+    this.draftPath = saved.photoPath
+    this.genPhotoSeq++
+    this.suggestSeq++
+    await new Promise<void>(ok => this.setData({
+      stage: 'edit',
+      photo: saved.photoPath,
+      photoW: saved.width,
+      photoH: saved.height,
+      stylePresetId: saved.presetId,
+      styleAmount: saved.styleAmount,
+      activeStyle: activePresetId(saved.params, false),
+      tool: 'ai',
+      toneGroup: 'basic',
+      sliders: [],
+      canUndo: false,
+    }, ok))
+    try {
+      await this.startRender(saved.photoPath, false)
+    } catch (e) {
+      this.reportPhotoFailure(e)
+    }
   },
 
   /**
@@ -716,16 +817,37 @@ Page({
     //   这一套、点下去画面不会有任何变化；那就连 note 也不留（0 条）、render 也不空跑。
     if (activePresetId(this.params, false) === id) return
     this.params = { ...next } // 存副本：预设那份是模块级常量，谁都不许原地改
+    this.stylePresetId = id === ORIGINAL_ID ? null : id
     pipe.render(this.params)
     this.setData({
       activeStyle: activePresetId(this.params, false),
       sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
+      stylePresetId: this.stylePresetId,
+      styleAmount: 100,
     })
     // ★ Task 14：点风格在对话区留一行**系统小字**（spec §4.2 修订块：「点风格留一行
     //   『套用了「日系」』」）。名字取那格自己的 label；「原图」那格是另一句话。
     //   ⚠️ 点风格**不进撤销**（canUndo 一个字不动）—— 撤销只有一层、只对生成有意义
     //   （点错风格点「原图」就回去了）。
     this.pushMsg({ kind: 'note', text: preset ? '套用了「' + preset.label + '」' : '回到原图' })
+    this.saveDraft()
+  },
+
+  /** 风格强度：每次都从预设原值重算，不能拿上一帧的参数反复相乘。 */
+  onStyleAmount(e: WechatMiniprogram.SliderChange) {
+    const id = this.data.stylePresetId
+    const preset = id ? PRESETS.find(item => item.id === id) : undefined
+    const pipe = this.pipe
+    if (!preset || !pipe || this.data.generating) return
+    const amount = Math.max(0, Math.min(100, Number(e.detail.value)))
+    this.params = { ...ZERO, ...mixPreset(amount, preset.adjustments) }
+    pipe.render(this.params)
+    this.setData({
+      styleAmount: amount,
+      activeStyle: amount === 100 ? id : null,
+      sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
+    })
+    this.saveDraft()
   },
 
   /** 展开 / 收起工具面板。生成中不切工具，避免换底图与参数面板抢状态。 */
@@ -767,12 +889,16 @@ Page({
     if (!key) return
     this.endPeek()
     this.params = setAdjustment(this.params, key, Number(e.detail.value))
+    this.stylePresetId = null
     const pipe = this.pipe
     if (pipe) pipe.render(this.params)
     this.setData({
       activeStyle: activePresetId(this.params, false),
+      stylePresetId: null,
+      styleAmount: 100,
       sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
     })
+    this.saveDraft()
   },
 
   /** 重置当前工具：调色只清当前组，人像清三项；别的参数不动。 */
@@ -783,12 +909,16 @@ Page({
       : tool === 'portrait' ? PORTRAIT_KEYS : []
     if (!keys.length || this.data.generating) return
     this.params = resetKeys(this.params, keys)
+    this.stylePresetId = null
     const pipe = this.pipe
     if (pipe) pipe.render(this.params)
     this.setData({
       activeStyle: activePresetId(this.params, false),
+      stylePresetId: null,
+      styleAmount: 100,
       sliders: rowsForTool(tool, this.data.toneGroup, this.params),
     })
+    this.saveDraft()
   },
 
   /** 对比：按住画原图，抬手恢复当前成片；参数一个字不动。 */
@@ -850,7 +980,13 @@ Page({
     const aiId = this.pushMsg({ kind: 'ai', state: 'thinking', text: '' })
     // ★ 撤销的现场**在发送这一刻**拍好（'both' 那条参数马上要落地，晚了就拍到
     //   "落过参数"的了）—— 但只在生成**成功**那刻才写进 undoSnap（见 runGenerate）。
-    const snap: UndoSnap = { photo, params: { ...this.params }, fromMsgId }
+    const snap: UndoSnap = {
+      photo,
+      params: { ...this.params },
+      presetId: this.stylePresetId,
+      styleAmount: this.data.styleAmount,
+      fromMsgId,
+    }
     let decision: RouteDecision
     try {
       // 路由看的是**用户此刻看到的画面**（640 小图；这条故意不做 align32，见 prepare.ts）
@@ -912,13 +1048,17 @@ Page({
     const isParams = d.route === 'params' || d.route === 'both'
     if (isParams) {
       this.params = applyDeltas(this.params, d.paramDeltas || {})
+      this.stylePresetId = null
       const pipe = this.pipe
       if (pipe) pipe.render(this.params)
       // 点亮 = 共享判据算的（和点风格那条同一个函数、同一条规矩：全等才亮）
       this.setData({
         activeStyle: activePresetId(this.params, false),
+        stylePresetId: null,
+        styleAmount: 100,
         sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
       })
+      this.saveDraft()
     }
     // lut / preset 在协议里必填，但小程序第一版还没有那两块（没有用户滤镜/预设）——
     // 收下即弃。真后端给了非 null 时留一行警告，别静默。
@@ -1060,6 +1200,7 @@ Page({
       this.undoSnap = snap
       pipe.render(this.params) // 参数原封不动继续生效（铁律：生成只换底图）
       this.setAi(aiId, 'done', reply) // ★ Task 14：reply 落进那颗气泡（不自动消失）
+      void this.prepareDraft(path)
     } catch (e) {
       if (isAbortError(e)) {
         if (this.genPhotoSeq !== seqAtStart) {
@@ -1172,6 +1313,7 @@ Page({
       if (this.pipe !== pipe) return
       // ↓ 同步上屏（同 runGenerate 那条纪律）
       this.params = { ...snap.params }
+      this.stylePresetId = snap.presetId
       this.genPhotoSeq++
       this.suggestSeq++ // ★ Task 19 复审 M2：画面翻篇了，在飞的 suggest 作废（提示语回默认，见 setData）
       pipe.setImage(img)
@@ -1181,11 +1323,15 @@ Page({
         photo: snap.photo, photoW: img.width, photoH: img.height,
         stageW: Math.round(img.width * k), stageH: Math.round(img.height * k),
         activeStyle: activePresetId(this.params, false),
+        stylePresetId: snap.presetId,
+        styleAmount: snap.styleAmount,
+        sliders: rowsForTool(this.data.tool, this.data.toneGroup, this.params),
         // ★ Task 19 复审 M2：已上屏的 sayPh 是上一轮按生成后画面给的 —— 画面被撤销翻篇，
         //   提示语也要跟着回默认（spec §4.2「提示随照片走」原则）。
         sayPh: DEFAULT_SAY_PH,
       })
       pipe.render(this.params)
+      void this.prepareDraft(snap.photo)
       // ★ Task 14：那次生成在对话区的**问答一起收走**（只留 id 比锚更早的）——
       //   撤销 = "当没说那句话"。放上屏之后做：画面先回，记录紧跟着收。
       this.trimMsgsAt(snap.fromMsgId)

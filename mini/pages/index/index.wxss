@@ -210,6 +210,27 @@
   color: var(--accent);
 }
 
+.style-strength {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 32rpx;
+  color: var(--muted);
+  font-size: 24rpx;
+}
+
+.style-strength-slider {
+  flex: 1;
+  margin: 0 12rpx;
+}
+
+.style-strength-value {
+  width: 56rpx;
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── 工具行：AI / 调色 / 人像 / 对比 ─────────────────────────────── */
 .tool-row {
   flex: none;
