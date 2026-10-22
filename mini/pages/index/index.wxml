@@ -78,6 +78,8 @@
             aria-role="button" bindtap="onToolTap">调色</view>
       <view class="tool-cell {{tool === 'portrait' ? 'on' : ''}}" data-tool="portrait"
             aria-role="button" bindtap="onToolTap">人像</view>
+      <view class="tool-cell {{tool === 'crop' ? 'on' : ''}}" data-tool="crop"
+            aria-role="button" bindtap="onToolTap">裁剪</view>
       <view class="tool-cell compare" aria-role="button"
             bindtouchstart="onCompareStart" bindtouchend="onCompareEnd"
             bindtouchcancel="onCompareEnd">对比</view>
@@ -118,6 +120,33 @@
                 bindchanging="onSliderChanging" bindchange="onSliderChange" />
       </view>
       <view class="panel-reset" aria-role="button" bindtap="onResetTool">重置人像</view>
+    </view>
+
+    <view wx:if="{{tool === 'crop'}}" class="edit-panel" aria-label="裁剪">
+      <view class="panel-title">旋转与画幅</view>
+      <view class="crop-actions">
+        <view class="crop-chip" data-delta="-1" bindtap="onCropRotate">左转 90°</view>
+        <view class="crop-chip" data-delta="1" bindtap="onCropRotate">右转 90°</view>
+        <view class="crop-chip {{cropFlipH ? 'on' : ''}}" bindtap="onCropFlip">水平翻转</view>
+      </view>
+      <view class="crop-ratios">
+        <view class="crop-chip {{cropRatio === 'original' ? 'on' : ''}}"
+              data-ratio="original" bindtap="onCropRatio">原图</view>
+        <view class="crop-chip {{cropRatio === '1:1' ? 'on' : ''}}"
+              data-ratio="1:1" bindtap="onCropRatio">1:1</view>
+        <view class="crop-chip {{cropRatio === '4:5' ? 'on' : ''}}"
+              data-ratio="4:5" bindtap="onCropRatio">4:5</view>
+        <view class="crop-chip {{cropRatio === '3:4' ? 'on' : ''}}"
+              data-ratio="3:4" bindtap="onCropRatio">3:4</view>
+        <view class="crop-chip {{cropRatio === '16:9' ? 'on' : ''}}"
+              data-ratio="16:9" bindtap="onCropRatio">16:9</view>
+      </view>
+      <view class="panel-actions">
+        <view class="panel-reset" bindtap="onCropCancel">取消</view>
+        <view class="panel-primary {{cropping ? 'off' : ''}}" bindtap="onCropApply">
+          {{cropping ? '正在裁…' : '完成裁剪'}}
+        </view>
+      </view>
     </view>
 
     <!-- 对话区（★ Task 14 / spec §4.2 修订块）：说过的话（me）/ 小皇帝回的（ai）/

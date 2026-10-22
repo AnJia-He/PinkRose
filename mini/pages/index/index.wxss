@@ -340,6 +340,61 @@
   font-size: 24rpx;
 }
 
+.crop-actions,
+.crop-ratios,
+.panel-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.crop-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 72rpx;
+  margin: 6rpx 10rpx 6rpx 0;
+  padding: 0 22rpx;
+  border: 2rpx solid var(--line-2);
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font-size: 24rpx;
+}
+
+.crop-chip.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.crop-ratios {
+  margin-top: 4rpx;
+}
+
+.panel-actions {
+  justify-content: flex-end;
+  margin-top: 12rpx;
+}
+
+.panel-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 72rpx;
+  margin-left: 12rpx;
+  padding: 0 28rpx;
+  border-radius: var(--r-pill);
+  background: var(--accent-400);
+  color: var(--accent-ink);
+  font-size: 24rpx;
+  font-weight: 600;
+}
+
+.panel-primary.off {
+  color: var(--muted);
+  background: var(--raised);
+}
+
 /* ── ★ Task 14 · 对话区（spec §4.2 的 2026-10-13 修订块）───────────────
    说过的话（me）/ 小皇帝回的（ai）/ 系统小字（note）都留在这条消息流里 ——
    wxml 里排在风格栏和输入条**之间**，**正常排版流**的一条 scroll-view。

@@ -49,6 +49,7 @@ import {
   type AdjustmentRow, type EditorTool, type ToneGroup,
 } from '../../lib/editor'
 import { draft } from '../../lib/draft'
+import { cropToFile, type CropRatio } from '../../lib/image/crop'
 
 /** AI 气泡的四个阶段（SayMsg / setAi 共用；四段见 SayMsg 的注释）。 */
 type AiState = 'thinking' | 'done' | 'stopped' | 'failed'
@@ -108,6 +109,10 @@ interface IndexData {
   toneGroup: ToneGroup
   /** 当前面板显示的滑杆行。 */
   sliders: AdjustmentRow[]
+  cropRatio: CropRatio
+  cropTurns: number
+  cropFlipH: boolean
+  cropping: boolean
   // ── ★ Task 14（对话留痕）────────────────────────────────────────────
   msgs: SayMsg[]
   scrollTo: string
@@ -399,6 +404,10 @@ Page({
     tool: 'ai',
     toneGroup: 'basic',
     sliders: [],
+    cropRatio: 'original',
+    cropTurns: 0,
+    cropFlipH: false,
+    cropping: false,
     msgs: [] as SayMsg[],
     scrollTo: '',
   } as IndexData,
@@ -416,6 +425,8 @@ Page({
   draftPath: null as string | null,
   /** 草稿复制令牌：换照片后旧复制结果必须作废。 */
   draftSeq: 0,
+  /** 裁剪生成的令牌：换照片 / 重开裁剪后旧结果作废。 */
+  cropSeq: 0,
   /** ★ Task 9：保存进行中（只防重入，不参与渲染 —— 所以放实例字段、不进 data）。
    *  点了「保存」到导出+存盘走完之前，再点多少次都被这一条忽略。 */
   saving: false,
@@ -557,6 +568,7 @@ Page({
         styles: [], spritePath: '', spriteW: 0, activeStyle: null,
         stylePresetId: null, styleAmount: 100, canUndo: false,
         sayPh: DEFAULT_SAY_PH, tool: 'ai', toneGroup: 'basic', sliders: [],
+        cropRatio: 'original', cropTurns: 0, cropFlipH: false, cropping: false,
       }, ok))
     void this.prepareDraft(path)
     await this.startRender(path)
@@ -667,6 +679,7 @@ Page({
       canUndo: false, sayBusy: false, generating: false, sayPh: DEFAULT_SAY_PH,
       tool: 'ai', toneGroup: 'basic', sliders: [],
       activeStyle: null, stylePresetId: null, styleAmount: 100,
+      cropRatio: 'original', cropTurns: 0, cropFlipH: false, cropping: false,
     })
   },
 
@@ -752,7 +765,7 @@ Page({
     // ★ 2026-10-13 真机修复 + Task 14：生成中**不开「按住看原图」** —— 那时照片
     //    很快就要被换掉，按下去了 150ms 后把照片白闪回原图毫无意义（蒙层时代它是
     //    真机上"拦不住手势"的兜底；现在照片上没有任何蒙层了，这条仍是唯一的闸）。
-    if (this.data.generating) return
+    if (this.data.generating || this.data.cropping) return
     // ⚠️ `e &&` 两道：automator 探针用 `page.callMethod('onPhotoTouchStart')` 直接调
     //    这个处理器时**没有事件对象**（冒烟那条备选路），别在那儿抛。
     const t = e && e.touches && e.touches[0]
@@ -854,7 +867,7 @@ Page({
   onToolTap(e: WechatMiniprogram.TouchEvent) {
     const raw = String(e.currentTarget.dataset.tool || '')
     if (!raw) return
-    if (this.data.generating) {
+    if (this.data.generating || this.data.cropping) {
       wx.showToast({ title: '照片正在修，等这一张完成再换工具', icon: 'none' })
       return
     }
@@ -884,7 +897,7 @@ Page({
   },
 
   applySliderValue(e: WechatMiniprogram.SliderChange) {
-    if (this.data.generating) return
+    if (this.data.generating || this.data.cropping) return
     const key = e.currentTarget.dataset.key as keyof Adjustments | undefined
     if (!key) return
     this.endPeek()
@@ -907,7 +920,7 @@ Page({
     const keys = tool === 'tone'
       ? TONE_GROUPS[this.data.toneGroup]
       : tool === 'portrait' ? PORTRAIT_KEYS : []
-    if (!keys.length || this.data.generating) return
+    if (!keys.length || this.data.generating || this.data.cropping) return
     this.params = resetKeys(this.params, keys)
     this.stylePresetId = null
     const pipe = this.pipe
@@ -923,7 +936,7 @@ Page({
 
   /** 对比：按住画原图，抬手恢复当前成片；参数一个字不动。 */
   onCompareStart() {
-    if (!this.pipe || this.data.generating) return
+    if (!this.pipe || this.data.generating || this.data.cropping) return
     this.endPeek()
     this.comparing = true
     this.pipe.render(ZERO)
@@ -933,6 +946,92 @@ Page({
     if (!this.comparing) return
     this.comparing = false
     if (this.pipe) this.pipe.render(this.params)
+  },
+
+  onCropRotate(e: WechatMiniprogram.TouchEvent) {
+    if (this.data.cropping) return
+    const delta = Number(e.currentTarget.dataset.delta || 0)
+    if (!delta) return
+    const turns = ((this.data.cropTurns + delta) % 4 + 4) % 4
+    this.setData({ cropTurns: turns })
+  },
+
+  onCropRatio(e: WechatMiniprogram.TouchEvent) {
+    if (this.data.cropping) return
+    const ratio = String(e.currentTarget.dataset.ratio || 'original') as CropRatio
+    if (!['original', '1:1', '4:5', '3:4', '16:9'].includes(ratio)) return
+    this.setData({ cropRatio: ratio })
+  },
+
+  onCropFlip() {
+    if (this.data.cropping) return
+    this.setData({ cropFlipH: !this.data.cropFlipH })
+  },
+
+  onCropCancel() {
+    if (this.data.cropping) return
+    this.cropSeq++
+    this.setData({
+      tool: null,
+      cropRatio: 'original',
+      cropTurns: 0,
+      cropFlipH: false,
+    }, () => this.fitStage())
+  },
+
+  /**
+   * 裁剪完成 = 生成一张新底图；当前调色参数原样保留。
+   * 先写临时文件，确认仍是同一张照片后再一次性上屏。
+   */
+  async onCropApply() {
+    const photo = this.data.photo
+    const pipe = this.pipe
+    const node = this.node
+    if (!photo || !pipe || !node || this.data.generating || this.data.cropping) return
+    const seq = ++this.cropSeq
+    const photoSeq = this.genPhotoSeq
+    this.setData({ cropping: true })
+    wx.showLoading({ title: '正在裁…', mask: true })
+    try {
+      const result = await cropToFile({
+        sourcePath: photo,
+        width: this.data.photoW,
+        height: this.data.photoH,
+        ratio: this.data.cropRatio,
+        quarterTurns: this.data.cropTurns,
+        flipH: this.data.cropFlipH,
+      })
+      if (seq !== this.cropSeq || this.genPhotoSeq !== photoSeq
+        || this.data.photo !== photo || this.pipe !== pipe) return
+      const img = await loadImage(node, result.path)
+      const box = await queryStage(this)
+      if (seq !== this.cropSeq || this.genPhotoSeq !== photoSeq
+        || this.data.photo !== photo || this.pipe !== pipe) return
+      const k = fitK(box.w, box.h, img.width, img.height)
+      pipe.setImage(img)
+      pipe.resizeToImage()
+      this.genPhotoSeq++
+      this.setData({
+        photo: result.path,
+        photoW: img.width,
+        photoH: img.height,
+        stageW: Math.round(img.width * k),
+        stageH: Math.round(img.height * k),
+        tool: null,
+        cropRatio: 'original',
+        cropTurns: 0,
+        cropFlipH: false,
+        sliders: [],
+      })
+      pipe.render(this.params)
+      void this.prepareDraft(result.path)
+    } catch (e) {
+      console.error('[index] 裁剪没走通：', e)
+      wx.showToast({ title: (e as Error).message || '没能裁好，再试一次', icon: 'none' })
+    } finally {
+      wx.hideLoading()
+      if (seq === this.cropSeq) this.setData({ cropping: false }, () => this.fitStage())
+    }
   },
 
   // ── ★ Task 12 · 说一句（输入 → 路由 → 分流 → 过程/停止 → 换图/撤销）─────────
@@ -964,7 +1063,7 @@ Page({
    * 决策作废、一个字不动 —— 电脑版同款守卫与话术）→ applyDecision 分流。
    */
   async onSaySend() {
-    if (this.data.sayBusy || this.data.generating) return // 上一句还没算完
+    if (this.data.sayBusy || this.data.generating || this.data.cropping) return // 上一句还没算完
     const text = (this.data.sayText || '').trim()
     if (!text) return // 空话不发（键盘的发送键也会走到这儿）
     const pipe = this.pipe
@@ -1599,7 +1698,7 @@ Page({
     //    `endPeek()` 顺手收掉：**按住看原图**的到点定时器是同类"导出中途有人往
     //    缓冲里画"的来源（到点重画一帧 / 抬手画回来）。⚠️ 放在守卫**后面** ——
     //    按住的手指还压着时不该动他的画面。
-    if (this.saving || this.data.generating) return
+    if (this.saving || this.data.generating || this.data.cropping) return
     this.endPeek()
     const pipe = this.pipe
     const node = this.node
