@@ -11,6 +11,7 @@ import { assertRoomFor } from './quota.ts'
 import { resolveLutRef } from './luts.ts'
 import { ZERO, applyDeltas, type Adjustments } from '../shared/adjustments.ts'
 import { normalizeLutRef, type LutRef } from '../shared/lut.ts'
+import { normalizeEditLayers, type EditLayer } from '../shared/layers.ts'
 import type { SessionDetail, SessionMessage, SessionMeta, SessionStep } from '../shared/sessions.ts'
 
 export type SessionsDeps = { db: Db; storage: Storage; now?: () => number }
@@ -55,6 +56,8 @@ type StoredStep = {
   id: number; label: string; params: Adjustments; prompt?: string; at: number; image: string
   /** ★ 2026-10-05：这一步用的滤镜（`{ lutId, amount }`）。老步骤没有这个键 */
   lut?: LutRef | null
+  /** ★ 2026-10-19：这一步的文字层。老步骤没有这个键 = 没有层。 */
+  layers?: EditLayer[]
 }
 
 /**
@@ -190,6 +193,7 @@ function toSteps(stored: readonly StoredStep[]): SessionStep[] {
     //   没有这个键，读出来是 `undefined`，而**前端只看得到这一份**：不在这里归一，
     //   等于把"判一下 undefined"摊给每一个调用点。老步骤 = 没用滤镜。
     lut: s.lut ?? null,
+    ...(s.layers?.length ? { layers: s.layers } : {}),
     reusesPrev: i > 0 && stored[i - 1]!.image === s.image,
   }))
 }
@@ -273,6 +277,7 @@ function mergeSteps(
       //   和 `params` 过 `applyDeltas` 同一条规矩）；**存不存在、是不是他的**
       //   由调用方紧随其后的 `resolveLutRef` 那道闸判 —— 它要查库，这里够不到 db。
       lut: normalizeLutRef(o.lut),
+      layers: normalizeEditLayers(o.layers),
     })
   }
   // ③：新步骤里**最后那一个**拿新文件 —— **只在没指名"状态挂在哪一步"时**（旧行为）
@@ -486,6 +491,12 @@ export async function handleUpdateSession(
     //   落库的是 null（不存在的、别人的，都算认不出来）。
     if (o.lut !== undefined && ti >= 0) {
       steps[ti] = { ...steps[ti]!, lut: resolveLutRef(deps.db, user.id, o.lut) }
+    }
+
+    // ★ 2026-10-19：文字层和 params / lut 同一条状态路 —— 落在 stateStepId
+    //   指名的那一步上，**换一个对象**，旧层可以被显式清空（送 []）。
+    if (o.layers !== undefined && ti >= 0) {
+      steps[ti] = { ...steps[ti]!, layers: normalizeEditLayers(o.layers) }
     }
 
     title = o.title === null || o.title === undefined

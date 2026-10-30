@@ -22,6 +22,7 @@ export const PAGE = 60
 export function usePagedDays<T extends DayGroupable>(
   list: readonly T[] | null, q: string,
   match: (x: T, q: string, now: number) => boolean,
+  timeOf?: (work: T) => number,
 ): {
   now: number
   groups: DayGroup<T>[]
@@ -34,8 +35,8 @@ export function usePagedDays<T extends DayGroupable>(
   const [limit, setLimit] = useState(PAGE)
   const now = useMemo(() => Date.now(), [])
   const groups = useMemo(
-    () => (list ? groupByDay(list.filter(x => match(x, q, now)), now) : []),
-    [list, q, now, match])
+    () => (list ? groupByDay(list.filter(x => match(x, q, now)), now, timeOf) : []),
+    [list, q, now, match, timeOf])
   const shown = useMemo(() => visibleGroups(groups, limit), [groups, limit])
   const more = shown.length < groups.length
   const sentinel = useLoadMoreSentinel(more, PAGE, setLimit)

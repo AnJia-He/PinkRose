@@ -3,7 +3,7 @@ import { fileUrl } from './works'
 import type { WorkMeta } from '../../shared/works.ts'
 
 const w = (hasThumb: boolean): WorkMeta =>
-  ({ id: 7, alias: null, createdAt: 0, updatedAt: 1_700_000_000_000, bytes: 0, hasThumb })
+  ({ id: 7, alias: null, createdAt: 0, updatedAt: 1_700_000_000_000, bytes: 0, hasThumb, rating: 0, flag: 0 })
 
 describe('fileUrl', () => {
   it('有缩略图就走 /thumb —— 列表上那张小图，别拿原图当缩略图下', () => {

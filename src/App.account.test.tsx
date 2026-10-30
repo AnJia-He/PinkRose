@@ -6,15 +6,19 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { CUBE2_TEXT, LOGGED_IN, MODEL, canvasProps, container, decision, fetchMock, goNav, jsonResponse, makeGate, renderApp, say, setMeFails, setMeGate, setMeUsage, setMeUsageGate, setMeUser, uploadPhoto, withModels, withModelsError, withUsage, withUsageError } from './test/appHarness'
+import { CUBE2_TEXT, LOGGED_IN, MODEL, bodyOf, canvasProps, container, decision, fetchMock, goNav, jsonResponse, makeGate, renderApp, say, setMeFails, setMeGate, setMeUsage, setMeUsageGate, setMeUser, uploadPhoto, withModels, withModelsError, withPresets, withUsage, withUsageError } from './test/appHarness'
 import { act } from 'react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { MAX_LUT_FILE_BYTES, type LutMeta } from '../shared/lut.ts'
+import { ZERO } from '../shared/adjustments.ts'
+import { PRESETS } from './core/presets'
 import { MIN_SLICE_RATIO, formatSize, modelValue, pie3dPaths, restPctLabel } from './ui/AccountPage'
 import * as api from './api/client'
 import * as lutsMod from './api/luts'
-import { describe, expect, it, vi } from 'vitest'
+import { DEFAULT_STYLE_KEY } from './app/defaultStyle'
+import { APPEARANCE_KEY } from './app/appearance'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('登录这道门', () => {
   /** 往受控输入框里打字。React 靠自己的 value tracker 判断"值变没变"，
@@ -104,6 +108,8 @@ describe('登录这道门', () => {
     expect(container.querySelector('.login-box')).toBeTruthy()
     // 上传入口**不出现**：让用户先挑好照片、再在下一步撞 401，是最糟的顺序。
     expect(container.querySelector('input[type="file"]')).toBeNull()
+    // 导出能力属于登录后的工作区；登录页不该先发一条必然 401 的探测。
+    expect(calledWith('/api/convert/heic/capability')).toHaveLength(0)
   })
 
   it('登录成功 → 进得来（上传入口出现），请求也带着 cookie', async () => {
@@ -785,6 +791,11 @@ describe('登录这道门', () => {
 })
 
 describe('用户管理页', () => {
+  beforeEach(() => {
+    // 默认风格是本机 / 账号双份偏好，用例之间不能互相串。
+    localStorage.removeItem(DEFAULT_STYLE_KEY)
+  })
+
   /** 左栏那颗「个人设置」。
    *
    *  ⚠️ **2026-10-04 起按 `aria-label` 找，不是按文字** —— 用户说
@@ -863,7 +874,7 @@ describe('用户管理页', () => {
     expect(container.querySelector('.account-label')?.textContent).toBe('用户名')
   })
 
-  it('★ 版式：三个分组按**单列**排（不再并排三个 tile 一行）（2026-10-11）', async () => {
+  it('★ 版式：四个分组按**单列**排（不再并排 tile 一行）（2026-10-11 / 10-19）', async () => {
     // 用户原话：「设置页看起来很业余很散漫」。真机体检
     //（`.superpowers/scratch/design-audit/report.md`）量出来的病根是**仪表盘排版**：
     // 三格并排装三块内容量差五倍的东西（账号 3 行 / 模型 1 行 / 用量一整张
@@ -878,10 +889,10 @@ describe('用户管理页', () => {
     const grid = container.querySelector('.account-grid')
     expect(grid).toBeTruthy()
     const tiles = [...grid!.children].filter(el => el.classList.contains('account-tile'))
-    expect(tiles, '三个分组，一个不多一个不少').toHaveLength(3)
-    // 单列的**顺序**就是阅读顺序：账号 → 模型配置 → 作品空间用量
+    expect(tiles, '四个分组，一个不多一个不少').toHaveLength(4)
+    // 单列的**顺序**就是阅读顺序：账号 → 模型配置 → 修图偏好 → 作品空间用量
     expect(tiles.map(t => t.querySelector('.account-tile-title')?.textContent))
-      .toEqual(['账号', '模型配置', '作品空间用量'])
+      .toEqual(['账号', '模型配置', '修图偏好', '作品空间用量'])
     // 「退出登录」不归任何一组（它是"离开这一页"，不是这一页上的一项设置）——
     // 收进版心那条流里就行，别收进任何一个 tile
     expect(grid!.querySelector('.account-signout')).toBeNull()
@@ -893,6 +904,165 @@ describe('用户管理页', () => {
     expect(gridRule, '单列的排法：flex 竖排').toContain('flex-direction: column')
     // 版心 680（原 1200）：1200 是"三格并排"要的宽度，单列不再需要
     expect(cssRule('.account-inner')).toContain('max-width: 680px')
+  })
+
+  it('★ 默认风格：设置页选内置预设 → 存账号；下一张新照片按它起手', async () => {
+    setMeUser({ ...LOGGED_IN })
+    await renderApp()
+    await openAccount()
+
+    const select = container.querySelector('.account-select') as HTMLSelectElement
+    expect(select, '设置页该有「默认风格」下拉').toBeTruthy()
+    expect([...select.options].map(o => o.textContent)).toEqual(
+      expect.arrayContaining(['不预设（原图起手）', '柔光人像', '胶片']),
+    )
+
+    await act(async () => {
+      select.value = 'portrait'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    const save = fetchMock.mock.calls.find(
+      ([u, init]) => u === '/api/me' && (init as RequestInit | undefined)?.method === 'PATCH',
+    )
+    expect(save, '选完应把 style 写进账号偏好').toBeTruthy()
+    expect(bodyOf(save!).preferences.style).toBe('portrait')
+    expect(localStorage.getItem(DEFAULT_STYLE_KEY)).toBe('portrait')
+    expect(container.textContent).toContain('下一张新照片会用「柔光人像」起手')
+
+    // 回到修图页 → 上传下一张：参数就是「柔光人像」那套。
+    await goNav('修图')
+    await uploadPhoto()
+    const expected = PRESETS.find(p => p.id === 'portrait')!.adjustments
+    expect(canvasProps.props.at(-1)?.params).toMatchObject({
+      exposure: expected.exposure,
+      contrast: expected.contrast,
+      skinSmooth: expected.skinSmooth,
+    })
+  })
+
+  it('★ 默认风格：改设置**不改当前照片**，只在下一张起手', async () => {
+    setMeUser({ ...LOGGED_IN })
+    await renderApp()
+    await uploadPhoto()
+    const before = canvasProps.props.at(-1)!.params
+    expect(before.skinSmooth).toBe(0)
+
+    await openAccount()
+    const select = container.querySelector('.account-select') as HTMLSelectElement
+    await act(async () => {
+      select.value = 'film'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await goNav('调色')
+
+    // 当前这张的滑块 / 画面参数一个字都不许动。
+    expect(canvasProps.props.at(-1)?.params).toEqual(before)
+  })
+
+  it('★ 默认风格：下拉按「内置风格 / 我的预设」分组，选我的预设也存同一个 style 字段', async () => {
+    setMeUser({ ...LOGGED_IN })
+    withPresets([{
+      id: 9, name: '我的夜色', createdAt: 0,
+      params: { ...ZERO, exposure: 9, temperature: -12 },
+    }])
+    await renderApp()
+    await openAccount()
+
+    const select = container.querySelector('.account-select') as HTMLSelectElement
+    const groups = [...select.querySelectorAll('optgroup')]
+    expect(groups.map(g => g.getAttribute('label')))
+      .toEqual(['内置风格', '我的预设'])
+    expect(groups[1]!.textContent).toContain('我的夜色')
+
+    await act(async () => {
+      select.value = '9'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const save = fetchMock.mock.calls.find(
+      ([u, init]) => u === '/api/me' && (init as RequestInit | undefined)?.method === 'PATCH',
+    )
+    expect(bodyOf(save!).preferences.style).toBe('9')
+  })
+
+  it('★ 默认风格：换设备登录同账号，账号里的 style 覆盖本机', async () => {
+    setMeUser({
+      ...LOGGED_IN,
+      preferences: { style: 'film' },
+    })
+    localStorage.removeItem(DEFAULT_STYLE_KEY)
+    await renderApp()
+    await uploadPhoto()
+
+    const expected = PRESETS.find(p => p.id === 'film')!.adjustments
+    expect(canvasProps.props.at(-1)?.params).toMatchObject({
+      exposure: expected.exposure,
+      contrast: expected.contrast,
+      temperature: expected.temperature,
+    })
+    expect(localStorage.getItem(DEFAULT_STYLE_KEY)).toBe('film')
+  })
+
+  it('★ 默认风格：账号里还没存过 → 本机那份仍然生效', async () => {
+    setMeUser({ ...LOGGED_IN })
+    localStorage.setItem(DEFAULT_STYLE_KEY, 'film')
+    await renderApp()
+    await uploadPhoto()
+
+    const expected = PRESETS.find(p => p.id === 'film')!.adjustments
+    expect(canvasProps.props.at(-1)?.params).toMatchObject({
+      exposure: expected.exposure,
+      contrast: expected.contrast,
+      temperature: expected.temperature,
+    })
+  })
+
+  it('★ 界面外观：切浅色 → shell 属性、本机和账号三处一起变', async () => {
+    setMeUser({ ...LOGGED_IN })
+    await renderApp()
+    await openAccount()
+
+    const shell = container.querySelector('.shell') as HTMLElement
+    expect(shell.getAttribute('data-theme')).toBe('dark')
+    const light = [...container.querySelectorAll('button')]
+      .find(b => b.textContent?.trim() === '浅色')
+    expect(light, '设置页该有「浅色」').toBeTruthy()
+    await act(async () => {
+      light!.click()
+      await new Promise(r => setTimeout(r, 0))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(shell.getAttribute('data-theme')).toBe('light')
+    expect(localStorage.getItem(APPEARANCE_KEY)).toBe('light')
+    const patch = fetchMock.mock.calls.find(
+      ([u, init]) => u === '/api/me' && (init as RequestInit | undefined)?.method === 'PATCH',
+    )
+    expect(bodyOf(patch!).preferences.appearance).toBe('light')
+    expect(container.textContent).toContain('已切到浅色界面')
+  })
+
+  it('★ 界面外观：账号里的 light 登录后覆盖本机深色', async () => {
+    setMeUser({ ...LOGGED_IN, preferences: { appearance: 'light' } })
+    localStorage.setItem(APPEARANCE_KEY, 'dark')
+    await renderApp()
+
+    expect(container.querySelector('.shell')?.getAttribute('data-theme')).toBe('light')
+    expect(localStorage.getItem(APPEARANCE_KEY)).toBe('light')
+  })
+
+  it('★ 界面外观：账号还没存过 → 本机浅色仍然生效', async () => {
+    setMeUser({ ...LOGGED_IN })
+    localStorage.setItem(APPEARANCE_KEY, 'light')
+    await renderApp()
+
+    expect(container.querySelector('.shell')?.getAttribute('data-theme')).toBe('light')
   })
 
   it('★ 用量区：百分比和「N 张作品」进了右侧 .usage-copy（饼上只留那两条压图标签）（2026-10-11）', async () => {

@@ -39,6 +39,11 @@ export async function cropToBitmap(
   ctx.translate(-spec.rect.x * bounds.w, -spec.rect.y * bounds.h)
   ctx.translate(bounds.w / 2, bounds.h / 2)
   ctx.rotate((-angle * Math.PI) / 180)
+  // 翻转在底图自己的中心坐标系里做（在旋转之后、drawImage 之前）；
+  // 预览的 CSS 用同一个顺序：rotate(...) scale(k) scaleX/scaleY(...)。
+  if (spec.flipH || spec.flipV) {
+    ctx.scale(spec.flipH ? -1 : 1, spec.flipV ? -1 : 1)
+  }
   ctx.drawImage(source, -source.width / 2, -source.height / 2)
 
   return createImageBitmap(canvas)

@@ -65,6 +65,13 @@ async function mount(opts: {
 
 const down = (el: Element, clientX: number, clientY: number) =>
   act(async () => { el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX, clientY })) })
+const penDown = (el: Element, clientX: number, clientY: number, pressure: number) =>
+  act(async () => {
+    const e = new MouseEvent('pointerdown', { bubbles: true, clientX, clientY })
+    Object.defineProperty(e, 'pointerType', { value: 'pen' })
+    Object.defineProperty(e, 'pressure', { value: pressure })
+    el.dispatchEvent(e)
+  })
 const move = (clientX: number, clientY: number) =>
   act(async () => { window.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX, clientY })) })
 const up = () =>
@@ -102,6 +109,18 @@ describe('RetouchOverlay', () => {
     await up()
     expect(ink(c.mask)).toBe(0)
     expect(c.changed).not.toHaveBeenCalled()
+  })
+
+  it('Apple Pencil pressure changes brush area; mouse pressure is ignored', async () => {
+    const full = await mount({ radius: 20 })
+    await down(full.layer(), 400, 300)
+    const fullInk = ink(full.mask)
+    const low = await mount({ radius: 20 })
+    await penDown(low.layer(), 400, 300, 0.1)
+    expect(ink(low.mask)).toBeLessThan(fullInk * 0.7)
+    const high = await mount({ radius: 20 })
+    await penDown(high.layer(), 400, 300, 1)
+    expect(ink(high.mask)).toBe(fullInk)
   })
 
   it('橡皮模式：擦过的地方真的下去', async () => {

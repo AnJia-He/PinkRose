@@ -55,18 +55,41 @@ describe('describeParams', () => {
     expect(s).not.toContain('暗角')   // 零值项不出现
   })
 
-  it('八个参数都有中文名，且名字与参数一一对应', () => {
-    // 八个参数给**不同**的值：否则"名字都出现过"这种断言对调两个标签也照样满足。
-    // 十五个字段要写全 —— 专业面板新加的七个从 ZERO 长（中立 0），**不进提示词**
-    // （`prompt.ts` 的 `PromptParamKey` 只列这八个），所以这一份的输出不变。
+  it('三十九个参数（含色调、黑白混色、磨皮、去雾、HDR、柔光、细节、美颜、透视、镜头与校正）都有中文名，且名字与参数一一对应', () => {
+    // 三十一个参数给**不同**的值：否则"名字都出现过"这种断言对调两个标签也照样满足。
+    // 八十六个字段要写全 —— 专业面板加的那些从 ZERO 长（中立 0），**不进提示词**
+    // （`prompt.ts` 的 `PromptParamKey` 只列这三十一个），所以这一份的输出不含它们。
     const all = describeParams({
       ...ZERO,
       exposure: 1, contrast: 2, highlights: 3, shadows: 4,
-      saturation: 5, temperature: 6, clarity: 7, vignette: 8,
+      whites: 25, blacks: 26,
+      saturation: 5, temperature: 6, tint: 33,
+      bwAmount: 34, bwRed: 35, bwGreen: 36, bwBlue: 37,
+      clarity: 7, vignette: 8,
+      skinSmooth: 9, dehaze: 22, hdr: 23, glow: 24,
+      texture: 27,
+      sharpen: 10, sharpenRadius: 31, sharpenMasking: 32,
+      noiseReduction: 11, colorNoiseReduction: 30, grain: 12,
+      skinBrighten: 13, skinRosy: 14,
+      perspectiveV: 15, perspectiveH: 16,
+      lensBlur: 17, lensRange: 18, lensFeather: 19, lensShape: 28, lensAngle: 29,
+      lensDistortion: 20, lensChromatic: 21,
     })
     for (const [label, v] of [
       ['亮度', 1], ['对比度', 2], ['高光', 3], ['阴影', 4],
-      ['饱和度', 5], ['色温(正数=更暖)', 6], ['通透度', 7], ['暗角', 8],
+      ['白色色阶', 25], ['黑色色阶', 26],
+      ['饱和度', 5], ['色温(正数=更暖)', 6], ['色调(正数=偏洋红)', 33],
+      ['黑白强度', 34], ['红色混色', 35], ['绿色混色', 36], ['蓝色混色', 37],
+      ['通透度', 7], ['暗角', 8], ['磨皮', 9],
+      ['去雾', 22], ['HDR', 23], ['柔光', 24],
+      ['纹理', 27],
+      ['锐化', 10], ['锐化半径', 31], ['锐化蒙版', 32],
+      ['降噪', 11], ['彩色降噪', 30], ['颗粒', 12],
+      ['美白', 13], ['红润', 14],
+      ['垂直透视', 15], ['水平透视', 16],
+      ['虚化强度', 17], ['清晰范围', 18], ['过渡', 19],
+      ['移轴模式', 28], ['移轴角度', 29],
+      ['畸变校正', 20], ['色差校正', 21],
     ] as const) {
       expect(all).toContain(`${label} +${v}`)
     }
@@ -103,6 +126,107 @@ describe('ROUTER_SYSTEM', () => {
     // 不用 /调色[\s\S]*params/ 那种正则：它只要求两个词先后出现，
     // 而同一段里还有别的地方会带 "params"——钉住这一句才真的钉住规则。
     expect(ROUTER_SYSTEM).toContain('一律走 params')
+  })
+
+  it('★ 磨皮（2026-10-17）走 params、给 skinSmooth，且明写"不要为磨皮走 generate"', () => {
+    // 这条规则存在的理由和调色那条同源：磨皮是高频本地操作，派去生成 =
+    // 每次花钱 + 十几秒 + 长边压到 2048。模板里也得有这个键，模型照模板逐键抄。
+    expect(ROUTER_SYSTEM).toContain('给 skinSmooth 正增量')
+    expect(ROUTER_SYSTEM).toContain('不要**为磨皮走 generate')
+    expect(ROUTER_SYSTEM).toContain('"skinSmooth": 0')
+  })
+
+  it('★ 细节组（2026-10-17）走 params、给 sharpen / noiseReduction / grain', () => {
+    // 和磨皮同一类：本地 0~100 的滑杆，模型有标尺；派去生成既慢又贵。
+    expect(ROUTER_SYSTEM).toContain('锐化 / 锐化半径 / 锐化蒙版 / 降噪 / 彩色降噪 / 颗粒')
+    expect(ROUTER_SYSTEM).toContain('"sharpen": 0')
+    expect(ROUTER_SYSTEM).toContain('"sharpenRadius": 0')
+    expect(ROUTER_SYSTEM).toContain('"sharpenMasking": 0')
+    expect(ROUTER_SYSTEM).toContain('"noiseReduction": 0')
+    expect(ROUTER_SYSTEM).toContain('"colorNoiseReduction": 0')
+    expect(ROUTER_SYSTEM).toContain('"grain": 0')
+  })
+
+  it('★ 白色 / 黑色色阶与纹理（2026-10-19）也走 params', () => {
+    expect(ROUTER_SYSTEM).toContain('白色色阶 / 黑色色阶')
+    expect(ROUTER_SYSTEM).toContain('"whites": 0')
+    expect(ROUTER_SYSTEM).toContain('"blacks": 0')
+    expect(ROUTER_SYSTEM).toContain('"texture": 0')
+    expect(ROUTER_SYSTEM).toContain('不要**为它们走 generate')
+  })
+
+  it('★ 去雾（2026-10-17）走 params、给 dehaze，正负两个方向都写清', () => {
+    expect(ROUTER_SYSTEM).toContain('雾蒙蒙')
+    expect(ROUTER_SYSTEM).toContain('给 dehaze 正增量')
+    expect(ROUTER_SYSTEM).toContain('加一点雾')
+    expect(ROUTER_SYSTEM).toContain('"dehaze": 0')
+    expect(ROUTER_SYSTEM).toContain('不要**为去雾走 generate')
+  })
+
+  it('★ HDR（2026-10-18）走 params、给 hdr，并写明是本地局部明暗映射', () => {
+    expect(ROUTER_SYSTEM).toContain('大光比')
+    expect(ROUTER_SYSTEM).toContain('给 hdr 正增量')
+    expect(ROUTER_SYSTEM).toContain('"hdr": 0')
+    expect(ROUTER_SYSTEM).toContain('不要**为 HDR 走 generate')
+  })
+
+  it('★ 柔光（2026-10-18）走 params、给 glow，并写明只让高光溢出', () => {
+    expect(ROUTER_SYSTEM).toContain('柔光')
+    expect(ROUTER_SYSTEM).toContain('给 glow 正增量')
+    expect(ROUTER_SYSTEM).toContain('"glow": 0')
+    expect(ROUTER_SYSTEM).toContain('不要**为柔光走 generate')
+  })
+
+  it('★ 美颜（2026-10-17）走 params、给 skinBrighten / skinRosy', () => {
+    expect(ROUTER_SYSTEM).toContain('美白 / 红润')
+    expect(ROUTER_SYSTEM).toContain('"skinBrighten": 0')
+    expect(ROUTER_SYSTEM).toContain('"skinRosy": 0')
+  })
+
+  it('★ 几何透视（2026-10-17）走 params，并写清正负方向', () => {
+    expect(ROUTER_SYSTEM).toContain('上窄下宽')
+    expect(ROUTER_SYSTEM).toContain('左窄右宽')
+    expect(ROUTER_SYSTEM).toContain('"perspectiveV": 0')
+    expect(ROUTER_SYSTEM).toContain('"perspectiveH": 0')
+  })
+
+  it('★ 镜头虚化（2026-10-17）走 params，并说明不是人物抠图', () => {
+    expect(ROUTER_SYSTEM).toContain('背景虚化一点')
+    expect(ROUTER_SYSTEM).toContain('不是人物背景抠图')
+    expect(ROUTER_SYSTEM).toContain('"lensBlur": 0')
+    expect(ROUTER_SYSTEM).toContain('"lensRange": 0')
+    expect(ROUTER_SYSTEM).toContain('"lensFeather": 0')
+    expect(ROUTER_SYSTEM).toContain('"lensFocusX": 0')
+    expect(ROUTER_SYSTEM).toContain('"lensFocusY": 0')
+    expect(ROUTER_SYSTEM).toContain('负值左 / 上')
+  })
+
+  it('★ 移轴模糊（2026-10-21）走 params，模式和角度都交给模型', () => {
+    expect(ROUTER_SYSTEM).toContain('移轴')
+    expect(ROUTER_SYSTEM).toContain('微缩模型')
+    expect(ROUTER_SYSTEM).toContain('"lensShape": 0')
+    expect(ROUTER_SYSTEM).toContain('"lensAngle": 0')
+    expect(ROUTER_SYSTEM).toContain('不要**为移轴走 generate')
+    expect(ROUTER_SYSTEM).toContain('正角度让清晰带顺时针倾斜')
+  })
+
+  it('★ 镜头校正（2026-10-17）走 params，覆盖畸变和色差', () => {
+    expect(ROUTER_SYSTEM).toContain('广角拍弯了')
+    expect(ROUTER_SYSTEM).toContain('lensDistortion')
+    expect(ROUTER_SYSTEM).toContain('lensChromatic')
+    expect(ROUTER_SYSTEM).toContain('"lensDistortion": 0')
+    expect(ROUTER_SYSTEM).toContain('"lensChromatic": 0')
+    expect(ROUTER_SYSTEM).toContain('不要**为它们走 generate')
+  })
+
+  it('★ 画质增强 / 黑白上色（2026-10-18）走 generate，且把保身份、保构图写清', () => {
+    expect(ROUTER_SYSTEM).toContain('画质增强 / 修复模糊照片 / 去压缩噪点')
+    expect(ROUTER_SYSTEM).toContain('facial identity')
+    expect(ROUTER_SYSTEM).toContain('黑白上色 / 老照片上色')
+    expect(ROUTER_SYSTEM).toContain('natural colors')
+    expect(ROUTER_SYSTEM).toContain('no added objects')
+    // 单根「清晰度」滑杆仍然是本地调色，不能因为这里加了画质增强就被送去生成。
+    expect(ROUTER_SYSTEM).toContain('单个「清晰度」滑杆仍走 params')
   })
 
   it('明写「走 params 时 edit_prompt 必须留空」—— 实测模型把它当必填项填满', () => {

@@ -874,8 +874,11 @@ async function measureToolRow(page, doneText = '完成') {
       .find(b => (b.textContent ?? '').trim() === t) ?? null
     return {
       row: box(document.querySelector('.tool-row-second')),
+      main: box(document.querySelector('.tool-row-main')),
       done: box(btn(text)),
       cancel: box(btn('取消')),
+      mainScrollW: document.querySelector('.tool-row-main')?.scrollWidth ?? 0,
+      mainClientW: document.querySelector('.tool-row-main')?.clientWidth ?? 0,
       scrollW: document.documentElement.scrollWidth,
       clientW: document.documentElement.clientWidth,
     }
@@ -886,6 +889,10 @@ function judgeToolRow(label, m, view, doneText = '完成') {
   const fmt = b => (b ? `${b.w}x${b.h} @${b.left},${b.top}` : '不在 DOM 里')
   console.log(`── ${label}`)
   console.log(`     第二行 ${fmt(m.row)}   完成 ${fmt(m.done)}   取消 ${fmt(m.cancel)}`)
+  if (view.width <= 640 && m.mainScrollW > m.mainClientW + 1) {
+    fails.push(`${label}：工具行第一排的 ${m.mainScrollW}px 内容塞不进 ${m.mainClientW}px ——` +
+      '工具格被切掉了一截（窄屏该收紧内边距，实在放不下才横滑）')
+  }
   if (!m.row || m.row.w <= 0 || m.row.h <= 0) {
     fails.push(`${label}：点了「裁剪」却没有第二行（.tool-row-second）——` +
       '那个工具的控件整个不见了')
@@ -1507,6 +1514,21 @@ try {
           await page.waitForTimeout(300)   // 让排版落定（横滑条出现会再占一点高）
           judge(`${view.name} · 开着裁剪`, await measure(page), view)
           judgeToolRow(`${view.name} · 开着裁剪`, await measureToolRow(page), view)
+          // ★ 2026-10-17（AI 扩图）：裁剪里的另一个子模式；比例和说明走横滑，
+          // 主按钮「生成扩图」和「取消」必须仍在视口里。
+          await page.getByRole('button', { name: 'AI 扩图' }).click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着 AI 扩图`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着 AI 扩图`, await measureToolRow(page, '生成扩图'), view, '生成扩图')
+          await page.getByRole('button', { name: '返回裁剪' }).click()
+          await page.waitForTimeout(200)
+          // ★ 2026-10-17（四角透视）：裁剪里的子模式，出口叫「应用透视」。
+          await page.locator('.crop-chip', { hasText: '透视' }).click()
+          await page.waitForSelector('.perspective', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着透视`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着透视`, await measureToolRow(page, '应用透视'), view, '应用透视')
           // 量完收掉（「取消」= 什么都没发生）—— 不收的话后面每一屏都多一条第二行，
           // 而那些判据量的是别的功能。
           await page.locator('.crop-tools button', { hasText: '取消' }).click()
@@ -1527,6 +1549,228 @@ try {
           await page.waitForTimeout(300)
           judge(`${view.name} · 开着点修`, await measure(page), view)
           judgeToolRow(`${view.name} · 开着点修`, await measureToolRow(page, '擦掉这里'), view, '擦掉这里')
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-17（智能主体 / 换背景）：点修里的最长一条第二行 ──
+        // 背景下拉、智能主体、点背景、容差和画笔都在同一条横滑带里；
+        // 主按钮仍要完整落在视口里，不能把照片挤矮或让整页横向溢出。
+        if (await retouchCell.count()) {
+          await retouchCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.getByRole('button', { name: '抠图', exact: true }).click()
+          await page.waitForSelector('.bg-select select', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着抠图 / 换背景`, await measure(page), view)
+          judgeToolRow(
+            `${view.name} · 开着抠图 / 换背景`,
+            await measureToolRow(page, '擦成透明'), view, '擦成透明',
+          )
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-17（克隆）：选源点 / 笔刷 / 重来 / 应用克隆 ──
+        if (await retouchCell.count()) {
+          await retouchCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.getByRole('button', { name: '克隆', exact: true }).click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着克隆`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着克隆`, await measureToolRow(page, '应用克隆'), view, '应用克隆')
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-18（AI 消除）：点修里的付费子模式 ──────────────
+        // 笔刷 / 取消 / 主按钮都在同一条横滑带里；会花额度那句提示不能把
+        // 行高撑破，主按钮也不能被挤出 390px 视口。
+        if (await retouchCell.count()) {
+          await retouchCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.getByRole('button', { name: 'AI 消除', exact: true }).first().click()
+          await page.waitForSelector('.crop-done', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着 AI 消除`, await measure(page), view)
+          judgeToolRow(
+            `${view.name} · 开着 AI 消除`,
+            await measureToolRow(page, 'AI 消除'), view, 'AI 消除',
+          )
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-17（磨皮）：第六个状态「开着磨皮」──────────────
+        // 第二行和点修同一套，多出「强度」和「纹理」滑块（另加笔刷一根）——
+        // 窄屏走横向滚动时它是**最长**的一条，主按钮仍要钉在右边够得着。
+        const smoothCell = page.locator('.tool-cell', { hasText: '磨皮' })
+        if (!(await smoothCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「磨皮」那颗工具格 ——` +
+            '「开着磨皮」这一态量不了（下面两条判据先跳过）')
+        } else {
+          await smoothCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着磨皮`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着磨皮`, await measureToolRow(page, '磨这里'), view, '磨这里')
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-17（人像）：瘦脸 / 大眼 / 下巴三根滑杆 + 人脸框 ──
+        const portraitCell = page.locator('.tool-cell', { hasText: '人像' })
+        if (!(await portraitCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「人像」那颗工具格 ——` +
+            '「开着人像」这一态量不了')
+        } else {
+          await portraitCell.click()
+          await page.waitForSelector('.face-guide, .notice', { timeout: 15_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着人像`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着人像`, await measureToolRow(page, '应用人像'), view, '应用人像')
+          if (await page.locator('.crop-tools button', { hasText: '取消' }).count()) {
+            await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          }
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-17（局部）：第七个状态「开着局部」──────────────
+        // 第二行最长：效果 + 蒙版 + 笔触 + 笔刷 + 当前模式滑杆 + 取消 / 应用。窄屏横滑时
+        // 「应用局部」仍要钉在右边够得着。
+        const localCell = page.locator('.tool-cell', { hasText: '局部' })
+        if (!(await localCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「局部」那颗工具格 ——` +
+            '「开着局部」这一态量不了（下面两条判据先跳过）')
+        } else {
+          await localCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着局部`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着局部`, await measureToolRow(page, '应用局部'), view, '应用局部')
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-17（文字）：第八个状态「开着文字」──────────────
+        // 第二行比别的多一个输入框；窄屏走横滑，主按钮仍要钉在右边够得着。
+        const textCell = page.locator('.tool-cell', { hasText: '文字' })
+        if (!(await textCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「文字」那颗工具格 ——` +
+            '「开着文字」这一态量不了（下面两条判据先跳过）')
+        } else {
+          await textCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着文字`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着文字`, await measureToolRow(page, '加上文字'), view, '加上文字')
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-18（画布）：装饰里的新模式 ───────────────────────
+        const frameCell = page.locator('.tool-cell', { hasText: '装饰' })
+        if (!(await frameCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「装饰」那颗工具格 ——` +
+            '「开着画布 / 边框」这两态量不了')
+        } else {
+          await frameCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.locator('.tool-row-second .crop-chip', { hasText: '画布' }).click()
+          await page.waitForSelector('.canvas-frame-preview', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着画布`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着画布`, await measureToolRow(page, '应用画布'), view, '应用画布')
+
+          // ── ★ 2026-10-17（装饰）：「开着边框」────────────────────────
+          // 第二行有四个样式药丸 + 宽度 / 颜色 + 出口；窄屏横滑，主按钮仍要够得着。
+          await page.locator('.tool-row-second .crop-chip', { hasText: '边框' }).click()
+          await page.waitForSelector('.frame-preview', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着边框`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着边框`, await measureToolRow(page, '应用边框'), view, '应用边框')
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-17（贴纸）：第十一个状态「开着贴纸」──────────────
+        if (!(await frameCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「装饰」那颗工具格 ——` +
+            '「开着贴纸」这一态量不了')
+        } else {
+          await frameCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.locator('.crop-chip', { hasText: '贴纸' }).click()
+          await page.waitForSelector('.sticker-preview', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着贴纸`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着贴纸`, await measureToolRow(page, '应用贴纸'), view, '应用贴纸')
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-19（形状）：装饰里的新成员 ─────────────────────
+        if (!(await frameCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「装饰」那颗工具格 ——` +
+            '「开着形状」这一态量不了')
+        } else {
+          await frameCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.locator('.tool-row-second .crop-chip', { hasText: '形状' }).click()
+          await page.waitForSelector('.shape-layer', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着形状`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着形状`, await measureToolRow(page, '应用形状'), view, '应用形状')
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-18（涂鸦）：装饰里的第四种模式 ─────────────────
+        if (!(await frameCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「装饰」那颗工具格 ——` +
+            '「开着涂鸦」这一态量不了')
+        } else {
+          await frameCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.locator('.crop-chip', { hasText: '涂鸦' }).click()
+          await page.waitForSelector('.doodle-layer', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着涂鸦`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着涂鸦`, await measureToolRow(page, '应用涂鸦'), view, '应用涂鸦')
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-18（光效）：装饰里的第五种模式 ─────────────────
+        if (!(await frameCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「装饰」那颗工具格 ——` +
+            '「开着光效」这一态量不了')
+        } else {
+          await frameCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.locator('.tool-row-second .crop-chip', { hasText: '光效' }).click()
+          await page.waitForSelector('.light-layer', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着光效`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着光效`, await measureToolRow(page, '应用光效'), view, '应用光效')
+          await page.locator('.crop-tools button', { hasText: '取消' }).click()
+          await page.waitForTimeout(200)
+        }
+
+        // ── ★ 2026-10-17（液化）：第十个状态「开着液化」──────────────
+        // 液化是「局部」的子模式，没有自己的格子；从局部切进去，量第二条出口。
+        if (!(await localCell.count())) {
+          fails.push(`${view.name}：调色屏上找不到「局部」那颗工具格 ——` +
+            '「开着液化」这一态量不了')
+        } else {
+          await localCell.click()
+          await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+          await page.locator('.crop-chip', { hasText: '液化' }).click()
+          await page.waitForSelector('.liquify', { timeout: 5_000 })
+          await page.waitForTimeout(300)
+          judge(`${view.name} · 开着液化`, await measure(page), view)
+          judgeToolRow(`${view.name} · 开着液化`, await measureToolRow(page, '应用液化'), view, '应用液化')
           await page.locator('.crop-tools button', { hasText: '取消' }).click()
           await page.waitForTimeout(200)
         }
@@ -1568,7 +1812,12 @@ try {
       judge(`${view.name} · 存失败之后`, await measure(page), view)
       // 量完就收掉：留着的话下面每一屏都跟着变矮，而那些判据量的是别的功能。
       // （「知道了」也是用户真会按的一个按钮。）
-      await page.getByRole('button', { name: '知道了' }).click()
+      // 前几步可能留下不止一条通报；逐条关掉，避免 strict mode 撞到两个同名按钮。
+      const dismissals = page.getByRole('button', { name: '知道了' })
+      while (await dismissals.count() > 0) {
+        await dismissals.first().click()
+        await page.waitForTimeout(50)
+      }
       await page.waitForTimeout(200)
       saveFails = false
 
@@ -1725,6 +1974,323 @@ try {
       if (!real.end) {
         fails.push(`${view.name}：作品全摆完了，却没有那句「没有更多了」`)
       }
+
+      // ── 批量处理（★ 2026-10-17）────────────────────────────────────
+      // 它没有一级导航入口，从作品页头进。这里量的是空工作区：头、选照片区、
+      // 预设、导出和主按钮都不能把页面顶出横向滚动；真正处理多图由
+      // `.superpowers/scratch/batch-probe.mjs` 那类真浏览器探针负责。
+      await page.getByRole('button', { name: '批量处理' }).click()
+      await page.waitForSelector('.batch-page', { timeout: 10_000 })
+      const batch = await page.evaluate(() => {
+        const box = (selector) => {
+          const el = document.querySelector(selector)
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return {
+            left: Math.round(r.left), right: Math.round(r.right),
+            top: Math.round(r.top), bottom: Math.round(r.bottom),
+          }
+        }
+        return {
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+          back: box('.batch-back'),
+          drop: box('.batch-drop'),
+          pick: box('.batch-pick'),
+          start: box('.batch-run-button'),
+        }
+      })
+      console.log(`── ${view.name} · 作品 → 批量处理`)
+      console.log(`     返回 ${JSON.stringify(batch.back)}　选照片区 ${JSON.stringify(batch.drop)}`)
+      if (batch.scrollW > batch.clientW + TOL) {
+        fails.push(`${view.name}：批量处理页横向溢出（${batch.scrollW} > ${batch.clientW}）`)
+      }
+      for (const [name, b] of [['返回', batch.back], ['选照片区', batch.drop], ['选照片', batch.pick], ['开始处理', batch.start]]) {
+        if (!b || b.left < -TOL || b.right > view.width + TOL) {
+          fails.push(`${view.name}：批量处理的「${name}」没有完整落在视口宽度里（${JSON.stringify(b)}）`)
+        }
+      }
+      await page.locator('.batch-back').click()
+      await page.waitForSelector('.gallery-cell', { timeout: 10_000 })
+
+      // ── 拼图（★ 2026-10-17）────────────────────────────────────────
+      await page.getByRole('button', { name: '拼图' }).click()
+      await page.waitForSelector('.collage-page', { timeout: 10_000 })
+      const collage = await page.evaluate(() => {
+        const box = (selector) => {
+          const el = document.querySelector(selector)
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return {
+            left: Math.round(r.left), right: Math.round(r.right),
+            top: Math.round(r.top), bottom: Math.round(r.bottom),
+          }
+        }
+        return {
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+          back: box('.batch-back'),
+          drop: box('.batch-drop'),
+          controls: box('.collage-controls'),
+          preview: box('.collage-placeholder'),
+          start: box('.batch-run-button'),
+        }
+      })
+      console.log(`── ${view.name} · 作品 → 拼图`)
+      console.log(`     返回 ${JSON.stringify(collage.back)}　选照片区 ${JSON.stringify(collage.drop)}`)
+      if (collage.scrollW > collage.clientW + TOL) {
+        fails.push(`${view.name}：拼图页横向溢出（${collage.scrollW} > ${collage.clientW}）`)
+      }
+      for (const [name, b] of [
+        ['返回', collage.back], ['选照片区', collage.drop],
+        ['版式', collage.controls], ['预览占位', collage.preview], ['生成按钮', collage.start],
+      ]) {
+        if (!b || b.left < -TOL || b.right > view.width + TOL) {
+          fails.push(`${view.name}：拼图的「${name}」没有完整落在视口宽度里（${JSON.stringify(b)}）`)
+        }
+      }
+      await page.locator('.batch-back').click()
+      await page.waitForSelector('.gallery-cell', { timeout: 10_000 })
+
+      // ── 全景（★ 2026-10-18）────────────────────────────────────────
+      // 和拼图同一套判据：空工作区的头、选照片区、预览占位和生成按钮
+      // 都不能把页面顶出横向滚动；顺序行的上下移在 390px 也要放得下。
+      await page.getByRole('button', { name: '全景', exact: true }).click()
+      await page.waitForSelector('.panorama-page', { timeout: 10_000 })
+      const panorama = await page.evaluate(() => {
+        const box = (selector) => {
+          const el = document.querySelector(selector)
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return {
+            left: Math.round(r.left), right: Math.round(r.right),
+            top: Math.round(r.top), bottom: Math.round(r.bottom),
+          }
+        }
+        return {
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+          back: box('.batch-back'),
+          drop: box('.batch-drop'),
+          preview: box('.collage-placeholder'),
+          start: box('.batch-run-button'),
+        }
+      })
+      console.log(`── ${view.name} · 作品 → 全景`)
+      console.log(`     返回 ${JSON.stringify(panorama.back)}　选照片区 ${JSON.stringify(panorama.drop)}`)
+      if (panorama.scrollW > panorama.clientW + TOL) {
+        fails.push(`${view.name}：全景页横向溢出（${panorama.scrollW} > ${panorama.clientW}）`)
+      }
+      for (const [name, b] of [
+        ['返回', panorama.back], ['选照片区', panorama.drop],
+        ['预览占位', panorama.preview], ['生成按钮', panorama.start],
+      ]) {
+        if (!b || b.left < -TOL || b.right > view.width + TOL) {
+          fails.push(`${view.name}：全景的「${name}」没有完整落在视口宽度里（${JSON.stringify(b)}）`)
+        }
+      }
+      await page.locator('.batch-back').click()
+      await page.waitForSelector('.gallery-cell', { timeout: 10_000 })
+
+      // ── HDR 合成（★ 2026-10-18）────────────────────────────────────
+      await page.getByRole('button', { name: 'HDR 合成', exact: true }).click()
+      await page.waitForSelector('.hdr-page', { timeout: 10_000 })
+      const hdr = await page.evaluate(() => {
+        const box = (selector) => {
+          const el = document.querySelector(selector)
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return {
+            left: Math.round(r.left), right: Math.round(r.right),
+            top: Math.round(r.top), bottom: Math.round(r.bottom),
+          }
+        }
+        return {
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+          back: box('.batch-back'),
+          drop: box('.batch-drop'),
+          preview: box('.collage-placeholder'),
+          start: box('.batch-run-button'),
+        }
+      })
+      console.log(`── ${view.name} · 作品 → HDR 合成`)
+      console.log(`     返回 ${JSON.stringify(hdr.back)}　选照片区 ${JSON.stringify(hdr.drop)}`)
+      if (hdr.scrollW > hdr.clientW + TOL) {
+        fails.push(`${view.name}：HDR 页横向溢出（${hdr.scrollW} > ${hdr.clientW}）`)
+      }
+      for (const [name, b] of [
+        ['返回', hdr.back], ['选照片区', hdr.drop],
+        ['预览占位', hdr.preview], ['生成按钮', hdr.start],
+      ]) {
+        if (!b || b.left < -TOL || b.right > view.width + TOL) {
+          fails.push(`${view.name}：HDR 的「${name}」没有完整落在视口宽度里（${JSON.stringify(b)}）`)
+        }
+      }
+      await page.locator('.batch-back').click()
+      await page.waitForSelector('.gallery-cell', { timeout: 10_000 })
+
+      // ── 长曝光（★ 2026-10-18）──────────────────────────────────────
+      await page.getByRole('button', { name: '长曝光', exact: true }).click()
+      await page.waitForSelector('.long-exposure-page', { timeout: 10_000 })
+      const longExposure = await page.evaluate(() => {
+        const box = (selector) => {
+          const el = document.querySelector(selector)
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return {
+            left: Math.round(r.left), right: Math.round(r.right),
+            top: Math.round(r.top), bottom: Math.round(r.bottom),
+          }
+        }
+        return {
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+          back: box('.batch-back'),
+          drop: box('.batch-drop'),
+          preview: box('.collage-placeholder'),
+          start: box('.batch-run-button'),
+        }
+      })
+      console.log(`── ${view.name} · 作品 → 长曝光`)
+      console.log(`     返回 ${JSON.stringify(longExposure.back)}　选照片区 ${JSON.stringify(longExposure.drop)}`)
+      if (longExposure.scrollW > longExposure.clientW + TOL) {
+        fails.push(`${view.name}：长曝光页横向溢出（${longExposure.scrollW} > ${longExposure.clientW}）`)
+      }
+      for (const [name, b] of [
+        ['返回', longExposure.back], ['选照片区', longExposure.drop],
+        ['预览占位', longExposure.preview], ['生成按钮', longExposure.start],
+      ]) {
+        if (!b || b.left < -TOL || b.right > view.width + TOL) {
+          fails.push(`${view.name}：长曝光的「${name}」没有完整落在视口宽度里（${JSON.stringify(b)}）`)
+        }
+      }
+      await page.locator('.batch-back').click()
+      await page.waitForSelector('.gallery-cell', { timeout: 10_000 })
+
+      // ── 九宫格切图（★ 2026-10-18）──────────────────────────────────
+      // 和拼图同一套判据：单张照片入口、切法、预览占位和下载按钮都在屏内。
+      await page.getByRole('button', { name: '九宫格', exact: true }).click()
+      await page.waitForSelector('.grid-split-page', { timeout: 10_000 })
+      const gridSplit = await page.evaluate(() => {
+        const box = (selector) => {
+          const el = document.querySelector(selector)
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return {
+            left: Math.round(r.left), right: Math.round(r.right),
+            top: Math.round(r.top), bottom: Math.round(r.bottom),
+          }
+        }
+        return {
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+          back: box('.batch-back'),
+          drop: box('.batch-drop'),
+          controls: box('.collage-controls'),
+          preview: box('.collage-placeholder'),
+          start: box('.batch-run-button'),
+        }
+      })
+      console.log(`── ${view.name} · 作品 → 九宫格切图`)
+      console.log(`     返回 ${JSON.stringify(gridSplit.back)}　选照片区 ${JSON.stringify(gridSplit.drop)}`)
+      if (gridSplit.scrollW > gridSplit.clientW + TOL) {
+        fails.push(`${view.name}：九宫格页横向溢出（${gridSplit.scrollW} > ${gridSplit.clientW}）`)
+      }
+      for (const [name, b] of [
+        ['返回', gridSplit.back], ['选照片区', gridSplit.drop],
+        ['切法', gridSplit.controls], ['预览占位', gridSplit.preview], ['下载按钮', gridSplit.start],
+      ]) {
+        if (!b || b.left < -TOL || b.right > view.width + TOL) {
+          fails.push(`${view.name}：九宫格的「${name}」没有完整落在视口宽度里（${JSON.stringify(b)}）`)
+        }
+      }
+      await page.locator('.batch-back').click()
+      await page.waitForSelector('.gallery-cell', { timeout: 10_000 })
+
+      // ── 长图拼接（★ 2026-10-18）────────────────────────────────────
+      await page.getByRole('button', { name: '长图', exact: true }).click()
+      await page.waitForSelector('.long-image-page', { timeout: 10_000 })
+      const longImage = await page.evaluate(() => {
+        const box = (selector) => {
+          const el = document.querySelector(selector)
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return {
+            left: Math.round(r.left), right: Math.round(r.right),
+            top: Math.round(r.top), bottom: Math.round(r.bottom),
+          }
+        }
+        return {
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+          back: box('.batch-back'),
+          drop: box('.batch-drop'),
+          controls: box('.collage-controls'),
+          preview: box('.collage-placeholder'),
+          start: box('.batch-run-button'),
+        }
+      })
+      console.log(`── ${view.name} · 作品 → 长图拼接`)
+      console.log(`     返回 ${JSON.stringify(longImage.back)}　选照片区 ${JSON.stringify(longImage.drop)}`)
+      if (longImage.scrollW > longImage.clientW + TOL) {
+        fails.push(`${view.name}：长图页横向溢出（${longImage.scrollW} > ${longImage.clientW}）`)
+      }
+      for (const [name, b] of [
+        ['返回', longImage.back], ['选照片区', longImage.drop],
+        ['排版', longImage.controls], ['预览占位', longImage.preview], ['生成按钮', longImage.start],
+      ]) {
+        if (!b || b.left < -TOL || b.right > view.width + TOL) {
+          fails.push(`${view.name}：长图的「${name}」没有完整落在视口宽度里（${JSON.stringify(b)}）`)
+        }
+      }
+      await page.locator('.batch-back').click()
+      await page.waitForSelector('.gallery-cell', { timeout: 10_000 })
+
+      // ── 作品多选下载（★ 2026-10-17）────────────────────────────────
+      await page.getByRole('button', { name: '多选' }).click()
+      await page.locator('.gallery-cell').first().click()
+      const selectedBar = await page.evaluate(() => {
+        const box = (selector) => {
+          const el = document.querySelector(selector)
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return {
+            left: Math.round(r.left), right: Math.round(r.right),
+            top: Math.round(r.top), bottom: Math.round(r.bottom),
+          }
+        }
+        return {
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+          bar: box('.gallery-select'),
+          download: box('.gallery-select-download'),
+          color: box('.gallery-bulk-color select'),
+          similar: box('[aria-label="找相似照片"]'),
+          best: box('[aria-label="从选中里挑最好"]'),
+          remove: box('.gallery-select-del'),
+          cancel: box('.gallery-select-cancel'),
+        }
+      })
+      console.log(`── ${view.name} · 作品 → 多选`)
+      console.log(`     操作条 ${JSON.stringify(selectedBar.bar)}　下载 ${JSON.stringify(selectedBar.download)}`
+        + `　颜色 ${JSON.stringify(selectedBar.color)}　相似 ${JSON.stringify(selectedBar.similar)}`
+        + `　挑最好 ${JSON.stringify(selectedBar.best)}`)
+      if (selectedBar.scrollW > selectedBar.clientW + TOL) {
+        fails.push(`${view.name}：作品多选操作条横向溢出（${selectedBar.scrollW} > ${selectedBar.clientW}）`)
+      }
+      for (const [name, b] of [
+        ['操作条', selectedBar.bar], ['下载', selectedBar.download],
+        ['颜色', selectedBar.color], ['找相似', selectedBar.similar],
+        ['挑最好', selectedBar.best],
+        ['删除', selectedBar.remove], ['取消', selectedBar.cancel],
+      ]) {
+        if (!b || b.left < -TOL || b.right > view.width + TOL) {
+          fails.push(`${view.name}：作品多选的「${name}」没有完整落在视口宽度里（${JSON.stringify(b)}）`)
+        }
+      }
+      await page.locator('.gallery-select-cancel').click()
+      await page.waitForFunction(() => !document.querySelector('.gallery-select'), null, { timeout: 5_000 })
 
       // ── 详情页（Task 12）────────────────────────────────────────────
       // 点第一格进去 —— 和用户做的是同一件事（`onOpen` 那条路）。
@@ -1985,12 +2551,60 @@ if (fails.length) {
   console.log('   外加调色屏「开着裁剪」那一态（★ 2026-10-06 终审 C1）：工具行的第二行' +
     '不折（窄屏 ≤ 64px，折出来的每一行都是从照片身上抠走的）、' +
     '「完成 / 取消」两颗完整在视口里（窄屏横滑之后也够得着）')
+  console.log('   外加调色屏「开着 AI 扩图」那一态（★ 2026-10-17）：比例和说明横滑，' +
+    '主按钮「生成扩图」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着透视」那一态（★ 2026-10-17）：四角把手在照片上，' +
+    '主按钮「应用透视」和「取消」完整在视口里')
   console.log('   外加调色屏「开着点修」那一态（★ 2026-10-07）：同一套判据，' +
     '主按钮叫「擦掉这里」（它没涂过时是禁用的，量盒子不受影响）')
+  console.log('   外加调色屏「开着抠图 / 换背景」那一态（★ 2026-10-17）：' +
+    '智能主体 / 背景下拉 / 画笔横滑，主按钮「擦成透明」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着克隆」那一态（★ 2026-10-17）：' +
+    '选源点 / 笔刷 / 重来横滑，主按钮「应用克隆」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着 AI 消除」那一态（★ 2026-10-18）：' +
+    '会花额度那句提示不撑破行高，主按钮「AI 消除」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着磨皮」那一态（★ 2026-10-17）：三根滑块也是横滑，' +
+    '主按钮「磨这里」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着人像」那一态（★ 2026-10-17）：人脸框在照片上，' +
+    '七根滑杆和口红色号横滑，主按钮「应用人像」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着局部」那一态（★ 2026-10-17）：八颗工具格仍在 390px 内，' +
+    '效果 / 蒙版 / 笔触 / 当前模式滑杆横滑，主按钮「应用局部」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着文字」那一态（★ 2026-10-17）：输入框 + 字体 / 字号 / 颜色横滑，' +
+    '主按钮「加上文字」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着边框」那一态（★ 2026-10-17）：四个样式 + 宽度 / 颜色横滑，' +
+    '主按钮「应用边框」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着画布」那一态（★ 2026-10-18）：比例 / 背景 / 边距 / 颜色横滑，' +
+    '主按钮「应用画布」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着贴纸」那一态（★ 2026-10-17）：十二种形状 + 大小 / 旋转 / 颜色横滑，' +
+    '主按钮「应用贴纸」和「取消」完整在视口里')
+    console.log('   外加调色屏「开着形状」那一态（★ 2026-10-19）：矩形 / 椭圆 / 直线 / 箭头 / 线宽 / 圆角 / 填充横滑，' +
+      '主按钮「应用形状」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着涂鸦」那一态（★ 2026-10-18）：颜色 / 笔刷 / 不透明度 /' +
+    '撤销 / 清空横滑，主按钮「应用涂鸦」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着光效」那一态（★ 2026-10-18）：预设 / 强度横滑，' +
+    '主按钮「应用光效」和「取消」完整在视口里')
+  console.log('   外加调色屏「开着液化」那一态（★ 2026-10-17）：从「局部」切进去，' +
+    '两个笔触 / 笔刷 / 强度横滑，主按钮「应用液化」和「取消」完整在视口里')
   console.log('   外加存失败（§6.6 ①）：横幅和那个「下载到电脑」都完整在视口里、不用滚动、' +
     '画布还在、两个按钮的字各顶一行（不被 flex 挤扁）')
   console.log(`   外加作品页：${GALLERY_FAKE} 条时首屏只摆 ${GALLERY_FIRST} 张、圈在转、` +
     '滚到底真的接上后面的、整页不滚（左栏钉在原地）')
+  console.log('   外加作品页「批量处理」（★ 2026-10-17）：返回 / 选照片区 / 起点按钮' +
+    '都在视口宽度内，页面不横向溢出')
+  console.log('   外加作品页「拼图」（★ 2026-10-17）：返回 / 选照片区 / 版式 / 预览 /' +
+    '生成按钮都在视口宽度内，页面不横向溢出')
+  console.log('   外加作品页「全景」（★ 2026-10-18）：返回 / 选照片区 / 预览占位 /' +
+    '生成按钮都在视口宽度内，页面不横向溢出')
+  console.log('   外加作品页「HDR 合成」（★ 2026-10-18）：返回 / 选照片区 / 预览占位 /' +
+    '生成按钮都在视口宽度内，页面不横向溢出')
+  console.log('   外加作品页「长曝光」（★ 2026-10-18）：返回 / 选照片区 / 预览占位 /' +
+    '生成按钮都在视口宽度内，页面不横向溢出')
+  console.log('   外加作品页「九宫格切图」（★ 2026-10-18）：返回 / 选照片区 / 切法 /' +
+    '预览占位 / 下载按钮都在视口宽度内，页面不横向溢出')
+  console.log('   外加作品页「长图拼接」（★ 2026-10-18）：返回 / 选照片区 / 排版 /' +
+    '预览占位 / 生成按钮都在视口宽度内，页面不横向溢出')
+  console.log('   外加作品页「多选下载」（★ 2026-10-17）：操作条、下载、删除、取消' +
+    '都完整在视口宽度内，页面不横向溢出')
   console.log('   外加作品页列表上那张缩略图**不是被拉大的**（源像素 ≥ 它被显示出来要的' +
     '设备像素；只判桌面档，理由见 judgeGallery 那段）')
   console.log(`   外加详情页：那张大图真的是原图（自然尺寸的长边 ≥ ${SEED_IMAGE_LONG}，不是 ${SEED_THUMB_MAX}px 的缩略图）、` +

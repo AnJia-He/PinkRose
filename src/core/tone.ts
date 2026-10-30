@@ -20,8 +20,8 @@ export function linearToSrgb(c: number): number {
 }
 
 /**
- * 六个「与像素位置无关」的参数依次作用在一个 sRGB 颜色上：
- * 色温 → 曝光 → 高光/阴影 → 对比度 → 饱和度。
+ * 七个「与像素位置无关」的参数依次作用在一个 sRGB 颜色上：
+ * 色温 / 色调 → 曝光 → 高光/阴影 → 对比度 → 饱和度。
  *
  * 另外两个参数**故意不在这里**：
  *   - 清晰度（clarity）需要邻域像素的模糊值
@@ -31,12 +31,21 @@ export function linearToSrgb(c: number): number {
  * 本函数的运算顺序与 render/shader.ts 的 GLSL 实现严格一致，
  * 改一边必须同步改另一边。
  */
-export function applyTone(rgb: RGB, u: Unit): RGB {
+export function applyTone(
+  rgb: RGB,
+  u: Unit,
+  dehaze?: { amount: number; dark: number },
+): RGB {
   let [r, g, b] = rgb
 
   // 1. 色温：暖 = 抬红压蓝（sRGB 空间近似，够用且可预测）
   r += u.temperature * 0.10
   b -= u.temperature * 0.10
+  // 1.5 色调：绿—洋红轴。正洋红、负偏绿；系数以亮度权重平衡，
+  //     所以主要改变色相，不会顺手把整张图提亮 / 压暗。
+  r += u.tint * 0.09
+  g -= u.tint * 0.035
+  b += u.tint * 0.09
 
   // 2. 曝光：线性空间乘 2^ev
   r = srgbToLinear(r); g = srgbToLinear(g); b = srgbToLinear(b)
@@ -62,11 +71,44 @@ export function applyTone(rgb: RGB, u: Unit): RGB {
   const loW = (1 - smoothstep(0.0, 0.5, l)) * 1.0 * u.shadows * l
   r += hiW + loW; g += hiW + loW; b += hiW + loW
 
+  // 3.5 白色 / 黑色色阶：端点加权。与 shader 的公式和顺序保持一致，
+  //     小底数保证纯黑 / 纯白端点仍可移动，但不会退化成第二根曝光。
+  const lw = luma(r, g, b)
+  const whiteW = smoothstep(0.65, 1.0, lw) * u.whites
+    * (0.05 + 0.95 * (1.0 - lw)) * 1.2
+  const blackW = (1 - smoothstep(0.0, 0.35, lw)) * u.blacks
+    * (0.05 + 0.95 * lw) * 1.2
+  r += whiteW + blackW
+  g += whiteW + blackW
+  b += whiteW + blackW
+
   // 4. 对比度：围绕中灰支点
   const cScale = 1 + u.contrast
   r = (r - 0.5) * cScale + 0.5
   g = (g - 0.5) * cScale + 0.5
   b = (b - 0.5) * cScale + 0.5
+
+  // 4.5 去雾：局部引擎会把邻域暗通道一起传进来；没有邻域的程序仍可省略。
+  if (dehaze && Math.abs(dehaze.amount) > 1e-5) {
+    const haze = smoothstep(0.30, 0.85, clamp01(dehaze.dark))
+    if (dehaze.amount > 0) {
+      const trans = Math.max(0.35, 1 - dehaze.amount * 0.45 * haze)
+      const lift = 0.05 * dehaze.amount * haze
+      r = (r - lift) / trans
+      g = (g - lift) / trans
+      b = (b - lift) / trans
+      const dl = luma(r, g, b)
+      const chroma = 1 + dehaze.amount * 0.22 * haze
+      r = dl + (r - dl) * chroma
+      g = dl + (g - dl) * chroma
+      b = dl + (b - dl) * chroma
+    } else {
+      const mix = Math.min(1, -dehaze.amount * 0.35)
+      r += (0.82 - r) * mix
+      g += (0.86 - g) * mix
+      b += (0.92 - b) * mix
+    }
+  }
 
   // 5. 饱和度：朝亮度灰点插值
   const l2 = luma(r, g, b)
@@ -74,6 +116,19 @@ export function applyTone(rgb: RGB, u: Unit): RGB {
   r = l2 + (r - l2) * sat
   g = l2 + (g - l2) * sat
   b = l2 + (b - l2) * sat
+
+  // 6. 黑白混色：通道权重按 2^参数缩放后归一化；0 权重时保持 Rec.709。
+  if (u.bwAmount > 0) {
+    const wr = LUMA_R * Math.pow(2, u.bwRed)
+    const wg = LUMA_G * Math.pow(2, u.bwGreen)
+    const wb = LUMA_B * Math.pow(2, u.bwBlue)
+    const sum = wr + wg + wb
+    const gray = sum > 1e-8 ? (r * wr + g * wg + b * wb) / sum : luma(r, g, b)
+    const mix = clamp01(u.bwAmount)
+    r += (gray - r) * mix
+    g += (gray - g) * mix
+    b += (gray - b) * mix
+  }
 
   return [clamp01(r), clamp01(g), clamp01(b)]
 }

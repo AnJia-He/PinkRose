@@ -1,8 +1,10 @@
+import type { ReactNode } from 'react'
+
 /**
  * 「选择模式底下那条操作条」—— 对话区 / 对话列表 / 作品页**同一条**
  * （2026-10-09 收口；★ 2026-10-10 加了作品页这第三处）。
  *
- * 两副面孔（全站"不弹窗"的规矩）：平时 `已选 N 条 ｜ 删除 ｜ 取消`；
+ * 两副面孔（全站"不弹窗"的规矩）：平时 `已选 N 条 ｜ （可选下载）｜ 删除 ｜ 取消`；
  * 点了【删除】之后就地问一句，那一问变成 `确认删除 ｜ 算了`。
  *
  * ⚠️ **两颗里只有「确认删除」穿危险色**（`.danger`）：它俩文案都短、长得又像，
@@ -17,6 +19,7 @@
  */
 export function SelectBar({
   scope, count, busy, askNote, onAsk, onConfirm, onExitAsk, onExit, unit = '条',
+  onDownload, downloading = false, status, ratingSlot, albumSlot,
 }: {
   /** 类名前缀：`'chat'` → `.chat-select`，`'sessions'` → `.sessions-select`，
    *  `'gallery'` → `.gallery-select`（★ 2026-10-10 加的第三处：作品页批删）。 */
@@ -38,6 +41,16 @@ export function SelectBar({
   /** ★ 2026-10-10：「已选 N __」的量词。对话/会话是**条**（默认），作品是**张** ——
    *  两边的分组标题本来就一个数"条"一个数"张"，这里跟着各自的量词走。 */
   unit?: string
+  /** ★ 2026-10-17（作品页批量下载）：有这一项才在「删除」前多一颗「下载」。 */
+  onDownload?: () => void
+  /** 正在打包 ZIP —— 按钮自己显示进度，同时锁住其余动作。 */
+  downloading?: boolean
+  /** 可选的状态句（例如「正在取 2 / 5…」「已下载 5 张」）；不传就显示已选数量。 */
+  status?: string | null
+  /** Optional controls rendered next to the selected count (gallery bulk rating). */
+  ratingSlot?: ReactNode
+  /** Optional album actions for the gallery selection bar. */
+  albumSlot?: ReactNode
 }) {
   const cls = `${scope}-select`
   return (
@@ -53,7 +66,14 @@ export function SelectBar({
         </>
       ) : (
         <>
-          <span className={`${cls}-count`}>{`已选 ${count} ${unit}`}</span>
+          <span className={`${cls}-count`}>{status ?? `已选 ${count} ${unit}`}</span>
+          {ratingSlot}
+          {albumSlot}
+          {onDownload && (
+            <button className={`${cls}-download`}
+              disabled={busy || downloading || count === 0}
+              onClick={onDownload}>{downloading ? '正在打包…' : '下载'}</button>
+          )}
           <button className={`${cls}-del`}
             disabled={busy || count === 0}
             onClick={onAsk}>删除</button>

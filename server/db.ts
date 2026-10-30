@@ -180,6 +180,58 @@ export const MIGRATIONS: readonly string[] = [
   // 会各建一个（先查后插的老毛病），而且**一句错都不报** —— 用户只是发现
   // 自己在小程序里前后是两个人。
   `CREATE UNIQUE INDEX users_wechat_openid ON users(wechat_openid);`,
+  // #10 —— 作品星级（2026-10-19，选片工作流）。0 = 未评分，1~5 星。
+  // ⚠️ 评分是整理动作，不是图片字节变化：所有写评分的接口都**不许 bump
+  //    `updated_at`**（它同时是图片 URL 版本号和未命名时的日期名）。
+  `ALTER TABLE works ADD COLUMN rating INTEGER NOT NULL DEFAULT 0;`,
+  // #11 作品选片标记（2026-10-19）：-1 = 排除，0 = 未标记，1 = 保留。
+  // 和评分一样只改整理状态，不 bump `updated_at`。
+  `ALTER TABLE works ADD COLUMN flag INTEGER NOT NULL DEFAULT 0;`,
+  // #12 相册 / 收藏集（2026-10-19）：一个作品可以在多个相册里。
+  // 删相册 / 删作品都靠级联清 membership，不另外补孤儿清理。
+  `
+  CREATE TABLE albums (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name       TEXT    NOT NULL COLLATE NOCASE,
+    created_at INTEGER NOT NULL,
+    UNIQUE(user_id, name)
+  );
+  CREATE INDEX albums_user ON albums(user_id, created_at);
+  CREATE TABLE work_albums (
+    album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+    work_id  INTEGER NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (album_id, work_id)
+  );
+  CREATE INDEX work_albums_work ON work_albums(work_id);
+  `,
+  // #13 作品公开分享链接（2026-10-19）：opt-in 的只读 token。
+  // 空 = 没有分享；唯一索引让同一 token 不可能指向两张作品。
+  // SQLite 的 UNIQUE 索引允许多个 NULL，所以没分享的作品不会互相撞。
+  `ALTER TABLE works ADD COLUMN share_token TEXT;`,
+  `CREATE UNIQUE INDEX works_share_token ON works(share_token);`,
+  // #15 users.prefs（2026-10-19）：账号级偏好 JSON。
+  // 只存用户主动设为默认的偏好，不进 5 GB 配额；具体字段由前端校验，
+  // 服务端只保证它是对象且有大小上限，方便以后加默认风格 / 外观。
+  `ALTER TABLE users ADD COLUMN prefs TEXT;`,
+  // #16 作品颜色标签（2026-10-21，选片整理工作流）。
+  // 和星级 / 保留排除一样，只改整理状态，不 bump `updated_at`。
+  `ALTER TABLE works ADD COLUMN color TEXT NOT NULL DEFAULT 'none';`,
+  // #17 作品来源（2026-10-21，真实相机连拍 / 文件追溯）。
+  // `source_name` 只存安全的基础文件名，不存客户端给的路径；
+  // `captured_at` 是 EXIF 拍摄时间的毫秒值，缺失时保留 NULL，不伪造上传时间。
+  `
+  ALTER TABLE works ADD COLUMN source_name TEXT;
+  ALTER TABLE works ADD COLUMN captured_at INTEGER;
+  `,
+  // #18 作品拍摄器材（2026-10-21，作品来源与镜头检索）。
+  // 只保存 EXIF 中的原始字符串；没有可信 EXIF 时留 NULL，不推断。
+  `
+  ALTER TABLE works ADD COLUMN camera_make TEXT;
+  ALTER TABLE works ADD COLUMN camera_model TEXT;
+  ALTER TABLE works ADD COLUMN lens_model TEXT;
+  `,
 ]
 
 /**

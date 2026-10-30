@@ -5,8 +5,12 @@ import { join } from 'node:path'
 import { openDb, type Db } from './db.ts'
 import { createStorage, type Storage } from './storage.ts'
 import {
-  handleCreateWork, handleDeleteWork, handleDeleteWorks, handleGetWork,
-  handleListWorks, handleRenameWork, handleReplaceWork, handleWorkFile, handleWorkThumb,
+  handleCreateWork, handleDeleteWork, handleDeleteWorks, handleFlagWork, handleGetWork,
+  handleListWorks, handleRateWork, handleRateWorks, handleRenameWork, handleReplaceWork,
+  handleColorWork, handleColorWorks,
+  handleCreateWorkShare, handleGetSharedWork, handleRevokeWorkShare, handleSharedWorkFile,
+  handleWorkFile, handleWorkThumb,
+  handleFlagWorks,
 } from './works.ts'
 import type { PublicUser } from './account.ts'
 import type { HttpError } from './http.ts'
@@ -59,6 +63,35 @@ describe('handleCreateWork', () => {
       { image: JPEG, recipe: { params: {}, edits: [] } }, USER, deps)
     const row = db.raw.prepare('SELECT thumb_name FROM works WHERE id = ?').get(id) as { thumb_name: string | null }
     expect(row.thumb_name).toBe(null)
+  })
+
+  it('★ 保存原始文件名和拍摄时间，路径只留文件名', async () => {
+    const capturedAt = new Date('2026-10-21T08:15:03').getTime()
+    const { id } = await handleCreateWork({
+      image: JPEG,
+      sourceName: 'C:\\fakepath\\IMG_1234.JPG',
+      capturedAt,
+      cameraMake: 'SONY',
+      cameraModel: 'ILCE-7CM2',
+      lensModel: 'FE 50mm F1.4 GM',
+    }, USER, deps)
+
+    const row = db.raw.prepare(
+      'SELECT source_name, captured_at, camera_make, camera_model, lens_model FROM works WHERE id = ?',
+    ).get(id) as {
+      source_name: string | null; captured_at: number | null
+      camera_make: string | null; camera_model: string | null; lens_model: string | null
+    }
+    expect(row.source_name).toBe('IMG_1234.JPG')
+    expect(row.captured_at).toBe(capturedAt)
+    expect(row.camera_make).toBe('SONY')
+    expect(row.camera_model).toBe('ILCE-7CM2')
+    expect(row.lens_model).toBe('FE 50mm F1.4 GM')
+    expect(handleListWorks(USER, deps).works.find(work => work.id === id))
+      .toMatchObject({
+        sourceName: 'IMG_1234.JPG', capturedAt,
+        cameraMake: 'SONY', cameraModel: 'ILCE-7CM2', lensModel: 'FE 50mm F1.4 GM',
+      })
   })
 
   it('★ 缩略图**存不下去**（第二次 save 抛）→ 整张图照样存进去，thumb_name 是 NULL', async () => {
@@ -217,9 +250,19 @@ describe('handleListWorks', () => {
 
     const r = handleListWorks(USER, deps)
     expect(r.works.map((w) => w.id)).toEqual([later.id, earlier.id])   // 时间晚的在前，别人的不在
-    // ★ 响应里**不许**出现硬盘上的文件名，也不许出现配方（那是详情页才给的）
+    // ★ 响应里不许出现硬盘上的 stored_name / 路径，也不许出现配方（那是详情页才给的）。
+    // sourceName 是用户原来的基础文件名；这两条老作品没有来源元数据，所以是 null。
     for (const w of r.works) expect(Object.keys(w).sort()).toEqual(
-      ['alias', 'bytes', 'createdAt', 'hasThumb', 'id', 'updatedAt'])
+      ['alias', 'bytes', 'cameraMake', 'cameraModel', 'capturedAt', 'color',
+        'createdAt', 'flag', 'hasThumb', 'id', 'lensModel', 'rating',
+        'sourceName', 'updatedAt'])
+    for (const w of r.works) {
+      expect(w.sourceName).toBe(null)
+      expect(w.capturedAt).toBe(null)
+      expect(w.cameraMake).toBe(null)
+      expect(w.cameraModel).toBe(null)
+      expect(w.lensModel).toBe(null)
+    }
   })
 
   it('一条都没有 → 空数组，不是 null、不是 404', () => {
@@ -294,6 +337,90 @@ describe('handleGetWork / handleRenameWork', () => {
     expect(row).toEqual({ alias: '海边那张', updated_at: 100 })   // ★ 还是 100，不是 999
   })
 
+  it('★ 星级 0~5 只改评分，**updated_at 一点都不动**；越界直接拒', async () => {
+    const { id } = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    expect(handleRateWork(id, { rating: 4 }, USER, deps).rating).toBe(4)
+    const row = db.raw.prepare('SELECT rating, updated_at FROM works WHERE id = ?').get(id)
+    expect(row).toEqual({ rating: 4, updated_at: 100 })
+    expect(handleListWorks(USER, deps).works.find(w => w.id === id)?.rating).toBe(4)
+    expect(handleRateWork(id, { rating: 0 }, USER, deps).rating).toBe(0)
+    expect(() => handleRateWork(id, { rating: 6 }, USER, deps)).toThrow(/0~5/)
+    expect(() => handleRateWork(id, { rating: 1.5 }, USER, deps)).toThrow(/0~5/)
+  })
+
+  it('批量评分：一次改多张，updated_at 不动，不存在的 id 单独回报', async () => {
+    const a = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    const b = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    const got = handleRateWorks({ ids: [a.id, b.id, 99999], rating: 4 }, USER, deps)
+    expect(got).toEqual({ rated: [a.id, b.id], missing: [99999] })
+
+    const rows = db.raw.prepare(
+      'SELECT id, rating, updated_at FROM works ORDER BY id',
+    ).all()
+    expect(rows).toEqual([
+      { id: a.id, rating: 4, updated_at: 100 },
+      { id: b.id, rating: 4, updated_at: 100 },
+    ])
+
+    expect(handleRateWorks({ ids: [a.id, b.id], rating: 0 }, USER, deps))
+      .toEqual({ rated: [a.id, b.id], missing: [] })
+    expect(() => handleRateWorks({ ids: [a.id], rating: 6 }, USER, deps)).toThrow(/0~5/)
+    expect(() => handleRateWorks({ ids: [0], rating: 4 }, USER, deps)).toThrow(/正整数/)
+    expect(() => handleRateWorks({ ids: [], rating: 4 }, USER, deps)).toThrow(/没给/)
+  })
+
+  it('选片标记：保留 / 排除 / 清除，不动 updated_at', async () => {
+    const { id } = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    expect(handleFlagWork(id, { flag: 1 }, USER, deps).flag).toBe(1)
+    expect(handleListWorks(USER, deps).works.find(w => w.id === id)?.flag).toBe(1)
+    expect(handleFlagWork(id, { flag: -1 }, USER, deps).flag).toBe(-1)
+    const row = db.raw.prepare('SELECT flag, updated_at FROM works WHERE id = ?').get(id)
+    expect(row).toEqual({ flag: -1, updated_at: 100 })
+    expect(handleFlagWork(id, { flag: 0 }, USER, deps).flag).toBe(0)
+    expect(() => handleFlagWork(id, { flag: 2 }, USER, deps)).toThrow(/-1、0 或 1/)
+  })
+
+  it('批量选片标记：不同作品可在一次请求里写不同建议，不存在的 id 单独回报', async () => {
+    const a = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    const b = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+
+    expect(handleFlagWorks({
+      items: [
+        { id: a.id, flag: 1 },
+        { id: b.id, flag: -1 },
+        { id: 99999, flag: 1 },
+      ],
+    }, USER, deps)).toEqual({ flagged: [a.id, b.id], missing: [99999] })
+
+    expect(db.raw.prepare(
+      'SELECT id, flag, updated_at FROM works ORDER BY id',
+    ).all()).toEqual([
+      { id: a.id, flag: 1, updated_at: 100 },
+      { id: b.id, flag: -1, updated_at: 100 },
+    ])
+  })
+
+  it('颜色标签：单张与批量都能设置 / 清除，不动 updated_at', async () => {
+    const a = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+    const b = await handleCreateWork({ image: JPEG }, USER, { ...deps, now: () => 100 })
+
+    expect(handleColorWork(a.id, { color: 'red' }, USER, deps).color).toBe('red')
+    expect(handleListWorks(USER, deps).works.find(w => w.id === a.id)?.color).toBe('red')
+    expect(handleColorWorks({ ids: [a.id, b.id, 99999], color: 'purple' }, USER, deps))
+      .toEqual({ colored: [a.id, b.id], missing: [99999] })
+
+    const rows = db.raw.prepare(
+      'SELECT id, color, updated_at FROM works ORDER BY id',
+    ).all()
+    expect(rows).toEqual([
+      { id: a.id, color: 'purple', updated_at: 100 },
+      { id: b.id, color: 'purple', updated_at: 100 },
+    ])
+    expect(handleColorWork(a.id, { color: 'none' }, USER, deps).color).toBe('none')
+    expect(() => handleColorWork(a.id, { color: 'orange' }, USER, deps)).toThrow(/颜色标签/)
+    expect(() => handleColorWorks({ ids: [a.id], color: 'orange' }, USER, deps)).toThrow(/颜色标签/)
+  })
+
   it('别名给 null 或空串 = 改回"用时间当名字"', async () => {
     const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
     handleRenameWork(id, { alias: 'x' }, USER, deps)
@@ -311,6 +438,14 @@ describe('handleGetWork / handleRenameWork', () => {
     expect(() => handleRenameWork(id, { alias: 'x' }, other, deps)).toThrow(/没有这张作品/)
     // 而且**真的一动没动**
     expect(handleGetWork(id, USER, deps).alias).toBe(null)
+  })
+
+  it('给别人的作品打分 → 当它不存在', async () => {
+    const other: PublicUser = { id: 2, username: '小红', email: 'b@x.com' }
+    db.raw.prepare(`INSERT INTO users (username, email, password_hash, created_at) VALUES (?,?,?,?)`)
+      .run(other.username, other.email, 'h', 1)
+    const { id } = await handleCreateWork({ image: JPEG }, USER, deps)
+    expect(() => handleRateWork(id, { rating: 5 }, other, deps)).toThrow(/没有这张作品/)
   })
 })
 
@@ -786,5 +921,57 @@ describe('★ 同一张作品被两条路同时改', () => {
     await expect(handleReplaceWork(id, { image: JPEG }, USER, racing)).rejects.toThrow(/改过了/)
     // 新文件收回去了：库里和盘上都还是原来那版
     expect(readdirSync(root)).toHaveLength(1)
+  })
+})
+
+describe('★ 作品公开分享链接', () => {
+  async function seeded(alias: string | null = null): Promise<number> {
+    const { id } = await handleCreateWork(
+      { image: JPEG, thumb: JPEG, recipe: { params: {}, edits: ['裁剪'] } }, USER, deps)
+    if (alias) handleRenameWork(id, { alias }, USER, deps)
+    return id
+  }
+
+  it('开启分享是幂等的；公开页只给名字 / 时间，不给配方和文件名', async () => {
+    const id = await seeded('海边')
+    const first = handleCreateWorkShare(id, USER, deps)
+    const second = handleCreateWorkShare(id, USER, deps)
+    expect(first.token).toMatch(/^[A-Za-z0-9_-]{16,64}$/)
+    expect(second.token).toBe(first.token)
+
+    const shared = handleGetSharedWork(first.token, deps)
+    expect(shared).toMatchObject({ token: first.token, alias: '海边', hasThumb: true })
+    const json = JSON.stringify(shared)
+    expect(json).not.toContain('stored_name')
+    expect(json).not.toContain('recipe')
+    expect(json).not.toContain('小明')
+
+    const file = await handleSharedWorkFile(first.token, deps)
+    expect(file.contentType).toBe('image/jpeg')
+    expect(file.bytes.byteLength).toBeGreaterThan(0)
+  })
+
+  it('停止分享后旧 token 立刻 404；再开启会得到一个新 token', async () => {
+    const id = await seeded()
+    const old = handleCreateWorkShare(id, USER, deps).token
+    handleRevokeWorkShare(id, USER, deps)
+    expect(() => handleGetSharedWork(old, deps)).toThrow(/分享链接不在了/)
+    await expect(handleSharedWorkFile(old, deps)).rejects.toThrow(/分享链接不在了/)
+    const next = handleCreateWorkShare(id, USER, deps).token
+    expect(next).not.toBe(old)
+  })
+
+  it('别人的作品不能开分享；乱造的 token 和别的作品的 token 都不会串', async () => {
+    const id = await seeded()
+    const other: PublicUser = { id: 2, username: '小红', email: 'b@x.com' }
+    expect(() => handleCreateWorkShare(id, other, deps)).toThrow(/没有这张作品/)
+    expect(() => handleGetSharedWork('A'.repeat(32), deps)).toThrow(/分享链接不在了/)
+
+    const one = handleCreateWorkShare(id, USER, deps).token
+    const id2 = await seeded('另一张')
+    const two = handleCreateWorkShare(id2, USER, deps).token
+    expect(one).not.toBe(two)
+    expect(handleGetSharedWork(one, deps).alias).toBe(null)
+    expect(handleGetSharedWork(two, deps).alias).toBe('另一张')
   })
 })

@@ -93,6 +93,19 @@ function cubeFile(
     .concat(rows).join('\n') + '\n'
 }
 
+/** 生成 1D `.cube`：每行是同一个归一化输入处三条通道各自的输出。 */
+function cube1dFile(
+  size: number,
+  fn: (t: number) => [number, number, number],
+  title: string,
+): string {
+  const rows = Array.from({ length: size }, (_, i) => {
+    const rgb = fn(i / (size - 1))
+    return rgb.map((v) => (Math.round(v * 255) / 255).toFixed(6)).join(' ')
+  })
+  return [`TITLE "${title}"`, `LUT_1D_SIZE ${size}`, ...rows].join('\n') + '\n'
+}
+
 /** 红蓝对调（置换表）。断言 1/2/3 用它 —— 方向这件事只有置换表说得清。 */
 const CUBE_SWAP = cubeFile(2, (r, g, b) => [b, g, r], { title: '红蓝对调' })
 /**
@@ -125,12 +138,19 @@ const CUBE_DUSK = cubeFile(
   (r, g, b) => [0.15 + 0.7 * r, 0.1 + 0.8 * g, 0.05 + 0.6 * b],
   { title: '黄昏' },
 )
+/** 1D 曲线：三条通道各走一条不同的非线性曲线，验证解析后会进真 GPU。 */
+const CUBE_1D = cube1dFile(
+  8,
+  t => [1 - (1 - t) ** 2, t ** 0.5, t ** 0.25],
+  '1D 三条曲线',
+)
 
 const CUBES: readonly { name: string; text: string; cube: Cube }[] = [
   { name: '红蓝对调', text: CUBE_SWAP, cube: parseCube(CUBE_SWAP) },
   { name: '半格表', text: CUBE_DOMAIN, cube: parseCube(CUBE_DOMAIN) },
   { name: '铁曲线', text: CUBE_GAMMA, cube: parseCube(CUBE_GAMMA) },
   { name: '黄昏', text: CUBE_DUSK, cube: parseCube(CUBE_DUSK) },
+  { name: '1D 三条曲线', text: CUBE_1D, cube: parseCube(CUBE_1D) },
 ]
 const cubeOf = (name: string): Cube => {
   const hit = CUBES.find((c) => c.name === name)
@@ -386,12 +406,10 @@ async function main(): Promise<void> {
 
     // 设置页截图要在**导入之前**拍（空态），所以顺序是：先量空态 → 导 4 个 → 再量列表。
     console.log('── 1. 设置页 /app/luts（清单四态 / 导入）')
-    await page.locator('.nav-me').click()
-    await page.waitForSelector('.account', { timeout: 10_000 })
-    // ⚠️ 2026-10-05 晚全站改名：那一行现在叫「Lut」（用户拍板「全都叫 Lut」）。
-    //   探针里按文字的找法要跟着改，否则在**这一屏**就崩（旧「滤镜」字样没了，
-    //   类名 `.luts-*` 这些反倒是没动的那部分）。
-    await page.locator('button.account-row', { hasText: 'Lut' }).click()
+    // ★ 2026-10-17：Lut 早就从左栏那一支进去了（个人设置里那一行 2026-10-06
+    //   就撤了）。这里直接点左栏，别再绕「个人设置 → Lut」那条已经不存在的路。
+    //   ⚠️ 按文字找的是「Lut」这三个字 —— 全站改名之后用户看到的就是它。
+    await page.locator('button.nav-item', { hasText: 'Lut' }).click()
     await page.waitForSelector('.luts', { timeout: 10_000 })
     await page.waitForSelector('.luts-empty', { timeout: 10_000 })
     await shot(page, '1-luts-empty')
@@ -521,6 +539,15 @@ async function main(): Promise<void> {
     await setSlider(page, '亮度', 0)
     await waitPixel(page, (p) => dist(p, P_order) > TOL)
 
+    // 1D `.cube` 会被解析器展开成现有 3D 纹理；这里验真实 GPU 结果。
+    await tile(page, '1D 三条曲线').click()
+    const exp1d = expect255(cubeOf('1D 三条曲线'), P255, 100)
+    const w1d = await waitPixel(page, (p) => dist(p, exp1d) <= TOL)
+    const P_1d = w1d?.px ?? (await pixel(page))
+    check('13', '1D LUT 在真实 GPU 上按三条通道曲线生效，且与 CPU 对得上',
+      dist(P_1d, exp1d) <= TOL,
+      `画布 ${P_1d.join(',')} / CPU 期望 ${exp1d.join(',')}`)
+
     // 断言 5：domain≠[0,1] + 半格校正。
     await page.waitForTimeout(1400)          // 让亮度那一下的落盘（800ms 防抖）先走完
     const putP = page.waitForResponse(
@@ -624,11 +651,15 @@ async function main(): Promise<void> {
       dist(P_gen_with, expGenWith) <= TOL && dist(P_gen_with, P_off) > TOL,
       `画布 ${P_gen_with.join(',')} / CPU 期望 ${expGenWith.join(',')}（假底图 ${FAKE255.join(',')}）`)
 
-    // 先把滤镜摘掉（画面回到"假底图 + 没滤镜"）……
-    await tile(page, '不用').click()
-    await waitPixel(page, (p) => dist(p, P_gen_with) > TOL)
-    const P_gen_off = await pixel(page)
-    // ……再跳回那一步 —— 滤镜必须跟着回来。
+    // 跳走再跳回来 —— 滤镜必须跟着回来。
+    //
+    // ★ 2026-10-17 更正：这里原来先点「不用」把当前这一版的滤镜摘掉，再跳走，
+    //   然后期望跳回来时又变回「黄昏」。那是**把两条语义混在了一起**：
+    //   「当前这一版」的 params / lut 是可变的现场 —— 摘掉滤镜就是写回这一步；
+    //   跳走再回来应该看到**最后一次离开时的样子**（「不用」），不是生成时的
+    //   旧值。真正要验的「跳转还原」不需要先摘滤镜：跳到原图那一步画面本来就
+    //   不同。摘掉后再跳回来仍是「不用」那半由
+    //   `src/App.adjust.test.tsx` 的现场写回用例守着。
     //
     // ★ 2026-10-06（晚）：跳步的入口从"对话里那颗按钮"换成了**照片上方的转盘**
     //   （`.strip-node`；对话里「回到这一步」/「你在这里」两颗文字提示那天退役了）。
@@ -642,7 +673,8 @@ async function main(): Promise<void> {
     //   恢复会话时服务端把落盘的 lut 记在**最后一步**上（§5），而这个会话在
     //   调色区量断言 5 时最后的 lut 正是「半格表」—— 所以「原图」这一步恢复
     //   回来就带着它；跳到它 = 回到那一刻的状态（设计 §5 的口径，不是 bug）。
-    const wBackOrig = await waitPixel(page, (p) => dist(p, P_gen_off) > TOL)
+    const wBackOrig = await waitPixel(page, (p) => dist(p, P_gen_with) > TOL)
+    const P_orig = wBackOrig?.px ?? (await pixel(page))
     // ★ 顺带验一眼非破坏行为：「傍晚」那一格原地变回了**可点的按钮**
     //   （跳转只挪"站的位置"，一个字节都没删）—— 它就是下面要点的那一格。
     const backJump = await page.locator('.strip-node').nth(1)
@@ -664,12 +696,43 @@ async function main(): Promise<void> {
     const P_gen_back = await pixel(page)
     const lit11 = await litTile(page)
     check('11b', '点转盘上那一格 → 滤镜跟着回来（格子和画面都对上）',
-      dist(P_gen_back, P_gen_with) <= TOL && lit11 === '黄昏' && dist(P_gen_off, P_gen_back) > TOL,
-      `摘掉后 ${P_gen_off.join(',')} → 跳回后 ${P_gen_back.join(',')}（那一步是 ${P_gen_with.join(',')}），` +
+      dist(P_gen_back, P_gen_with) <= TOL && lit11 === '黄昏' && dist(P_orig, P_gen_back) > TOL,
+      `原图 ${P_orig.join(',')} → 跳回后 ${P_gen_back.join(',')}（那一步是 ${P_gen_with.join(',')}），` +
       `亮的格子「${lit11}」`)
     check('11c', '这一条真的只打了一次图像模型（假的那次）',
       editCalls.length === editCallsBeforeChat + 1,
       `累计 /api/edit ${editCalls.length} 次`)
+
+    // ★ 2026-10-17（去雾）：真 GPU 上的数值复核。
+    //   负值分支不依赖暗通道阈值，能直接证明 uDehaze 真的进了 shader，
+    //   而且混合比例和源码里的 0.35 对得上；回到 0 必须逐字节恢复。
+    // 这一步回到调色屏：参数组（含「效果 → 去雾」）只在那一屏出现。
+    await nav(page, '调色').click()
+    await page.waitForSelector('.panel', { timeout: 10_000 })
+    await page.locator('.panel-group-head', { hasText: 'Lut' }).click()
+    await page.waitForSelector('.lut-picker .lut-tile', { timeout: 10_000 })
+    await tile(page, '不用').click()
+    await waitPixel(page, (p) => dist(p, P_gen_back) > TOL)
+    // 「效果」组默认是开着的；只有收着时才点开（别把已经展开的组点回去）。
+    const effectsHead = page.locator('.panel-group-head', { hasText: '效果' })
+    if (await effectsHead.getAttribute('aria-expanded') === 'false') await effectsHead.click()
+    const P_haze_base = await pixel(page)
+    const setHaze = await setSlider(page, '去雾', -60)
+    const wHaze = await waitPixel(page, (p) => dist(p, P_haze_base) > TOL)
+    const P_haze = wHaze?.px ?? (await pixel(page))
+    const air: [number, number, number] = [209, 219, 235]
+    const expHaze = P_haze_base.map((v, i) =>
+      Math.round(v + (air[i]! - v) * 0.6 * 0.35)) as [number, number, number]
+    check('12', '去雾负值：真 GPU 把画面按 0.35 混向冷色空气层',
+      dist(P_haze, expHaze) <= TOL,
+      `画布 ${P_haze.join(',')} / CPU 期望 ${expHaze.join(',')}（${setHaze}）`)
+    const setHaze0 = await setSlider(page, '去雾', 0)
+    const wHaze0 = await waitPixel(page, (p) => dist(p, P_haze) > TOL)
+    const P_haze0 = wHaze0?.px ?? (await pixel(page))
+    check('12b', '去雾回到 0 = 和没加之前逐字节相同',
+      P_haze0[0] === P_haze_base[0] && P_haze0[1] === P_haze_base[1]
+        && P_haze0[2] === P_haze_base[2],
+      `${P_haze0.join(',')} vs ${P_haze_base.join(',')}（${setHaze0}）`)
   } finally {
     await browser.close()
   }

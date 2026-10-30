@@ -17,6 +17,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 import type { DecodedImage } from '../image/decode'
 import type { Snapshot } from '../core/history'
+import type { EditLayer } from '../../shared/layers.ts'
 import type { ToolId } from '../ui/ToolBar'
 import { pushEdit, settleLedger, type EditState } from '../core/ledger'
 
@@ -46,7 +47,7 @@ export type BaseEditToolDeps = {
   baseSeqRef: { current: number }
   cursorIdRef: { current: number | null }
   editSeqRef: { current: number }
-  markDirty: (stepId: number, baseChanged: boolean) => void
+  markDirty: (stepId: number, baseChanged: boolean, layersChanged?: boolean) => void
   setTool: (t: ToolId | null) => void
 }
 
@@ -101,6 +102,10 @@ export type BaseEditCommit = {
   at: number | null
   /** 像素活儿的产物。 */
   bitmap: ImageBitmap
+  /** 这一笔之后文字层变成什么；不给 = 原样保留。几何工具用它清空（字已合并）。 */
+  layers?: EditLayer[]
+  /** 和 `layers` 配套：把 App 上的文字层状态一起换掉。 */
+  setLayers?: Dispatch<SetStateAction<EditLayer[]>>
   /**
    * 调用方**闭包里的** `history` —— 和 `at` 是同一拍读的。
    * ⚠️ 不能现读：下面那句"那一版还在不在"的检查必须和 `at` 对齐。
@@ -110,9 +115,40 @@ export type BaseEditCommit = {
   setImage: Dispatch<SetStateAction<DecodedImage | null>>
   baseSeqRef: { current: number }
   editSeqRef: { current: number }
-  markDirty: (stepId: number, baseChanged: boolean) => void
+  markDirty: (stepId: number, baseChanged: boolean, layersChanged?: boolean) => void
   flushEdit: () => void
   clearTransient: () => void
+}
+
+/**
+ * 账本历史里显示的操作名。
+ *
+ * `what` 是各调用点本来就有的短句（“这一刀”“这一磨”），直接展示也能读，
+ * 但历史列表里更适合用名词；认不出来时原样返回，**绝不吞掉**一个未来的新工具。
+ */
+const EDIT_LABELS: Record<string, string> = {
+  '这一刀': '裁剪',
+  '这一擦': '点修',
+  '这一磨': '磨皮',
+  '这一句': '文字',
+  '这张贴纸': '贴纸',
+  '这个形状': '形状',
+  '这个边框': '边框',
+  '这个画布': '画布',
+  '这一叠': '双重曝光',
+  '这一笔涂鸦': '涂鸦',
+  '这个光效': '光效',
+  '这个双色调': '双色调',
+  '这一推': '液化',
+  '这一局部': '局部调整',
+  '这个人像': '人像',
+  '这一克隆': '克隆',
+  '这一抠': '抠图',
+  '这一透视': '透视',
+}
+
+export function editLabelFor(what: string): string {
+  return EDIT_LABELS[what] ?? what
 }
 
 /**
@@ -121,7 +157,7 @@ export type BaseEditCommit = {
  */
 export function applyBaseEdit(deps: BaseEditCommit, what: string): void {
   const {
-    at, bitmap, history, setHistory, setImage,
+    at, bitmap, layers, setLayers, history, setHistory, setImage,
     baseSeqRef, editSeqRef, markDirty, flushEdit, clearTransient,
   } = deps
   const base: DecodedImage = { bitmap, width: bitmap.width, height: bitmap.height }
@@ -149,10 +185,17 @@ export function applyBaseEdit(deps: BaseEditCommit, what: string): void {
       // 但**别顺手拿"最接近的那一版"顶上**：记错版本 = 光标和画面对不上，
       // 而且一句错都不报。
       if (s.id !== at) return s
-      const before: EditState = { base: s.base, params: s.params, lut: s.lut, seq }
+      const before: EditState = {
+        base: s.base, params: s.params, lut: s.lut, layers: s.layers,
+        label: s.editLabel, seq,
+      }
       // "之后"取**这一版自己的** params/lut —— 它就是"当前这一版"的现场
       // （写回那条 effect 一直在把它们镜像成最新）；裁剪/擦除只换底图，不动调色。
-      return pushEdit(s, before, { base, params: s.params, lut: s.lut }, seq)
+      return pushEdit(s, before, {
+        base, params: s.params, lut: s.lut,
+        layers: layers !== undefined ? layers : s.layers,
+        label: editLabelFor(what),
+      }, seq)
     })
     // ★ Task 5：记完这一笔 → 预算闸 + 位图回收（`settleLedger` 里两件事一起做）。
     //   记账**不切未来**，所以回收那一半通常一张都不关："裁之前"那张进了账本、
@@ -171,8 +214,52 @@ export function applyBaseEdit(deps: BaseEditCommit, what: string): void {
   //   这里只是让类型过得去；真为 null 的话上面已经报过「账本没记上」，轮不到这行。
   if (at !== null) markDirty(at, true)
   setImage(base)
+  if (layers !== undefined) setLayers?.(layers)
   // ★ 终审 I3：**底图换了 = 那批"上一条照片的临时状态"一起清** —— `onPick` /
   //   `loadSession` / `resetEditor` 三处都写着这条规矩，裁剪 / 点修是第四、五个
   //   换底图的地方（原来漏了；两条后果各有一半是"错了不报错"，见 `clearTransient`）。
   clearTransient()
+}
+
+/**
+ * 只改**文字层**（不动底图像素）的一笔。
+ *
+ * 和 `applyBaseEdit` 同一条账本 / 定稿 / 落盘规矩，但：
+ *   · `base` 不换，所以不推 `baseSeqRef`、不重传底图；
+ *   · `layersChanged` 让落盘那一趟知道要更新封面（文字层不在 WebGL 画布里）；
+ *   · 调用方负责把 `setLayers` 设成同一份数组（这里只写历史）。
+ */
+export type LayersEditCommit = {
+  at: number | null
+  history: readonly Snapshot[]
+  setHistory: Dispatch<SetStateAction<Snapshot[]>>
+  editSeqRef: { current: number }
+  markDirty: (stepId: number, baseChanged: boolean, layersChanged?: boolean) => void
+  flushEdit: () => void
+}
+
+export function applyLayersEdit(
+  deps: LayersEditCommit, layers: EditLayer[], label = '文字',
+): void {
+  const { at, history, setHistory, editSeqRef, markDirty, flushEdit } = deps
+  flushEdit()
+  if (!history.some(s => s.id === at)) {
+    console.error('账本没记上：那一版不在了（id ' + String(at) + '）—— 文字层只改了画面，退不回去')
+    return
+  }
+  const seq = ++editSeqRef.current
+  setHistory(prev => {
+    const next = prev.map(s => {
+      if (s.id !== at) return s
+      const before: EditState = {
+        base: s.base, params: s.params, lut: s.lut, layers: s.layers,
+        label: s.editLabel, seq,
+      }
+      return pushEdit(s, before, {
+        base: s.base, params: s.params, lut: s.lut, layers, label,
+      }, seq)
+    })
+    return settleLedger(prev, next)
+  })
+  if (at !== null) markDirty(at, false, true)
 }

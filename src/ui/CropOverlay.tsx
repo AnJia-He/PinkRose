@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { MIN_SIDE, type CropRect } from '../core/crop'
+import { MIN_SIDE, type CropGuide, type CropRect } from '../core/crop'
 import { bindWindowDrag } from './kit/windowDrag.ts'
 
 /**
@@ -23,6 +23,16 @@ export type CropBox = { left: number; top: number; width: number; height: number
 /** 八个把手：四角 + 四边。`data-h` 就是它们的名字，拖动算法按它分支。 */
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const
 type Handle = (typeof HANDLES)[number]
+const HANDLE_LABELS: Record<Handle, string> = {
+  nw: '左上角',
+  n: '上边',
+  ne: '右上角',
+  e: '右边',
+  se: '右下角',
+  s: '下边',
+  sw: '左下角',
+  w: '左边',
+}
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
@@ -134,9 +144,38 @@ export default function CropOverlay(props: {
   aspect: number | null
   /** 框只能在它里面（旋转留下的四个空角在它外面）。 */
   inner: CropRect
+  /** 三分构图网格：只画在框里，不写进成片。 */
+  grid?: boolean
+  guide?: CropGuide
   onRect: (r: CropRect) => void
 }) {
   const [drag, setDrag] = useState<Drag | null>(null)
+
+  /**
+   * 键盘走和拖动**同一套约束函数**：1px 步进，Shift 10px。这样键盘不会成为
+   * 第二条能力不全的裁剪实现 —— 内接区、最小边和锁定比例都必须原样成立。
+   */
+  const onKey = (at: Handle | 'move', e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight'
+      && e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+    e.preventDefault()
+    e.stopPropagation()
+    const pixels = e.shiftKey ? 10 : 1
+    let dx = e.key === 'ArrowLeft' ? -pixels / props.box.width
+      : e.key === 'ArrowRight' ? pixels / props.box.width : 0
+    let dy = e.key === 'ArrowUp' ? -pixels / props.box.height
+      : e.key === 'ArrowDown' ? pixels / props.box.height : 0
+    if (at === 'move') {
+      props.onRect(moveRect(props.rect, dx, dy, props.inner))
+      return
+    }
+    if (!at.includes('e') && !at.includes('w')) dx = 0
+    if (!at.includes('n') && !at.includes('s')) dy = 0
+    if (dx === 0 && dy === 0) return
+    props.onRect(props.aspect === null
+      ? resizeFree(at, props.rect, dx, dy, props.inner)
+      : resizeFixed(at, props.rect, dx, dy, props.aspect, props.inner))
+  }
 
   const begin = (at: Handle | 'move') => (e: React.PointerEvent) => {
     // 把手住在框里、框住在这层里 —— 不让它冒泡的话，抓个角会变成"整体平移"
@@ -171,6 +210,7 @@ export default function CropOverlay(props: {
   }, [drag])
 
   const { box, rect } = props
+  const guide = props.guide ?? (props.grid ? 'thirds' : 'off')
   const frame = {
     left: box.left + rect.x * box.width,
     top: box.top + rect.y * box.height,
@@ -192,10 +232,48 @@ export default function CropOverlay(props: {
       onClick={e => e.stopPropagation()}
       onDoubleClick={e => e.stopPropagation()}
     >
-      <div className="crop-frame" style={frame} onPointerDown={begin('move')}>
+      <div
+        className="crop-frame"
+        style={frame}
+        role="group"
+        tabIndex={0}
+        aria-label="裁剪框；方向键移动，Shift 加速"
+        onPointerDown={begin('move')}
+        onKeyDown={e => onKey('move', e)}
+      >
         {HANDLES.map(h => (
-          <span key={h} className="crop-h" data-h={h} onPointerDown={begin(h)} />
+          <span
+            key={h}
+            className="crop-h"
+            data-h={h}
+            role="button"
+            tabIndex={0}
+            aria-label={`裁剪框${HANDLE_LABELS[h]}把手；方向键调整大小`}
+            onPointerDown={begin(h)}
+            onKeyDown={e => onKey(h, e)}
+          />
         ))}
+        {guide !== 'off' && (
+          <svg className="crop-guides" viewBox="0 0 100 100"
+            preserveAspectRatio="none" aria-hidden="true" data-guide={guide}>
+            {guide === 'thirds' && <>
+              <line x1="33.333" y1="0" x2="33.333" y2="100" />
+              <line x1="66.666" y1="0" x2="66.666" y2="100" />
+              <line x1="0" y1="33.333" x2="100" y2="33.333" />
+              <line x1="0" y1="66.666" x2="100" y2="66.666" />
+            </>}
+            {guide === 'golden' && <>
+              <line x1="38.2" y1="0" x2="38.2" y2="100" />
+              <line x1="61.8" y1="0" x2="61.8" y2="100" />
+              <line x1="0" y1="38.2" x2="100" y2="38.2" />
+              <line x1="0" y1="61.8" x2="100" y2="61.8" />
+            </>}
+            {guide === 'diagonal' && <>
+              <line x1="0" y1="0" x2="100" y2="100" />
+              <line x1="100" y1="0" x2="0" y2="100" />
+            </>}
+          </svg>
+        )}
       </div>
     </div>
   )

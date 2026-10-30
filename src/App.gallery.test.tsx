@@ -13,10 +13,22 @@ import * as api from './api/client'
 import * as saveMod from './export/save'
 import * as thumbMod from './core/thumbnail'
 import * as lutsMod from './api/luts'
+import * as photoInfo from './core/photoInfo.ts'
+vi.mock('./core/photoInfo.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./core/photoInfo.ts')>()
+  return { ...actual, readLensInfo: vi.fn() }
+})
 // ★ 2026-10-10：按大小排那一格上要显示大小 —— 口径和用户管理页那个用量图
 //   同一份（断言也用同一个函数，免得两边各写各的格式）。
 import { formatSize } from './ui/AccountPage'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+beforeEach(() => {
+  vi.mocked(photoInfo.readLensInfo).mockResolvedValue({
+    make: null, model: null, lens: null,
+    focalMm: null, focal35mm: null, hasExif: false, takenAt: null,
+  })
+})
 
 describe('左栏导航：切界面不丢工作', () => {
   it('★ 切到作品再切回来，改到一半的东西一点没丢', async () => {
@@ -418,6 +430,700 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     expect(container.querySelectorAll('.gallery-cell').length).toBe(1)
   })
 
+  it('★ 作品页能按原文件名、相机和镜头搜索', async () => {
+    withWorks([{
+      ...WORK(1, new Date('2026-10-20T10:00:00').getTime(), '海边'),
+      sourceName: 'IMG_1234.JPG',
+      cameraMake: 'SONY',
+      cameraModel: 'ILCE-7CM2',
+      lensModel: 'FE 50mm F1.4 GM',
+    }])
+    await renderApp()
+    await goNav('作品')
+
+    const box = container.querySelector('.gallery-search') as HTMLInputElement
+    await typeIn(box, 'img_1234')
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(1)
+    await typeIn(box, 'ilce-7cm2')
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(1)
+    await typeIn(box, '50mm f1.4')
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(1)
+    await typeIn(box, 'nikon')
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(0)
+  })
+
+  it('★ 作品卡片可打星；再点同一颗清回 0 星', async () => {
+    const now = Date.now()
+    withWorks([WORK(1, now, '海边那张')])
+    const inner = fetchMock.getMockImplementation()!
+    const patches: unknown[] = []
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works/1' && init?.method === 'PATCH') {
+        const body = JSON.parse(String(init.body)) as { rating: number }
+        patches.push(body)
+        return jsonResponse({ ...WORK(1, now, '海边那张'), rating: body.rating })
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+
+    const star = container.querySelector(
+      '[aria-label="海边那张 星级 4 星"]',
+    ) as HTMLButtonElement
+    expect(star).toBeTruthy()
+    await act(async () => { star.click(); await new Promise(r => setTimeout(r, 0)) })
+    await vi.waitFor(() => expect(patches[0]).toEqual({ rating: 4 }))
+    expect(star.getAttribute('aria-pressed')).toBe('true')
+
+    await act(async () => { star.click(); await new Promise(r => setTimeout(r, 0)) })
+    await vi.waitFor(() => expect(patches[1]).toEqual({ rating: 0 }))
+    expect(star.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('★ 按星级筛选：只看 4 星以上', async () => {
+    const now = Date.now()
+    withWorks([
+      { ...WORK(1, now, '五星'), rating: 5 },
+      { ...WORK(2, now, '三星'), rating: 3 },
+      { ...WORK(3, now, '未评分'), rating: 0 },
+    ])
+    await renderApp()
+    await goNav('作品')
+
+    const select = container.querySelector(
+      'select[aria-label="按星级筛选"]',
+    ) as HTMLSelectElement
+    expect(select).toBeTruthy()
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(select, '4')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(1)
+    expect(container.textContent).toContain('五星')
+    expect(container.textContent).not.toContain('三星')
+  })
+
+  it('★ 按选片标记筛选：保留 / 排除各自只看一桶', async () => {
+    const now = Date.now()
+    withWorks([
+      { ...WORK(1, now, '留着'), flag: 1 },
+      { ...WORK(2, now - 1_000, '排除'), flag: -1 },
+      { ...WORK(3, now - 2_000, '未标记'), flag: 0 },
+    ])
+    await renderApp()
+    await goNav('作品')
+
+    expect(container.querySelector('.gallery-flag.pick')?.textContent).toBe('保留')
+    expect(container.querySelector('.gallery-flag.reject')?.textContent).toBe('排除')
+    const select = container.querySelector(
+      'select[aria-label="按标记筛选"]',
+    ) as HTMLSelectElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(select, 'pick')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const cells = [...container.querySelectorAll('.gallery-cell')]
+    expect(cells).toHaveLength(1)
+    expect(cells.map(cell => cell.textContent).join('')).not.toContain('排除')
+    expect(container.textContent).toContain('留着')
+  })
+
+  it('★ 颜色标签会显示在卡片上，并能按颜色筛选', async () => {
+    const now = Date.now()
+    withWorks([
+      { ...WORK(1, now, '红标'), color: 'red' },
+      { ...WORK(2, now - 1_000, '蓝标'), color: 'blue' },
+      { ...WORK(3, now - 2_000, '无标色'), color: 'none' },
+    ])
+    await renderApp()
+    await goNav('作品')
+
+    expect(container.querySelector('.gallery-color.color-red')?.getAttribute('aria-label'))
+      .toBe('颜色标签：红')
+    const select = container.querySelector(
+      'select[aria-label="按颜色筛选"]',
+    ) as HTMLSelectElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(select, 'red')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(1)
+    expect(container.textContent).toContain('红标')
+    expect(container.textContent).not.toContain('蓝标')
+  })
+
+  it('★ 按机身和镜头筛选作品', async () => {
+    const now = Date.now()
+    withWorks([
+      {
+        ...WORK(1, now, '索尼'),
+        cameraMake: 'SONY',
+        cameraModel: 'ILCE-7CM2',
+        lensModel: 'FE 50mm F1.4 GM',
+      },
+      {
+        ...WORK(2, now - 1_000, '佳能'),
+        cameraMake: 'Canon',
+        cameraModel: 'EOS R5',
+        lensModel: 'RF 24-70mm F2.8 L',
+      },
+      WORK(3, now - 2_000, '没有器材信息'),
+    ])
+    await renderApp()
+    await goNav('作品')
+
+    const gear = container.querySelector(
+      'select[aria-label="按器材筛选"]',
+    ) as HTMLSelectElement
+    expect(gear).toBeTruthy()
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+
+    await act(async () => {
+      setter.call(gear, 'camera:SONY ILCE-7CM2')
+      gear.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(1)
+    expect(container.textContent).toContain('索尼')
+    expect(container.textContent).not.toContain('佳能')
+
+    await act(async () => {
+      setter.call(gear, 'lens:FE 50mm F1.4 GM')
+      gear.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(1)
+    expect(container.textContent).toContain('索尼')
+
+    await act(async () => {
+      setter.call(gear, 'all')
+      gear.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(3)
+  })
+
+  it('★ 按拍摄时间分组：EXIF 日期优先，切回编辑时间不留状态', async () => {
+    const edited1 = new Date('2026-09-25T10:00:00').getTime()
+    const edited2 = new Date('2026-09-24T10:00:00').getTime()
+    const edited3 = new Date('2026-09-21T10:00:00').getTime()
+    withWorks([
+      {
+        ...WORK(1, edited1, '甲'),
+        capturedAt: new Date('2026-09-20T08:00:00').getTime(),
+      },
+      {
+        ...WORK(2, edited2, '乙'),
+        capturedAt: new Date('2026-09-20T08:00:03').getTime(),
+      },
+      {
+        ...WORK(3, edited3, '丙'),
+        capturedAt: new Date('2026-09-22T09:00:00').getTime(),
+      },
+    ])
+    await renderApp()
+    await goNav('作品')
+
+    expect([...container.querySelectorAll('.gallery-day-title')].map(el => el.textContent))
+      .toEqual(['9月25日 · 1 张', '9月24日 · 1 张', '9月21日 · 1 张'])
+
+    await clickByText('按拍摄')
+    expect([...container.querySelectorAll('.gallery-day-title')].map(el => el.textContent))
+      .toEqual(['拍摄于 9月22日 · 1 张', '拍摄于 9月20日 · 2 张'])
+    const shotOrder = [...container.querySelectorAll('.gallery-cell')].map(el => el.textContent ?? '')
+    expect(shotOrder[0]).toContain('丙')
+    expect(shotOrder.slice(1).join(' ')).toContain('甲')
+    expect(shotOrder.slice(1).join(' ')).toContain('乙')
+
+    await clickByText('按编辑')
+    expect([...container.querySelectorAll('.gallery-day-title')].map(el => el.textContent))
+      .toEqual(['9月25日 · 1 张', '9月24日 · 1 张', '9月21日 · 1 张'])
+  })
+
+  it('★ 连拍组：5 张相邻作品先收起，展开后每张仍可查看和评分', async () => {
+    const base = new Date('2026-10-21T08:15:00').getTime()
+    withWorks([
+      { ...WORK(1, base, '连拍 1'), createdAt: base },
+      { ...WORK(2, base + 300, '连拍 2'), createdAt: base + 300 },
+      { ...WORK(3, base + 600, '连拍 3'), createdAt: base + 600, rating: 4 },
+      { ...WORK(4, base + 900, '连拍 4'), createdAt: base + 900, rating: 5 },
+      { ...WORK(5, base + 1_200, '连拍 5'), createdAt: base + 1_200 },
+    ])
+    await renderApp()
+    await goNav('作品')
+
+    const trigger = container.querySelector('.gallery-stack-trigger') as HTMLButtonElement
+    expect(trigger).toBeTruthy()
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(0)
+    expect(container.textContent).toContain('5 张')
+
+    await act(async () => {
+      trigger.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelectorAll('.gallery-stack-expanded .gallery-cell')).toHaveLength(5)
+    expect(container.querySelector('[aria-label="连拍 4 星级 4 星"]')).toBeTruthy()
+  })
+
+  it('★ 连拍组可以直接整组多选，批量入口拿到的是全部真实作品', async () => {
+    const base = new Date('2026-10-21T09:15:00').getTime()
+    withWorks(Array.from({ length: 5 }, (_, i) => ({
+      ...WORK(i + 1, base + i * 300, `连拍 ${i + 1}`),
+      createdAt: base + i * 300,
+    })))
+    await renderApp()
+    await goNav('作品')
+
+    await clickByText('多选整组')
+
+    expect(container.querySelectorAll('input[aria-label="选中这张作品"]:checked')).toHaveLength(5)
+    expect(container.textContent).toContain('已选 5 张')
+  })
+
+  it('★ 连拍组可以关掉：作品墙立刻回到一张一格，再开回来仍能折叠', async () => {
+    const base = new Date('2026-10-21T10:15:00').getTime()
+    withWorks(Array.from({ length: 5 }, (_, i) => ({
+      ...WORK(i + 1, base + i * 300, `连拍 ${i + 1}`),
+      createdAt: base + i * 300,
+    })))
+    await renderApp()
+    await goNav('作品')
+
+    const toggle = container.querySelector(
+      'button[aria-label="展开所有连拍组"]',
+    ) as HTMLButtonElement
+    expect(toggle).toBeTruthy()
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+
+    await act(async () => {
+      toggle.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(container.querySelectorAll('.gallery-stack')).toHaveLength(0)
+    expect(container.querySelectorAll('.gallery-cell')).toHaveLength(5)
+
+    await act(async () => {
+      toggle.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.querySelectorAll('.gallery-stack')).toHaveLength(1)
+  })
+
+  it('★ 连拍组一键整组挑最好：进入多选并只留下推荐张', async () => {
+    const base = new Date('2026-10-21T11:15:00').getTime()
+    withWorks(Array.from({ length: 5 }, (_, i) => ({
+      ...WORK(i + 1, base + i * 300, `连拍 ${i + 1}`),
+      createdAt: base + i * 300,
+    })))
+    const metrics: Record<string, object> = {
+      '1': { sharpness: 100, exposure: 0.7, clipping: 0.04, meanLuma: 0.4 },
+      '2': { sharpness: 220, exposure: 0.75, clipping: 0.03, meanLuma: 0.42 },
+      '3': { sharpness: 840, exposure: 0.9, clipping: 0.02, meanLuma: 0.48 },
+      '4': { sharpness: 1_500, exposure: 0.97, clipping: 0.005, meanLuma: 0.51 },
+      '5': { sharpness: 1_100, exposure: 0.35, clipping: 0.2, meanLuma: 0.12 },
+    }
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const match = url.match(/^\/api\/works\/(\d+)\/thumb\?/)
+      if (match) {
+        return {
+          ok: true,
+          status: 200,
+          blob: async () => new Blob([JSON.stringify(metrics[match[1]!])], {
+            type: 'application/json',
+          }),
+        } as Response
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+
+    await clickByText('整组挑最好')
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('推荐「连拍 4」')
+      expect(container.textContent).toContain('本机评分')
+    })
+    const checked = [...container.querySelectorAll<HTMLInputElement>(
+      'input[aria-label="选中这张作品"]:checked',
+    )]
+    expect(checked).toHaveLength(1)
+    expect(checked[0]!.closest('.gallery-item')?.textContent).toContain('连拍 4')
+  })
+
+  it('★ 多选后批量标色：一次请求改所有选中作品', async () => {
+    const now = Date.now()
+    withWorks([
+      { ...WORK(1, now, '一'), color: 'none' },
+      { ...WORK(2, now, '二'), color: 'none' },
+      { ...WORK(3, now, '三'), color: 'none' },
+    ])
+    const inner = fetchMock.getMockImplementation()!
+    const calls: { ids: number[]; color: string }[] = []
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works/color' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { ids: number[]; color: string }
+        calls.push(body)
+        return jsonResponse({ colored: body.ids, missing: [] })
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+    await clickByText('多选')
+
+    const cells = [...container.querySelectorAll<HTMLButtonElement>('.gallery-cell')]
+    await act(async () => { cells[0]!.click(); cells[1]!.click() })
+    const select = container.querySelector(
+      'select[aria-label="批量颜色标签"]',
+    ) as HTMLSelectElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(select, 'green')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    await vi.waitFor(() => expect(calls[0]).toEqual({ ids: [1, 2], color: 'green' }))
+    expect(container.textContent).toContain('已给 2 张标绿色')
+  })
+
+  it('★ 相册：新建、把多选作品加进去，再按相册筛选', async () => {
+    const now = Date.now()
+    const a = WORK(1, now, '一')
+    const b = WORK(2, now - 1_000, '二')
+    withWorks([a, b])
+    const inner = fetchMock.getMockImplementation()!
+    let albums: { id: number; name: string; createdAt: number; workCount: number }[] = []
+    const members = new Set<number>()
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/albums' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse({ albums })
+      }
+      if (url === '/api/albums' && init?.method === 'POST') {
+        const { name } = JSON.parse(String(init.body)) as { name: string }
+        const album = { id: 1, name, createdAt: now, workCount: 0 }
+        albums = [album]
+        return jsonResponse({ album })
+      }
+      if (url === '/api/albums/1/works' && init?.method === 'POST') {
+        const { ids } = JSON.parse(String(init.body)) as { ids: number[] }
+        ids.forEach(id => members.add(id))
+        albums = albums.map(album => ({ ...album, workCount: members.size }))
+        return jsonResponse({ added: ids, missing: [] })
+      }
+      if (url === '/api/works?album=1') {
+        return jsonResponse({ works: [a, b].filter(work => members.has(work.id)) })
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+
+    await clickByText('新建相册')
+    const input = container.querySelector('[aria-label="新相册名"]') as HTMLInputElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, '旅行')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      input.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await vi.waitFor(() => expect(container.textContent).toContain('已创建相册「旅行」'))
+
+    await clickByText('多选')
+    const cells = [...container.querySelectorAll<HTMLButtonElement>('.gallery-cell')]
+    await act(async () => { cells[0]!.click(); cells[1]!.click() })
+    const pickAlbum = container.querySelector('select[aria-label="加入相册"]') as HTMLSelectElement
+    const selectSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+    await act(async () => {
+      selectSetter.call(pickAlbum, '1')
+      pickAlbum.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await vi.waitFor(() => expect(container.textContent).toContain('已把 2 张加入「旅行」'))
+
+    const cancel = container.querySelector('.gallery-select-cancel') as HTMLButtonElement
+    await act(async () => { cancel.click(); await new Promise(r => setTimeout(r, 0)) })
+    const filter = container.querySelector('select[aria-label="按相册筛选"]') as HTMLSelectElement
+    await act(async () => {
+      selectSetter.call(filter, '1')
+      filter.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await vi.waitFor(() => expect(container.querySelectorAll('.gallery-cell')).toHaveLength(2))
+  })
+
+  it('★ 多选后批量打星：一次请求改所有选中作品', async () => {
+    const now = Date.now()
+    withWorks([
+      { ...WORK(1, now, '一'), rating: 0 },
+      { ...WORK(2, now, '二'), rating: 0 },
+      { ...WORK(3, now, '三'), rating: 0 },
+    ])
+    const inner = fetchMock.getMockImplementation()!
+    const calls: { ids: number[]; rating: number }[] = []
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works/rate' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { ids: number[]; rating: number }
+        calls.push(body)
+        return jsonResponse({ rated: body.ids, missing: [] })
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+    await clickByText('多选')
+
+    const cells = [...container.querySelectorAll<HTMLButtonElement>('.gallery-cell')]
+    await act(async () => { cells[0]!.click(); cells[1]!.click() })
+    const star = container.querySelector(
+      '[aria-label="批量星级 4 星"]',
+    ) as HTMLButtonElement
+    expect(star).toBeTruthy()
+    await act(async () => { star.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    await vi.waitFor(() => expect(calls[0]).toEqual({ ids: [1, 2], rating: 4 }))
+    expect(star.getAttribute('aria-pressed')).toBe('true')
+    expect(container.textContent).toContain('已给 2 张打 4 星')
+  })
+
+  it('★ 找相似：本地比较缩略图后一起选中相近照片', async () => {
+    const now = Date.now()
+    withWorks([
+      { ...WORK(101, now, '连拍一'), color: 'none' },
+      { ...WORK(102, now - 1_000, '连拍二'), color: 'none' },
+      { ...WORK(103, now - 2_000, '别的构图'), color: 'none' },
+    ])
+    const inner = fetchMock.getMockImplementation()!
+    const hashes: Record<string, string> = {
+      '101': '0000000000000000',
+      '102': '0000000000000000',
+      '103': 'ffffffffffffffff',
+    }
+    const reads: string[] = []
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const match = url.match(/^\/api\/works\/(\d+)\/thumb\?/)
+      if (match) {
+        reads.push(url)
+        return {
+          ok: true,
+          status: 200,
+          blob: async () => new Blob([hashes[match[1]!]!], { type: 'image/jpeg' }),
+        } as Response
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+    await clickByText('多选')
+    const cells = [...container.querySelectorAll<HTMLButtonElement>('.gallery-cell')]
+    await act(async () => { cells[0]!.click() })
+    const similar = container.querySelector(
+      '[aria-label="找相似照片"]',
+    ) as HTMLButtonElement
+    expect(similar.disabled).toBe(false)
+    await act(async () => {
+      similar.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('找到 1 张相近照片')
+    })
+    expect(container.querySelectorAll('input[aria-label="选中这张作品"]:checked')).toHaveLength(2)
+    expect(reads).toHaveLength(3)
+    expect(reads.every(url => url.includes('/thumb?'))).toBe(true)
+  })
+
+  it('★ 挑最好：比较清晰度与曝光后只选中推荐的一张', async () => {
+    const now = Date.now()
+    withWorks([
+      { ...WORK(201, now, '模糊那张') },
+      { ...WORK(202, now - 1_000, '清晰那张') },
+      { ...WORK(203, now - 2_000, '曝光偏了') },
+    ])
+    const inner = fetchMock.getMockImplementation()!
+    const metrics: Record<string, object> = {
+      '201': { sharpness: 120, exposure: 0.8, clipping: 0.01, meanLuma: 0.5 },
+      '202': { sharpness: 1200, exposure: 0.95, clipping: 0.005, meanLuma: 0.52 },
+      '203': { sharpness: 800, exposure: 0.2, clipping: 0.25, meanLuma: 0.1 },
+    }
+    const reads: string[] = []
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const match = url.match(/^\/api\/works\/(\d+)\/thumb\?/)
+      if (match) {
+        reads.push(url)
+        return {
+          ok: true,
+          status: 200,
+          blob: async () => new Blob([JSON.stringify(metrics[match[1]!])], {
+            type: 'application/json',
+          }),
+        } as Response
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+    await clickByText('多选')
+    const cells = [...container.querySelectorAll<HTMLButtonElement>('.gallery-cell')]
+    await act(async () => { cells[0]!.click(); cells[1]!.click(); cells[2]!.click() })
+    const best = container.querySelector(
+      '[aria-label="从选中里挑最好"]',
+    ) as HTMLButtonElement
+    expect(best.disabled).toBe(false)
+    await act(async () => {
+      best.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('推荐「清晰那张」')
+    })
+    const checked = [...container.querySelectorAll<HTMLInputElement>(
+      'input[aria-label="选中这张作品"]:checked',
+    )]
+    expect(checked).toHaveLength(1)
+    expect(checked[0]!.closest('.gallery-item')?.textContent).toContain('清晰那张')
+    expect(reads).toHaveLength(3)
+    expect(reads.every(url => url.includes('/thumb?'))).toBe(true)
+  })
+
+  it('★ 智能复查：本机分析选中作品，只写保留 / 复查标记，不删除', async () => {
+    const now = Date.now()
+    withWorks([
+      WORK(301, now, '清晰那张'),
+      WORK(302, now - 1_000, '模糊那张'),
+      WORK(303, now - 2_000, '曝光偏了'),
+    ])
+    const metrics: Record<string, object> = {
+      '301': { sharpness: 1_200, exposure: 0.95, clipping: 0.005, meanLuma: 0.52 },
+      '302': { sharpness: 600, exposure: 0.8, clipping: 0.01, meanLuma: 0.5 },
+      '303': { sharpness: 800, exposure: 0.2, clipping: 0.25, meanLuma: 0.1 },
+    }
+    const flagPosts: { items: { id: number; flag: number }[] }[] = []
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      const thumb = url.match(/^\/api\/works\/(\d+)\/thumb\?/)
+      if (thumb) {
+        return {
+          ok: true,
+          status: 200,
+          blob: async () => new Blob([JSON.stringify(metrics[thumb[1]!])], {
+            type: 'application/json',
+          }),
+        } as Response
+      }
+      if (url === '/api/works/flag' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as {
+          items: { id: number; flag: number }[]
+        }
+        flagPosts.push(body)
+        return jsonResponse({
+          flagged: body.items.map(item => item.id),
+          missing: [],
+        })
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+    await clickByText('多选')
+    const cells = [...container.querySelectorAll<HTMLButtonElement>('.gallery-cell')]
+    await act(async () => {
+      cells[0]!.click()
+      cells[1]!.click()
+      cells[2]!.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    await clickByText('智能复查')
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('2 张建议保留')
+      expect(container.textContent).toContain('1 张建议复查')
+    })
+    expect(flagPosts).toHaveLength(1)
+    expect(flagPosts[0]!.items).toEqual([
+      { id: 301, flag: 1 },
+      { id: 302, flag: 1 },
+      { id: 303, flag: -1 },
+    ])
+    expect(fetchMock.mock.calls.some(([url, init]) => (
+      url === '/api/works/delete' && init?.method === 'POST'
+    ))).toBe(false)
+  })
+
+  it('★ 全屏看片：方向键切换，数字键直接评分，Esc 退出', async () => {
+    const now = Date.now()
+    withWorks([
+      WORK(1, now, '甲'),
+      WORK(2, now - 1_000, '乙'),
+      WORK(3, now - 2_000, '丙'),
+    ])
+    const inner = fetchMock.getMockImplementation()!
+    let rated: unknown = null
+    let flagged: unknown = null
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/works/2' && init?.method === 'PATCH') {
+        const body = JSON.parse(String(init.body)) as { rating?: number; flag?: number }
+        if (body.flag !== undefined) {
+          flagged = body
+          return jsonResponse({ ...WORK(2, now - 1_000, '乙'), flag: body.flag })
+        }
+        rated = body
+        return jsonResponse({ ...WORK(2, now - 1_000, '乙'), rating: body.rating })
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+
+    await act(async () => {
+      (container.querySelector('[aria-label="全屏看 甲"]') as HTMLButtonElement).click()
+    })
+    expect(container.querySelector('.cull-lightbox')).toBeTruthy()
+    expect(container.textContent).toContain('1 / 3')
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.textContent).toContain('乙')
+    expect(container.textContent).toContain('2 / 3')
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await vi.waitFor(() => expect(flagged).toEqual({ flag: 1 }))
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '5' }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    await vi.waitFor(() => expect(rated).toEqual({ rating: 5 }))
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(container.querySelector('.cull-lightbox')).toBeNull()
+  })
+
   it('一张作品都没有时，说的是一句有出路的话，不是白屏', async () => {
     withWorks([])
     await renderApp()
@@ -490,6 +1196,36 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     expect(none?.textContent ?? '').toContain('换个字')
     // "筛掉了"和"一张都没有"是两件事 —— 说错了用户会以为东西丢了
     expect(container.querySelector('.gallery-empty')).toBeNull()
+  })
+
+  it('★ 选中两张作品可一键进入左右对比', async () => {
+    const now = Date.now()
+    withWorks([WORK(1, now, '甲'), WORK(2, now - 1_000, '乙'), WORK(3, now - 2_000, '丙')])
+    await renderApp()
+    await goNav('作品')
+    await clickByText('多选')
+
+    const cells = [...container.querySelectorAll<HTMLButtonElement>('.gallery-cell')]
+    await act(async () => {
+      cells[0]!.click()
+      cells[1]!.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const compare = container.querySelector(
+      '[aria-label="对比选中的两张"]',
+    ) as HTMLButtonElement
+    expect(compare).toBeTruthy()
+    expect(compare.disabled).toBe(false)
+
+    await act(async () => {
+      compare.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(container.querySelector('.cull-lightbox')).toBeTruthy()
+    expect(container.querySelector('.cull-stage.comparing')).toBeTruthy()
+    expect(container.querySelector('.cull-compare-base')?.getAttribute('alt')).toBe('甲')
+    expect(container.querySelector('.cull-compare-top img')?.getAttribute('alt')).toBe('乙')
   })
 })
 
@@ -635,7 +1371,7 @@ describe('作品详情页：这张图怎么来的', () => {
       if (url === '/api/works/1' && (init?.method ?? 'GET') === 'GET') {
         return jsonResponse({
           id: 1, alias: null, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_000,
-          bytes: 100, hasThumb: true,
+          bytes: 100, hasThumb: true, rating: 0, flag: 0,
           recipe: recipe ?? { params: { ...ZERO, exposure: 20, contrast: 5 }, edits: ['把后面那个人去掉'] },
         })
       }
@@ -720,7 +1456,10 @@ describe('作品详情页：这张图怎么来的', () => {
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === '/api/works/1' && init?.method === 'PATCH') {
         patches += 1
-        return jsonResponse({ id: 1, alias: '海边那张', createdAt: 0, updatedAt: 0, bytes: 0, hasThumb: true })
+        return jsonResponse({
+          id: 1, alias: '海边那张', createdAt: 0, updatedAt: 0, bytes: 0,
+          hasThumb: true, rating: 0, flag: 0,
+        })
       }
       return inner(url, init)
     })
@@ -840,7 +1579,7 @@ describe('作品详情页：这张图怎么来的', () => {
         }
         return jsonResponse({
           id: 1, alias: null, createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_000,
-          bytes: 100, hasThumb: true,
+          bytes: 100, hasThumb: true, rating: 0, flag: 0,
           recipe: { params: { ...ZERO, exposure: 20 }, edits: [] },
         })
       }
@@ -897,7 +1636,7 @@ describe('作品详情页：这张图怎么来的', () => {
     // 一个「自然饱和度 undefined」。真改过的那一行淹没在七行幽灵里，
     // 而那些字用户根本读不懂（这一页要回答的是"这张图是怎么来的"）。
     //
-    // ⚠️ 夹具里的键**故意只有八个** —— 类型上 `Recipe['params']` 要十五个键，
+    // ⚠️ 夹具里的键**故意只有八个** —— 类型上 `Recipe['params']` 要五十个键，
     //    可**库里老数据真就是这个形状**，老的代码写进去的行不会自己长出七个新键。
     //    `openWork` 收的是 `unknown`，要演的正是这个"类型系统拦不住"的样子。
     const legacyRecipe = {
@@ -950,7 +1689,7 @@ describe('作品详情页：这张图怎么来的', () => {
     const row = container.querySelector('.recipe-params li')
     expect(row?.querySelector('.recipe-param-name')?.textContent).toBe('Lut')
     expect(row?.querySelector('.recipe-param-value')?.textContent).toBe('黄昏 80%')
-    // ② ★ 有滤镜就不是"原样" —— 哪怕十五个参数一个都没动（这份配方就是全 ZERO）。
+    // ② ★ 有滤镜就不是"原样" —— 哪怕五十个参数一个都没动（这份配方就是全 ZERO）。
     //    判据漏了滤镜的话，屏幕上会一边列着「滤镜 黄昏」一边说"没有调过色"。
     expect(container.textContent ?? '').not.toContain('这一张是原样')
 
@@ -1037,7 +1776,7 @@ describe('作品详情页：这张图怎么来的', () => {
   // ── ★ 2026-10-10（「我的预设」，设计 §5.4）：配方卡上那颗「把这套存成预设」 ──
   // 第二个存入口（spec §8.1 原话：「看到调得好的一键存下来」）—— 停在**这张作品的
   // 配方**上就能存，不用先"套到手上 → 再回面板头存一遍"。
-  // ⚠️ 存的是**配方那套参数**，而且**只有那十五个**（设计 §0：预设不含 Lut）。
+  // ⚠️ 存的是**配方那套参数**，而且**只有那五十个**（设计 §0：预设不含 Lut）。
   // 那一行的样子（起名 + 存下来）和面板头那块是**同一份**（`PresetSaveRow`）——
   // 抄第二份的话，"成功清空输入框""失败保留刚打的字"这些账会只记在一边。
 
@@ -1085,7 +1824,7 @@ describe('作品详情页：这张图怎么来的', () => {
     expect(canvasProps.props.at(-1)?.params.exposure, '前提：手上那套不是这张作品的配方').toBe(40)
 
     // 配方 = { ...ZERO, exposure: 20, contrast: 5 } + 一层 Lut。
-    //   ★ Lut 是**故意**放进去的：预设只含那十五个参数、不含 Lut（设计 §0），
+    //   ★ Lut 是**故意**放进去的：预设只含那五十个参数、不含 Lut（设计 §0），
     //     下面那句 `toEqual` 是**精确的** —— 多送一个 `lut` 字段就红。
     await openWork({
       params: { ...ZERO, exposure: 20, contrast: 5 },
@@ -1185,6 +1924,38 @@ describe('保存 = 存进作品集（Task 13）', () => {
     await clickTop('存进作品')
     expect(savedBody()).toBeTruthy()     // 先证明那一趟真的走到存了，别让 ② 红在别的原因上
     expect(thumbMod.makeThumbnail).toHaveBeenCalledWith(expect.anything(), 480)
+  })
+
+  it('★ 保存时把原文件名和 EXIF 拍摄时间带给作品集', async () => {
+    const takenAtMs = new Date(2026, 9, 21, 8, 15, 30).getTime()
+    vi.mocked(photoInfo.readLensInfo).mockResolvedValue({
+      make: 'SONY',
+      model: 'ILCE-7CM2',
+      lens: 'FE 50mm F1.4 GM',
+      focalMm: 50,
+      focal35mm: 50,
+      hasExif: true,
+      takenAt: '2026-10-21 08:15',
+      takenAtMs,
+    })
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => (
+      url === '/api/works' && init?.method === 'POST'
+        ? jsonResponse({ id: 9 })
+        : inner(url, init)
+    ))
+
+    await renderApp()
+    await uploadPhoto()
+    await clickTop('存进作品')
+
+    expect(savedBody()).toMatchObject({
+      sourceName: 'p.jpg',
+      capturedAt: takenAtMs,
+      cameraMake: 'SONY',
+      cameraModel: 'ILCE-7CM2',
+      lensModel: 'FE 50mm F1.4 GM',
+    })
   })
 
   it('★ 点「存进作品」是存进作品集，**没有偷偷下载**（§3.4）', async () => {
@@ -1584,4 +2355,315 @@ describe('对话列表：页头与搜索', () => {
       .toContain('还没改过照片')
     expect(container.querySelector('.error-state')).toBeNull()
   })
+})
+
+describe('作品页：批量处理入口', () => {
+  it('欢迎页多选相册 → 直接进批量工作区，照片已经预填', async () => {
+    withWorks([])
+    await renderApp()
+
+    const input = container.querySelector('input[type="file"][multiple]') as HTMLInputElement
+    expect(input, '欢迎页的相册入口应支持多选').toBeTruthy()
+    const a = new File(['a'], 'a.jpg', { type: 'image/jpeg' })
+    const b = new File(['b'], 'b.jpg', { type: 'image/jpeg' })
+    Object.defineProperty(input, 'files', { value: [a, b], configurable: true })
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(location.pathname).toBe('/app/works')
+    await vi.waitFor(() => expect(container.querySelector('.batch-page')).toBeTruthy())
+    await vi.waitFor(() => expect(container.textContent).toContain('2 / 20'))
+    expect(container.textContent).toContain('a.jpg')
+    expect(container.textContent).toContain('b.jpg')
+  })
+
+  it('从作品页进入批量工作区，再原路返回', async () => {
+    withWorks([WORK(1, Date.now(), '测试作品')])
+    await renderApp()
+    await goNav('作品')
+
+    const entry = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '批量处理') as HTMLButtonElement | undefined
+    expect(entry).toBeTruthy()
+    await act(async () => { entry!.click() })
+
+    await vi.waitFor(() => expect(container.querySelector('.batch-page')).toBeTruthy())
+    expect(container.querySelector('.gallery-title')?.textContent).toBe('批量处理')
+    expect(container.querySelector('input[type="file"]')).toBeTruthy()
+    const start = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').includes('开始处理')) as HTMLButtonElement
+    expect(start.disabled).toBe(true)
+
+    const back = container.querySelector('.batch-back') as HTMLButtonElement
+    await act(async () => { back.click() })
+    expect(container.querySelector('.batch-page')).toBeNull()
+    expect(container.querySelector('.gallery-title')?.textContent).toBe('我的作品')
+  })
+
+  it('从作品页进入拼图工作区，再原路返回', async () => {
+    withWorks([WORK(1, Date.now(), '测试作品')])
+    await renderApp()
+    await goNav('作品')
+
+    const entry = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '拼图') as HTMLButtonElement | undefined
+    expect(entry).toBeTruthy()
+    await act(async () => { entry!.click() })
+
+    await vi.waitFor(() => expect(container.querySelector('.collage-page')).toBeTruthy())
+    expect(container.querySelector('.gallery-title')?.textContent).toBe('拼图')
+    const start = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').includes('生成拼图')) as HTMLButtonElement
+    expect(start.disabled).toBe(true)
+
+    const back = container.querySelector('.batch-back') as HTMLButtonElement
+    await act(async () => { back.click() })
+    expect(container.querySelector('.collage-page')).toBeNull()
+    expect(container.querySelector('.gallery-title')?.textContent).toBe('我的作品')
+  })
+
+  it('从作品页进入全景工作区，再原路返回', async () => {
+    withWorks([WORK(1, Date.now(), '测试作品')])
+    await renderApp()
+    await goNav('作品')
+
+    const entry = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '全景') as HTMLButtonElement | undefined
+    expect(entry).toBeTruthy()
+    await act(async () => { entry!.click() })
+
+    await vi.waitFor(() => expect(container.querySelector('.panorama-page')).toBeTruthy())
+    expect(container.querySelector('.gallery-title')?.textContent).toBe('全景')
+    const start = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').includes('生成全景')) as HTMLButtonElement
+    expect(start.disabled).toBe(true)
+
+    const back = container.querySelector('.batch-back') as HTMLButtonElement
+    await act(async () => { back.click() })
+    expect(container.querySelector('.panorama-page')).toBeNull()
+    expect(container.querySelector('.gallery-title')?.textContent).toBe('我的作品')
+  })
+
+  it('从作品页进入 HDR 合成，再原路返回', async () => {
+    withWorks([WORK(1, Date.now(), '测试作品')])
+    await renderApp()
+    await goNav('作品')
+
+    const entry = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === 'HDR 合成') as HTMLButtonElement | undefined
+    expect(entry).toBeTruthy()
+    await act(async () => { entry!.click() })
+
+    await vi.waitFor(() => expect(container.querySelector('.hdr-page')).toBeTruthy())
+    expect(container.querySelector('.gallery-title')?.textContent).toBe('HDR 合成')
+    const start = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').includes('生成 HDR')) as HTMLButtonElement
+    expect(start.disabled).toBe(true)
+
+    const back = container.querySelector('.batch-back') as HTMLButtonElement
+    await act(async () => { back.click() })
+    expect(container.querySelector('.hdr-page')).toBeNull()
+    expect(container.querySelector('.gallery-title')?.textContent).toBe('我的作品')
+  })
+})
+
+describe('作品页：相册整组处理', () => {
+  const album = (workCount: number) => ({
+    id: 1, name: '旅行', createdAt: Date.now(), workCount,
+  })
+
+  /** 给 fetch 接上相册清单、相册里的作品，以及按 id 取原图的那条路。 */
+  function withAlbumWorks(
+    works: ReturnType<typeof WORK>[],
+    fetchFile?: (url: string) => Response | null,
+  ) {
+    withWorks(works)
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/albums' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse({ albums: [album(works.length)] })
+      }
+      if (url === '/api/works?album=1') return jsonResponse({ works })
+      const file = fetchFile?.(url)
+      if (file) return file
+      return inner(url, init)
+    })
+  }
+
+  async function pickAlbum(id = 1) {
+    const filter = container.querySelector('select[aria-label="按相册筛选"]') as HTMLSelectElement
+    expect(filter, '相册筛选应在作品页').toBeTruthy()
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(filter, String(id))
+      filter.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+  }
+
+  it('★ 相册里选「批量处理相册」→ 按作品取原图进批量页，来源和张数说清楚', async () => {
+    const now = Date.now()
+    const works = [WORK(1, now, '海边'), WORK(2, now - 1_000, '山上')]
+    const fileCalls: string[] = []
+    withAlbumWorks(works, (url) => {
+      if (!url.startsWith('/api/works/')) return null
+      fileCalls.push(url)
+      if (url.startsWith('/api/works/1/file')) {
+        return new Response('jpeg-1', { status: 200, headers: { 'content-type': 'image/jpeg' } })
+      }
+      if (url.startsWith('/api/works/2/file')) {
+        return new Response('jpeg-2', { status: 200, headers: { 'content-type': 'image/jpeg' } })
+      }
+      return null
+    })
+
+    await renderApp()
+    await goNav('作品')
+    await pickAlbum()
+    await vi.waitFor(() => expect(container.querySelectorAll('.gallery-cell')).toHaveLength(2))
+
+    expect(container.textContent).toContain('批量处理相册')
+    expect(container.textContent).toContain('下载相册')
+    await clickByText('批量处理相册')
+    await vi.waitFor(() => expect(container.querySelector('.batch-page')).toBeTruthy())
+
+    expect(container.textContent).toContain('2 / 20')
+    expect(container.textContent).toContain('海边_1.jpg')
+    expect(container.textContent).toContain('山上_2.jpg')
+    expect(container.querySelector('.batch-source-note')?.textContent)
+      .toContain('来自相册「旅行」，2 张照片。')
+    // 整组处理要的是原图，不是列表那张缩略图
+    expect(fileCalls).toHaveLength(2)
+    expect(fileCalls.every(url => url.includes('/file?v='))).toBe(true)
+    expect(fileCalls.some(url => url.includes('/thumb'))).toBe(false)
+  })
+
+  it('★ 相册超过 20 张只取前 20；单张失败不拖垮整组，并把张数带进批量页', async () => {
+    const now = Date.now()
+    const works = Array.from({ length: 21 }, (_, i) => WORK(i + 1, now - i, `第${i + 1}张`))
+    const noisy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      withAlbumWorks(works, (url) => {
+        if (!url.startsWith('/api/works/')) return null
+        if (url.startsWith('/api/works/3/file')) {
+          return new Response('bad', { status: 500 })
+        }
+        if (/^\/api\/works\/\d+\/file/.test(url)) {
+          return new Response('jpeg', { status: 200, headers: { 'content-type': 'image/jpeg' } })
+        }
+        return null
+      })
+
+      await renderApp()
+      await goNav('作品')
+      await pickAlbum()
+      const burstToggle = container.querySelector(
+        'button[aria-label="展开所有连拍组"]',
+      ) as HTMLButtonElement | null
+      if (burstToggle) {
+        await act(async () => {
+          burstToggle.click()
+          await new Promise(r => setTimeout(r, 0))
+        })
+      }
+      await vi.waitFor(() => expect(container.querySelectorAll('.gallery-cell')).toHaveLength(21))
+
+      await clickByText('批量处理相册')
+      await vi.waitFor(() => expect(container.querySelector('.batch-page')).toBeTruthy(), { timeout: 5_000 })
+
+      expect(container.textContent).toContain('19 / 20')
+      expect(container.textContent).not.toContain('第21张')
+      expect(container.querySelector('.batch-source-note')?.textContent)
+        .toContain('共 21 张，本次先处理前 20 张，1 张没取到')
+    } finally {
+      noisy.mockRestore()
+    }
+  })
+
+  it('★ 相册整组下载：复用原图 ZIP 打包，并如实说下载了几张', async () => {
+    const now = Date.now()
+    const works = [WORK(1, now, 'A'), WORK(2, now - 1_000, 'B')]
+    withAlbumWorks(works, (url) => {
+      if (url.startsWith('/api/works/1/file')) {
+        return new Response('jpeg-a', { status: 200, headers: { 'content-type': 'image/jpeg' } })
+      }
+      if (url.startsWith('/api/works/2/file')) {
+        return new Response('jpeg-b', { status: 200, headers: { 'content-type': 'image/jpeg' } })
+      }
+      return null
+    })
+
+    await renderApp()
+    await goNav('作品')
+    await pickAlbum()
+    await vi.waitFor(() => expect(container.querySelectorAll('.gallery-cell')).toHaveLength(2))
+
+    const download = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '下载相册') as HTMLButtonElement
+    expect(download).toBeTruthy()
+    await act(async () => {
+      download.click()
+      await new Promise(r => setTimeout(r, 50))
+    })
+    await vi.waitFor(() => expect(saveMod.downloadImage).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(container.textContent).toContain('已下载 2 张'))
+  }, 15_000)
+
+  it('★ 从相册批量页返回后再用普通批量入口，不会把上一组相册照片偷偷带回来', async () => {
+    const now = Date.now()
+    const works = [WORK(1, now, 'A')]
+    withAlbumWorks(works, (url) => (
+      url.startsWith('/api/works/1/file')
+        ? new Response('jpeg-a', { status: 200, headers: { 'content-type': 'image/jpeg' } })
+        : null
+    ))
+
+    await renderApp()
+    await goNav('作品')
+    await pickAlbum()
+    await vi.waitFor(() => expect(container.querySelectorAll('.gallery-cell')).toHaveLength(1))
+
+    await clickByText('批量处理相册')
+    await vi.waitFor(() => expect(container.querySelector('.batch-page')).toBeTruthy())
+    const back = container.querySelector('.batch-back') as HTMLButtonElement
+    await act(async () => { back.click(); await new Promise(r => setTimeout(r, 0)) })
+    expect(container.querySelector('.batch-page')).toBeNull()
+
+    await clickByText('批量处理')
+    expect(container.querySelector('.batch-page')).toBeTruthy()
+    expect(container.textContent).toContain('0 / 20')
+    expect(container.querySelectorAll('.batch-file-row')).toHaveLength(0)
+  })
+})
+
+describe('作品页：多选下载', () => {
+  it('勾两张作品 → 一次下载 ZIP，并如实说下载了几张', async () => {
+    const now = Date.now()
+    withWorks([WORK(1, now, 'A'), WORK(2, now, 'B')])
+    const inner = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/works/1/file')) {
+        return new Response('jpeg-a', { status: 200, headers: { 'content-type': 'image/jpeg' } })
+      }
+      if (url.startsWith('/api/works/2/file')) {
+        return new Response('jpeg-b', { status: 200, headers: { 'content-type': 'image/jpeg' } })
+      }
+      return inner(url, init)
+    })
+    await renderApp()
+    await goNav('作品')
+    await clickByText('多选')
+    const cells = [...container.querySelectorAll<HTMLButtonElement>('.gallery-cell')]
+    await act(async () => { cells[0]!.click(); cells[1]!.click() })
+    const download = container.querySelector('.gallery-select-download') as HTMLButtonElement
+    expect(download).toBeTruthy()
+    await act(async () => {
+      download.click()
+      await new Promise(r => setTimeout(r, 30))
+    })
+    await vi.waitFor(() => expect(saveMod.downloadImage).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(container.textContent).toContain('已下载 2 张'))
+  }, 15_000)
 })

@@ -1,10 +1,21 @@
-import { useRef } from 'react'
+import { lazy, Suspense, useRef, useState } from 'react'
+import { FolderOpen } from 'lucide-react'
 import { Btn } from './kit/Btn.tsx'
+import type { Appearance } from '../app/appearance.ts'
+
+const CameraBridge = lazy(() => import('./CameraBridge.tsx'))
 
 type Props = {
   /** 和欢迎页那颗「选照片」**同一个动作、同一个去处**（`App` 的 `onPick`）——
    *  选完就落回**这一屏**（调色），因为这一屏本来就是用户点进来的地方。 */
-  onPick: (file: File, wish: string) => void
+  onPick: (file: File, wish: string, sidecar?: File) => void
+  /** 相机桥 / 文件夹等一次取回多张时，交给批量处理。 */
+  onPickMany?: (files: File[], wish: string, sidecars?: File[]) => void
+  /** 相机包围曝光整组 → HDR 合成。 */
+  onHdrMany?: (files: File[]) => void
+  /** 焦点包围整组 → 焦点堆栈。 */
+  onFocusMany?: (files: File[]) => void
+  appearance?: Appearance
 }
 
 /**
@@ -32,8 +43,11 @@ type Props = {
  * ⚠️ `input` 那一格和欢迎页一样要**留在 DOM 里**（藏起来、由按钮去点它）：
  * `check:layout` 靠 `input[type="file"]` 判断"这一屏到了没有"。
  */
-export default function AdjustEmpty({ onPick }: Props) {
+export default function AdjustEmpty({
+  onPick, onPickMany, onHdrMany, onFocusMany, appearance = 'dark',
+}: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
+  const [bridgeOpen, setBridgeOpen] = useState(false)
 
   return (
     <div className="adjust-empty empty-state">
@@ -41,7 +55,7 @@ export default function AdjustEmpty({ onPick }: Props) {
         ref={fileRef}
         className="composer-file"
         type="file"
-        accept="image/*"
+        accept="image/*,.heic,.heif"
         onChange={e => {
           const f = e.target.files?.[0]
           if (f) onPick(f, '')
@@ -50,7 +64,48 @@ export default function AdjustEmpty({ onPick }: Props) {
         }}
       />
       <p className="empty-state-title">还没有照片。</p>
-      <Btn className="primary" onClick={() => fileRef.current?.click()}>选一张照片</Btn>
+      <div className="adjust-empty-actions">
+        <Btn className="primary" onClick={() => fileRef.current?.click()}>选一张照片</Btn>
+        <button
+          type="button"
+          className="adjust-empty-secondary"
+          onClick={() => setBridgeOpen(true)}
+        >
+          <FolderOpen size={14} strokeWidth={1.5} aria-hidden="true" />
+          从相机导入
+        </button>
+      </div>
+      {bridgeOpen && (
+        <Suspense fallback={(
+          <div className="camera-dialog" data-theme={appearance} role="status">
+            <div className="camera-panel camera-loading">正在打开相机桥…</div>
+          </div>
+        )}>
+          <CameraBridge
+            open
+            appearance={appearance}
+            onClose={() => setBridgeOpen(false)}
+            onImport={(file, sidecar) => {
+              setBridgeOpen(false)
+              if (sidecar) onPick(file, '', sidecar)
+              else onPick(file, '')
+            }}
+            onImportMany={(files, sidecars) => {
+              setBridgeOpen(false)
+              if (sidecars?.length) onPickMany?.(files, '', sidecars)
+              else onPickMany?.(files, '')
+            }}
+            onHdrMany={files => {
+              setBridgeOpen(false)
+              onHdrMany?.(files)
+            }}
+            onFocusMany={files => {
+              setBridgeOpen(false)
+              onFocusMany?.(files)
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   )
 }

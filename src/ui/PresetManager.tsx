@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { Pencil, Trash2 } from 'lucide-react'
+import { Download, Pencil, Trash2, Upload } from 'lucide-react'
 import { errorText } from '../api/client'
-import { MAX_PRESETS, MAX_PRESET_NAME, type PresetMeta } from '../../shared/preset.ts'
+import {
+  MAX_PRESETS, MAX_PRESET_NAME, samePresetName, type PresetMeta,
+} from '../../shared/preset.ts'
 import { PRESET_LIMIT_REACHED } from '../../shared/copy.ts'
 import type { Adjustments } from '../../shared/adjustments.ts'
+import {
+  parsePresetFile, parsePresetXmp, presetExportFilename, presetXmpFilename,
+  serializePresetXmp, serializePresets,
+} from '../core/presetFile'
+import { downloadFile } from '../export/save'
 import { Btn } from './kit/Btn.tsx'
 import { RenameInput } from './kit/RenameInput.tsx'
 
@@ -51,6 +58,10 @@ export function PresetManager({ presets, known, params, onSave, onRename, onDele
   /** 删除的确认块开在哪一条下面（null = 没开）。开了**什么都还没删**。 */
   const [ask, setAsk] = useState<number | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [transferMsg, setTransferMsg] = useState<string | null>(null)
+  const [transferErr, setTransferErr] = useState<string | null>(null)
+  const presetFileRef = useRef<HTMLInputElement | null>(null)
 
   /**
    * 卸载之后晚到的响应不再写状态（`AccountPage` / `LutSettings` 同款理由）。
@@ -99,11 +110,111 @@ export function PresetManager({ presets, known, params, onSave, onRename, onDele
     }
   }
 
+  const doExport = () => {
+    if (presets.length === 0) return
+    setTransferErr(null)
+    const blob = new Blob([serializePresets(presets)], { type: 'application/json' })
+    downloadFile(blob, presetExportFilename())
+    setTransferMsg(`已导出 ${presets.length} 套。`)
+  }
+
+  const doExportXmp = () => {
+    setTransferErr(null)
+    const blob = new Blob(
+      [serializePresetXmp('PinkRose 当前调色', params)],
+      { type: 'application/rdf+xml' },
+    )
+    downloadFile(blob, presetXmpFilename())
+    setTransferMsg('已导出当前调色的 XMP。')
+  }
+
+  const doImport = async (file: File) => {
+    if (importing) return
+    setTransferErr(null)
+    setTransferMsg(null)
+    if (!known) {
+      setTransferErr('预设清单还没到手，等一下再导入。')
+      return
+    }
+    setImporting(true)
+    try {
+      const text = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result ?? ''))
+        reader.onerror = () => reject(new Error('这个预设文件读不出来。'))
+        reader.readAsText(file)
+      })
+      const isXmp = /\.xmp$/i.test(file.name)
+        || file.type.includes('rdf')
+        || /<x:xmpmeta[\s>]/.test(text)
+      const list = isXmp
+        ? [parsePresetXmp(text, file.name)]
+        : parsePresetFile(text)
+      const room = MAX_PRESETS - presets.length
+      if (list.length > room) {
+        throw new Error(`现在最多还能导入 ${Math.max(0, room)} 套，先删掉几套再来。`)
+      }
+      const conflict = list.find(item => presets.some(p => samePresetName(p.name, item.name)))
+      if (conflict) {
+        throw new Error(`已经有一套叫「${conflict.name}」的预设了，先删掉或改名再导入。`)
+      }
+      let imported = 0
+      for (const item of list) {
+        try {
+          await onSave(item.name, item.params)
+          imported++
+        } catch (e) {
+          if (alive.current) {
+            setTransferErr(
+              `已导入 ${imported} 套，「${item.name}」没存进去：${errorText(e, '再试一次')}`,
+            )
+          }
+          return
+        }
+      }
+      if (alive.current) setTransferMsg(`已导入 ${imported} 套。`)
+    } catch (e) {
+      if (alive.current) setTransferErr(presetTransferError(e, '这个预设文件没读成。'))
+    } finally {
+      if (alive.current) setImporting(false)
+    }
+  }
+
   return (
     <div className="my-presets">
       {/* 起名 + 存 —— 这一行住在 `PresetSaveRow` 里（文件底下那段）：面板头和
           **作品详情页**那两张脸共用**同一份**（设计 §5.4 要的"复用存组件"）。 */}
       <PresetSaveRow params={params} full={full} onSave={onSave} />
+      <div className="my-presets-transfer">
+        <input
+          ref={presetFileRef}
+          className="my-presets-file"
+          type="file"
+          accept="application/json,.json,application/rdf+xml,.xmp,application/xml,text/xml"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) void doImport(file)
+            e.target.value = ''
+          }}
+        />
+        <button type="button" disabled={importing || !known}
+                onClick={() => presetFileRef.current?.click()}>
+          <Upload size={14} strokeWidth={1.5} aria-hidden="true" />
+          {importing ? '正在导入…' : '导入预设'}
+        </button>
+        <button type="button" disabled={importing || presets.length === 0}
+                onClick={doExport}>
+          <Download size={14} strokeWidth={1.5} aria-hidden="true" />
+          导出全部
+        </button>
+        <button type="button" disabled={importing} onClick={doExportXmp}>
+          <Download size={14} strokeWidth={1.5} aria-hidden="true" />
+          导出当前 XMP
+        </button>
+        <span>JSON 含全部预设；XMP 单套，不含 Lut</span>
+      </div>
+      {transferMsg && <p className="luts-hint">{transferMsg}</p>}
+      {transferErr && <p className="luts-error">{transferErr}</p>}
       {/* **改名 / 删**那条错（存那条在 `PresetSaveRow` 里自己说）—— 位置和
           原来一样：在这一栏那一堆清单话的上面。 */}
       {err && <p className="luts-error">{err}</p>}
@@ -262,4 +373,10 @@ export function PresetSaveRow({ params, full = false, onSave }: {
       {err && <p className="luts-error">{err}</p>}
     </>
   )
+}
+
+/** 导入这一层的错误：我们自己抛的是人话，网络层错误交给 `errorText`。 */
+function presetTransferError(e: unknown, fallback: string): string {
+  if (e instanceof Error && /[\u3400-\u9fff]/.test(e.message)) return e.message
+  return errorText(e, fallback)
 }

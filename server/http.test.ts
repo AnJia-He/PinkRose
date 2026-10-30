@@ -1,7 +1,7 @@
 import { readTextCapped } from './http.ts'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createServer } from 'node:http'
-import { readJsonBody, sendJson, sendError, HttpError } from './http.ts'
+import { readJsonBody, readRequestBytes, sendJson, sendError, HttpError } from './http.ts'
 import { SenseNovaClient, SnError } from './sn.ts'
 
 afterEach(() => vi.restoreAllMocks())
@@ -9,7 +9,7 @@ afterEach(() => vi.restoreAllMocks())
 /** 起一个一次性服务器把 req/res 造出来，比 mock 更接近真实。 */
 async function withServer(
   handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void,
-  body: string,
+  body: string | Uint8Array,
   headers: Record<string, string> = { 'content-type': 'application/json' },
 ): Promise<{ status: number; text: string }> {
   const server = createServer(handler)
@@ -60,6 +60,31 @@ describe('readJsonBody', () => {
       sendJson(s, 200, {})
     }, '{oops')
     expect((err as HttpError).code).toBe('BAD_REQUEST')
+  })
+})
+
+describe('readRequestBytes', () => {
+  it('二进制请求逐字节读出，不经过 UTF-8 字符串转换', async () => {
+    let seen: Uint8Array | null = null
+    await withServer(async (req, res) => {
+      seen = await readRequestBytes(req, 64)
+      sendJson(res, 200, {})
+    }, Uint8Array.from([0xff, 0x00, 0x41]), { 'content-type': 'application/octet-stream' })
+    expect([...seen!]).toEqual([0xff, 0x00, 0x41])
+  })
+
+  it('超过上限抛 413，不继续攒 body', async () => {
+    let err: unknown
+    await withServer(async (req, res) => {
+      try {
+        await readRequestBytes(req, 4)
+      } catch (caught) {
+        err = caught
+      }
+      sendJson(res, 200, {})
+    }, '12345678', { 'content-type': 'application/octet-stream' })
+    expect(err).toBeInstanceOf(HttpError)
+    expect((err as HttpError).status).toBe(413)
   })
 })
 

@@ -17,6 +17,9 @@ import { HttpError } from './http.ts'
 // ⚠️ 「删了会话，作品还在」那一条要用到作品那一层 —— 它守的正是**两层互不牵连**
 import { handleCreateWork, handleGetWork, handleWorkFile } from './works.ts'
 import { ZERO } from '../shared/adjustments.ts'
+import { DEFAULT_TEXT } from '../shared/text.ts'
+import { DEFAULT_SHAPE } from '../shared/shape.ts'
+import { DEFAULT_STICKER } from '../shared/sticker.ts'
 import { QUOTA_BYTES } from './quota.ts'
 import { createLut } from './luts.ts'
 import { b64Of, jpegBytes, jpegUrl } from './testImages.ts'
@@ -495,6 +498,33 @@ describe('stateStepId：状态挂在指定的那一步上', () => {
     const steps = handleGetSession(id, user, deps()).steps
     expect(steps[0]!.lut).toEqual({ lutId: lut.id, amount: 55 })
     expect(steps[1]!.lut).toBeNull()   // 最后一步没被顺手补上
+  })
+
+  it('★ 文字 / 形状 / 贴纸层落在 stateStepId 那一步上；显式空数组能清掉，别的步骤不动', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    await handleUpdateSession(id, { steps: [step(1), step(2)] }, user, deps())
+    const layers = [{
+      kind: 'text',
+      id: 'text-1',
+      options: { ...DEFAULT_TEXT, text: '你好', x: 0.2, y: 0.3, fontPx: 88 },
+    }, {
+      kind: 'shape',
+      id: 'shape-1',
+      options: { ...DEFAULT_SHAPE, kind: 'line', opacity: 70 },
+    }, {
+      kind: 'sticker',
+      id: 'sticker-1',
+      options: { ...DEFAULT_STICKER, shape: 'heart' },
+      image: null,
+    }]
+
+    await handleUpdateSession(id, { stateStepId: 1, layers }, user, deps())
+    const detail = handleGetSession(id, user, deps())
+    expect(detail.steps[0]!.layers).toEqual(layers)
+    expect(detail.steps[1]!.layers).toBeUndefined()
+
+    await handleUpdateSession(id, { stateStepId: 1, layers: [] }, user, deps())
+    expect(handleGetSession(id, user, deps()).steps[0]!.layers).toBeUndefined()
   })
 
   it('★★ 新文件落在 stateStepId 那一步的 image 上（替换掉旧图），不是"最后一个新步骤"', async () => {

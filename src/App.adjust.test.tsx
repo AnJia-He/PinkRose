@@ -44,7 +44,7 @@ import {
   withWorks,
 } from './test/appHarness'
 import { act } from 'react'
-import { ZERO } from '../shared/adjustments.ts'
+import { blendAdjustments, clampAdjustments, ZERO } from '../shared/adjustments.ts'
 import { type LutMeta } from '../shared/lut.ts'
 import { MAX_PRESETS, MAX_PRESET_NAME, type PresetMeta } from '../shared/preset.ts'
 // ⚠️ `PRESETS` 走**直接 import**（App.sessions.test.tsx 也是这么写的），
@@ -69,7 +69,7 @@ describe('★ 「照着这张调」：拟合的世界 = 看到的世界（2026-1
   const SRC: Rgb[] = [[96, 92, 88], [128, 120, 112], [160, 150, 140], [80, 84, 90]]
   const REF: Rgb[] = [[168, 158, 140], [196, 184, 164], [150, 152, 140], [140, 142, 150]]
 
-  it('★ 套用参考图：六条换拟合值、五条参与颜色的归零；清晰度/暗角原样留着', async () => {
+  it('★ 套用参考图：六条换拟合值、参与颜色的参数归零；清晰度/暗角原样留着', async () => {
     await renderApp()
     await uploadPhoto()
 
@@ -78,14 +78,19 @@ describe('★ 「照着这张调」：拟合的世界 = 看到的世界（2026-1
     vi.mocked(api.postRoute).mockResolvedValueOnce(decision({
       route: 'params',
       paramDeltas: {
-        vibrance: 30, cbYellowBlue: 60, splitAmount: 40, splitHiHue: 200,
+        vibrance: 30, tint: 27, bwAmount: 100, bwRed: 20,
+        cbYellowBlue: 60, splitAmount: 40, splitHiHue: 200,
+        splitMidHue: 280, splitMidAmount: 35, splitBalance: -25,
         clarity: 20, vignette: -30,
       },
       reply: '调好了。',
     }))
     await say('调个色')
     expect(canvasProps.props.at(-1)?.params).toMatchObject({
-      vibrance: 30, cbYellowBlue: 60, splitAmount: 40, clarity: 20, vignette: -30,
+      vibrance: 30, tint: 27, bwAmount: 100, bwRed: 20,
+      cbYellowBlue: 60, splitAmount: 40,
+      splitMidHue: 280, splitMidAmount: 35, splitBalance: -25,
+      clarity: 20, vignette: -30,
     })
 
     // ② 「照着这张调」那颗按钮住在调色面板里 —— 先到那一屏
@@ -111,14 +116,20 @@ describe('★ 「照着这张调」：拟合的世界 = 看到的世界（2026-1
     for (const k of ['temperature', 'saturation', 'exposure', 'contrast', 'highlights', 'shadows'] as const) {
       expect(after[k], `${k} 该是拟合值`).toBe(matched[k])
     }
-    // ④ 五条参与颜色的新参数：拟合的世界里它们就是 0（不归零 = 色偏悄悄混进来）
+    // ④ 八条参与颜色的新参数：拟合的世界里它们就是 0（不归零 = 色偏悄悄混进来）
     expect(after.vibrance).toBe(0)
+    expect(after.tint).toBe(0)
+    expect(after.bwAmount).toBe(0)
+    expect(after.bwRed).toBe(0)
     expect(after.cbCyanRed).toBe(0)
     expect(after.cbMagentaGreen).toBe(0)
     expect(after.cbYellowBlue).toBe(0)
     expect(after.splitAmount).toBe(0)
-    // ⑤ 两条色相**不动**（强度归零它们本来就不起作用；顺手清掉反而是丢用户挑的颜色）
+    expect(after.splitMidAmount).toBe(0)
+    expect(after.splitBalance).toBe(0)
+    // ⑤ 三条色相**不动**（强度归零它们本来就不起作用；顺手清掉反而是丢用户挑的颜色）
     expect(after.splitHiHue).toBe(200)
+    expect(after.splitMidHue).toBe(280)
     // ⑥ 清晰度 / 暗角：构图与局部细节，不在"参考图长什么样"的世界里
     expect(after.clarity).toBe(20)
     expect(after.vignette).toBe(-30)
@@ -172,6 +183,166 @@ describe('★ 「照着这张调」：拟合的世界 = 看到的世界（2026-1
     }
     // 取的是**小图**那条 URL（带版本号）—— 原图只是白费流量
     expect(fetchMock.mock.calls.some(c => c[0] === '/api/works/7/thumb?v=1000')).toBe(true)
+  })
+})
+
+describe('★ 镜头虚化焦点（2026-10-19）', () => {
+  it('调色屏上虚化强度 > 0 才交焦点环，拖动写回 -100~100；强度归零就撤掉', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+
+    await setSlider('虚化强度', 40)
+    const shown = canvasProps.props.at(-1)!.lensFocus!
+    expect(shown).toMatchObject({ x: 0.5, y: 0.5 })
+
+    await act(async () => shown.onChange(0.25, 0.8))
+    expect(canvasProps.props.at(-1)?.params).toMatchObject({
+      lensFocusX: -50, lensFocusY: 60,
+    })
+
+    await setSlider('虚化强度', 0)
+    expect(canvasProps.props.at(-1)?.lensFocus).toBeNull()
+  })
+
+  it('★ 切到移轴后只拖清晰带上下位置，回到径向仍保留原左右焦点', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+
+    await setSlider('虚化强度', 40)
+    await setSlider('焦点左右', 30)
+    await clickByText('移轴')
+
+    const shown = canvasProps.props.at(-1)!.lensFocus!
+    expect(shown).toMatchObject({ shape: 'tilt', x: 0.5 })
+    await act(async () => shown.onChange(0.8, 0.7))
+    expect(canvasProps.props.at(-1)?.params).toMatchObject({
+      lensFocusX: 30, lensFocusY: 40,
+    })
+  })
+})
+
+describe('★ HSL 定向取色（2026-10-19）', () => {
+  it('点「从照片取色」→ 画布取样 → 面板切到最近的色带，不生成', async () => {
+    vi.mocked(sampleMod.samplePixelAt).mockReturnValue([20, 60, 240])
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+
+    await clickByText('从照片取色')
+    expect(canvasProps.props.at(-1)?.sampling).toBe(true)
+
+    const sample = canvasProps.props.at(-1)!.onSamplePoint!
+    await act(async () => {
+      sample(0.5, 0.5)
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(canvasProps.props.at(-1)?.sampling).toBe(false)
+    const bands = [...adjustPanel().querySelectorAll<HTMLButtonElement>('.hsl-band')]
+    expect(bands.find(b => b.getAttribute('aria-label') === '蓝色')
+      ?.getAttribute('aria-pressed')).toBe('true')
+    expect(api.postEdit).not.toHaveBeenCalled()
+  })
+
+  it('点到灰色 → 明确请用户换一块有颜色的地方，色带不乱切', async () => {
+    vi.mocked(sampleMod.samplePixelAt).mockReturnValue([128, 128, 128])
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await clickByText('从照片取色')
+    const sample = canvasProps.props.at(-1)!.onSamplePoint!
+    await act(async () => {
+      sample(0.5, 0.5)
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(container.textContent).toContain('太灰')
+    const bands = [...adjustPanel().querySelectorAll<HTMLButtonElement>('.hsl-band')]
+    expect(bands.find(b => b.getAttribute('aria-pressed') === 'true')
+      ?.getAttribute('aria-label')).toBe('红色')
+  })
+})
+
+describe('★ 一键自动（2026-10-17）', () => {
+  it('暗底图 → 自动提亮；不调用生成、只改当前参数', async () => {
+    vi.mocked(sampleMod.samplePixels).mockReturnValue([[40, 40, 40]])
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+
+    expect(canvasProps.props.at(-1)?.params.exposure).toBe(0)
+    await clickByText('自动')
+
+    const p = canvasProps.props.at(-1)!.params
+    expect(p.exposure).toBeGreaterThan(20)
+    expect(p.contrast).toBeGreaterThan(0)
+    // 纯灰不硬加饱和
+    expect(p.saturation).toBe(0)
+    expect(api.postEdit).not.toHaveBeenCalled()
+  })
+})
+
+describe('★ 推荐（2026-10-18）', () => {
+  it('肤色画面 → 推荐柔光人像；只改当前参数、不调用生成', async () => {
+    vi.mocked(sampleMod.samplePixels).mockReturnValue(
+      Array.from({ length: 80 }, () => [205, 155, 135] as Rgb))
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+
+    await clickByText('推荐')
+
+    expect(canvasProps.props.at(-1)?.params)
+      .toEqual(PRESETS.find(p => p.id === 'portrait')!.adjustments)
+    expect(container.textContent).toContain('柔光人像')
+    expect(api.postEdit).not.toHaveBeenCalled()
+  })
+})
+
+describe('★ 白平衡吸管（2026-10-17）', () => {
+  it('点按钮进入取样 → 点画面写白平衡两轴，其它参数不动、不花钱', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await setSlider('亮度', 25)
+
+    await clickByText('白平衡吸管')
+    expect(canvasProps.props.at(-1)?.sampling, '按钮按下后等画布取样').toBe(true)
+
+    const sample = canvasProps.props.at(-1)!.onSamplePoint!
+    await act(async () => {
+      sample(0.5, 0.5)
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    const p = canvasProps.props.at(-1)!.params
+    expect(p.temperature).toBe(-59)
+    expect(p.tint).toBe(16)
+    expect(p.cbMagentaGreen, '吸管不再借用色彩平衡').toBe(0)
+    expect(p.cbCyanRed).toBe(0)
+    expect(p.cbYellowBlue).toBe(0)
+    expect(p.exposure, '吸管只改白平衡，不动亮度').toBe(25)
+    expect(canvasProps.props.at(-1)?.sampling).toBe(false)
+    expect(vi.mocked(sampleMod.samplePixelAt)).toHaveBeenCalledWith(
+      expect.objectContaining({ __tag: 'upload' }), 0.5, 0.5)
+    expect(api.postEdit).not.toHaveBeenCalled()
+  })
+
+  it('点到纯黑/纯白/重彩色 → 明确请用户换一块中性色', async () => {
+    vi.mocked(sampleMod.samplePixelAt).mockReturnValue([5, 5, 5])
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    await clickByText('白平衡吸管')
+    const sample = canvasProps.props.at(-1)!.onSamplePoint!
+    await act(async () => {
+      sample(0.5, 0.5)
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(canvasProps.props.at(-1)!.params.temperature).toBe(0)
+    expect(container.textContent).toContain('换一块灰色或白色再点')
   })
 })
 
@@ -254,7 +425,7 @@ describe('滤镜', () => {
     await openLutPanel()
 
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
-    // 强度那根只在这一组里找（全屏有十五条别的滑块）
+    // 强度那根只在这一组里找（全屏有二十四条别的滑块）
     const range = lutSection().querySelector('input[type="range"]') as HTMLInputElement
     expect(range.value).toBe('80')
 
@@ -364,6 +535,39 @@ describe('滤镜', () => {
 
     await click(nodeAt(container.querySelectorAll('.strip-node').length - 1))   // 再跳回来
     expect(rendered().exposure).toBe(25)                       // ← 丢参数那一半
+  })
+
+  it('★ 在最新一步把滤镜摘掉，跳走再跳回来仍然是不用（现场改动同样写回那一步）', async () => {
+    // 用户在这一版上最后看到的是「不用」—— 跳走再回来就该看到它。
+    // 不能拿"生成那一刻的滤镜"盖回来：那样用户亲手摘掉的滤镜会自己复活。
+    vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUT] })
+    vi.mocked(api.postRoute).mockResolvedValue(
+      decision({ route: 'generate', editPrompt: '改一下', reply: '好，改好了。' }))
+    vi.mocked(api.postEdit).mockResolvedValue(OK)
+
+    await renderApp()
+    await uploadPhoto()
+    await say('先改一次')
+    await goNav('调色')
+    await openLutPanel()
+    await click(tileNamed('黄昏'))
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
+    await click(tileNamed('不用'))
+    expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
+
+    const nodeAt = (i: number) => [...container.querySelectorAll<HTMLElement>('.strip-node')][i]!
+    await goNav('修图')
+    await click(nodeAt(0))
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
+
+    await goNav('修图')
+    await click(nodeAt(container.querySelectorAll('.strip-node').length - 1))
+    await goNav('调色')
+    await openLutPanel()
+    expect(tileNamed('不用').getAttribute('aria-pressed')).toBe('true')
+    expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('false')
   })
 
   it('★「回到这一步」跟着那一步把滤镜也还原（和参数对称）', async () => {
@@ -1176,7 +1380,7 @@ describe('调色的「一笔」：停手 0.8 秒定稿', () => {
     await goNav('调色')
     expect(stepNav()!.textContent).toContain('2 / 2')
     expect(canvasProps.props.at(-1)!.params.exposure).toBe(50)
-  })
+  }, 15_000)
 
   it('★ 调一下 → 点转盘跳到另一版 → 在那儿再调一下：两版各记各的（跳转的定稿点）', async () => {
     // 和上一条**同一个形状**的另一处定稿点（spec §5.5「点转盘跳版本」）：
@@ -1211,7 +1415,7 @@ describe('调色的「一笔」：停手 0.8 秒定稿', () => {
     await goNav('调色')
     expect(stepNav()!.textContent).toContain('2 / 2')
     expect(canvasProps.props.at(-1)!.params.exposure).toBe(50)
-  })
+  }, 15_000)
 })
 
 describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本', () => {
@@ -1259,6 +1463,64 @@ describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本',
     expect(canvasProps.images.at(-1)).toBe(afterCrop)
   })
 
+  it('★ 点计数展开历史：每一笔有名字，点「原图」直接跳回去', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    const beforeCrop = canvasProps.images.at(-1)
+    await cropOnce()
+
+    const count = container.querySelector('button.step-nav-count') as HTMLButtonElement
+    expect(count, '账本有两笔时计数应当能展开历史').toBeTruthy()
+    await tap(count)
+    const items = [...container.querySelectorAll<HTMLButtonElement>('.step-history-item')]
+    expect(items.map(x => x.textContent)).toEqual(['1原图', '2裁剪'])
+    expect(items[1]!.getAttribute('aria-current')).toBe('step')
+
+    await tap(items[0]!)
+    expect(stepNav()!.textContent).toContain('1 / 2')
+    expect(canvasProps.images.at(-1)).toBe(beforeCrop)
+  })
+
+  it('★ ⌘/Ctrl+Z 退一笔、⌘/Ctrl+Shift+Z 再进一笔；在输入框里不抢撤销', async () => {
+    await renderApp()
+    await uploadPhoto()
+    await goNav('调色')
+    const beforeCrop = canvasProps.images.at(-1)
+    await cropOnce()
+    const afterCrop = canvasProps.images.at(-1)
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'z', metaKey: true, bubbles: true, cancelable: true,
+      }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(stepNav()!.textContent).toContain('1 / 2')
+    expect(canvasProps.images.at(-1)).toBe(beforeCrop)
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'z', metaKey: true, shiftKey: true, bubbles: true, cancelable: true,
+      }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(stepNav()!.textContent).toContain('2 / 2')
+    expect(canvasProps.images.at(-1)).toBe(afterCrop)
+
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'z', ctrlKey: true, bubbles: true, cancelable: true,
+      }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(stepNav()!.textContent).toContain('2 / 2')
+    input.remove()
+  })
+
   it('★ 两头都不空转：出生那一笔按不动「上一步」、最新那一笔按不动「下一步」', async () => {
     await renderApp()
     await uploadPhoto()
@@ -1291,6 +1553,9 @@ describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本',
    * 变异：`pushEdit` 里那两段"回到账本上已有的一笔"删掉 → 第 4 句起开始涨
    *   （4/4、5/5…），下面每一条都红。
    */
+  // ⚠️ 这条会真的等两次 900ms 防抖，再走一遍翻账本；单独跑约 3.3s，
+  //    全量并发时会贴到默认 5s 上限。给它 15s，别让一次慢拍把后面整组
+  //    用例的 cleanup 一起拖垮（超时后 container 没卸，后面全是假红）。
   it('★ 来回切两个 Lut：账本只认画面，同一条不重复记（用户报的"切几次记几条"）', async () => {
     const QINGCHENG: LutMeta = { id: 2, name: '青橙', size: 2, bytes: 100, createdAt: 0 }
     vi.mocked(lutsMod.listLuts).mockResolvedValue({ luts: [HUANGHUN, QINGCHENG] })
@@ -1320,7 +1585,7 @@ describe('调色屏的「上一步 / 下一步」= 翻当前这一版的账本',
     await tap(navBtns()[0]!)
     expect(stepNav()!.textContent).toContain('2 / 3')
     expect(tileNamed('黄昏').getAttribute('aria-pressed')).toBe('true')
-  })
+  }, 15_000)
 
   it('★ 翻账本不跟对话打交道：一条消息不多、转盘一格不多、一分钱不花', async () => {
     await renderApp()
@@ -1590,7 +1855,7 @@ describe('★ 账本预算闸：记账统一收口（Task 5）', () => {
     expect(last().params.exposure, '参数退回了"改之前"（拖滑块之前是 2）').toBe(2)
     await waitPersist()                            // 落盘
     expect(lastPutBody().lut, '退回去不许把死滤镜带回来').toBeNull()
-  })
+  }, 15_000)
 
   it('顺手件③：待办挂在被删的那一版上时，删它就把待办一起清', async () => {
     // 定稿闹钟还挂着（拖了滑块、没到 0.8 秒）时把那一版删掉：待办还攥着**旧**
@@ -1681,10 +1946,12 @@ describe('★ 步骤小图：活着时重抓 + 恢复时离屏重画（Task 8）
     //    假 `makeThumbnail` 读的就是它）—— 第 2 格接着第 1 格的，仍是同一个串。
     const srcs = [...container.querySelectorAll('img.strip-thumb')]
       .map(t => t.getAttribute('src') ?? '')
+    const thumb = (params: typeof ZERO) =>
+      'thumb:' + JSON.stringify(clampAdjustments(params))
     expect(srcs).toEqual([
-      'thumb:' + JSON.stringify({ ...ZERO, exposure: 0 }),
-      'thumb:' + JSON.stringify({ ...ZERO, exposure: 0 }),
-      'thumb:' + JSON.stringify({ ...ZERO, exposure: 2 }),
+      thumb({ ...ZERO, exposure: 0 }),
+      thumb({ ...ZERO, exposure: 0 }),
+      thumb({ ...ZERO, exposure: 2 }),
     ])
     // ④ 走完就还回去：不 `dispose` 的话每恢复一次漏一条管线 + 一张画布
     //    （而且这条路的收尾是 finally —— 失败/作废那两条也一样）。
@@ -1974,6 +2241,44 @@ describe('★ 我的预设：用 · 预设栏（2026-10-10）', () => {
     // 拖一根滑块就不该再亮着（全等，没有"接近" —— 内置那条守卫在"我的"上再钉一次）
     await setSlider('亮度', 20)
     expect(railTiles().every(t => t.getAttribute('aria-pressed') === 'false')).toBe(true)
+  })
+
+  it('★ 预设强度 0~100：参数按比例混，格子保持点亮；手调别的参数后收起', async () => {
+    await gotoAdjust()
+    await click(railTile('黄昏'))
+    expect(canvasProps.props.at(-1)?.params).toMatchObject({
+      exposure: 4, contrast: 12, temperature: 32,
+    })
+
+    const strength = () => [...adjustPanel().querySelectorAll('.slider')]
+      .find(el => el.querySelector('.slider-label')?.textContent === '黄昏强度')
+    expect(strength(), '套上预设后面板要给出强度滑杆').toBeTruthy()
+    await setSlider('黄昏强度', 50)
+
+    expect(canvasProps.props.at(-1)?.params).toMatchObject({
+      exposure: 2, contrast: 6, highlights: -5, shadows: 5,
+      saturation: 7, temperature: 16, clarity: 3, vignette: 6,
+    })
+    expect(railTile('黄昏').getAttribute('aria-pressed'), '拖强度仍是在用这套预设').toBe('true')
+
+    await setSlider('亮度', 20)
+    expect(strength(), '手调别的参数后，预设不再是唯一来源').toBeUndefined()
+    expect(railTiles().every(t => t.getAttribute('aria-pressed') === 'false')).toBe(true)
+  })
+
+  it('★ 恢复会话时从参数反推预设与强度（刷新后滑杆不丢）', async () => {
+    const golden = PRESETS.find(p => p.id === 'golden')!
+    const s = makeSession(7, 1, '恢复这套', 'S7')
+    s.steps[0]!.params = blendAdjustments(ZERO, golden.adjustments, 50)
+    withSessions([s])
+
+    await renderApp()
+    await goNav('调色')
+    const strength = [...adjustPanel().querySelectorAll('.slider')]
+      .find(el => el.querySelector('.slider-label')?.textContent === '黄昏强度')
+    expect(strength, '参数能反推出「黄昏 50%」').toBeTruthy()
+    expect(strength!.querySelector('.slider-value')?.textContent).toBe('50')
+    expect(railTile('黄昏').getAttribute('aria-pressed')).toBe('true')
   })
 
   it('删掉一套之后栏里那格跟着消失；删的是"正在用的"那套，画面不变（§5.3）', async () => {

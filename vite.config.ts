@@ -11,6 +11,29 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // 业务主包当前约 0.96 MB；依赖已经拆出，单块阈值放到 1 MB 只用于
+    // 反映 Apple / PWA 首包预算，不再把已经被拆小的 vendor 块当失败。
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        /**
+         * 苹果端主屏应用会反复启动；把稳定依赖单独分块，版本不变时可直接命中
+         * HTTP / Service Worker 缓存，也避免一张照片编辑器的业务代码更新就
+         * 连带让 React、UI 原语和图标重新下载。
+         */
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (id.includes('/react/') || id.includes('/react-dom/')
+            || id.includes('/scheduler/') || id.includes('/@base-ui-components/')) {
+            return 'react-vendor'
+          }
+          if (id.includes('/lucide-react/')) return 'icons-vendor'
+          if (id.includes('/piexifjs/')) return 'exif-vendor'
+        },
+      },
+    },
+  },
   server: {
     // 开发时前端在 5173、后端在 8787。走同源代理，省掉 CORS。
     // 用 127.0.0.1 而不是 localhost：后者在 Windows 上可能先解析成 IPv6 的 ::1，
@@ -65,6 +88,14 @@ export default defineConfig({
     // 前端组件装了 Base UI 之后，它每次状态更新都在问"这是不是 act 环境"，
     // 不设就是每个零件刷一屏警告（见 src/test-setup.ts）。
     setupFiles: ['src/test-setup.ts'],
+    // ★ 2026-10-19：8 / 4 / 2 / 1 路 worker 都实测出现过
+    //   "Worker exited unexpectedly"（随后整片
+    //   "Object.defineProperty called on non-object" 的假红）。★ 2026-10-21：
+    //   单个 Vitest 进程连续跑完重型 App 文件后也会退化；全量入口现在由
+    //   `scripts/test-all.mjs` 把重型 App 文件各自隔离、其余前端文件小批运行。
+    //   每个子进程内部仍保持单进程顺序，避免并行 worker 的已知不稳定。
+    fileParallelism: false,
+    poolOptions: { forks: { minForks: 1, maxForks: 1 } },
     // 三条线各自的测试都在这儿：前端 src/、后端 server/、共用 shared/
     include: ['src/**/*.test.{ts,tsx}', 'server/**/*.test.ts', 'shared/**/*.test.ts'],
   },

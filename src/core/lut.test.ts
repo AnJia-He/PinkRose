@@ -1,6 +1,6 @@
 // src/core/lut.test.ts
 import { describe, it, expect } from 'vitest'
-import type { Cube } from '../../shared/lut.ts'
+import { parseCube, type Cube } from '../../shared/lut.ts'
 import { applyLut, sampleCube } from './lut.ts'
 import { applyTone } from './tone.ts'
 import { toUnit, ZERO } from '../../shared/adjustments.ts'
@@ -65,6 +65,19 @@ describe('applyLut', () => {
     // 输入 2（顶层）应命中表里最后一格 = 白
     const [r] = sampleCube(cube, 2, 2, 2)
     expect(r).toBeCloseTo(1, 2)
+  })
+
+  it('1D 文件解析后能直接走现有 LUT 查表，三通道各自用自己的曲线', () => {
+    const cube = parseCube([
+      'LUT_1D_SIZE 3',
+      '0 0 0',
+      '0.5 0.25 0.75',
+      '1 1 1',
+    ].join('\n'))
+    const out = applyLut(cube, [0.5, 0.5, 0.5], 100)
+    expect(out[0]).toBeCloseTo(0.5, 2)
+    expect(out[1]).toBeCloseTo(0.25, 2)
+    expect(out[2]).toBeCloseTo(0.75, 2)
   })
 })
 

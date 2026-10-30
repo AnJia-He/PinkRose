@@ -14,6 +14,11 @@ describe('normalizeDeltas', () => {
     expect(normalizeDeltas({ exposure: 10, sharpness: 50, foo: 1 })).toEqual({ exposure: 10 })
   })
 
+  it('★ 移轴模式和角度是合法本地增量', () => {
+    expect(normalizeDeltas({ lensShape: 80, lensAngle: -30 }))
+      .toEqual({ lensShape: 80, lensAngle: -30 })
+  })
+
   it('非有限值丢弃（NaN / Infinity / 字符串 / null）', () => {
     expect(normalizeDeltas({ exposure: NaN, contrast: Infinity, shadows: '30', highlights: null }))
       .toEqual({})

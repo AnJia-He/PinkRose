@@ -57,6 +57,7 @@ describe('网址 ↔ 界面', () => {
       { kind: 'sessions' } as const,
       { kind: 'gallery' } as const,
       { kind: 'work', id: 7 } as const,
+      { kind: 'shared', token: 'AbCdEfGhIjKlMnOpQrStUvWx' } as const,
       { kind: 'account' } as const,
       { kind: 'models' } as const,
       // ★ 2026-10-05（滤镜）：设置里那一页。上面的循环同时守着"认得出来 +
@@ -94,6 +95,14 @@ describe('网址 ↔ 界面', () => {
 
   it('★ 作品详情页的网址里**没有名字**，只有 id（§3.5.1）', () => {
     expect(pathOf({ kind: 'work', id: 7 })).toBe('/app/works/7')
+  })
+
+  it('★ 公开分享页 /s/<token> 认得出来、也拼得回去；坏 token 不冒充分享页', () => {
+    const token = 'AbCdEfGhIjKlMnOpQrStUvWx'
+    expect(viewFromPath(`/s/${token}`)).toEqual({ kind: 'shared', token })
+    expect(pathOf({ kind: 'shared', token })).toBe(`/s/${token}`)
+    expect(viewFromPath('/s/short')).toEqual({ kind: 'notfound', path: '/s/short' })
+    expect(viewFromPath('/s/not valid')).toEqual({ kind: 'notfound', path: '/s/not valid' })
   })
 
   it('★ 门面另外有一个「特意来看」的网址 —— 左栏那颗「产品介绍」走它（2026-10-03）', () => {

@@ -1,19 +1,50 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react'
-import { Minus, Plus } from 'lucide-react'
+import { Maximize2, Minimize2, Minus, Moon, Plus, Sun } from 'lucide-react'
 import { TonePipeline } from '../render/pipeline'
 import type { DecodedImage } from '../image/decode'
 import type { NormPoint } from '../image/mark'
 import { markerRadius } from '../image/mark'
 import type { Adjustments } from '../../shared/adjustments.ts'
 import type { Cube } from '../../shared/lut.ts'
-import { rotatedBounds, type CropRect } from '../core/crop'
+import { rotatedBounds, type CropGuide, type CropRect } from '../core/crop'
 import CropOverlay from './CropOverlay'
 import CompareSplit from './CompareSplit'
 import RetouchOverlay from './RetouchOverlay'
+import GradientOverlay from './GradientOverlay'
+import PerspectiveOverlay from './PerspectiveOverlay'
+import TextOverlay from './TextOverlay'
+import FrameOverlay from './FrameOverlay'
+import CanvasFrameOverlay from './CanvasFrameOverlay'
+import LiquifyOverlay, { type LiquifyDrag } from './LiquifyOverlay'
+import StickerOverlay from './StickerOverlay'
+import ShapeOverlay from './ShapeOverlay'
+import DoodleOverlay from './DoodleOverlay'
+import LightOverlay from './LightOverlay'
+import DuotoneOverlay from './DuotoneOverlay'
+import LensFocusOverlay from './LensFocusOverlay'
+import FaceGuide from './FaceGuide'
+import ManualFaceOverlay from './ManualFaceOverlay'
+import CloneOverlay, { type ClonePoint } from './CloneOverlay'
 import { bindWindowDrag } from './kit/windowDrag.ts'
 import type { BrushMode } from '../core/retouch'
+import type { GradientSpec } from '../core/gradientMask'
+import type { PerspectiveQuad } from '../core/perspective'
+import type { BlendMode } from '../image/doubleExposure'
+import type { HistogramData } from '../render/histogram'
+import type { CanvasFrameOptions } from '../image/canvasFrame'
+import type { TextOptions } from '../image/text'
+import type { EditLayer } from '../../shared/layers.ts'
+import type { FrameOptions } from '../image/frame'
+import type { LiquifyMode } from '../image/liquify'
+import type { StickerOptions } from '../image/sticker'
+import type { ShapeOptions } from '../image/shape'
+import type { DoodleStroke } from '../image/doodle'
+import type { LightOptions } from '../image/light'
+import type { DuotoneOptions } from '../image/duotone'
+import type { FaceBox } from '../core/faceDetect'
 import {
-  FIT, clampView, fitBox, maxScale, oneToOne, panBy, zoomTo, type Size, type View,
+  FIT, clampView, fitBox, maxScale, oneToOne, panBy, pinchView, zoomTo,
+  type PinchPoint, type Size, type View,
 } from './viewport'
 
 /**
@@ -37,13 +68,20 @@ export type CropScene = {
    *    —— 和 `image/crop.ts` 里那串"反过来画"是同一个方向，别写反。
    */
   angle: number
+  flipH?: boolean
+  flipV?: boolean
+  /** 只在预览里画的构图网格。 */
+  grid?: boolean
+  /** 构图参考线；不传时退回旧的 grid 三分线。 */
+  guide?: CropGuide
 }
 
 /**
- * 点修的现场（★ 2026-10-07）—— `App` 算好交下来的一整块：
- * 笔刷参数 + **掩码本体**（图片像素尺寸的缓冲区，组件往里面盖章）。
- * `Canvas` 只负责把它摆到照片上（盒子 + 图层），算式和盖章都在
- * `ui/RetouchOverlay` / `core/retouch`。
+ * 点修 / 磨皮的现场（★ 2026-10-07 点修、★ 2026-10-17 磨皮共用）——
+ * `App` 算好交下来的一整块：笔刷参数 + **掩码本体**（图片像素尺寸的缓冲区，
+ * 组件往里面盖章）。`Canvas` 只负责把它摆到照片上（盒子 + 图层），算式和盖章
+ * 都在 `ui/RetouchOverlay` / `core/retouch`。磨皮复用同一层：它的掩码协议
+ * （0 = 不磨，越大磨得越实）和点修一字不差，只是提交时走的引擎不同。
  */
 export type RetouchScene = {
   /** 画笔半径（图片像素）。 */
@@ -52,11 +90,118 @@ export type RetouchScene = {
   mask: Uint8Array
   /** 掩码有实际改动时喊一声（App 拿它让「擦掉这里」亮起来）。 */
   onMaskChange: () => void
+  /** 外部整张写掩码（自动选区 / 反选）时递增，涂抹层据此重画整张预览。 */
+  revision?: number
+  /** 只看不涂（色彩范围蒙版的预览）：事件穿过去，点画面 = 取色。 */
+  readOnly?: boolean
+}
+
+/** 局部工具的线性 / 径向渐变蒙版现场。 */
+export type GradientScene = {
+  spec: GradientSpec
+  onChange: (spec: GradientSpec) => void
+}
+
+/** 镜头虚化的可拖焦点（★ 2026-10-19）。 */
+export type LensFocusScene = {
+  x: number
+  y: number
+  shape?: 'radial' | 'tilt'
+  angle?: number
+  band?: number
+  onChange: (x: number, y: number) => void
+}
+
+/** 四角自由透视现场。 */
+export type PerspectiveScene = {
+  quad: PerspectiveQuad
+  onChange: (quad: PerspectiveQuad) => void
+}
+
+/** 双重曝光预览现场。 */
+export type DoubleExposureScene = {
+  preview: string
+  mode: BlendMode
+  opacity: number
+}
+
+/**
+ * 文字的现场（★ 2026-10-17）—— 和裁剪框 / 涂抹层同一条坐标系：
+ * `options` 里是归一化中心与图片像素字号，`onMove` 把拖动后的 0~1 喊回 App。
+ */
+export type TextScene = {
+  options: TextOptions
+  onMove: (x: number, y: number) => void
+}
+
+/** 相框的现场（★ 2026-10-17）—— 预览只画四条边，成片在 `image/frame.ts`。 */
+export type FrameScene = {
+  options: FrameOptions
+}
+
+/** 画布扩展现场（★ 2026-10-18）：比例 / 背景 / 边距；成片在 `image/canvasFrame.ts`。 */
+export type CanvasFrameScene = {
+  options: CanvasFrameOptions
+}
+
+/** 液化现场（★ 2026-10-17）—— 笔刷 + 一笔的方向，提交在 `app/useLiquify`。 */
+export type LiquifyScene = {
+  radius: number
+  mode: LiquifyMode
+  onStroke: (stroke: LiquifyDrag) => void
+}
+
+/** 贴纸现场（★ 2026-10-17）—— 选项 + 拖动后的归一化位置。 */
+export type StickerScene = {
+  options: StickerOptions
+  customPreview?: string | null
+  onMove: (x: number, y: number) => void
+}
+
+/** 形状现场（★ 2026-10-19）—— 两个归一化端点 + 拖动后的回调。 */
+export type ShapeScene = {
+  options: ShapeOptions
+  onChange: (patch: Partial<ShapeOptions>) => void
+}
+
+/** 涂鸦现场（★ 2026-10-18）—— 已完成笔画 + 当前笔刷，松手交一整笔。 */
+export type DoodleScene = {
+  strokes: readonly DoodleStroke[]
+  color: string
+  sizePct: number
+  opacity: number
+  onStroke: (stroke: DoodleStroke) => void
+}
+
+/** 光效现场（★ 2026-10-18）—— 纯预览，不接指针。 */
+export type LightScene = { options: LightOptions }
+export type DuotoneScene = { options: DuotoneOptions }
+
+/** 「人像」工具估出来的人脸框；只用于照片上的定位提示，不参与像素。 */
+export type FaceScene = {
+  face: FaceBox
+  faces?: FaceBox[]
+  all?: boolean
+  selected?: number
+  onPickFace?: (index: number) => void
+}
+export type FacePickScene = { onPick: (face: FaceBox) => void }
+
+/** 克隆图章现场：源点 + 首笔定下的偏移 + 涂抹回调。 */
+export type CloneScene = {
+  radius: number
+  source: ClonePoint | null
+  offset: ClonePoint | null
+  onStroke: (points: ClonePoint[]) => void
 }
 
 type Props = {
   image: DecodedImage | null
   params: Adjustments
+  /** 已提交的文字 / 形状层（★ 2026-10-19）；不传 = 没有。 */
+  layers?: EditLayer[]
+  /** 正在编辑的那一层先从已提交的预览里拿掉，避免重影。 */
+  hiddenLayerId?: string | null
   /** 当前滤镜的样子（null = 没装）；和 `params` 一样是"画在哪"的输入 */
   lutCube: Cube | null
   /** 强度 0–100（没装 = 0） */
@@ -67,6 +212,12 @@ type Props = {
   canvasRef: MutableRefObject<HTMLCanvasElement | null>
   /** 正在等用户点一下（spec §6.3）。true 时画布接受点击并把它换算成坐标。 */
   picking?: boolean
+  /** ★ 2026-10-17（白平衡吸管）：正在等用户点一块中性色。 */
+  sampling?: boolean
+  onSamplePoint?: (x: number, y: number) => void
+  sampleHint?: string
+  /** 镜头虚化的焦点环；null / 不传 = 没开虚化或正开着别的工具。 */
+  lensFocus?: LensFocusScene | null
   /**
    * ★ 2026-10-06（用户原话：「而且中途思考要有一些加载动作比如正在思考，要让
    * 用户知道你在干嘛」）：**正在生成**（判据在 App：`busy === BUSY_GENERATING`）。
@@ -115,14 +266,45 @@ type Props = {
   onCompare?: () => void
   /**
    * ★ 2026-10-07（点修）：涂抹的现场。null / 不传 = 没在点修。
-   * ⚠️ 它和 `viewLocked` 是两回事：点修**不禁缩放**（放大着修细节正是这个
-   *   工具的用法）—— 手势的停用由这一层自己盖住照片区完成（见
+   * ★ 2026-10-17（磨皮）：磨皮也用这一层（同一个掩码协议）—— App 传下来的是
+   * "当前那个工具的现场"，两个同一时刻最多一个非 null。
+   * ⚠️ 它和 `viewLocked` 是两回事：点修/磨皮**不禁缩放**（放大着修细节正是
+   *   这个工具的用法）—— 手势的停用由这一层自己盖住照片区完成（见
    *   `ui/RetouchOverlay` 文件头），滚轮从它上面冒泡上来照旧能缩放。
    */
   retouch?: RetouchScene | null
+  gradient?: GradientScene | null
+  perspective?: PerspectiveScene | null
+  doubleExposure?: DoubleExposureScene | null
+  /** 文字的现场。null / 不传 = 没在写字。 */
+  text?: TextScene | null
+  /** 相框的现场。null / 不传 = 没在加边框。 */
+  frame?: FrameScene | null
+  /** 画布扩展的现场。null / 不传 = 没在做画布。 */
+  canvasFrame?: CanvasFrameScene | null
+  /** 液化的现场。null / 不传 = 没在推像素。 */
+  liquify?: LiquifyScene | null
+  /** 贴纸的现场。null / 不传 = 没在贴。 */
+  sticker?: StickerScene | null
+  /** 形状的现场。null / 不传 = 没在画形状。 */
+  shape?: ShapeScene | null
+  /** 涂鸦的现场。null / 不传 = 没在画。 */
+  doodle?: DoodleScene | null
+  /** 光效的现场。null / 不传 = 没在加光。 */
+  light?: LightScene | null
+  /** 双色调的现场。null / 不传 = 没在映射颜色。 */
+  duotone?: DuotoneScene | null
+  /** 人像工具识别人脸后的取景框（只画框，不接收指针）。 */
+  faceShape?: FaceScene | null
+  /** 自动找脸失败 / 手动修正时，在照片上拖一个脸框。 */
+  facePick?: FacePickScene | null
+  /** 克隆图章现场。 */
+  clone?: CloneScene | null
   /** 画面这条路出了事，把**要说给用户的那句话**交出去（由 App 决定在哪儿显示）。
    *  组件自己不弹窗、不存状态：它只负责"把话说清楚"，说不说、在哪儿说是上层的事。 */
   onFail?: (message: string) => void
+  /** 调色屏的实时直方图；不传 = 不算（别的屏不白花这一趟 GPU 回读）。 */
+  onHistogram?: (data: HistogramData) => void
 }
 
 /** 画布相对 wrapper 的盒子，单位像素。红圈按它定位（理由见下面那段注释）。 */
@@ -170,14 +352,30 @@ export function describeFailure(e: unknown): string {
 
 /** 画布只负责"把渲染结果贴出来"，不碰像素、不碰状态。 */
 export default function Canvas({
-  image, params, lutCube, lutAmount, originalPreview, canvasRef, picking, marker, onPickPoint, onFail,
-  busy, resetKey, viewLocked, crop, comparing, compareWith, onCompare, retouch,
+  image, params, layers, hiddenLayerId, lutCube, lutAmount, originalPreview, canvasRef, picking, sampling, onSamplePoint,
+  sampleHint, marker, onPickPoint, onFail,
+  busy, resetKey, viewLocked, crop, comparing, compareWith, onCompare, retouch, gradient, text,
+  perspective, doubleExposure, frame, canvasFrame, liquify, sticker, shape, doodle, light, duotone,
+  lensFocus,
+  faceShape, facePick, clone, onHistogram,
 }: Props) {
   const innerRef = useRef<HTMLCanvasElement | null>(null)
+  const clipCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const pipeRef = useRef<TonePipeline | null>(null)
+  /**
+   * WebKit 的一个真实坑：WebGL 上下文建好之后再改 canvas.width/height，
+   * 缓冲区里能读回像素，但合成层可能整块不显示（画布看起来全透明）。
+   * 所以底图尺寸一变就换一个 canvas 元素，让管线和上下文一起重建。
+   */
+  const canvasKey = image ? `${image.width}x${image.height}` : 'empty'
   /** 用户此刻按住了画面（在看原图）。 */
   const [peeking, setPeeking] = useState(false)
+  const [focusView, setFocusView] = useState(false)
+  /** 查看辅助：bit 1 = 高光裁切，bit 2 = 阴影裁切。不进入作品参数。 */
+  const [clipWarnings, setClipWarnings] = useState(0)
+  const clipHigh = (clipWarnings & 1) !== 0
+  const clipLow = (clipWarnings & 2) !== 0
   /** 画布相对 wrapper 的盒子。红圈的定位基准 —— 见下面那个 effect 里的理由。 */
   const [box, setBox] = useState<CanvasBox | null>(null)
 
@@ -204,6 +402,10 @@ export default function Canvas({
   const pressRef = useRef<
     { id: number; startX: number; startY: number; base: View; panned: boolean } | null
   >(null)
+  /** 当前按在照片上的触控点。鼠标不进来；双指手势只从这里读。 */
+  const touchPointsRef = useRef<Map<number, { x: number; y: number }>>(new Map())
+  /** 双指手势收场（摘 window 监听）。和单指 `stopRef` 分开，互不覆盖。 */
+  const pinchStopRef = useRef<(() => void) | null>(null)
   /** 拖动中途组件被卸载时，挂在 window 上的那几个监听器也要收干净。 */
   const stopRef = useRef<(() => void) | null>(null)
   /** 量一次的那个函数（下面 effect 里建好）。缩放之后要**自己再喊一次** —— 理由见那条 effect。 */
@@ -237,7 +439,7 @@ export default function Canvas({
     } catch (e) {
       report(e)
     }
-  }, [report])
+  }, [report, canvasKey])
 
   // ① 图片换了才上传纹理、重设画布尺寸。
   //    这两件事都很贵——上传一次 1200 万像素的纹理、重设画布尺寸会清空
@@ -253,7 +455,7 @@ export default function Canvas({
       // 拒绝静默降采样，所以这里必须显式提示，不能把错误咽掉。
       report(e)
     }
-  }, [image, report])
+  }, [image, report, canvasKey])
 
   // ② 滤镜换了才传纹理 —— 上传一次 64³ 纹理不便宜（`setLut` 每次都会整块
   //    `texImage3D` 重传，见 `render/pipeline.ts` 那段）。
@@ -265,7 +467,7 @@ export default function Canvas({
   //    `setLut` 没跑过的话第一次 `render` 画的是"没有滤镜"的画面。
   useEffect(() => {
     try { pipeRef.current?.setLut(lutCube) } catch (e) { report(e) }
-  }, [lutCube, report])
+  }, [lutCube, report, canvasKey])
 
   // ③ 换图后、以及拖滑块时，都只更新 uniform 重绘一次。
   //    不碰纹理、不碰画布尺寸（spec §5.2：拖滑块只更新 uniform → 60fps）。
@@ -287,7 +489,48 @@ export default function Canvas({
     const pipe = pipeRef.current
     if (!pipe || !image) return
     pipe.render(params, lutAmount)
-  }, [image, params, lutAmount, lutCube])
+    if (clipHigh || clipLow) {
+      try {
+        const clipped = pipe.readClippingMask(params, lutAmount)
+        const overlay = clipCanvasRef.current
+        if (clipped && overlay) {
+          overlay.width = clipped.width
+          overlay.height = clipped.height
+          const ctx = overlay.getContext('2d')
+          if (ctx) {
+            const imageData = ctx.createImageData(clipped.width, clipped.height)
+            for (let p = 0, i = 0; p < clipped.mask.length; p++, i += 4) {
+              const kind = clipped.mask[p]
+              if (kind === 1 && clipHigh) {
+                imageData.data[i] = 255
+                imageData.data[i + 1] = 52
+                imageData.data[i + 2] = 52
+                imageData.data[i + 3] = 178
+              } else if (kind === 2 && clipLow) {
+                imageData.data[i] = 52
+                imageData.data[i + 1] = 120
+                imageData.data[i + 2] = 255
+                imageData.data[i + 3] = 178
+              }
+            }
+            ctx.putImageData(imageData, 0, 0)
+          }
+        }
+      } catch (e) {
+        // 裁切提示是查看辅助，读不回来也不能影响正常画面。
+        console.error('裁切警告没读回来', e)
+      }
+    }
+    if (onHistogram) {
+      try {
+        const h = pipe.readHistogram(params, lutAmount)
+        if (h) onHistogram(h)
+      } catch (e) {
+        // 直方图是辅助信息：读不回来也不能把正常画面带走。
+        console.error('直方图没读回来', e)
+      }
+    }
+  }, [image, params, lutAmount, lutCube, onHistogram, canvasKey, clipHigh, clipLow])
 
   /**
    * 量出**画布**相对 wrapper 的盒子。红圈的定位基准就是这个，不是 wrapper。
@@ -376,7 +619,7 @@ export default function Canvas({
    * 点在照片外面（stage 的留白上）不算数 —— 那不是在指照片里的东西。
    */
   const handlePick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!picking || !onPickPoint) return
+    if (!picking && !sampling) return
     // ★ 2026-10-06（缩放）：**拖动过的那一下不算"点这儿"**。放大之后用户要能
     //   拖着找到位置再点，而浏览器在 pointerup 之后照样会派发 click ——
     //   不挡的话每次平移都会在松手的地方顺手插一个圈。
@@ -388,6 +631,11 @@ export default function Canvas({
     const x = (e.clientX - rect.left) / rect.width
     const y = (e.clientY - rect.top) / rect.height
     if (x < 0 || x > 1 || y < 0 || y > 1) return
+    if (sampling) {
+      onSamplePoint?.(x, y)
+      return
+    }
+    if (!onPickPoint) return
     onPickPoint(x, y)
   }
 
@@ -416,9 +664,89 @@ export default function Canvas({
    * 默认都会弹"下载图片 / 复制"这类系统菜单，跟按住看原图直接打架。
    */
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!image || viewLocked || retouch) return
+    if (!image || viewLocked || retouch || gradient || perspective) return
     // 上一次按下要是没收干净（指针被系统抢走、pointerup 没送到），先收掉
     stopRef.current?.()
+    pinchStopRef.current?.()
+
+    /**
+     * 第二根手指落下 = 从单指拖动切成双指缩放。
+     *
+     * 收场一定挂在 **window** 上：双指很容易拖出照片区。两指的中点按
+     * `wrap` 左上角换算成可视区坐标，交给 `viewport.pinchView`；它负责
+     * “指间那块细节跟手”和缩放/平移边界，这里不重复写一遍。
+     */
+    const startPinch = () => {
+      stopRef.current?.()
+      pressRef.current = null
+      setPeeking(false)
+      const points = [...touchPointsRef.current.values()].slice(0, 2)
+      if (points.length < 2) return
+      const wrap = wrapRef.current
+      if (!wrap) return
+      const r = wrap.getBoundingClientRect()
+      const start: PinchPoint = {
+        mid: {
+          x: (points[0]!.x + points[1]!.x) / 2 - r.left,
+          y: (points[0]!.y + points[1]!.y) / 2 - r.top,
+        },
+        distance: Math.hypot(points[1]!.x - points[0]!.x, points[1]!.y - points[0]!.y),
+      }
+      const base = viewRef.current
+
+      const onMove = (ev: PointerEvent) => {
+        const p = touchPointsRef.current.get(ev.pointerId)
+        if (!p) return
+        p.x = ev.clientX
+        p.y = ev.clientY
+        if (ev.cancelable) ev.preventDefault()
+        if (touchPointsRef.current.size < 2) return
+        const [a, b] = [...touchPointsRef.current.values()]
+        if (!a || !b) return
+        const area = areaRef.current
+        const fit = fitBox(image, area)
+        const current: PinchPoint = {
+          mid: {
+            x: (a.x + b.x) / 2 - r.left,
+            y: (a.y + b.y) / 2 - r.top,
+          },
+          distance: Math.hypot(b.x - a.x, b.y - a.y),
+        }
+        putView(pinchView(base, start, current, fit, area, maxScale(image, fit)))
+      }
+
+      const stop = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onEnd)
+        window.removeEventListener('pointercancel', onEnd)
+        if (pinchStopRef.current === stop) pinchStopRef.current = null
+      }
+      const onEnd = (ev: PointerEvent) => {
+        touchPointsRef.current.delete(ev.pointerId)
+        if (touchPointsRef.current.size >= 2) return
+        // 双指手势结束就整批清掉：剩下一根手指不再冒充“第二指还在”，
+        // 下一次按下去从当前画面重新开始。用户不需要先抬干净再操作。
+        touchPointsRef.current.clear()
+        stop()
+      }
+      window.addEventListener('pointermove', onMove, { passive: false })
+      window.addEventListener('pointerup', onEnd)
+      window.addEventListener('pointercancel', onEnd)
+      pinchStopRef.current = stop
+    }
+
+    // jsdom 没有 PointerEvent，测试用 MouseEvent 补 `pointerType`；React 的
+    // SyntheticPointerEvent 在那种环境里不一定把它抄到外层，读 nativeEvent
+    // 这一条兜底对真浏览器无害。
+    const pointerType = e.pointerType
+      || (e.nativeEvent as PointerEvent | undefined)?.pointerType
+    if (pointerType === 'touch') {
+      touchPointsRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      if (touchPointsRef.current.size === 2) {
+        startPinch()
+        return
+      }
+    }
 
     const p = {
       id: e.pointerId, startX: e.clientX, startY: e.clientY,
@@ -429,7 +757,7 @@ export default function Canvas({
     let timer: number | null = null
     // 点选模式里不许 peek：那一下是"点一下告诉我是哪儿"，不是"按住看原图"。
     // 不挡的话**每次点选都会先闪一下没调过色的原图**。
-    if (!picking && originalPreview) {
+    if (!picking && !sampling && originalPreview) {
       timer = window.setTimeout(() => {
         if (pressRef.current === p && !p.panned) setPeeking(true)
       }, PEEK_HOLD_MS)
@@ -451,6 +779,19 @@ export default function Canvas({
       putView(panBy(p.base, dx, dy, fitBox(image, area)))
     }
 
+    // ⚠️ 单指的触控点**不能**在 `bindWindowDrag` 的收场里删：第二根手指落下时
+    //    也会先调一次那个收场（把单指拖动停掉），这时第一指还得留在表里，
+    //    否则永远凑不齐双指。只在自己的 pointerup / cancel 上删。
+    function clearTouch(ev: PointerEvent) {
+      if (ev.pointerId !== p.id) return
+      touchPointsRef.current.delete(p.id)
+      window.removeEventListener('pointerup', clearTouch)
+      window.removeEventListener('pointercancel', clearTouch)
+    }
+    // 先挂：`bindWindowDrag` 的 pointerup 监听会顺手把自己的收场跑掉，
+    // 它若排在前面，会在 clearTouch 之前把监听摘掉，触控点就永远留在表里。
+    window.addEventListener('pointerup', clearTouch)
+    window.addEventListener('pointercancel', clearTouch)
     // 三种"松手"（抬手 / 被抢走 / 取消）那条规矩在 `kit/windowDrag` 里 ——
     // 少接一个，用户按一下就会被**永久留在原图上**，而他没有任何办法按回来。
     // `stopRef` 存的是**完整收场**那一版（摘监听 + 清计时器）：下一趟 pointerdown
@@ -458,6 +799,8 @@ export default function Canvas({
     const d = bindWindowDrag(onMove, () => {
       if (timer !== null) { window.clearTimeout(timer); timer = null }
       setPeeking(false)
+      window.removeEventListener('pointerup', clearTouch)
+      window.removeEventListener('pointercancel', clearTouch)
     })
     stopRef.current = d.stop
   }
@@ -469,7 +812,7 @@ export default function Canvas({
    */
   const onDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const wrap = wrapRef.current
-    if (!image || !wrap || picking || viewLocked || retouch) return
+    if (!image || !wrap || picking || viewLocked || retouch || gradient || perspective) return
     const v = viewRef.current
     if (v.scale > 1) { putView(FIT); return }
     const area = areaRef.current
@@ -517,7 +860,10 @@ export default function Canvas({
   }
 
   /** 组件真的走掉时，把还挂在 window 上的那套收干净。 */
-  useEffect(() => () => stopRef.current?.(), [])
+  useEffect(() => () => {
+    stopRef.current?.()
+    pinchStopRef.current?.()
+  }, [])
 
   /**
    * 贴到画布上（以及「按住看原图」那张覆盖图）的那个变换。
@@ -560,7 +906,10 @@ export default function Canvas({
     })()
     : 1
   const stageStyle = crop
-    ? { transform: `rotate(${-crop.angle}deg) scale(${cropK})` }
+    ? {
+      transform: `rotate(${-crop.angle}deg) scale(${cropK})` +
+        `${crop.flipH ? ' scaleX(-1)' : ''}${crop.flipV ? ' scaleY(-1)' : ''}`,
+    }
     : zoomStyle
 
   /** 那排按钮自己的指针事件**不许冒泡到照片上**（理由见下面那段注释）。 */
@@ -580,6 +929,24 @@ export default function Canvas({
    * "高度受限"的屏上又会偏大 —— 那是同一个坑的另一半。
    */
   const markerSize = box ? 2 * markerRadius(Math.max(box.width, box.height)) : 0
+  const focusAllowed = !!image && !viewLocked && !picking && !sampling
+    && !crop && !retouch && !gradient && !perspective && !doubleExposure
+    && !text && !frame && !canvasFrame && !liquify && !sticker && !shape
+    && !doodle && !light && !duotone && !faceShape && !facePick && !clone
+    && !lensFocus
+
+  useEffect(() => {
+    if (!focusAllowed && focusView) setFocusView(false)
+  }, [focusAllowed, focusView])
+
+  useEffect(() => {
+    if (!focusView) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFocusView(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [focusView])
 
   return (
     <div
@@ -587,7 +954,7 @@ export default function Canvas({
       // 放大之后鼠标变成小手（CSS 里 `.zoomed`）：那是在说"这里可以拖"
       // ★ 2026-10-06（裁剪）：`cropping` 和 `.zoomed` 走的是同一条剪裁规矩
       //   （见 CSS）—— 转出来的外框会比照片大，不剪会漏到舞台和对话栏上。
-      className={`canvas-wrap${view.scale > 1 ? ' zoomed' : ''}${crop ? ' cropping' : ''}`}
+      className={`canvas-wrap${view.scale > 1 ? ' zoomed' : ''}${crop ? ' cropping' : ''}${sampling ? ' sampling' : ''}${focusView ? ' focused' : ''}`}
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
       onContextMenu={e => e.preventDefault()}
@@ -603,12 +970,37 @@ export default function Canvas({
           ⚠️ 只有放大之后才真的剪：适应窗口时不剪，才保得住照片那圈"相纸边"
           和底下的投影（都画在盒子外面）。见 CSS 里 `.zoomed` 那条。 */}
       <div className="canvas-clip">
-        <canvas ref={node => {
+        <canvas key={canvasKey} ref={node => {
           innerRef.current = node
           canvasRef.current = node
         }} className="canvas" style={stageStyle} />
+        {doubleExposure && (
+          <img
+            className="double-exposure"
+            src={doubleExposure.preview}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            style={{
+              ...stageStyle,
+              opacity: Math.max(0, Math.min(100, doubleExposure.opacity)) / 100,
+              mixBlendMode: doubleExposure.mode,
+            }}
+          />
+        )}
         {peeking && originalPreview && (
           <img className="canvas-peek" src={originalPreview} alt="原图" draggable={false} style={stageStyle} />
+        )}
+        {clipWarnings > 0 && box && !peeking && !viewLocked && (
+          <canvas
+            ref={clipCanvasRef}
+            className="canvas-clipping"
+            aria-hidden="true"
+            style={{
+              left: box.left, top: box.top,
+              width: box.width, height: box.height,
+            }}
+          />
         )}
       </div>
       {/* ★ 2026-10-06（对比）：**分屏那一层**（spec §3.3）—— 左「原图」、右「现在」，
@@ -634,7 +1026,9 @@ export default function Canvas({
           画出来会在错的地方（点选那条路本来也不该在裁剪时进行）。
           ★ 2026-10-07（点修）：点修时也**不画** —— 那一屏的记号是用户正在涂的
           掩码（红影），再叠一个对话红圈只会让人分不清谁是谁。 */}
-      {marker && box && !crop && !retouch && (
+      {marker && box && !crop && !retouch && !gradient && !perspective && !doubleExposure
+        && !text && !frame && !canvasFrame && !liquify && !sticker && !shape && !doodle && !light && !duotone
+        && !faceShape && !clone && !sampling && (
         <span
           className="canvas-marker"
           // 用**像素**、以画布盒子为基准（不是 wrapper 的百分比 —— 理由见上面
@@ -652,11 +1046,21 @@ export default function Canvas({
           }}
         />
       )}
+      {sampling && (
+        <div className="wb-pick-hint" role="status">
+          {sampleHint ?? '点一下画面里的灰色或白色'}
+        </div>
+      )}
       {crop && box && (
         <CropOverlay
           box={box} rect={crop.rect} aspect={crop.aspect} inner={crop.inner}
+          grid={!!crop.grid}
+          guide={crop.guide}
           onRect={crop.onRect}
         />
+      )}
+      {perspective && box && (
+        <PerspectiveOverlay box={box} quad={perspective.quad} onChange={perspective.onChange} />
       )}
       {/* ★ 2026-10-07（点修）：**涂抹层**（spec §3.2）—— 它盖住整块照片区、
           把指针事件关在门里（放大/平移/点选/按住看原图都不误触发），
@@ -675,7 +1079,175 @@ export default function Canvas({
           mode={retouch.mode}
           mask={retouch.mask}
           onMaskChange={retouch.onMaskChange}
+          revision={retouch.revision}
+          readOnly={retouch.readOnly}
         />
+      )}
+      {clone && box && image && (
+        <CloneOverlay
+          box={box}
+          imageWidth={image.width}
+          imageHeight={image.height}
+          radius={clone.radius}
+          source={clone.source}
+          offset={clone.offset}
+          onStroke={clone.onStroke}
+        />
+      )}
+      {/* ★ 2026-10-17（渐变蒙版）：同样盖住照片区接收拖动；预览在 SVG 里，
+          松手后上层只更新一次渐变参数。 */}
+      {gradient && box && (
+        <GradientOverlay
+          box={box}
+          spec={gradient.spec}
+          onChange={gradient.onChange}
+        />
+      )}
+      {/* ★ 2026-10-17（文字）：预览 + 拖动层。它排在涂抹层之后、暗罩之前
+          （两个工具不会同时开）；坐标基准同样是量出来的照片可见矩形。 */}
+      {box && image && !comparing && !peeking && layers?.length
+        ? layers
+          // 局部层是像素效果、不是叠图：它已经在 `effectiveImage` 里了。
+          .filter(layer => layer.id !== hiddenLayerId
+            && layer.kind !== 'local' && layer.visible !== false)
+          .map(layer => layer.kind === 'shape' ? (
+            <ShapeOverlay
+              key={layer.id}
+              box={box}
+              imageWidth={image.width}
+              imageHeight={image.height}
+              options={layer.options}
+              onChange={() => {}}
+              readOnly
+            />
+          ) : layer.kind === 'sticker' ? (
+            <StickerOverlay
+              key={layer.id}
+              box={box}
+              options={layer.options}
+              customPreview={layer.image ?? null}
+              onMove={() => {}}
+              readOnly
+            />
+          ) : layer.kind === 'text' ? (
+            <TextOverlay
+              key={layer.id}
+              box={box}
+              imageWidth={image.width}
+              imageHeight={image.height}
+              options={layer.options}
+              onMove={() => {}}
+              readOnly
+            />
+          ) : null)
+        : null}
+      {text && box && image && (
+        <TextOverlay
+          box={box}
+          imageWidth={image.width}
+          imageHeight={image.height}
+          options={text.options}
+          onMove={text.onMove}
+        />
+      )}
+      {/* ★ 2026-10-17（边框）：四条边的预览；成片才真的裁圆角 / 画齿孔。 */}
+      {frame && box && image && (
+        <FrameOverlay
+          box={box}
+          imageWidth={image.width}
+          imageHeight={image.height}
+          options={frame.options}
+        />
+      )}
+      {canvasFrame && box && image && (
+        <CanvasFrameOverlay
+          box={box}
+          imageWidth={image.width}
+          imageHeight={image.height}
+          options={canvasFrame.options}
+          sourceRef={innerRef}
+        />
+      )}
+      {/* ★ 2026-10-17（液化）：笔刷 / 方向线；松手后由 App 落后一帧重采样。 */}
+      {liquify && box && image && (
+        <LiquifyOverlay
+          box={box}
+          imageWidth={image.width}
+          imageHeight={image.height}
+          radius={liquify.radius}
+          onStroke={liquify.onStroke}
+        />
+      )}
+      {/* ★ 2026-10-17（贴纸）：预览和成片共用同一份 SVG path。 */}
+      {sticker && box && (
+        <StickerOverlay
+          box={box}
+          options={sticker.options}
+          customPreview={sticker.customPreview}
+          onMove={sticker.onMove}
+        />
+      )}
+      {shape && box && image && (
+        <ShapeOverlay
+          box={box}
+          imageWidth={image.width}
+          imageHeight={image.height}
+          options={shape.options}
+          onChange={shape.onChange}
+        />
+      )}
+      {doodle && box && (
+        <DoodleOverlay
+          box={box}
+          strokes={doodle.strokes}
+          color={doodle.color}
+          sizePct={doodle.sizePct}
+          opacity={doodle.opacity}
+          onStroke={doodle.onStroke}
+        />
+      )}
+      {light && box && (
+        <LightOverlay box={box} options={light.options} />
+      )}
+      {duotone && box && image && (
+        <DuotoneOverlay box={box} options={duotone.options} sourceRef={innerRef} />
+      )}
+      {/* ★ 2026-10-19（镜头虚化）：可拖焦点环。只在 App 判定"正在调虚化"
+          时传下来；容器本身不挡画布手势，只有小环接指针。 */}
+      {lensFocus && box && image && !comparing && !peeking && (
+        <LensFocusOverlay
+          box={box}
+          x={lensFocus.x}
+          y={lensFocus.y}
+          shape={lensFocus.shape}
+          angle={lensFocus.angle}
+          band={lensFocus.band}
+          onChange={lensFocus.onChange}
+        />
+      )}
+      {facePick && box && image && (
+        <ManualFaceOverlay
+          box={box}
+          imageWidth={image.width}
+          imageHeight={image.height}
+          onPick={facePick.onPick}
+        />
+      )}
+      {faceShape && box && image && (
+        (faceShape.faces?.length ? faceShape.faces : [faceShape.face]).map((face, index) => (
+          <FaceGuide
+            key={index}
+            box={box}
+            imageWidth={image.width}
+            imageHeight={image.height}
+            face={face}
+            active={faceShape.selected === index}
+            onPick={faceShape.onPickFace ? () => faceShape.onPickFace!(index) : undefined}
+            label={faceShape.all && (faceShape.faces?.length ?? 0) > 1
+              ? `脸 ${index + 1}`
+              : undefined}
+          />
+        ))
       )}
       {/* ★ 2026-10-06：生成中那层**暗罩 + 转圈**（用户原话：「要让用户知道你在
           干嘛」——那十几秒照片原来完全没反应）。
@@ -687,6 +1259,24 @@ export default function Canvas({
           「按住看原图」和图上点选照常收得到事件，它们挂在 wrap 上）。
           ⚠️ `aria-hidden`：它本身没有一个字，要把话说出去的是上面那条气泡。 */}
       {busy && <div className="canvas-veil" aria-hidden="true" />}
+      {focusAllowed && (
+        <button
+          type="button"
+          className={`canvas-focus-toggle${focusView ? ' on' : ''}`}
+          aria-label={focusView ? '退出专注看图' : '专注看图'}
+          aria-pressed={focusView}
+          title={focusView ? '退出专注看图（Esc）' : '放大查看整张照片'}
+          onPointerDown={swallow}
+          onClick={(event) => {
+            swallow(event)
+            setFocusView(value => !value)
+          }}
+        >
+          {focusView
+            ? <Minimize2 size={15} strokeWidth={1.5} aria-hidden="true" />
+            : <Maximize2 size={15} strokeWidth={1.5} aria-hidden="true" />}
+        </button>
+      )}
       {/* ★ 2026-10-06（缩放）：照片**右下角那排按钮**（用户：「在对话区设置一个
           功能帮助用户能够正常缩放照片和定位到具体的细节区域」）。
 
@@ -714,6 +1304,30 @@ export default function Canvas({
               onClick={onCompare}
             >对比</button>
           )}
+          <div className="clip-toggles" role="group" aria-label="裁切警告">
+            <button
+              type="button"
+              className={`zoom-warn high${clipHigh ? ' on' : ''}`}
+              aria-label="高光裁切警告"
+              aria-pressed={clipHigh}
+              title="显示接近纯白的高光像素"
+              onClick={() => setClipWarnings(value => value ^ 1)}
+            >
+              <Sun size={13} strokeWidth={1.5} aria-hidden="true" />
+              高光
+            </button>
+            <button
+              type="button"
+              className={`zoom-warn low${clipLow ? ' on' : ''}`}
+              aria-label="阴影裁切警告"
+              aria-pressed={clipLow}
+              title="显示接近纯黑的阴影像素"
+              onClick={() => setClipWarnings(value => value ^ 2)}
+            >
+              <Moon size={13} strokeWidth={1.5} aria-hidden="true" />
+              暗部
+            </button>
+          </div>
           <button
             type="button" className="zoom-btn" aria-label="缩小" title="缩小"
             disabled={view.scale <= 1} onClick={() => zoomBy(1 / ZOOM_STEP)}

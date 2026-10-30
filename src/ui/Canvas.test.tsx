@@ -28,6 +28,7 @@ type Recorded = {
   images: unknown[]
   lutCalls: (Cube | null)[]
   renders: [unknown, number][]
+  clipReads: [unknown, number][]
 }
 
 /** ⚠️ 走 `vi.hoisted`：`vi.mock` 的工厂被提到所有 import 之前跑（同 `App.test.tsx` 的 `canvasProps`）。 */
@@ -44,13 +45,17 @@ vi.mock('../render/pipeline', () => ({
   TonePipeline: class {
     rec: Recorded
     constructor() {
-      this.rec = { images: [], lutCalls: [], renders: [] }
+      this.rec = { images: [], lutCalls: [], renders: [], clipReads: [] }
       made.push(this.rec)
     }
     setImage(img: unknown) { this.rec.images.push(img) }
     resizeToImage() {}
     setLut(c: Cube | null) { this.rec.lutCalls.push(c); order.push('setLut') }
     render(params: unknown, amount = 0) { this.rec.renders.push([params, amount]); order.push('render') }
+    readClippingMask(params: unknown, amount = 0) {
+      this.rec.clipReads.push([params, amount])
+      return { mask: new Uint8Array([1, 2, 0, 0]), width: 2, height: 2 }
+    }
     dispose() {}
   },
 }))
@@ -152,6 +157,7 @@ describe('Canvas 与滤镜（依赖守卫）', () => {
     await draw(CUBE, 100)
     expect(pipe().images).toHaveLength(1)
     expect(pipe().renders).toHaveLength(1)
+    const first = pipe()
 
     const IMG2 = { bitmap: {} as ImageBitmap, width: 800, height: 600 } as DecodedImage
     await act(async () => {
@@ -160,7 +166,43 @@ describe('Canvas 与滤镜（依赖守卫）', () => {
           originalPreview={null} canvasRef={canvasRef} onFail={noFail} />,
       )
     })
-    expect(pipe().images).toHaveLength(2)
-    expect(pipe().renders).toHaveLength(2)
+    // 尺寸变了 -> 换 canvas / 重建管线；新管线必须收到新图并重绘。
+    expect(made).toHaveLength(2)
+    const latest = made.at(-1)!
+    expect(latest).not.toBe(first)
+    expect(latest.images).toEqual([IMG2])
+    expect(latest.renders.length).toBeGreaterThan(0)
+  })
+
+  it('★ 高光 / 暗部裁切警告只改查看状态，并立即重画', async () => {
+    let putImageData = 0
+    Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+      configurable: true,
+      value: vi.fn(() => ({
+        createImageData: (w: number, h: number) =>
+          ({ data: new Uint8ClampedArray(w * h * 4), width: w, height: h }),
+        putImageData: () => { putImageData++ },
+      })),
+    })
+    await draw(null, 0)
+    const before = pipe().clipReads.length
+    const high = container.querySelector('[aria-label="高光裁切警告"]') as HTMLButtonElement
+    const low = container.querySelector('[aria-label="阴影裁切警告"]') as HTMLButtonElement
+    expect(high).toBeTruthy()
+    expect(low).toBeTruthy()
+
+    await act(async () => { high.click() })
+    expect(high.getAttribute('aria-pressed')).toBe('true')
+    expect(pipe().clipReads.length).toBe(before + 1)
+    expect(container.querySelector('.canvas-clipping')).toBeTruthy()
+    expect(putImageData).toBeGreaterThan(0)
+
+    await act(async () => { low.click() })
+    expect(low.getAttribute('aria-pressed')).toBe('true')
+    expect(pipe().clipReads.length).toBe(before + 2)
+
+    await act(async () => { high.click() })
+    expect(high.getAttribute('aria-pressed')).toBe('false')
+    expect(low.getAttribute('aria-pressed')).toBe('true')
   })
 })

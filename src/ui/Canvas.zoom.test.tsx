@@ -17,8 +17,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ZERO } from '../../shared/adjustments.ts'
 import type { DecodedImage } from '../image/decode'
 
+const pipelineCreates = vi.hoisted(() => vi.fn())
+
 vi.mock('../render/pipeline', () => ({
   TonePipeline: class {
+    constructor() { pipelineCreates() }
     setImage() {}
     resizeToImage() {}
     setLut() {}
@@ -152,6 +155,22 @@ const down = (el: HTMLElement, clientX: number, clientY: number) =>
 const move = (clientX: number, clientY: number) =>
   act(async () => { window.dispatchEvent(new MouseEvent('pointermove', { clientX, clientY })) })
 const up = () => act(async () => { window.dispatchEvent(new MouseEvent('pointerup')) })
+const touch = (
+  type: 'pointerdown' | 'pointermove' | 'pointerup',
+  target: EventTarget,
+  id: number, clientX: number, clientY: number,
+) => act(async () => {
+  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY })
+  Object.defineProperty(e, 'pointerId', { value: id })
+  Object.defineProperty(e, 'pointerType', { value: 'touch' })
+  target.dispatchEvent(e)
+})
+const touchDown = (el: HTMLElement, id: number, x: number, y: number) =>
+  touch('pointerdown', el, id, x, y)
+const touchMove = (id: number, x: number, y: number) =>
+  touch('pointermove', window, id, x, y)
+const touchUp = (id: number, x: number, y: number) =>
+  touch('pointerup', window, id, x, y)
 const clickAt = (el: HTMLElement, clientX: number, clientY: number) =>
   act(async () => { el.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX, clientY })) })
 const dblclickAt = (el: HTMLElement, clientX: number, clientY: number) =>
@@ -168,6 +187,7 @@ const screenX = (v: { x: number; scale: number }, u: number) => AREA.width / 2 +
 
 beforeEach(() => {
   stubRects()
+  pipelineCreates.mockClear()
 })
 afterEach(async () => {
   for (const { root, container } of roots.splice(0)) {
@@ -178,6 +198,17 @@ afterEach(async () => {
 })
 
 describe('那排按钮', () => {
+  it('★ 底图尺寸一变就换 canvas 并重建管线（WebKit 合成层不认原地 resize）', async () => {
+    const c = await mount({ image: IMG })
+    const before = c.container.querySelector('.canvas') as HTMLCanvasElement
+    await c.rerender({
+      image: { bitmap: {} as ImageBitmap, width: 1000, height: 1000 },
+    })
+    const after = c.container.querySelector('.canvas') as HTMLCanvasElement
+    expect(after).not.toBe(before)
+    expect(pipelineCreates).toHaveBeenCalledTimes(2)
+  })
+
   it('「＋」放大、「−」缩小；适应窗口时「−」按不动（没得缩）', async () => {
     const c = await mount()
     expect(c.bar(), '照片上该有一排缩放按钮').toBeTruthy()
@@ -208,6 +239,30 @@ describe('那排按钮', () => {
     const c = await mount()
     for (let i = 0; i < 20; i++) await press(c.byLabel('放大'))
     expect(c.view().scale).toBe(8)
+  })
+
+  it('★ 专注看图：照片区进入全屏层，Esc 退出且不重建画布', async () => {
+    const c = await mount()
+    const canvas = c.container.querySelector('.canvas')
+    const focus = c.byLabel('专注看图')
+    expect(focus).toBeTruthy()
+
+    await press(focus)
+    expect(c.wrap().className).toContain('focused')
+    expect(c.byLabel('退出专注看图').getAttribute('aria-pressed')).toBe('true')
+    expect(c.container.querySelector('.canvas')).toBe(canvas)
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(c.wrap().className).not.toContain('focused')
+    expect(c.byLabel('专注看图')).toBeTruthy()
+  })
+
+  it('编辑工具锁住画布时，不给专注看图入口', async () => {
+    const c = await mount({ viewLocked: true })
+    expect(c.bar()).toBeNull()
+    expect(c.container.querySelector('.canvas-focus-toggle')).toBeNull()
   })
 })
 
@@ -284,6 +339,60 @@ describe('拖动 = 平移', () => {
     await move(103, 102)
     await up()
     expect(c.view()).toEqual({ x: 0, y: 0, scale: 1.4 })
+  })
+})
+
+describe('双指触控（iPhone / iPad）', () => {
+  it('两指拉开 = 以两指中心为锚放大', async () => {
+    const c = await mount()
+    await touchDown(c.wrap(), 1, 250, 200)
+    await touchDown(c.wrap(), 2, 350, 200)   // 距离 100，中心在可视区正中
+    await touchMove(1, 200, 200)
+    await touchMove(2, 400, 200)             // 距离 200，中心没动
+
+    expect(c.view().scale).toBeCloseTo(2)
+    expect(c.view().x).toBeCloseTo(0)
+    expect(c.view().y).toBeCloseTo(0)
+    await touchUp(1, 200, 200)
+    await touchUp(2, 400, 200)
+  })
+
+  it('放大之后两指同向拖 = 平移', async () => {
+    const c = await mount()
+    await press(c.byLabel('放大'))
+    await touchDown(c.wrap(), 1, 250, 200)
+    await touchDown(c.wrap(), 2, 350, 200)
+    await touchMove(1, 280, 220)
+    await touchMove(2, 380, 220)
+
+    expect(c.view()).toEqual({ x: 30, y: 20, scale: 1.4 })
+    await touchUp(1, 280, 220)
+    await touchUp(2, 380, 220)
+  })
+
+  it('两指收拢最多回到适应窗口', async () => {
+    const c = await mount()
+    await press(c.byLabel('放大'))
+    await press(c.byLabel('放大'))
+    await touchDown(c.wrap(), 1, 200, 200)
+    await touchDown(c.wrap(), 2, 400, 200)
+    await touchMove(1, 290, 200)
+    await touchMove(2, 310, 200)
+
+    expect(c.view()).toEqual({ x: 0, y: 0, scale: 1 })
+    await touchUp(1, 290, 200)
+    await touchUp(2, 310, 200)
+  })
+
+  it('工具开着时双指手势也停用', async () => {
+    const c = await mount({ viewLocked: true })
+    await touchDown(c.wrap(), 1, 250, 200)
+    await touchDown(c.wrap(), 2, 350, 200)
+    await touchMove(1, 100, 200)
+    await touchMove(2, 500, 200)
+    expect(c.view()).toEqual({ x: 0, y: 0, scale: 1 })
+    await touchUp(1, 100, 200)
+    await touchUp(2, 500, 200)
   })
 })
 

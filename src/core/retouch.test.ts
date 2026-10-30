@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  createMask, expandMask, maskBounds, stampBrush, stampStroke,
+  adjustMaskEdge, createMask, expandMask, featherMask, growMask, invertMask, maskBounds,
+  penPressureScale, scaleMask, shrinkMask, stampBrush, stampStroke,
 } from './retouch'
 
 /**
@@ -13,6 +14,23 @@ describe('createMask', () => {
     const m = createMask(7, 5)
     expect(m.length).toBe(35)
     expect(m.every(v => v === 0)).toBe(true)
+  })
+})
+
+describe('penPressureScale', () => {
+  it('鼠标 / 手指不受压感影响；压感笔从 0.35 倍到 1 倍', () => {
+    expect(penPressureScale('mouse', 0)).toBe(1)
+    expect(penPressureScale('touch', 0)).toBe(1)
+    expect(penPressureScale(undefined, 0.2)).toBe(1)
+    expect(penPressureScale('pen', 0)).toBeCloseTo(0.35)
+    expect(penPressureScale('pen', 0.5)).toBeCloseTo(0.675)
+    expect(penPressureScale('pen', 1)).toBe(1)
+  })
+
+  it('压感值越界或缺失时仍给出有限、可用的比例', () => {
+    expect(penPressureScale('pen', -1)).toBeCloseTo(0.35)
+    expect(penPressureScale('pen', 2)).toBe(1)
+    expect(penPressureScale('pen', Number.NaN)).toBeCloseTo(0.675)
   })
 })
 
@@ -131,5 +149,91 @@ describe('expandMask', () => {
     expect(out.every(v => v === 0)).toBe(true)
     m[0] = 200
     expect(out[0]).toBe(0)
+  })
+})
+
+describe('invertMask', () => {
+  it('覆盖度逐像素取反，软边仍然连续，原掩码不动', () => {
+    const source = new Uint8Array([0, 64, 128, 255])
+    expect([...invertMask(source)]).toEqual([255, 191, 127, 0])
+    expect([...source]).toEqual([0, 64, 128, 255])
+  })
+})
+
+describe('featherMask', () => {
+  it('把硬边向外柔和铺开，原掩码不动；半径 0 返回副本', () => {
+    const w = 21, h = 21
+    const source = createMask(w, h)
+    source[10 * w + 10] = 255
+    const before = source.slice()
+
+    const soft = featherMask(source, w, h, 3)
+    expect(soft[10 * w + 10]).toBeGreaterThan(0)
+    expect(soft[10 * w + 13]).toBeGreaterThan(0)
+    expect(soft[0]).toBe(0)
+    expect([...source]).toEqual([...before])
+
+    const same = featherMask(source, w, h, 0)
+    expect(same).not.toBe(source)
+    expect([...same]).toEqual([...before])
+  })
+})
+
+describe('蒙版扩展 / 收缩', () => {
+  const block = (w: number, h: number): Uint8Array => {
+    const m = createMask(w, h)
+    for (let y = 3; y <= 5; y++) for (let x = 3; x <= 5; x++) m[y * w + x] = 255
+    return m
+  }
+
+  it('★ 3×3 方块外扩 2 → 7×7；再往外仍是 0', () => {
+    const w = 9, h = 9
+    const grown = growMask(block(w, h), w, h, 2)
+    expect(grown[1 * w + 1]).toBe(255)
+    expect(grown[7 * w + 7]).toBe(255)
+    expect(grown[0]).toBe(0)
+    expect(grown[8 * w + 8]).toBe(0)
+  })
+
+  it('★ 3×3 方块内收 1 → 只剩中心', () => {
+    const w = 9, h = 9
+    const shrunk = shrinkMask(block(w, h), w, h, 1)
+    expect(shrunk[4 * w + 4]).toBe(255)
+    expect(shrunk[3 * w + 4]).toBe(0)
+    expect(shrunk[5 * w + 5]).toBe(0)
+  })
+
+  it('软边跟着长：128 的孤立像素外扩后邻居也是 128，不会凭空变 255', () => {
+    const w = 5, h = 5
+    const soft = createMask(w, h)
+    soft[2 * w + 2] = 128
+    const grown = growMask(soft, w, h, 1)
+    expect(grown[2 * w + 2]).toBe(128)
+    expect(grown[2 * w + 1]).toBe(128)
+    expect(grown[0]).toBe(0)
+  })
+
+  it('adjustMaskEdge：0 = 副本；正数扩、负数收，原掩码不动', () => {
+    const w = 9, h = 9
+    const source = block(w, h)
+    const before = source.slice()
+    const same = adjustMaskEdge(source, w, h, 0)
+    expect(same).not.toBe(source)
+    expect([...same]).toEqual([...before])
+
+    expect(adjustMaskEdge(source, w, h, 1)[2 * w + 4]).toBe(255)
+    expect(adjustMaskEdge(source, w, h, -1)[3 * w + 4]).toBe(0)
+    expect([...source]).toEqual([...before])
+  })
+})
+
+describe('scaleMask', () => {
+  it('按百分比缩放覆盖度：50% 减半、0 全零、100 返回副本', () => {
+    const source = new Uint8Array([0, 128, 255])
+    expect([...scaleMask(source, 50)]).toEqual([0, 64, 128])
+    expect([...scaleMask(source, 0)]).toEqual([0, 0, 0])
+    const full = scaleMask(source, 100)
+    expect(full).not.toBe(source)
+    expect([...full]).toEqual([0, 128, 255])
   })
 })

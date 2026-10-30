@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { PRESETS, ORIGINAL_ID, activePresetId, type Preset } from './presets'
-import { PARAM_KEYS, PARAM_RANGE, ZERO } from '../../shared/adjustments.ts'
+import {
+  PRESETS, ORIGINAL_ID, activePresetId, inferPresetBlend, type Preset,
+} from './presets'
+import {
+  PARAM_KEYS, PARAM_RANGE, ZERO, blendAdjustments,
+} from '../../shared/adjustments.ts'
 
 describe('PRESETS', () => {
   // ★ 2026-10-05：从 6 个扩到 12 个 —— 预设从"面板上一排文字药丸"变成
@@ -77,6 +81,25 @@ describe('PRESETS', () => {
       expect(PARAM_KEYS.some(k => p.adjustments[k] !== 0), `${p.id} 是全零的`).toBe(true)
     }
   })
+
+  it('★ 夜景增强：暗部抬起、高光压住，并带降噪和一点局部光晕', () => {
+    const night = PRESETS.find(p => p.id === 'night')
+    expect(night, '夜景增强不见了').toBeTruthy()
+    expect(night!.label).toBe('夜景增强')
+    expect(night!.adjustments.shadows).toBeGreaterThan(0)
+    expect(night!.adjustments.highlights).toBeLessThan(0)
+    expect(night!.adjustments.hdr).toBeGreaterThan(0)
+    expect(night!.adjustments.noiseReduction).toBeGreaterThan(0)
+    expect(night!.adjustments.glow).toBeGreaterThan(0)
+  })
+
+  it('★ 黑白预设使用真正的黑白混色，而不是只降饱和度', () => {
+    const bw = PRESETS.find(p => p.id === 'bw')
+    expect(bw, '黑白预设不见了').toBeTruthy()
+    expect(bw!.adjustments.bwAmount).toBe(100)
+    expect(bw!.adjustments.bwRed).toBeGreaterThan(0)
+    expect(bw!.adjustments.bwGreen).toBeLessThan(0)
+  })
 })
 
 /**
@@ -132,5 +155,29 @@ describe('activePresetId', () => {
 
   it('不给清单（旧调用）时我的那套不算数 —— 默认值保住旧行为', () => {
     expect(activePresetId({ ...MINE[0]!.adjustments }, false)).toBeNull()
+  })
+})
+
+describe('inferPresetBlend', () => {
+  const MINE: readonly Preset[] = [
+    { id: '501', label: '黄昏旅拍', adjustments: { ...ZERO, exposure: 40, temperature: 20 } },
+  ]
+
+  it('按比例套过的参数能反推出预设和强度（刷新后恢复滑杆）', () => {
+    const golden = PRESETS.find(p => p.id === 'golden')!
+    const hit = inferPresetBlend(blendAdjustments(ZERO, golden.adjustments, 50))
+    expect(hit?.preset.id).toBe('golden')
+    expect(hit?.amount).toBe(50)
+  })
+
+  it('我的预设也参与反推', () => {
+    const hit = inferPresetBlend(blendAdjustments(ZERO, MINE[0]!.adjustments, 25), MINE)
+    expect(hit?.preset.id).toBe('501')
+    expect(hit?.amount).toBe(25)
+  })
+
+  it('普通手调参数 / 全零不会被误认成预设', () => {
+    expect(inferPresetBlend({ ...ZERO, exposure: 13, contrast: 7 })).toBeNull()
+    expect(inferPresetBlend(ZERO)).toBeNull()
   })
 })

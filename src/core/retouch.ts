@@ -24,8 +24,76 @@ export function maxBrushRadius(w: number, h: number): number {
   return Math.max(24, Math.round(Math.min(w, h) * 0.25))
 }
 
+/**
+ * Apple Pencil / stylus pressure scale. Mouse and touch stay exactly 1.
+ * Pressure 0 still leaves a usable 35% brush; pressure 1 gives the full size.
+ */
+export function penPressureScale(pointerType: string | undefined, pressure: number | undefined): number {
+  if (pointerType !== 'pen') return 1
+  const p = Math.max(0, Math.min(1, Number.isFinite(pressure) ? pressure! : 0.5))
+  return 0.35 + 0.65 * p
+}
+
 export function createMask(width: number, height: number): Uint8Array {
   return new Uint8Array(width * height)
+}
+
+/** 覆盖度逐像素取反：0 ↔ 255，软边仍按 255-v 连续过渡。返回新数组。 */
+export function invertMask(mask: Uint8Array): Uint8Array {
+  const out = new Uint8Array(mask.length)
+  for (let i = 0; i < mask.length; i++) out[i] = 255 - mask[i]!
+  return out
+}
+
+/** 按百分比缩放覆盖率（0–100）；100 返回副本，原掩码不动。 */
+export function scaleMask(mask: Uint8Array, percent: number): Uint8Array {
+  const p = Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 100)) / 100
+  const out = new Uint8Array(mask.length)
+  if (p <= 0) return out
+  if (p >= 1) return mask.slice()
+  for (let i = 0; i < mask.length; i++) out[i] = Math.round(mask[i]! * p)
+  return out
+}
+
+/**
+ * 羽化覆盖度：沿横竖各做两次盒式模糊，边缘由硬切变成平滑过渡。
+ * 半径 0 返回副本；原掩码不动，方便用户继续调滑杆而不会反复叠加。
+ */
+export function featherMask(
+  mask: Uint8Array, width: number, height: number, radius: number,
+): Uint8Array {
+  const out = mask.slice()
+  const r = Math.max(0, Math.min(255, Math.round(radius)))
+  if (r === 0) return out
+  const passR = Math.max(1, Math.round(r / 2))
+  const win = passR * 2 + 1
+  const tmp = new Uint8Array(out.length)
+  for (let pass = 0; pass < 2; pass++) {
+    for (let y = 0; y < height; y++) {
+      let sum = 0
+      for (let k = -passR; k <= passR; k++) {
+        sum += out[y * width + Math.max(0, Math.min(width - 1, k))]!
+      }
+      for (let x = 0; x < width; x++) {
+        tmp[y * width + x] = Math.round(sum / win)
+        sum -= out[y * width + Math.max(0, Math.min(width - 1, x - passR))]!
+        sum += out[y * width + Math.max(0, Math.min(width - 1, x + passR + 1))]!
+      }
+    }
+    // 竖向滑窗单独走一遍，避免在每列重复算窗口。
+    for (let x = 0; x < width; x++) {
+      let sum = 0
+      for (let k = -passR; k <= passR; k++) {
+        sum += tmp[Math.max(0, Math.min(height - 1, k)) * width + x]!
+      }
+      for (let y = 0; y < height; y++) {
+        out[y * width + x] = Math.round(sum / win)
+        sum -= tmp[Math.max(0, Math.min(height - 1, y - passR)) * width + x]!
+        sum += tmp[Math.max(0, Math.min(height - 1, y + passR + 1)) * width + x]!
+      }
+    }
+  }
+  return out
 }
 
 /** 盖章中心到像素中心的距离 → 覆盖率（0–255）。软区走 smoothstep，别用线性 ——
@@ -148,4 +216,80 @@ export function expandMask(mask: Uint8Array, w: number, h: number, px: number): 
     }
   }
   return out
+}
+
+/**
+ * 一维滑动窗口取最大 / 最小（单调队列，O(N)）。
+ *
+ * `expandMask` 是逐像素扫邻域的写法，给它加"收缩"还得再扫一遍反方向；
+ * 蒙版扩展 / 收缩要支持几十像素，12 MP 上按 O(N·r) 扫会明显卡。
+ * 这里横竖各一趟，窗口里的极值用单调队列维护。
+ */
+function edgePass(
+  src: Uint8Array, w: number, h: number, r: number,
+  horizontal: boolean, mode: 'max' | 'min',
+): Uint8Array {
+  const out = new Uint8Array(src.length)
+  const n = horizontal ? w : h
+  const lines = horizontal ? h : w
+  const dq = new Int32Array(n)
+  const value = (i: number, line: number): number =>
+    horizontal ? src[line * w + i]! : src[i * w + line]!
+  const at = (i: number, line: number): number =>
+    horizontal ? line * w + i : i * w + line
+  const better = mode === 'max'
+    ? (a: number, b: number) => a <= b
+    : (a: number, b: number) => a >= b
+
+  for (let line = 0; line < lines; line++) {
+    let head = 0
+    let tail = 0
+    for (let i = 0; i < n + r; i++) {
+      if (i < n) {
+        const v = value(i, line)
+        while (tail > head) {
+          const prev = dq[tail - 1]!
+          if (!better(value(prev, line), v)) break
+          tail--
+        }
+        dq[tail++] = i
+      }
+      while (tail > head && dq[head]! < i - 2 * r) head++
+      const o = i - r
+      if (o >= 0) out[at(o, line)] = src[at(dq[head]!, line)]!
+    }
+  }
+  return out
+}
+
+/** 灰度膨胀：邻域取最大，软边跟着外扩。 */
+export function growMask(
+  mask: Uint8Array, w: number, h: number, radius: number,
+): Uint8Array {
+  const r = Math.max(0, Math.min(64, Math.round(radius)))
+  if (r <= 0) return mask.slice()
+  const once = edgePass(mask, w, h, r, true, 'max')
+  return edgePass(once, w, h, r, false, 'max')
+}
+
+/** 灰度腐蚀：邻域取最小，软边跟着内收。 */
+export function shrinkMask(
+  mask: Uint8Array, w: number, h: number, radius: number,
+): Uint8Array {
+  const r = Math.max(0, Math.min(64, Math.round(radius)))
+  if (r <= 0) return mask.slice()
+  const once = edgePass(mask, w, h, r, true, 'min')
+  return edgePass(once, w, h, r, false, 'min')
+}
+
+/**
+ * 蒙版扩展 / 收缩：`delta > 0` 外扩，`delta < 0` 内收，单位图片像素。
+ * 0 返回副本（调用方可以照常 set，不会和原掩码互相影响）。
+ */
+export function adjustMaskEdge(
+  mask: Uint8Array, w: number, h: number, delta: number,
+): Uint8Array {
+  const px = Math.round(delta)
+  if (!Number.isFinite(px) || px === 0) return mask.slice()
+  return px > 0 ? growMask(mask, w, h, px) : shrinkMask(mask, w, h, -px)
 }

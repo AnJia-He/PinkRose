@@ -2,6 +2,7 @@ import { get, post, put, del } from './client'
 import type { SessionDetail, SessionMeta, SessionMessage, SessionStep } from '../../shared/sessions.ts'
 import type { Adjustments } from '../../shared/adjustments.ts'
 import type { LutRef } from '../../shared/lut.ts'
+import type { EditLayer } from '../../shared/layers.ts'
 
 /**
  * 会话的接口。图**不从这里走** —— 和作品那套同一条规矩：图是 `<img src>`
@@ -53,6 +54,8 @@ export type SessionPatch = {
    *   和 params 一样。
    */
   lut?: LutRef | null
+  /** 当前这一版的文字层（★ 2026-10-19）；和 `params` / `lut` 同一条状态路。 */
+  layers?: EditLayer[]
   /**
    * ★ 2026-10-08（账本）：**这趟的 `params`/`lut`/`base` 说的是哪一步的"现在"**。
    * 今天客户端总会带它（状态挂在"正在编辑的那一版"上）；不带 = 旧行为（写最后一步），

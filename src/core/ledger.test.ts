@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  enforceLedgerBudget, ledgerIndex, ledgerTotal, pushEdit, redoEdit, sameEdit, undoEdit,
+  enforceLedgerBudget, jumpLedger, ledgerIndex, ledgerLabels, ledgerTotal,
+  pushEdit, redoEdit, sameEdit, undoEdit,
   LEDGER_PIXEL_BUDGET, type EditState,
 } from './ledger'
 import type { Snapshot } from './history'
@@ -10,9 +11,11 @@ import { ZERO } from '../../shared/adjustments.ts'
 // 只认**对象身份**（同一张）和**像素数**（`width × height`）。`tag` 是给断言
 // 读的标签，出事时能一眼看出丢的是哪一张。
 const img = (w: number, h: number, tag = '') => ({ bitmap: { tag }, width: w, height: h }) as any
-const st = (base: any, params = ZERO, lut: any = null, seq = 1): EditState => ({ base, params, lut, seq })
+const st = (base: any, params = ZERO, lut: any = null, seq = 1, label = '调整'): EditState =>
+  ({ base, params, lut, seq, label })
 const snap = (o: Partial<Snapshot> = {}): Snapshot => ({
-  id: 1, label: 'x', base: img(100, 100), params: ZERO, lut: null, isOriginal: false, thumb: '', past: [], future: [], ...o,
+  id: 1, label: 'x', editLabel: '原图', base: img(100, 100), params: ZERO, lut: null,
+  isOriginal: false, thumb: '', past: [], future: [], ...o,
 })
 
 describe('账本：记账 / 撤销 / 重做', () => {
@@ -61,6 +64,24 @@ describe('账本：记账 / 撤销 / 重做', () => {
     expect(ledgerIndex(s0)).toBe(1); expect(ledgerTotal(s0)).toBe(1)
     expect(ledgerIndex(s2)).toBe(1); expect(ledgerTotal(s2)).toBe(2)
     expect(ledgerIndex(s1)).toBe(2); expect(ledgerTotal(s1)).toBe(2)
+  })
+
+  it('★ 每一笔带名字；跳转时名字跟着位置走，future 里的那一笔不丢', () => {
+    const a = img(10, 10), b = img(20, 20)
+    const s0 = snap({ base: a, editLabel: '原图' })
+    const s1 = pushEdit(s0, st(a, ZERO, null, 1, '原图'), {
+      base: b, params: ZERO, lut: null, label: '裁剪',
+    }, 1)
+    expect(ledgerLabels(s1)).toEqual(['原图', '裁剪'])
+    const back = undoEdit(s1)
+    expect(ledgerLabels(back)).toEqual(['原图', '裁剪'])
+    expect(back.editLabel).toBe('原图')
+    const jump = jumpLedger(s1, 1)
+    expect(jump.base).toBe(a)
+    expect(jump.editLabel).toBe('原图')
+    expect(jump.future).toHaveLength(1)
+    expect(jump.future[0]!.label).toBe('裁剪')
+    expect(jumpLedger(s1, 99)).toBe(s1)
   })
 
   it('净零判断：base 认对象、params/lut 认值', () => {

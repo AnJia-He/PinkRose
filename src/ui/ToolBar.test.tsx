@@ -17,14 +17,19 @@ const pick = async (label: string) => {
 }
 
 describe('工具行', () => {
-  it('三个格子（裁剪 / 点修 / 对比）；点一下告诉上层，再点一下收回', async () => {
+  it('八个格子（裁剪 / 点修 / 磨皮 / 人像 / 局部 / 装饰 / 文字 / 对比）；点一下告诉上层，再点一下收回', async () => {
     const seen: (string | null)[] = []
     await act(async () => { root.render(<ToolBar active={null} onPick={t => seen.push(t)} />) })
-    expect(container.querySelectorAll('.tool-cell')).toHaveLength(3)
+    expect(container.querySelectorAll('.tool-cell')).toHaveLength(8)
     await pick('裁剪')
     await pick('点修')
+    await pick('磨皮')
+    await pick('人像')
+    await pick('局部')
+    await pick('装饰')
+    await pick('文字')
     await pick('对比')
-    expect(seen).toEqual(['crop', 'retouch', 'compare'])
+    expect(seen).toEqual(['crop', 'retouch', 'smooth', 'portrait', 'local', 'frame', 'text', 'compare'])
   })
 
   it('★ 开着工具时，第二行才出现；点当前工具是"收回"（传 null）', async () => {
@@ -48,5 +53,45 @@ describe('工具行', () => {
     //   那正好打在"放大着比细节"这个用法上（spec §3.3），所以没有控件就不画。
     await act(async () => { root.render(<ToolBar active="compare" onPick={() => {}} />) })
     expect(container.querySelector('.tool-row-second'), '没有 children 就不该有第二行').toBeNull()
+  })
+
+  it('★ 液化是「局部」的子模式：没有自己的格子，但「局部」保持点亮', async () => {
+    const seen: (string | null)[] = []
+    await act(async () => {
+      root.render(<ToolBar active="liquify" onPick={t => seen.push(t)}>
+        <span className="probe">液化</span>
+      </ToolBar>)
+    })
+    expect(container.querySelectorAll('.tool-cell')).toHaveLength(8)
+    const local = container.querySelector('[aria-label="局部"]') as HTMLButtonElement
+    expect(local.className).toContain('on')
+    await act(async () => { local.click() })
+    expect(seen).toEqual([null])
+  })
+
+  it('★ 贴纸是「装饰」的子模式：没有自己的格子，但「装饰」保持点亮', async () => {
+    const seen: (string | null)[] = []
+    await act(async () => {
+      root.render(<ToolBar active="sticker" onPick={t => seen.push(t)}>
+        <span className="probe">贴纸</span>
+      </ToolBar>)
+    })
+    const cell = container.querySelector('[aria-label="装饰"]') as HTMLButtonElement
+    expect(cell.className).toContain('on')
+    await act(async () => { cell.click() })
+    expect(seen).toEqual([null])
+  })
+
+  it('★ 形状也是「装饰」的子模式：没有自己的格子，但「装饰」保持点亮', async () => {
+    const seen: (string | null)[] = []
+    await act(async () => {
+      root.render(<ToolBar active="shape" onPick={t => seen.push(t)}>
+        <span className="probe">形状</span>
+      </ToolBar>)
+    })
+    const cell = container.querySelector('[aria-label="装饰"]') as HTMLButtonElement
+    expect(cell.className).toContain('on')
+    await act(async () => { cell.click() })
+    expect(seen).toEqual([null])
   })
 })

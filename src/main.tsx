@@ -17,6 +17,9 @@ import './styles.css'
 // 与其让下一个人去猜，不如把顺序写死在这儿。
 // 页面组件在 `ui/LandingPage.tsx`，那边留了指回来的路标。
 import './landing.css'
+import { registerPwa } from './pwa/register'
+
+if (import.meta.env.PROD) registerPwa()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

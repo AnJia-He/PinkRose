@@ -4,6 +4,10 @@ import type { DecodedImage } from '../image/decode'
 import { VERTEX_SRC, FRAGMENT_SRC } from './shader'
 import { fitToLimit, readLimit } from './limits'
 import { UNIFORM_NAMES, uniformValues, type UniformName } from './uniforms'
+import { computeHistogram, type HistogramData } from './histogram'
+import { clippingMaskPixels } from './clipping'
+
+export const HISTOGRAM_SIZE = 128
 
 export class TonePipeline {
   private gl: WebGL2RenderingContext
@@ -15,6 +19,8 @@ export class TonePipeline {
   private uniforms = new Map<UniformName, WebGLUniformLocation | null>()
   private uTexel: WebGLUniformLocation | null = null
   private lutTex: WebGLTexture
+  private histTex: WebGLTexture | null = null
+  private histFbo: WebGLFramebuffer | null = null
   private lutOn = 0
   private uLutOn: WebGLUniformLocation | null = null
   private uLutAmount: WebGLUniformLocation | null = null
@@ -33,7 +39,9 @@ export class TonePipeline {
     this.canvas = canvas
     this.onFatal = onFatal
     const gl = canvas.getContext('webgl2', {
-      alpha: false,
+      // ★ 2026-10-17（透明抠图）：alpha 必须真的进绘图缓冲，否则擦掉的背景
+      //   在屏幕和 PNG 导出里都会变成不透明黑块。
+      alpha: true,
       premultipliedAlpha: false,
       // 导出走的是 canvas.toBlob()，它读的就是绘图缓冲。不开这个标志时，
       // 浏览器在合成之后可以随时清空缓冲，toBlob 有概率拍到一张空图。
@@ -92,6 +100,36 @@ export class TonePipeline {
     this.uLutDomainMin = gl.getUniformLocation(this.program, 'uLutDomainMin')
     this.uLutDomainMax = gl.getUniformLocation(this.program, 'uLutDomainMax')
     gl.uniform1i(gl.getUniformLocation(this.program, 'uLut'), 1)
+
+    // 直方图用的小离屏缓冲：128×128 足够看分布，readPixels 也只有 64KB。
+    // 它和屏幕上那张大图走同一个 program / 同一套 uniform；失败时只关掉
+    // 直方图，不影响正常渲染。
+    const histTex = gl.createTexture()
+    const histFbo = gl.createFramebuffer()
+    if (histTex && histFbo) {
+      gl.activeTexture(gl.TEXTURE2)
+      gl.bindTexture(gl.TEXTURE_2D, histTex)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, HISTOGRAM_SIZE, HISTOGRAM_SIZE,
+        0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+      gl.bindFramebuffer(gl.FRAMEBUFFER, histFbo)
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,
+        gl.TEXTURE_2D, histTex, 0)
+      const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      gl.activeTexture(gl.TEXTURE0)
+      if (ok) {
+        this.histTex = histTex
+        this.histFbo = histFbo
+      } else {
+        gl.deleteTexture(histTex)
+        gl.deleteFramebuffer(histFbo)
+        console.warn('直方图离屏缓冲不可用，调色面板将不显示直方图')
+      }
+    }
 
     // 上下文丢失默认是**静默**的：没有任何事件处理，画布直接变白。
     // preventDefault() 表明这次丢失已被处理（也是浏览器后续尝试恢复的前提），
@@ -177,14 +215,8 @@ export class TonePipeline {
    * ⚠️ 这里**不判 cube 在不在** —— 那件事只有 `setLut` 知道（它算 `lutOn`），
    * 两个来源各管各的，调用方拼错了也吵不起来。
    */
-  render(a: Adjustments, lutAmount = 0): void {
+  private setUniforms(a: Adjustments, lutAmount: number): void {
     const gl = this.gl
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height)
-    gl.useProgram(this.program)
-    gl.bindVertexArray(this.vao)
-    gl.activeTexture(gl.TEXTURE0)
-    gl.bindTexture(gl.TEXTURE_2D, this.texture)
-
     gl.uniform2f(this.uTexel, 1 / this.imageW, 1 / this.imageH)
     const map = uniformValues(a)
     for (const n of UNIFORM_NAMES) {
@@ -192,8 +224,66 @@ export class TonePipeline {
     }
     gl.uniform1f(this.uLutOn, this.lutOn)
     gl.uniform1f(this.uLutAmount, Math.max(0, Math.min(100, lutAmount)) / 100)
+  }
 
+  render(a: Adjustments, lutAmount = 0): void {
+    const gl = this.gl
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.useProgram(this.program)
+    gl.bindVertexArray(this.vao)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.texture)
+    this.setUniforms(a, lutAmount)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
+  }
+
+  /**
+   * 用同一套 program / uniform 在 128×128 的离屏缓冲上再画一遍，读回来算直方图。
+   * 它不碰屏幕上的默认 framebuffer —— 调用完默认缓冲里仍是 `render()` 那一帧。
+   */
+  readHistogram(a: Adjustments, lutAmount = 0): HistogramData | null {
+    const gl = this.gl
+    if (!this.histFbo) return null
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.histFbo)
+    gl.viewport(0, 0, HISTOGRAM_SIZE, HISTOGRAM_SIZE)
+    gl.useProgram(this.program)
+    gl.bindVertexArray(this.vao)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.texture)
+    this.setUniforms(a, lutAmount)
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
+    const out = new Uint8Array(HISTOGRAM_SIZE * HISTOGRAM_SIZE * 4)
+    gl.readPixels(0, 0, HISTOGRAM_SIZE, HISTOGRAM_SIZE,
+      gl.RGBA, gl.UNSIGNED_BYTE, out)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height)
+    return computeHistogram(out, 64, HISTOGRAM_SIZE, HISTOGRAM_SIZE)
+  }
+
+  /**
+   * 同一套离屏渲染结果只用来生成查看辅助的裁切 mask。
+   * 0 = 正常，1 = 高光，2 = 阴影。screen 主画布和导出都不被改写。
+   */
+  readClippingMask(
+    a: Adjustments, lutAmount = 0,
+  ): { mask: Uint8Array; width: number; height: number } | null {
+    const gl = this.gl
+    if (!this.histFbo) return null
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.histFbo)
+    gl.viewport(0, 0, HISTOGRAM_SIZE, HISTOGRAM_SIZE)
+    gl.useProgram(this.program)
+    gl.bindVertexArray(this.vao)
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, this.texture)
+    this.setUniforms(a, lutAmount)
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
+    const pixels = new Uint8Array(HISTOGRAM_SIZE * HISTOGRAM_SIZE * 4)
+    gl.readPixels(0, 0, HISTOGRAM_SIZE, HISTOGRAM_SIZE,
+      gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height)
+    return clippingMaskPixels(pixels, HISTOGRAM_SIZE, HISTOGRAM_SIZE)
   }
 
   /**
@@ -219,6 +309,8 @@ export class TonePipeline {
     gl.deleteProgram(this.program)
     gl.deleteTexture(this.texture)
     gl.deleteTexture(this.lutTex)
+    if (this.histTex) gl.deleteTexture(this.histTex)
+    if (this.histFbo) gl.deleteFramebuffer(this.histFbo)
     gl.deleteVertexArray(this.vao)
     gl.deleteBuffer(this.buffer)
   }

@@ -67,6 +67,17 @@ describe('applyTone', () => {
     expect(out[2]).toBeGreaterThan(out[0])
   })
 
+  it('色调 +100 偏洋红、-100 偏绿，并尽量保持亮度', () => {
+    const luma = ([r, g, b]: [number, number, number]) =>
+      0.2126 * r + 0.7152 * g + 0.0722 * b
+    const magenta = applyTone(mid, toUnit({ ...ZERO, tint: 100 }))
+    const green = applyTone(mid, toUnit({ ...ZERO, tint: -100 }))
+    expect(magenta[1]).toBeLessThan(0.5)
+    expect(green[1]).toBeGreaterThan(0.5)
+    expect(Math.abs(luma(magenta) - luma(mid))).toBeLessThan(0.005)
+    expect(Math.abs(luma(green) - luma(mid))).toBeLessThan(0.005)
+  })
+
   it('高光 +100 主要提亮亮部，暗部几乎不动', () => {
     const light = applyTone([0.85, 0.85, 0.85], toUnit({ ...ZERO, highlights: 100 }))
     const dark = applyTone([0.2, 0.2, 0.2], toUnit({ ...ZERO, highlights: 100 }))
@@ -81,8 +92,35 @@ describe('applyTone', () => {
     expect(Math.abs(light[0] - 0.85)).toBeLessThan(0.02)
   })
 
+  it('★ 白色色阶主要抬高亮部端点，黑色色阶主要抬暗部端点', () => {
+    const whiteDark = applyTone([0.2, 0.2, 0.2], toUnit({ ...ZERO, whites: 100 }))
+    const whiteLight = applyTone([0.85, 0.85, 0.85], toUnit({ ...ZERO, whites: 100 }))
+    const blackDark = applyTone([0.2, 0.2, 0.2], toUnit({ ...ZERO, blacks: 100 }))
+    const blackLight = applyTone([0.85, 0.85, 0.85], toUnit({ ...ZERO, blacks: 100 }))
+    expect(whiteLight[0] - 0.85).toBeGreaterThan(whiteDark[0] - 0.2)
+    expect(blackDark[0] - 0.2).toBeGreaterThan(blackLight[0] - 0.85)
+  })
+
+  it('★ 黑白混色强度 100 输出灰色，红通道权重能单独改变红色亮度', () => {
+    const red = [0.8, 0.12, 0.12] as [number, number, number]
+    const neutral = applyTone(red, toUnit({ ...ZERO, bwAmount: 100 }))
+    const boosted = applyTone(red, toUnit({ ...ZERO, bwAmount: 100, bwRed: 100 }))
+    const cut = applyTone(red, toUnit({ ...ZERO, bwAmount: 100, bwRed: -100 }))
+    expect(neutral[0]).toBeCloseTo(neutral[1], 5)
+    expect(neutral[1]).toBeCloseTo(neutral[2], 5)
+    expect(boosted[0]).toBeGreaterThan(neutral[0])
+    expect(cut[0]).toBeLessThan(neutral[0])
+  })
+
+  it('★ 去雾可在烘焙颜色前吸收外部暗通道，满足时拉开亮部', () => {
+    const before: [number, number, number] = [0.72, 0.72, 0.72]
+    const after = applyTone(before, toUnit(ZERO), { amount: 1, dark: 0.8 })
+    expect(after[0]).toBeGreaterThan(before[0])
+    expect(after[1]).toBeCloseTo(after[2], 3)
+  })
+
   it('输出永远落在 [0, 1] 内（极端参数也不越界）', () => {
-    // 十五个字段要写全 —— 新加的七个（自然饱和度 / 色彩平衡 / 分离色调）**不进
+    // 五十个字段要写全 —— 新加的七个（自然饱和度 / 色彩平衡 / 分离色调）**不进
     // CPU 模型**（`tone.ts` 本批不动，见设计 §4：它只给「照着这张调」拟合六个），
     // 从中立 0 长起来就对了；"极端"说的是这个模型真正消费的那些参数。
     const extreme = toUnit({

@@ -3,6 +3,8 @@ import { updateSession, type SessionPatch } from '../api/sessions'
 import { GALLERY_THUMB_MAX_SIDE, bitmapToDataUrl, makeThumbnail } from '../core/thumbnail'
 import { pushEdit, sameEdit, settleLedger, type EditState } from '../core/ledger'
 import type { Snapshot } from '../core/history'
+import { compositeEditLayers } from '../image/layers'
+import { preloadStickerImages } from '../image/sticker'
 import type { ChatMessage } from '../ui/ChatPanel'
 import type { Adjustments } from '../../shared/adjustments.ts'
 import type { LutRef } from '../../shared/lut.ts'
@@ -44,7 +46,7 @@ export type PersistDeps = {
   sessionIdRef: { current: number | null }
   cursorId: number | null
   /** **哪一版的"现在"变了**（App 拿着；`flushEdit` 与这里都读它）。 */
-  dirtyRef: { current: { stepId: number; baseChanged: boolean } | null }
+  dirtyRef: { current: { stepId: number; baseChanged: boolean; layersChanged?: boolean } | null }
   /** **没定稿的那一笔**（App 拿着；`flushEdit` 是它唯一的出口）。 */
   editPendingRef: { current: { stepId: number; before: EditState } | null }
   /** 账本发号器（App 拿着）：定稿那一笔的 `seq` 从这儿发。 */
@@ -98,7 +100,9 @@ export function usePersist(deps: PersistDeps) {
       // 那一版已经不在了（被删了 / 换了会话）：原样返回，一个字节都不动。
       if (!s) return h
       // ⚠️ 这里**不能**用闭包里的 `params`：定时器到点时那是过去那一轮的值。
-      const next = { base: s.base, params: s.params, lut: s.lut }
+      const next = {
+        base: s.base, params: s.params, lut: s.lut, layers: s.layers, label: '调色',
+      }
       if (sameEdit(p.before, next)) return h         // 净零：不记（也不惊动渲染）
       const withEdit = h.map(x => (x.id === p.stepId ? pushEdit(x, { ...p.before, seq }, next, seq) : x))
       // ★ Task 5：记完这一笔 → 过预算闸 + 回收位图（调色笔零成本，闸多半什么都不动）
@@ -174,6 +178,7 @@ export function usePersist(deps: PersistDeps) {
     // 快照，所以快照上那一份就是"改之后"。
     const stateParams = dirtyVersion?.params
     const stateLut = dirtyVersion?.lut
+    const stateLayers = dirtyVersion?.layers ?? []
     // ★★ 底图从**位图**编码，**不是画布**（spec §3 那个 bug 的修法）。
     //   画布上跑过 `render(params)`：拿它当底图 = 把参数**烤进像素**，恢复时
     //   `setImage(base)` + `setParams(同一套参数)` 就把参数作用了两次（真机实测：
@@ -194,6 +199,8 @@ export function usePersist(deps: PersistDeps) {
       //   哪天服务端改成"客户端赢"或这里多出"一次 PUT 带好几个新步骤"的走法，
       //   少这一个字段就会静默丢滤镜。**别因为"今天没人看"把它删掉。**
       lut: s.lut,
+      // ★ 2026-10-19：文字层也按步骤带上；空层不写键，老形状保持干净。
+      ...(s.layers?.length ? { layers: s.layers } : {}),
     }))
     // ⚠️ `ChatMessage` 上**没有 `at`**（这个客户端不显示消息时间），而
     //   `SessionMessage.at` 是必填的 —— 送 0 = "这个信息我们没有"（服务端
@@ -258,6 +265,9 @@ export function usePersist(deps: PersistDeps) {
             patch.stateStepId = stateStepId
             patch.params = stateParams
             patch.lut = stateLut ?? null
+            // ★ 2026-10-19：文字层和 params / lut 同生共死；空数组是"这一版确实
+            //   没有文字层"（用来清空上一次的层），不是"这次不表态"。
+            patch.layers = stateLayers
           }
           // ② 底图没换（拖滑块那几十趟）就**不许带** —— 带了就是多存一个没人引用的
           //   文件，而且服务端会把好好的缩略图删了重存（§4.3）。
@@ -275,18 +285,21 @@ export function usePersist(deps: PersistDeps) {
             //   还是那张没改过的照片，而且**不报错**。
             //   只在 `baseBitmap` 那一支里做：图没变的时候重做一张是白费（而且会让
             //   服务端把好好的缩略图删了重存）。
-            //   ⚠️ **封面照旧从画布抓**（它 = 现在**看到**的观感，正好和底图那条路
-            //   相反 —— 底图要干净、封面要好看）；画布不在（切屏之后到点）就**只跳过
-            //   封面这一样**，别的照发。
-            if (el) {
-              try {
-                patch.thumb = makeThumbnail(el, GALLERY_THUMB_MAX_SIDE)
-              } catch (e) {
-                // 封面是锦上添花（就是列表上那张小图），抓不到不该影响这一版底图
-                // —— 而且这**不是可选项**：异常路径正是没人盯着的那条，
-                // 不许静默（这个项目每一处"没做成"都要留痕）。
-                console.error('封面没做出来（不影响底图落盘）', e)
-              }
+          }
+          // 封面：底图换了，或者只改了文字层，都要重抓。文字层不在 WebGL 画布里，
+          // 所以先把层叠到画布副本上再缩 —— 不叠的话，列表封面永远看不到文字。
+          if ((baseBitmap || dirtyAt?.layersChanged) && el) {
+            try {
+              await preloadStickerImages(stateLayers)
+              patch.thumb = makeThumbnail(
+                compositeEditLayers(el, stateLayers, { localsAlreadyApplied: true }),
+                GALLERY_THUMB_MAX_SIDE,
+              )
+            } catch (e) {
+              // 封面是锦上添花（就是列表上那张小图），抓不到不该影响这一版底图
+              // —— 而且这**不是可选项**：异常路径正是没人盯着的那条，
+              // 不许静默（这个项目每一处"没做成"都要留痕）。
+              console.error('封面没做出来（不影响底图落盘）', e)
             }
           }
           // ★ `keepalive` 只在"页面正在消失"那两条路上传进来（`pagehide` /

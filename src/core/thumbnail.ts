@@ -82,6 +82,10 @@ export function makeThumbnail(source: Sizable, maxSide = THUMB_MAX_SIDE): string
   const { width, height } = fitWithin(source.width, source.height, maxSide)
   const { canvas, ctx } = makeCanvas(width, height, '做不了缩略图')
   ctx.imageSmoothingQuality = 'high'
+  // ★ 2026-10-17（透明抠图）：缩略图固定编码 JPEG，透明区域先铺白，
+  //   否则预览里会是黑块。
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
   return canvas.toDataURL('image/jpeg', 0.7)
 }
@@ -125,5 +129,10 @@ export function bitmapToDataUrl(source: Sizable, quality = 0.92): string {
   // 那条同款理由：默认档缩出来的边缘有锯齿）。
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
+  // 抠过图的底图要原样存 alpha；PNG 只在真有透明像素时才用，普通照片照旧 JPEG。
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i]! < 255) return canvas.toDataURL('image/png')
+  }
   return canvas.toDataURL('image/jpeg', quality)
 }

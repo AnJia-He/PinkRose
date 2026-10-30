@@ -110,3 +110,37 @@ export function zoomTo(
 export function panBy(v: View, dx: number, dy: number, fit: Size): View {
   return clampView({ scale: v.scale, x: v.x + dx, y: v.y + dy }, fit)
 }
+
+export type PinchPoint = { mid: Point; distance: number }
+
+/**
+ * 双指手势：距离变化决定缩放，两指中点移动决定平移。
+ *
+ * 先把**开始时两指中点底下那块画面**按缩放锚住，再按中点位移整体平移 ——
+ * 这样一边捏合一边挪动时，指间那块细节会跟着手指走，不会各算各的。
+ * 缩放上下限和单指拖动共用 `zoomTo` / `panBy` 那一套，不在手势层另写阈值。
+ */
+export function pinchView(
+  base: View,
+  start: PinchPoint,
+  current: PinchPoint,
+  fit: Size,
+  area: Size,
+  max = MAX_SCALE,
+): View {
+  if (start.distance <= 0 || current.distance <= 0) return base
+  const zoomed = zoomTo(
+    base,
+    base.scale * current.distance / start.distance,
+    start.mid,
+    fit,
+    area,
+    max,
+  )
+  return panBy(
+    zoomed,
+    current.mid.x - start.mid.x,
+    current.mid.y - start.mid.y,
+    fit,
+  )
+}

@@ -24,12 +24,15 @@ type Props = {
   erasing: boolean
   onMode: (mode: BrushMode) => void
   onRadius: (radius: number) => void
+  onCutout?: () => void
+  onClone?: () => void
+  onAiErase?: () => void
   onCancel: () => void
   onDone: () => void
 }
 
 export default function RetouchControls({
-  image, mode, radius, dirty, erasing, onMode, onRadius, onCancel, onDone,
+  image, mode, radius, dirty, erasing, onMode, onRadius, onCutout, onClone, onAiErase, onCancel, onDone,
 }: Props) {
   return (
     <>
@@ -46,6 +49,15 @@ export default function RetouchControls({
           )
         })}
       </div>
+      {onCutout && (
+        <button type="button" className="crop-chip" onClick={onCutout}>抠图</button>
+      )}
+      {onClone && (
+        <button type="button" className="crop-chip" onClick={onClone}>克隆</button>
+      )}
+      {onAiErase && (
+        <button type="button" className="crop-chip" onClick={onAiErase}>AI 消除</button>
+      )}
       <Slider
         label="笔刷" value={radius}
         min={4} max={maxBrushRadius(image.width, image.height)} step={1}

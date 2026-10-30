@@ -6,6 +6,7 @@ import type { AccountUser } from '../api/account'
 import type { DecodedImage } from '../image/decode'
 import { clampAdjustments, type Adjustments } from '../../shared/adjustments.ts'
 import { normalizeLutRef, type LutRef } from '../../shared/lut.ts'
+import { normalizeEditLayers, type EditLayer } from '../../shared/layers.ts'
 import type { SuggestCard } from '../../shared/protocol.ts'
 import type { ChatMessage } from '../ui/ChatPanel'
 import type { Notice } from './useNotice'
@@ -15,6 +16,9 @@ import {
   ORIGINAL_PREVIEW_MAX_SIDE, THUMB_MAX_SIDE, makeThumbnail,
 } from '../core/thumbnail'
 import { TonePipeline } from '../render/pipeline'
+import { compositeEditLayers } from '../image/layers'
+import { preloadLocalMasks } from '../image/localLayer'
+import { preloadStickerImages } from '../image/sticker'
 
 /**
  * **恢复会话那一整簇**（★ 2026-10-08 从 `App.tsx` 搬出来）：
@@ -53,6 +57,7 @@ export type LoadSessionDeps = {
   setImage: Dispatch<SetStateAction<DecodedImage | null>>
   setParams: Dispatch<SetStateAction<Adjustments>>
   setLut: Dispatch<SetStateAction<LutRef | null>>
+  setLayers: Dispatch<SetStateAction<EditLayer[]>>
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>
   setCards: Dispatch<SetStateAction<SuggestCard[]>>
   setHistory: Dispatch<SetStateAction<Snapshot[]>>
@@ -68,6 +73,8 @@ export type LoadSessionDeps = {
     { title: string | null; originalName: string | null } | null>>
   moveCursor: (id: number | null) => void
   clearTransient: () => void
+  /** 会话不保存动作短片；切到任何已持久化会话都要清掉内存里的实况配对。 */
+  clearLivePhoto: () => void
   /** 「上次那张要替换掉吗」的问句也一起收（切会话换了一张照片）。 */
   dismissAsk: () => void
   flushEdit: () => void
@@ -80,9 +87,10 @@ export function useLoadSession(deps: LoadSessionDeps) {
     checking, user,
     pickStartedRef, pickSeqRef, pickSettledSeqRef, baseSeqRef, idRef,
     editPendingRef, dirtyRef, originalFileRef,
-    setImage, setParams, setLut, setMessages, setCards, setHistory, setSavedId,
+    setImage, setParams, setLut, setLayers, setMessages, setCards, setHistory, setSavedId,
     setCompareSrc, setOriginalPreview, setBusy, setNotice,
-    setCurrentSession, setSessionName, moveCursor, clearTransient, dismissAsk, flushEdit, flushPersist, noticeBad,
+    setCurrentSession, setSessionName, moveCursor, clearTransient, clearLivePhoto,
+    dismissAsk, flushEdit, flushPersist, noticeBad,
   } = deps
 
   /** 挂载时那次"把上次那条会话接回来"跑过没有。**它保证只跑一次** ——
@@ -226,7 +234,13 @@ export function useLoadSession(deps: LoadSessionDeps) {
       //   ⚠️ 位图在上面先还掉了：作废不管哪一种，`steps` 里那些都得关，
       //   早返回不能把那一句也跳过去。
       if (gen !== loadSeqRef.current) return
-      console.error(note)
+      // ★ 2026-10-19（Safari 验收抓到）：**用户主动开新照片**会让挂载那趟
+      //   "恢复上次会话"正常地作废。它不是错误（没有失败、没有丢东西），
+      //   用 `console.error` 会被真机验收当成页面故障（Safari 探针 42 条里
+      //   就红在这一句）。留痕仍保留，但恢复那一路降到 info；真正抛错的那条
+      //   路在下面的 catch 里照旧 `console.error`。
+      if (why === 'restore') console.info(note)
+      else console.error(note)
       if (why === 'open') noticeBad('这条对话没打开，再试一次？')
     }
 
@@ -286,14 +300,19 @@ export function useLoadSession(deps: LoadSessionDeps) {
        *   ⚠️ 失败（管线没建起来 / 这一步画不出来）就退到"底图直出"—— **比没有强**
        *   （这一步的气泡上至少还有张图），而且上面已经留过痕。
        */
-      const thumbOf = (b: ImageBitmap, p: Adjustments): string => {
+      const thumbOf = async (b: ImageBitmap, p: Adjustments, layers: EditLayer[]): Promise<string> => {
+        await preloadStickerImages(layers)
+        await preloadLocalMasks(layers)
         if (offscreen) {
           try {
             offscreen.pipe.setImage({ bitmap: b, width: b.width, height: b.height })
             offscreen.pipe.resizeToImage()
             // ⚠️ 只传 params、不传 lutAmount：滤镜那层不在这一趟里（见上面那段）。
             offscreen.pipe.render(p)
-            return makeThumbnail(offscreen.canvas, THUMB_MAX_SIDE)
+            return makeThumbnail(
+              compositeEditLayers(offscreen.canvas, layers, { maxSide: THUMB_MAX_SIDE }),
+              THUMB_MAX_SIDE,
+            )
           } catch (e) {
             console.error('恢复时小图没做出来（退回底图直出）', e)
           }
@@ -301,7 +320,11 @@ export function useLoadSession(deps: LoadSessionDeps) {
         // "底图直出"本身也可能做不出来（连 2D 上下文都拿不到）—— 那一步的小图
         // 就是 `''`（不渲染）。**这一层的失败不能再抛出去**：它会把整条会话的
         // 恢复带塌（上面那段 ⚠️ 说的就是这件事）。
-        try { return makeThumbnail(b, THUMB_MAX_SIDE) } catch { return '' }
+        try {
+          return makeThumbnail(
+            compositeEditLayers(b, layers, { maxSide: THUMB_MAX_SIDE }), THUMB_MAX_SIDE,
+          )
+        } catch { return '' }
       }
       // 每一步都要解码回位图。⚠️ `reusesPrev` 是真的能省一次下载 + 一次解码：
       // 拖十次滑块就是十步，一步步全下就是十个一模一样的文件。
@@ -320,9 +343,13 @@ export function useLoadSession(deps: LoadSessionDeps) {
           // 肉眼一样的两张 —— 而这正是"刷新前后长得不一样"里最没必要的一种）。
           // ★ 2026-10-05：`lut` 走 `normalizeLutRef`（老步骤没有这个键 = 没用滤镜），
           //   和 params 过 `clampAdjustments` 同一条规矩 —— 归一化是唯一入口。
-          steps.push({ id: s.id, label: s.label, base: prev.base,
-                       params: clampAdjustments(s.params), lut: normalizeLutRef(s.lut),
-                       isOriginal: false, thumb: prev.thumb, prompt: s.prompt,
+          const params = clampAdjustments(s.params)
+          const layers = normalizeEditLayers(s.layers)
+          steps.push({ id: s.id, label: s.label, editLabel: s.label, base: prev.base,
+                       params, lut: normalizeLutRef(s.lut), layers,
+                       isOriginal: false,
+                       thumb: layers.length ? await thumbOf(prev.base.bitmap, params, layers) : prev.thumb,
+                       prompt: s.prompt,
                        past: [], future: [] })
           continue
         }
@@ -335,9 +362,11 @@ export function useLoadSession(deps: LoadSessionDeps) {
         //   用在这一版上，就会被这种"值一样、身份不一样"咬到）。
         const params = clampAdjustments(s.params)
         const lut = normalizeLutRef(s.lut)
-        steps.push({ id: s.id, label: s.label, params, lut,
+        const layers = normalizeEditLayers(s.layers)
+        steps.push({ id: s.id, label: s.label, editLabel: s.label, params, lut,
+                     layers,
                      base: { bitmap, width: bitmap.width, height: bitmap.height },
-                     isOriginal: steps.length === 0, thumb: thumbOf(bitmap, params), prompt: s.prompt,
+                     isOriginal: steps.length === 0, thumb: await thumbOf(bitmap, params, layers), prompt: s.prompt,
                      past: [], future: [] })
       }
       const lastStep = steps[steps.length - 1]!
@@ -411,8 +440,10 @@ export function useLoadSession(deps: LoadSessionDeps) {
         closeBitmaps(bitmapsToClose(prev, []))
         return steps
       })
+      clearLivePhoto()
       setImage(lastStep.base)
       setParams(lastStep.params)
+      setLayers(lastStep.layers ?? [])
       // ★ 2026-10-05（滤镜）：最后一步的滤镜跟着回来。
       //   ⚠️ `?? null` 那半不是多余的：`SessionStep.lut` 是**可选**的（老会话
       //   没有这个键，服务端给的是显式 null，但"直接手搓的详情"可能真是 undefined）
@@ -515,7 +546,10 @@ export function useLoadSession(deps: LoadSessionDeps) {
       if (offscreen) { offscreen.pipe.dispose(); offscreen = null }
       if (why === 'open') setBusy(null)
     }
-  }, [flushEdit, flushPersist, noticeBad, setCurrentSession, moveCursor, clearTransient])
+  }, [
+    flushEdit, flushPersist, noticeBad, setCurrentSession, moveCursor,
+    clearTransient, clearLivePhoto,
+  ])
 
   /**
    * 打开页面之后，把"上次那条会话"接回来（spec §6.2）。

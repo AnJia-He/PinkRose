@@ -15,7 +15,7 @@ export async function listPresets(): Promise<{ presets: PresetMeta[] }> {
   return get<{ presets: PresetMeta[] }>('/api/presets')
 }
 
-/** 存一套：名字 + 整套 15 个参数一起送（服务端会过 `clampAdjustments`）。 */
+/** 存一套：名字 + 整套 75 个参数一起送（服务端会过 `clampAdjustments`）。 */
 export async function createPreset(name: string, params: Adjustments): Promise<{ preset: PresetMeta }> {
   return post<{ preset: PresetMeta }>('/api/presets', { name, params })
 }

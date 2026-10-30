@@ -1,13 +1,41 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Canvas from './ui/Canvas'
+import {
+  isLayerVisible, sameEditLayers,
+  type EditLayer, type ShapeLayer, type StickerLayer, type TextLayer,
+} from '../shared/layers.ts'
+import { compositeEditLayers, editLayersToBitmap } from './image/layers'
+import { preloadStickerImages } from './image/sticker'
+import { applyLocalLayers, isLocalLayer, preloadLocalMasks } from './image/localLayer'
+import { useLocalLayers } from './app/useLocalLayers'
+import { applyLayersEdit } from './app/baseEdit'
 import Uploader from './ui/Uploader'
 import AdjustEmpty from './ui/AdjustEmpty'
 import AdjustmentPanel from './ui/AdjustmentPanel'
 import PresetRail from './ui/PresetRail'
 import TopActions from './ui/TopActions'
+import ExportSettings from './ui/ExportSettings'
 import Banners from './ui/Banners'
 import CropControls from './ui/CropControls'
+import OutpaintControls from './ui/OutpaintControls'
+import PerspectiveControls from './ui/PerspectiveControls'
 import RetouchControls from './ui/RetouchControls'
+import AiEraseControls from './ui/AiEraseControls'
+import SmoothControls from './ui/SmoothControls'
+import TransparentControls from './ui/TransparentControls'
+import PortraitControls from './ui/PortraitControls'
+import CloneControls from './ui/CloneControls'
+import LocalControls from './ui/LocalControls'
+import TextControls from './ui/TextControls'
+import FrameControls from './ui/FrameControls'
+import CanvasFrameControls from './ui/CanvasFrameControls'
+import DoubleExposureControls from './ui/DoubleExposureControls'
+import LiquifyControls from './ui/LiquifyControls'
+import StickerControls from './ui/StickerControls'
+import ShapeControls from './ui/ShapeControls'
+import DoodleControls from './ui/DoodleControls'
+import LightControls from './ui/LightControls'
+import DuotoneControls from './ui/DuotoneControls'
 import ChatPanel, { type ChatMessage } from './ui/ChatPanel'
 import StepStrip from './ui/StepStrip'
 import StepNav from './ui/StepNav'
@@ -16,13 +44,14 @@ import { LoginPage } from './ui/LoginPage'
 import { GalleryPage } from './ui/GalleryPage'
 import { SessionsPage } from './ui/SessionsPage'
 import { WorkDetailPage } from './ui/WorkDetailPage'
+import SharedWorkPage from './ui/SharedWorkPage'
 import { AccountPage } from './ui/AccountPage'
 import { ModelSettings } from './ui/ModelSettings'
 import { LutSettings } from './ui/LutSettings'
 import LandingPage from './ui/LandingPage'
 import { NotFound } from './ui/NotFound'
 import { Nav } from './ui/Nav'
-import { me, type AccountUser } from './api/account'
+import { me, savePreferences, type AccountUser } from './api/account'
 import { fetchWorkImage } from './api/works'
 import {
   createSession, sessionOriginalUrl, updateSession,
@@ -32,18 +61,34 @@ import { createPreset, deletePreset, renamePreset } from './api/presets'
 // ★ 2026-10-09：对话栏顶上那个名字的**唯一**口径（三级退：用户起的名字 →
 //   照片上传时的名字 → 「还没说话」）—— 和对话列表同一份，别在这儿另退一套。
 import { sessionTitle } from '../shared/sessions.ts'
-import { decodeImageFile, type DecodedImage } from './image/decode'
+import {
+  decodeImageFile, imageDecodeFailureText, type DecodedImage,
+} from './image/decode'
+import { sourceColorProfileLabel } from './image/sourceProfile'
 import { resizeBitmap } from './image/resize'
-import { samplePixels } from './image/sample'
+import { samplePixelAt, samplePixels } from './image/sample'
 import { matchToReference } from './core/colorMatch'
-import { activePresetId, type Preset } from './core/presets'
+import { autoAdjustments } from './core/autoEnhance'
+import { whiteBalanceFromSample } from './core/whiteBalance'
+import { colorReading, type ColorReading } from './core/colorSample'
+import { hslBandForRgb, type HslBandId } from './core/hslPick'
+import type { HistogramData } from './render/histogram'
+import {
+  activePresetId, inferPresetBlend, PRESETS, type Preset,
+} from './core/presets'
+import { recommendPreset } from './core/presetRecommend'
 import { fitToLimit, probeLimit } from './render/limits'
 // ★ 2026-10-08（账本 Task 8）：恢复会话时那条**离屏重画**的临时管线（全站第三处
 //   `new TonePipeline`，规模刻意压在"一条管线 + 一张画布、用完 dispose"）——
 //   ★ 2026-10-08（拆分 Batch 6）：它跟着 `loadSession` 一起搬进
 //   `app/useLoadSession`（这个文件里另两处 `TonePipeline` 的引用都是注释）。
-import { applyDeltas, ZERO, type Adjustments } from '../shared/adjustments.ts'
+import {
+  applyDeltas, blendAdjustments, PARAM_KEYS, ZERO, type Adjustments,
+} from '../shared/adjustments.ts'
 import { canShareImage } from './export/save'
+import {
+  makeOutpaintCanvas, outpaintPrompt, outpaintReply, type OutpaintAspect,
+} from './export/outpaint'
 import { prepareForRouting } from './image/prepare'
 import { errorText, isUnauthorized, postRoute } from './api/client'
 import { bitmapsToClose, attachThumb, closeBitmaps, type Snapshot } from './core/history'
@@ -56,7 +101,8 @@ import { bitmapsToClose, attachThumb, closeBitmaps, type Snapshot } from './core
 //   （预算闸 `enforceLedgerBudget` + 位图回收）。★ 2026-10-08：`settleLedger`
 //   和 `closeBitmaps` 一起搬进了 `core`（`app/baseEdit.ts` 那份共享骨架要用）。
 import {
-  ledgerIndex, ledgerTotal, pushEdit, redoEdit, sameEdit, settleLedger, undoEdit, type EditState,
+  jumpLedger, ledgerIndex, ledgerLabels, ledgerTotal, pushEdit, redoEdit, sameEdit,
+  settleLedger, undoEdit, type EditState,
 } from './core/ledger'
 // ★ 2026-10-08：删除的单位是"一问一答"（用户报的"删了一条、另半条还留着"），
 //   `expandDeleteIds` 就在这儿把一条 id 补成整轮 —— 纯函数，和 ChatPanel 勾选
@@ -66,25 +112,62 @@ import {
   GALLERY_THUMB_MAX_SIDE, ORIGINAL_PREVIEW_MAX_SIDE, bitmapToDataUrl, makeThumbnail,
 } from './core/thumbnail'
 import { markImage, type NormPoint } from './image/mark'
+import {
+  inspectLivePhotoPair, type LivePhotoEvidence, type LivePhotoPair,
+} from './core/livePhoto'
 import { useDelivery } from './app/useDelivery'
 import { BUSY_GENERATING, useGeneration } from './app/useGeneration'
 import { useLuts } from './app/useLuts'
 // ★ 2026-10-10（「我的预设」）：自己的预设清单 —— `usePresets` 就是"清单那一半"
 //   （照 `useLuts` 的对应件；存/改/删三个动作在下面那三个回调里）。
 import { usePresets } from './app/usePresets'
+import {
+  loadDefaultStyleId, normalizeDefaultStyleId, resolveDefaultStyle, saveDefaultStyleId,
+} from './app/defaultStyle'
+import {
+  loadAppearance, normalizeAppearance, saveAppearance, type Appearance,
+} from './app/appearance'
 // ★ 2026-10-08（拆分 Batch 3）：三个小簇各自的 hook —— 通报 / 导航 / 滤镜流程。
 import { useNotice } from './app/useNotice'
+import { useNetworkStatus } from './app/useNetworkStatus'
 import { useNav } from './app/useNav'
 import { useLutFlow } from './app/useLutFlow'
 import { usePersist } from './app/usePersist'
 import { useCrop } from './app/useCrop'
+import { useUpscale } from './app/useUpscale'
+import { usePerspective } from './app/usePerspective'
 import { useRetouch } from './app/useRetouch'
+import { useAiErase } from './app/useAiErase'
+import { useSmooth } from './app/useSmooth'
+import { useTransparent } from './app/useTransparent'
+import { usePortrait } from './app/usePortrait'
+import { useClone } from './app/useClone'
+import { useLocal } from './app/useLocal'
+import { useText } from './app/useText'
+import { useFrame } from './app/useFrame'
+import { useCanvasFrame } from './app/useCanvasFrame'
+import { useDoubleExposure } from './app/useDoubleExposure'
+import { useLiquify } from './app/useLiquify'
+import { useSticker } from './app/useSticker'
+import { useShape } from './app/useShape'
+import { useDoodle } from './app/useDoodle'
+import { useLight } from './app/useLight'
+import { useDuotone } from './app/useDuotone'
 import { useLoadSession } from './app/useLoadSession'
 // ★ 2026-10-10：拖/粘一张照片进来 = 换一张改（见 hook 里的注释）。
 import { usePhotoDrop } from './app/usePhotoDrop'
 import { sameLutName, type LutRef } from '../shared/lut.ts'
+import {
+  ADJUSTMENT_CLIPBOARD_KEY, decodeAdjustmentClipboard,
+  encodeAdjustmentClipboard, makeAdjustmentClipboard,
+  type AdjustmentClipboard,
+} from './core/adjustmentClipboard.ts'
 import type { SuggestCard } from '../shared/protocol.ts'
 import type { WorkMeta } from '../shared/works.ts'
+import {
+  AI_PRESETS, type AiPreset,
+} from './core/aiPresets'
+import { parsePresetXmp, type PresetTransfer } from './core/presetFile'
 
 /**
  * 建议卡片最多等这么久。**它只决定那个"正在看…"的提示挂多久，不再拦人。**
@@ -140,7 +223,7 @@ async function fitToDevice(
   // 尺寸以**新位图自报的**为准。和生成那一路同一个道理：声明可能与实物不符，
   // 拿声明去设画布会把照片拉变形。
   return {
-    image: { bitmap, width: bitmap.width, height: bitmap.height },
+    image: { ...img, bitmap, width: bitmap.width, height: bitmap.height },
     note: `这张照片 ${img.width}×${img.height} 太大了，浏览器画不动。` +
       `我按 ${bitmap.width}×${bitmap.height} 来修 —— 调色照常，` +
       `只是导出的图会比原图小一点。`,
@@ -193,6 +276,13 @@ type PendingReplace = {
   keepFromMsg?: number
 }
 
+type PresetBlend = {
+  id: string
+  label: string
+  target: Adjustments
+  amount: number
+}
+
 export default function App() {
   /** 当前登录的人。null = 没登录（或者还在问后端）。 */
   const [user, setUser] = useState<AccountUser | null>(null)
@@ -201,8 +291,102 @@ export default function App() {
    *  "还没问出来"，不分开的话每个还没登录的人都会先看到登录页闪一下。 */
   const [checking, setChecking] = useState(true)
 
+  /**
+   * 默认风格（★ 2026-10-19）：下一张**新打开**的照片从哪套预设起手。
+   *
+   * 本机先读 localStorage（首屏 / 离线可用）；登录后账号里的 `style` 会覆盖它。
+   * 它**只影响 `onPick`** —— 设置页改它不会碰当前照片（理由写在
+   * `app/defaultStyle.ts` 和设置页那一行下面）。
+   */
+  const [defaultStyleId, setDefaultStyleId] = useState<string | null>(() => loadDefaultStyleId())
+  const defaultStyleIdRef = useRef(defaultStyleId)
+  defaultStyleIdRef.current = defaultStyleId
+  const stylePrefKeyRef = useRef('')
+  /**
+   * 修图界面外观：默认深色，用户可在设置里切浅色。
+   * 只作用在 `.shell` 上；落地页 / 登录页仍跟随系统。
+   */
+  const [appearance, setAppearance] = useState<Appearance>(() => loadAppearance())
+  const appearancePrefKeyRef = useRef('')
+  /** 账号偏好当前那一份 —— 保存一个字段时和它合并，别把别的偏好冲掉。 */
+  const accountPrefsRef = useRef<Record<string, unknown>>({})
+
+  useEffect(() => {
+    accountPrefsRef.current = user?.preferences ?? {}
+  }, [user])
+
+  /**
+   * 登录后账号里的默认风格覆盖本机值。
+   *
+   * 只有账号里**真的有 `style` 这一格**才覆盖（显式 null 也算有 = 清掉）：
+   * 老账号 / 新账号没有这一格时，本机那份继续有效，和导出偏好同一条退路。
+   * `key` 防的是「保存完 → setUser → 又读回来」造成的无谓 setState。
+   */
+  useEffect(() => {
+    if (!user) {
+      // 退出后清掉"读过哪个账号"的记号：再登录同一账号时还要重新读一次
+      // （另一台设备可能刚改过默认风格）。
+      stylePrefKeyRef.current = ''
+      return
+    }
+    const prefs = user.preferences ?? {}
+    const hasStyle = Object.prototype.hasOwnProperty.call(prefs, 'style')
+    const key = `${user.id}:${hasStyle ? JSON.stringify(prefs.style) : '<none>'}`
+    if (key === stylePrefKeyRef.current) return
+    stylePrefKeyRef.current = key
+    if (!hasStyle) return
+    const id = normalizeDefaultStyleId(prefs.style)
+    setDefaultStyleId(id)
+    saveDefaultStyleId(id)
+  }, [user])
+
+  useEffect(() => {
+    if (!user) {
+      appearancePrefKeyRef.current = ''
+      return
+    }
+    const prefs = user.preferences ?? {}
+    const hasAppearance = Object.prototype.hasOwnProperty.call(prefs, 'appearance')
+    const key = `${user.id}:${hasAppearance ? JSON.stringify(prefs.appearance) : '<none>'}`
+    if (key === appearancePrefKeyRef.current) return
+    appearancePrefKeyRef.current = key
+    if (!hasAppearance) return
+    const next = normalizeAppearance(prefs.appearance)
+    setAppearance(next)
+    saveAppearance(next)
+  }, [user])
+
   const [image, setImage] = useState<DecodedImage | null>(null)
+  /** 当前静帧若来自实况照片，动作短片只随当前编辑会话保存在内存里。 */
+  const [livePhotoPair, setLivePhotoPair] = useState<LivePhotoPair | null>(null)
+  const [livePhotoEvidence, setLivePhotoEvidence] = useState<LivePhotoEvidence | null>(null)
+  const livePhotoSeqRef = useRef(0)
+  const clearLivePhoto = useCallback(() => {
+    livePhotoSeqRef.current++
+    setLivePhotoPair(null)
+    setLivePhotoEvidence(null)
+  }, [])
+  /**
+   * 当前这一版的**文字层**（★ 2026-10-19）。和 `image` / `params` 一样按版本记：
+   * 账本、会话步骤、导出都读它；底图不再把字烤进去。
+   */
+  const [layers, setLayers] = useState<EditLayer[]>([])
+  /**
+   * Files multi-selected from the welcome screen. They seed the batch
+   * workspace once; clearing them prevents the panel reopening later.
+   */
+  const [batchSeed, setBatchSeed] = useState<File[] | null>(null)
+  /** 相机录好的短片：直接带到「短片调色」工作区。 */
+  const [videoSeed, setVideoSeed] = useState<File[] | null>(null)
+  /** 相机包围曝光整组：直接带到「HDR 合成」。 */
+  const [hdrSeed, setHdrSeed] = useState<File[] | null>(null)
+  const [focusSeed, setFocusSeed] = useState<File[] | null>(null)
   const [params, setParams] = useState<Adjustments>(ZERO)
+  /**
+   * 刚套上的预设和它的强度。这里只记“从哪个预设在混”，
+   * 最终画面仍然唯一由 `params` 决定；用户一改别的参数，它就退出。
+   */
+  const [presetBlend, setPresetBlend] = useState<PresetBlend | null>(null)
   /** ★ 2026-10-06（工具行）：调色屏当前开着哪个工具。null = 都没开。 */
   const [tool, setTool] = useState<ToolId | null>(null)
 
@@ -216,15 +400,102 @@ export default function App() {
    *   运行时报错）。
    */
   const { notice, setNotice, noticeBad, noticeOk } = useNotice()
+  /** 只通报状态变化，不拿 `navigator.onLine` 静默拦操作；请求失败仍各自说人话。 */
+  const online = useNetworkStatus()
+  const wasOnlineRef = useRef<boolean | null>(null)
+  useEffect(() => {
+    const was = wasOnlineRef.current
+    wasOnlineRef.current = online
+    if (!online) {
+      noticeBad('当前离线。本地修图、裁剪和导出照常；AI、保存作品和账号同步需要联网。')
+    } else if (was === false) {
+      noticeOk('网络恢复了，可以继续用 AI、保存作品和账号同步。')
+    }
+  }, [online, noticeBad, noticeOk])
+
+  /**
+   * ★ 2026-10-19（可回改局部层）：`image` 是干净底图，画布 / 工具拿的是
+   *   `effectiveImage`（把局部层算进去的派生位图）。
+   *   ⚠️ 派生是异步的：准备期间 `effectiveImage` 退回首图，`pickTool` 会挡住
+   *   开底图工具 —— 否则工具会把「不含局部效果」的一版写回底图，层就白存了。
+   */
+  const {
+    effectiveImage, preparing: localPreparing, error: localLayerError,
+  } = useLocalLayers(image, layers)
+  useEffect(() => {
+    if (localLayerError) noticeBad(localLayerError)
+  }, [localLayerError, noticeBad])
+
+  /**
+   * 任何「换底图」的工具都走它：新底图里已经包含局部效果（工具拿的是
+   * `effectiveImage`），所以局部层必须在同一刻清掉，避免再叠一遍。
+   */
+  const setBaseImage: typeof setImage = useCallback((next) => {
+    setImage(next)
+    setLayers(prev => (prev.some(isLocalLayer) ? prev.filter(l => !isLocalLayer(l)) : prev))
+  }, [])
 
   /**
    * ★ 2026-10-05（滤镜）：这张照片现在用着哪个滤镜、强度多少。null = 不用。
    *
-   * ⚠️ 它**不进 `params`** —— 那是个"十五个数字"的 record，被 toUnit / 范围表 /
+   * ⚠️ 它**不进 `params`** —— 那是个"八十个数字"的 record，被 toUnit / 范围表 /
    * 提示词 / 照调那几处当数字消费（设计 §3.2）。它和 `params` 是**并列的两件事**，
    * 但走的是同一条路：拖强度 / 套滤镜**都不推快照**（裁定 ⑤），只落盘。
    */
   const [lut, setLut] = useState<LutRef | null>(null)
+  const [adjustmentClipboard, setAdjustmentClipboard] = useState<AdjustmentClipboard | null>(() => {
+    try {
+      return typeof localStorage === 'undefined'
+        ? null
+        : decodeAdjustmentClipboard(localStorage.getItem(ADJUSTMENT_CLIPBOARD_KEY))
+    } catch {
+      return null
+    }
+  })
+  const choosePreset = useCallback((p: Preset) => {
+    const blend: PresetBlend = {
+      id: p.id, label: p.label, target: p.adjustments, amount: 100,
+    }
+    setPresetBlend(blend)
+    setParams(blendAdjustments(ZERO, blend.target, blend.amount))
+    setLut(null)
+  }, [])
+
+  const setPresetStrength = useCallback((amount: number) => {
+    if (!presetBlend) return
+    const next = Math.max(0, Math.min(100, Math.round(amount)))
+    setPresetBlend({ ...presetBlend, amount: next })
+    setParams(blendAdjustments(ZERO, presetBlend.target, next))
+  }, [presetBlend])
+
+  const changeParams = useCallback((next: Adjustments) => {
+    setPresetBlend(null)
+    setParams(next)
+  }, [])
+
+  /**
+   * 镜头虚化焦点的拖动入口：归一化坐标（0~1）→ `-100~100` 的参数。
+   * 用函数式更新，拖拽期间不会因为闭包里的旧 `params` 把别的参数写回去。
+   */
+  const changeLensFocus = useCallback((x: number, y: number) => {
+    setPresetBlend(null)
+    setParams(p => ({
+      ...p,
+      lensFocusX: p.lensShape > 50 ? p.lensFocusX : Math.round((x - 0.5) * 200),
+      lensFocusY: Math.round((y - 0.5) * 200),
+    }))
+  }, [])
+
+  useEffect(() => {
+    if (!presetBlend) return
+    if (lut) {
+      setPresetBlend(null)
+      return
+    }
+    const expected = blendAdjustments(ZERO, presetBlend.target, presetBlend.amount)
+    if (PARAM_KEYS.some(k => params[k] !== expected[k])) setPresetBlend(null)
+  }, [params, lut, presetBlend])
+
   /**
    * ★ 2026-10-05：「下一趟进调色屏时，把面板里「滤镜」那一栏**展开**」。
    *
@@ -247,13 +518,15 @@ export default function App() {
    *   **说一句**（原来是吞成一行 console：格子亮着、画面不变、一句话都没有）。
    *   `noticeBad` 的身份是稳定的（`useCallback([])`），正合这个 hook 的要求。
    */
-  const lutsApi = useLuts({ lut, image, params, onError: noticeBad })
+  const lutsApi = useLuts({
+    lut, image, params, onError: noticeBad, enabled: !!user,
+  })
   /**
    * ★ 2026-10-10（「我的预设」，设计 §5.1）：自己的预设清单 —— `usePresets` 就是
    *   那"清单那一半"（同样的 `known` 语义：到手 ≠ 非空）。存 / 改名 / 删三个动作
    *   在下面那三个回调里，成功之后都是**重拉**（名单的真值只有服务端那一份）。
    */
-  const presetsApi = usePresets()
+  const presetsApi = usePresets(!!user)
   /**
    * ★ 2026-10-10（「我的预设」，设计 §5.2）：预设栏吃的那份形状
    *   （`core/presets` 的 `Preset`）—— 服务端 id（数字）`String(id)` 拼进内置
@@ -268,10 +541,44 @@ export default function App() {
     () => presetsApi.presets.map(p => ({ id: String(p.id), label: p.name, adjustments: p.params })),
     [presetsApi.presets])
   /**
+   * `onPick` 要读「我的预设」，但它不该因为这个数组变化而重建 ——
+   * 上传器虽然内部用 ref 接回调，这一层仍让新照片入口用 ref 拿**最新**清单，
+   * 避免闭包读到旧值。
+   */
+  const myPresetsRef = useRef<Preset[]>(myPresets)
+  useEffect(() => { myPresetsRef.current = myPresets }, [myPresets])
+  /**
+   * 设置页那格下拉的选项：内置 + 我的预设。id 和 `Preset.id` 同一套，
+   * 保存的偏好也只认这个 id。
+   */
+  const styleOptions = useMemo(
+    () => [
+      ...PRESETS.map(p => ({ id: p.id, label: p.label, mine: false })),
+      ...myPresets.map(p => ({ id: p.id, label: p.label, mine: true })),
+    ],
+    [myPresets],
+  )
+  /**
+   * 刷新 / 换版本 / 恢复会话后，参数是唯一可靠来源。
+   * 只要它与某套预设严格成比例，就把强度滑杆和预设点亮状态一起恢复。
+   */
+  useEffect(() => {
+    if (presetBlend || lut) return
+    const hit = inferPresetBlend(params, myPresets)
+    if (!hit) return
+    setPresetBlend({
+      id: hit.preset.id,
+      label: hit.preset.label,
+      target: hit.preset.adjustments,
+      amount: hit.amount,
+    })
+  }, [params, myPresets, lut, presetBlend])
+  /**
    * 单拎出来一个 `reload`（★ 2026-10-05）—— `lutsApi` 是每次渲染新造的**对象**，
    * 拿它当依赖的话，挂在 `refreshLuts` 上那个 effect 每次渲染都要重跑一遍
-   * （今天有守卫、不会出事，但那是"碰巧没事"）。`reload` 自己是 `useCallback([])`
-   * 的，身份稳定。**别把这个解构挪进 `refreshLuts` 的依赖数组里写 `lutsApi`。**
+   * （今天有守卫、不会出事，但那是"碰巧没事"）。`reload` 自己的身份只在登录状态
+   * 变化时换一次（`useCallback([enabled])`）。**别把这个解构挪进
+   * `refreshLuts` 的依赖数组里写 `lutsApi`。**
    */
   const reloadLuts = lutsApi.reload
   /** 非 null 时既是"正在忙"的标志，也是要显示给用户的那句话 */
@@ -309,6 +616,17 @@ export default function App() {
   const [originalPreview, setOriginalPreview] = useState<string | null>(null)
   /** 图上点选那一整条流程的状态（见 PendingMark）。null = 没在等用户点。 */
   const [pending, setPending] = useState<PendingMark | null>(null)
+  /** ★ 2026-10-17：白平衡吸管正在等用户点画面里的中性色。 */
+  const [wbPicking, setWbPicking] = useState(false)
+  /** ★ 2026-10-19：HSL 定向调色正在等用户点画面；取到颜色后切到那条色带。 */
+  const [hslPicking, setHslPicking] = useState(false)
+  const [hslPickedBand, setHslPickedBand] = useState<HslBandId | null>(null)
+  const [hslPickSeq, setHslPickSeq] = useState(0)
+  /** 颜色取样只读当前渲染结果，不写参数、不产生账本。 */
+  const [colorPicking, setColorPicking] = useState(false)
+  const [colorSample, setColorSample] = useState<ColorReading | null>(null)
+  /** 调色屏的实时直方图；只在这一屏读取（别的屏不白花 GPU 回读）。 */
+  const [histogram, setHistogram] = useState<HistogramData | null>(null)
 
   /**
    * ★ 2026-10-05：**现在站在哪一步**（步骤 id = 那条助手消息的 id，老约定）。
@@ -368,6 +686,7 @@ export default function App() {
     setImage(s.base)
     setParams(s.params)
     setLut(s.lut)
+    setLayers(s.layers ?? [])
   }, [])
 
   /** 从旧步骤继续改之前那条确认（`PendingReplace`，见它的定义）。null = 没在问。 */
@@ -395,6 +714,10 @@ export default function App() {
   const clearTransient = useCallback(() => {
     setPending(null)
     setPendingReplace(null)
+    setWbPicking(false)
+    setHslPicking(false)
+    setColorPicking(false)
+    setColorSample(null)
   }, [])
 
   /** 这一趟修图（同一张上传的照片）里，上一次存进去的是哪个。
@@ -522,18 +845,22 @@ export default function App() {
    *   "摆在 send 前面…落在后面就是 TDZ"）。声明在这儿，所有调用点都能照
    *   "读到的就写进依赖"那条规矩老实写。
    */
-  const dirtyRef = useRef<{ stepId: number; baseChanged: boolean } | null>(null)
+  const dirtyRef = useRef<{
+    stepId: number; baseChanged: boolean; layersChanged?: boolean
+  } | null>(null)
   /**
    * 记一笔"这一版的现在变了"。**一步一行**，调用点就那几处（写回 effect /
    * `commitCrop` / `commitRetouch` / `ledgerStep` / 生成落地 / 删 tip /
    * 删滤镜时扫到的那一版）。
    */
-  const markDirty = useCallback((stepId: number, baseChanged: boolean) => {
+  const markDirty = useCallback((stepId: number, baseChanged: boolean, layersChanged = false) => {
     const prev = dirtyRef.current
     dirtyRef.current = {
       stepId,
       // 同一步的 `baseChanged` 只增不减（理由见 `dirtyRef` 那段 ⚠️）。
       baseChanged: baseChanged || (prev?.stepId === stepId ? prev.baseChanged : false),
+      // 文字层同理：同一步一旦改过文字层，后面单纯拖调色也不能把"封面要重抓"抹掉。
+      layersChanged: layersChanged || (prev?.stepId === stepId ? !!prev.layersChanged : false),
     }
   }, [])
 
@@ -546,6 +873,56 @@ export default function App() {
   const originalFileRef = useRef<File | null>(null)
 
   /**
+   * 把**一组**偏好合并进账号并同步；失败由调用方退回"只存本机"的说法。
+   *
+   * ⚠️ 服务端 `PATCH /api/me` 收的是完整 `preferences`，不是 patch。
+   *   调用方一次只交自己那一段（导出 / 默认风格），所以这里必须先用
+   *   `accountPrefsRef` 和已有偏好合并 —— 否则「设为默认导出」会把默认风格冲掉，
+   *   反过来也一样。
+   */
+  const saveAccountPreferences = useCallback(async (patch: Record<string, unknown>) => {
+    const merged = { ...accountPrefsRef.current, ...patch }
+    accountPrefsRef.current = merged
+    const next = await savePreferences(merged)
+    accountPrefsRef.current = next.preferences ?? merged
+    setUser(next)
+    return next
+  }, [])
+
+  /**
+   * 设置页改默认风格：先落本机（离线也有效），再同步账号。
+   *
+   * 返回 `synced` 而不是在这里弹通报：设置页就在用户眼前，成功 / 只存本机
+   * 应当写在那一行下面；网络失败不影响本机这份继续生效。
+   */
+  const saveDefaultStyle = useCallback(async (id: string | null) => {
+    const safe = normalizeDefaultStyleId(id)
+    setDefaultStyleId(safe)
+    saveDefaultStyleId(safe)
+    try {
+      await saveAccountPreferences({ style: safe })
+      return { synced: true }
+    } catch (e) {
+      console.error('默认风格没同步到账号：', e)
+      return { synced: false }
+    }
+  }, [saveAccountPreferences])
+
+  /** 设置页改外观：先落本机，再同步账号；失败时本机仍立即生效。 */
+  const saveAppearancePreference = useCallback(async (value: Appearance) => {
+    const next = normalizeAppearance(value)
+    setAppearance(next)
+    saveAppearance(next)
+    try {
+      await saveAccountPreferences({ appearance: next })
+      return { synced: true }
+    } catch (e) {
+      console.error('界面外观没同步到账号：', e)
+      return { synced: false }
+    }
+  }, [saveAccountPreferences])
+
+  /**
    * 「把成品交到用户手上」那一整件：导出 / 分享 / 下载到电脑 / 存进作品集，
    * 以及"上次那张要替换掉吗"。
    *
@@ -554,15 +931,27 @@ export default function App() {
    * **图已经改好了，那一段只管怎么交出去**。见 `src/app/useDelivery.ts`。
    */
   const {
-    delivering, asking, saveFail, onShare, onDownload, onSave, answerAsk,
+    delivering, asking, saveFail, onShare, onDownload, onSave, onCopy,
+    onExportPlatforms, onExportLivePhoto,
+    copySupported, canShareArchive, heicSupported, answerAsk,
+    exportOptions, setExportFormat, setExportQuality, setExportLongEdge,
+    setExportAspect, setExportFit, setExportMetadata, setExportLocation, setExportColorSpace,
+    setExportCreator, setExportCopyright,
+    saveExportDefaults,
+    exportFilename, setExportFilename, resetExportFilename,
+    exportWatermark, setExportWatermark, exportLogo, pickExportLogo,
     dismissAsk, setSaveFail,
   } = useDelivery({
       canvasEl: canvasElRef,
       originalFile: originalFileRef,
-      savedId, setSavedId, params, messages, noticeBad, noticeOk,
+      savedId, setSavedId, params, layers, messages, noticeBad, noticeOk,
       // ★ 2026-10-05（T12）：配方里那一行 —— 滤镜只存**名字**，所以清单也要给它
       //   （id → 名字的转换在 `recipeNow` 里现做）。
       lut, luts: lutsApi.luts,
+      livePhotoPair, livePhotoEvidence,
+      accountPreferences: user?.preferences ?? null,
+      saveAccountPreferences,
+      enabled: user !== null,
     })
   const idRef = useRef(0)
   /** 每次选图 +1。只做一件事：**认出"这句提示还该不该挂"** ——
@@ -719,9 +1108,10 @@ export default function App() {
     checking, user,
     pickStartedRef, pickSeqRef, pickSettledSeqRef, baseSeqRef, idRef,
     editPendingRef, dirtyRef, originalFileRef,
-    setImage, setParams, setLut, setMessages, setCards, setHistory, setSavedId,
+    setImage, setParams, setLut, setLayers, setMessages, setCards, setHistory, setSavedId,
     setCompareSrc, setOriginalPreview, setBusy, setNotice,
     setCurrentSession, setSessionName, moveCursor, clearTransient, dismissAsk, flushEdit, flushPersist, noticeBad,
+    clearLivePhoto,
   })
 
   /**
@@ -745,7 +1135,7 @@ export default function App() {
     //   `retryGeneration` 是点它的动作（失败现场存在 hook 里，这里只转发）。
     retryId, retryGeneration } =
     useGeneration({
-      image, setImage, params, setParams, lut,
+      image, setImage, setLayers, params, setParams, layers, lut,
       // ★ 2026-10-05（T11）：说话那条路落滤镜的两样 —— `setLut` 落地、
       //   `lutsApi.luts` 把模型给的名字对成 id（写在 `applyDecision` 里）。
       setLut, luts: lutsApi.luts,
@@ -779,15 +1169,188 @@ export default function App() {
   //   ⚠️ `tool`（当前开着哪个工具）留在 App：它是**三个工具共用**的那一格，
   //   两个现场都拿它当"要不要交出去"的判据（`cropScene` / `retouchScene`）。
 
-  const { crop, openCrop, closeCrop, setCropAngle, pickCropAspect,
+  const { crop, openCrop, closeCrop, setCropAngle, pickCropAspect, toggleCropFlip,
+          toggleCropGrid, autoStraighten, smartCompose, smartComposing,
           cancelCrop, commitCrop, cropScene } = useCrop({
-    tool, image, setImage, history, setHistory, noticeBad,
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
     flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+    layers, setLayers,
+  })
+
+  // ★ 2026-10-17（四角透视）：裁剪工具里的子模式，四个角拖正后换底图。
+  const {
+    upscaling, canUpscale, target: upscaleTarget, factor: upscaleFactor,
+    setFactor: setUpscaleFactor, upscale,
+  } = useUpscale({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad, noticeOk,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+    layers, setLayers,
+  })
+
+  const runUpscale = useCallback(async () => {
+    if (await upscale()) {
+      closeCrop()
+      setTool(null)
+    }
+  }, [upscale, closeCrop])
+
+  const { perspective, applying: perspectiveApplying, openPerspective, closePerspective,
+          autoDetecting: perspectiveAutoDetecting, autoPerspective,
+          cancelPerspective, resetPerspective, commitPerspective, perspectiveScene } = usePerspective({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+    layers, setLayers,
   })
 
   const { retouch, setRetouch, erasing, openRetouch, closeRetouch, cancelRetouch,
           commitRetouch, retouchScene } = useRetouch({
-    tool, image, setImage, history, setHistory, noticeBad,
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+  })
+
+  // ★ 2026-10-18（AI 消除）：点修里的子模式。先涂住要去掉的东西，再把
+  //   选区周围的一小块方图送去模型；回图只贴回掩码里，不重画整张。
+  const { aiErase, setAiErase, applying: aiErasing,
+          openAiErase, closeAiErase, cancelAiErase,
+          commitAiErase, aiEraseScene } = useAiErase({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad, noticeOk,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+    blocked: busy !== null,
+    onUnauthorized: () => setUser(null),
+  })
+
+  // ★ 2026-10-17（磨皮画笔，方案二）：和上面两簇同一张单子、同一套骨架
+  //   （`app/baseEdit.ts`）—— 现场 = 掩码 + 笔刷 + 强度。
+  const { smooth, setSmooth, smoothing, openSmooth, closeSmooth, cancelSmooth,
+          commitSmooth, smoothScene } = useSmooth({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+  })
+
+  // ★ 2026-10-17（人像）：本地人脸框 + 瘦脸 / 大眼 / 下巴；预览和提交都走 baseEdit。
+  const { portrait, setPortrait, preview: portraitPreview, applying: portraitApplying,
+          openPortrait, closePortrait, cancelPortrait, resetPortrait,
+          selectPortraitFace, startManualFace, facePickScene, retryAutoFace,
+          commitPortrait, faceScene } = usePortrait({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+  })
+
+  // ★ 2026-10-17（抠图）：点修里的子模式，产出带透明通道的新底图。
+  const { transparent, setTransparent, applying: transparentizing,
+          openTransparent, closeTransparent, cancelTransparent,
+          startPickBackground, pickBackground, autoSelectSubject,
+          setBackgroundKind, setBackgroundColor, setBackgroundScale,
+          setBackgroundX, setBackgroundY, toggleBackgroundFlip, chooseBackground,
+          commitTransparent, transparentScene } = useTransparent({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+  })
+
+  // ★ 2026-10-17（克隆图章）：从「点修 → 克隆」进入；源点 + 偏移 + 工作画布。
+  const { clone, setClone, preview: clonePreview, applying: cloneApplying,
+          openClone, closeClone, cancelClone, startPickSource, pickSource,
+          resetClone, commitClone, cloneScene } = useClone({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+  })
+
+  // ★ 2026-10-17（局部调整）：同一套现场 + 共享 baseEdit 骨架。
+  const { local, setLocal, localizing, autoSelecting, openLocal, closeLocal, cancelLocal,
+          commitLocal, setMaskKind, invertSelection, autoSelectEyes, autoSelectTeeth,
+          autoSelectUnderEye,
+          autoSelectSubject: autoSelectLocalSubject,
+          autoSelectSky: autoSelectLocalSky,
+          blurBackground: blurLocalBackground,
+          startColorSplash,
+          localScene, gradientScene,
+          editingId: localEditingId, loadingLayer: localLoadingLayer,
+          saveLocalLayer, openLocalLayer, deleteLocalLayer,
+          startColorPick, sampleColorAt, setColorConnected, setColorTolerance, setColorFeather,
+          setMaskEdge, setLuminanceRange, setLuminanceWidth, setLuminanceFeather } = useLocal({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+    layers, setLayers,
+  })
+
+  // ★ 2026-10-17（文字）：同一套现场 + 共享 baseEdit 骨架；现场只有一份 TextOptions。
+  const { text, setText, writing, editingId: textEditingId,
+          openText, newText, editText, closeText, cancelText,
+          commitText, deleteText, textScene } = useText({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+    layers, setLayers,
+  })
+
+  // ★ 2026-10-17（边框）：现场只有样式 / 颜色 / 宽度；预览在 Canvas，提交走 baseEdit。
+  const { frame, setFrame, applying: framing, openFrame, closeFrame, cancelFrame,
+          commitFrame, frameScene } = useFrame({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+    layers, setLayers,
+  })
+
+  // ★ 2026-10-18（画布）：单张照片扩成社交比例，应用后进入当前版账本。
+  const { canvasFrame, setCanvasFrame, applying: canvasFraming,
+          openCanvasFrame, closeCanvasFrame, cancelCanvasFrame,
+          commitCanvasFrame, canvasFrameScene } = useCanvasFrame({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+    layers, setLayers,
+  })
+
+  // ★ 2026-10-17（双重曝光）：装饰里的第三种模式。
+  const { double, setDouble, applying: doubleApplying, closeDouble, cancelDouble,
+          chooseDouble, commitDouble, doubleScene } = useDoubleExposure({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+  })
+
+  // ★ 2026-10-17（液化）：局部工具的子模式；工作副本 + 预览位图都在 hook 里。
+  const { liquify, setLiquify, preview: liquifyPreview, applying: liquifying,
+          openLiquify, closeLiquify, cancelLiquify, resetLiquify, commitLiquify,
+          liquifyScene } = useLiquify({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+  })
+
+  // ★ 2026-10-17（贴纸）：「装饰」工具的第二种模式。
+  const { sticker, setSticker, applying: sticking, editingId: stickerEditingId,
+          customPreview: customStickerPreview, customName: customStickerName,
+          openSticker, newSticker, editSticker, closeSticker, cancelSticker, chooseCustom,
+          commitSticker, deleteSticker, stickerScene } = useSticker({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+    layers, setLayers,
+  })
+
+  // ★ 2026-10-19（形状）：矩形 / 椭圆 / 直线 / 箭头，拖出端点后写进当前底图。
+  const { shape, setShape, applying: shaping, editingId: shapeEditingId,
+          openShape, newShape, editShape, closeShape, cancelShape,
+          commitShape, deleteShape, shapeScene } = useShape({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+    layers, setLayers,
+  })
+
+  // ★ 2026-10-18（涂鸦）：「装饰」里的第四种模式。
+  const { doodle, setDoodle, applying: doodling, openDoodle, closeDoodle,
+          cancelDoodle, undoStroke, clearStrokes, commitDoodle, doodleScene } = useDoodle({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+  })
+
+  // ★ 2026-10-18（光效）：「装饰」里的第五种模式。
+  const { light, setLight, applying: lighting, openLight, closeLight, cancelLight,
+          commitLight, lightScene } = useLight({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
+    flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
+  })
+
+  // ★ 2026-10-19（双色调）：「装饰」里的第六种模式。
+  const { duotone, setDuotone, applying: duotoneApplying, openDuotone, closeDuotone,
+          cancelDuotone, commitDuotone, duotoneScene } = useDuotone({
+    tool, image: effectiveImage, setImage: setBaseImage, history, setHistory, noticeBad,
     flushEdit, clearTransient, baseSeqRef, cursorIdRef, editSeqRef, markDirty, setTool,
   })
 
@@ -798,11 +1361,124 @@ export default function App() {
    *    （裁剪现场、点修的掩码都是**照当前照片**算的，混着放没有意义）。
    */
   const pickTool = (t: ToolId | null) => {
+    if (t === 'aiErase' && busy !== null) {
+      noticeBad('先等当前这一步结束，再做 AI 消除。')
+      return
+    }
+    // 局部层正在算派生底图：这时候开底图工具会拿到不含局部效果的一版，
+    // 提交后局部层又被清掉 —— 等于白存。等那一下（通常几百毫秒）。
+    if (localPreparing && t !== null && t !== 'compare') {
+      noticeBad('正在准备可回改局部层，稍等一下再开这个工具。')
+      return
+    }
     setTool(t)
+    setHslPicking(false)
+    setColorPicking(false)
     if (t === 'crop') openCrop()
     else closeCrop()
+    if (t === 'perspective') openPerspective()
+    else closePerspective()
     if (t === 'retouch') openRetouch()
     else closeRetouch()
+    if (t === 'transparent') openTransparent()
+    else closeTransparent()
+    if (t === 'clone') openClone()
+    else closeClone()
+    if (t === 'smooth') openSmooth()
+    else closeSmooth()
+    if (t === 'portrait') void openPortrait()
+    else closePortrait()
+    if (t === 'local') openLocal()
+    else closeLocal()
+    if (t === 'liquify') openLiquify()
+    else closeLiquify()
+    if (t === 'text') openText()
+    else closeText()
+    if (t === 'frame') openFrame()
+    else closeFrame()
+    if (t === 'canvas') openCanvasFrame()
+    else closeCanvasFrame()
+    if (t === 'sticker') openSticker()
+    else closeSticker()
+    if (t === 'shape') openShape()
+    else closeShape()
+    if (t === 'double') {
+      closeFrame()
+      closeSticker()
+    } else closeDouble()
+    if (t === 'doodle') openDoodle()
+    else closeDoodle()
+    if (t === 'light') openLight()
+    else closeLight()
+    if (t === 'duotone') openDuotone()
+    else closeDuotone()
+    if (t === 'aiErase') openAiErase()
+    else closeAiErase()
+  }
+
+  // ── 统一图层面板（★ 2026-10-19）──────────────────────────────────────
+  //  面板只摆样子；四件事都在这里落地：显示 / 隐藏、上移 / 下移、删除、点名字回来改。
+  //  顺序语义见 `ui/LayerPanel.tsx` 顶部：叠图层越靠后越在上面，局部层越靠后越晚算。
+
+  /** 图层改动统一走这里：账本记一笔 + 状态换新（和文字 / 贴纸层同一条）。 */
+  const commitLayerChange = (next: EditLayer[]) => {
+    applyLayersEdit({
+      at: cursorIdRef.current, history, setHistory, editSeqRef, markDirty, flushEdit,
+    }, next, '图层')
+    setLayers(next)
+  }
+
+  const toggleLayer = (id: string) => {
+    const target = layers.find(layer => layer.id === id)
+    if (!target) return
+    const visible = isLayerVisible(target)
+    commitLayerChange(layers.map(layer => (
+      layer.id === id ? { ...layer, visible: !visible } : layer
+    )))
+  }
+
+  const moveLayer = (id: string, dir: 'up' | 'down') => {
+    const target = layers.find(layer => layer.id === id)
+    if (!target) return
+    const isLocal = target.kind === 'local'
+    const group = layers.filter(layer => (layer.kind === 'local') === isLocal)
+    const index = group.findIndex(layer => layer.id === id)
+    const swapAt = dir === 'up' ? index + 1 : index - 1
+    if (index < 0 || swapAt < 0 || swapAt >= group.length) return
+    const a = layers.indexOf(group[index]!)
+    const b = layers.indexOf(group[swapAt]!)
+    const next = [...layers]
+    ;[next[a], next[b]] = [next[b]!, next[a]!]
+    commitLayerChange(next)
+  }
+
+  const deleteLayer = (id: string) => {
+    if (!layers.some(layer => layer.id === id)) return
+    // 正开着这层的编辑现场：先收掉，免得提交时又把删掉的层写回来。
+    pickTool(null)
+    commitLayerChange(layers.filter(layer => layer.id !== id))
+  }
+
+  const editLayer = (id: string) => {
+    const layer = layers.find(item => item.id === id)
+    if (!layer) return
+    if (layer.kind === 'text') {
+      pickTool('text')
+      editText(id)
+    } else if (layer.kind === 'shape') {
+      pickTool('shape')
+      editShape(id)
+    } else if (layer.kind === 'sticker') {
+      pickTool('sticker')
+      editSticker(id)
+    } else {
+      if (localPreparing) {
+        noticeBad('正在准备可回改局部层，稍等一下再改。')
+        return
+      }
+      pickTool('local')
+      void openLocalLayer(id)
+    }
   }
 
   // ── 对比（★ 2026-10-06，工具行第二颗）────────────────────────────────
@@ -818,7 +1494,42 @@ export default function App() {
    */
   const comparing = tool === 'compare'
   /** 「工具开着」= **裁剪**那种要占住手势的模式（「对比」是开关，不在里面）。 */
-  const toolIsModal = tool === 'crop'
+  const toolIsModal = tool === 'crop' || tool === 'perspective' || tool === 'outpaint'
+
+  const generateOutpaint = useCallback(async (aspect: OutpaintAspect) => {
+    if (!image || busy || cursorId === null) return
+    const tip = history[history.length - 1]
+    if (!tip || tip.id !== cursorId) return
+    let source: HTMLCanvasElement
+    let flattened: ImageBitmap | null = null
+    let localBase: ImageBitmap | null = null
+    try {
+      if (layers.some(isLocalLayer)) {
+        await preloadLocalMasks(layers)
+        localBase = await applyLocalLayers(image.bitmap, layers)
+      }
+      const base = localBase ?? image.bitmap
+      if (layers.length > 0) {
+        flattened = await editLayersToBitmap(base, layers)
+      }
+      source = makeOutpaintCanvas(flattened ?? base, aspect)
+    } catch (e) {
+      console.error(e)
+      noticeBad('这张图现在扩不了，换一张小一点的试试。')
+      return
+    } finally {
+      if (localBase && localBase !== image.bitmap) localBase.close()
+      if (flattened && flattened !== image.bitmap && flattened !== localBase) flattened.close()
+    }
+    const mid = nextId()
+    await runGenerate(
+      outpaintPrompt(aspect), mid, params, lut, layers.length ? [] : layers, source,
+      { stepId: cursorId, keepFromMsg: mid }, outpaintReply(aspect),
+    )
+    setTool(null)
+  }, [
+    image, busy, cursorId, history, params, lut, layers, noticeBad, nextId, runGenerate,
+  ])
 
   // （`compareSrc` 的声明 ★ 2026-10-08 挪到了上面 —— 恢复会话的 hook 要清它；
   //   "对比"这一层的全部说明在 `makeCompareSrc` 那一段。）
@@ -906,7 +1617,40 @@ export default function App() {
     runSuggest(image)
   }, [image, busy, suggesting, runSuggest])
 
-  const onPick = useCallback(async (file: File, wish = '') => {
+  /**
+   * 一键 AI 动作：不经过路由模型，直接把固定提示词交给生成链路。
+   * 生成成功 / 失败 / 停止 / 重试都沿用 `applyDecision` 原有的那套，
+   * 所以它和用户自己说「修复老照片」走的是同一条账本与版本路径。
+   */
+  const runAiPreset = useCallback((preset: AiPreset) => {
+    if (!image || busy) return
+    const keepFromMsg = messages.at(-1)?.id ?? 0
+    void applyDecision({
+      route: 'generate',
+      paramDeltas: {},
+      reply: preset.reply,
+      editPrompt: preset.prompt,
+      needsDisambiguation: false,
+      degraded: false,
+      lut: null,
+      preset: null,
+    }, keepFromMsg).catch((e) => {
+      console.error('一键 AI 预设没跑起来', e)
+      noticeBad('这次 AI 处理没跑起来，再试一次？')
+    })
+  }, [image, busy, messages, applyDecision, noticeBad])
+
+  const aiActions = useMemo(() => image
+    ? AI_PRESETS.map(p => ({
+      id: p.id,
+      label: p.label,
+      run: () => runAiPreset(p),
+    }))
+    : undefined, [image, runAiPreset])
+
+  const onPick = useCallback(async (
+    file: File, wish = '', sidecar?: File, livePhoto?: LivePhotoPair,
+  ) => {
     // ★ **进门第一件事**，在下面两趟 await 之前：从这一刻起"用户自己动手了"。
     //   恢复那道闸门看的就是它（`baseSeqRef` 要等解码完才动，等它太晚 ——
     //   理由写在 `pickStartedRef` 的注释里）。这行必须在第一句 `await` 上面。
@@ -916,9 +1660,38 @@ export default function App() {
     //   两头的账都记在这儿和那儿，漏一头就等于没记。
     pickStartedRef.current = true
     pickSeqRef.current++
+    if (livePhoto) {
+      const seq = ++livePhotoSeqRef.current
+      setLivePhotoPair(livePhoto)
+      setLivePhotoEvidence(null)
+      void inspectLivePhotoPair(livePhoto).then(evidence => {
+        if (seq === livePhotoSeqRef.current) setLivePhotoEvidence(evidence)
+      }).catch(() => {
+        if (seq !== livePhotoSeqRef.current) return
+        setLivePhotoEvidence({
+          status: 'unverified',
+          detail: '照片和动作的 Apple 实况标识读不出来；只按同名配对。',
+          movieId: null,
+          imageId: null,
+        })
+      })
+    } else {
+      clearLivePhoto()
+    }
+    // 新照片回到默认命名；自定义文件名只属于上一张。
+    resetExportFilename()
     setBusy('正在打开照片…')
     try {
       const decoded = await decodeImageFile(file)
+      let sidecarProfile: PresetTransfer | null = null
+      let sidecarError: string | null = null
+      if (sidecar) {
+        try {
+          sidecarProfile = parsePresetXmp(await sidecar.text(), sidecar.name)
+        } catch (e) {
+          sidecarError = e instanceof Error ? e.message : '这个 XMP 读不出来'
+        }
+      }
       // 超出本设备画布上限就先缩到画得动（并带回一句要跟用户说的话）。
       // 放在这儿、放在"进 history 之前"：缩完的那张才是这一趟的底，
       // 之后所有事（渲染、送模型、快照）看到的都该是同一个尺寸。
@@ -959,7 +1732,21 @@ export default function App() {
         // 用户拿到的是一张没有对话入口的照片，整个应用不可用。
         console.error('原图预览生成失败（只是没有「按住看原图」，不影响修图）', e)
       }
-      setParams(ZERO)
+      // ★ 2026-10-19（默认风格）：新照片的起点 = 设置里选的那套预设；没选 / 预设
+      //   已经不在了就还是 `ZERO`。首步历史也记**这套起点**，否则用户点回「原图」
+      //   会把默认风格丢掉，画面和滑块同时回到零。
+      //   ⚠️ 只在 `onPick` 这里套 —— 恢复旧会话、切已有照片都不走这条。
+      const styleStart = resolveDefaultStyle(defaultStyleIdRef.current, myPresetsRef.current)
+      // 同目录同名 XMP 是这张照片自己的配方，优先于账号默认风格。
+      const startParams = sidecarProfile
+        ? { ...sidecarProfile.params }
+        : styleStart ? { ...styleStart.adjustments } : ZERO
+      setParams(startParams)
+      setPresetBlend(!sidecarProfile && styleStart ? {
+        id: styleStart.id, label: styleStart.label,
+        target: styleStart.adjustments, amount: 100,
+      } : null)
+      setLayers([])
       setMessages([])
       setCards([])
       // ★ 2026-10-03：用户在**欢迎页的对话区**里先打的那句话 —— 带进对话输入框
@@ -979,11 +1766,36 @@ export default function App() {
       // 原图自己也算一步，挂在欢迎语那条消息上 —— 这样「回到这一步」
       // 能回到最开始，撤销第一次生成时特别有用。
       const welcomeId = say('准备好啦，说说想怎么改？')
+      if (sidecarProfile) {
+        say(`已套用同名 XMP 调色旁车「${sidecarProfile.name}」。Lut 不包含在 XMP 中。`)
+      } else if (sidecarError) {
+        say(`找到了同名 XMP，但这次没有套用：${sidecarError}`)
+      }
       // 缩过就得说。紧跟欢迎语，用户往下看第一眼就撞上，不会滑过去。
       if (note) say(note)
+      if (img.rawPreview) {
+        say(
+          `这张 RAW 先用相机内嵌的 JPEG 预览打开（${img.rawPreview.width}×${img.rawPreview.height}）。` +
+          '这不是完整 RAW 解档：可以正常修图和导出，但原始位深、完整高光 / 阴影需要先用' +
+          '相机厂商软件或本机 RAW 转换器解成 JPG / TIFF。',
+        )
+      }
+      if (img.sourceColorProfile && img.sourceColorProfile !== 'srgb') {
+        const label = sourceColorProfileLabel(img.sourceColorProfile)
+        if (label) {
+          say(
+            `这张照片的源色彩是 ${label}。当前编辑和导出先统一转成 sRGB；` +
+            '特别鲜艳的广色域颜色可能被收窄，这一版不会伪装成广色域编辑。',
+          )
+        }
+      }
       setHistory([
         // 账本（2026-10-08）：出生 = 只有当前位置一笔。
-        { id: welcomeId, label: '原图', base: img, params: ZERO, lut: null, isOriginal: true, thumb: '', past: [], future: [] },
+        {
+          id: welcomeId, label: '原图', editLabel: '原图',
+          base: img, params: startParams, lut: null, layers: [], isOriginal: true, thumb: '',
+          past: [], future: [],
+        },
       ])
       // ★ 2026-10-05：位置从"原图那一步"开始 —— 原图挂在欢迎语那条消息上。
       //   ⚠️ 走 `moveCursor`（state + 影子 ref 一起写，见 `cursorIdRef`）。
@@ -1029,32 +1841,17 @@ export default function App() {
       })()
     } catch (e) {
       console.error(e)
-      noticeBad('这张图打不开，换一张试试')
+      noticeBad(imageDecodeFailureText(file))
     } finally {
       setBusy(null)
       // ★ "这一张开完了"（折了也算 —— 用户已经知道结果了）。切会话那趟看的是
       //   `pickSeqRef > pickSettledSeqRef`（见 `pickSettledSeqRef` 那段）。
       pickSettledSeqRef.current++
     }
-  }, [history, say, runSuggest, setCurrentSession, moveCursor, clearTransient])
-
-  /**
-   * ★ 2026-10-10：**拖/粘进来的一张照片 = 换一张改**（和顶栏「新的一张」
-   * 同一趟处理，只是不走"回欢迎屏再选"那两步）。
-   *
-   * 三句的顺序照 `startNew`：
-   *   · `busy` 时不接（生成回来会往 history 里推一步，而屏幕已经换了底图）；
-   *   · 先 `flushEdit`（"没定稿的一笔调色"记进账本）再 `flushPersist`
-   *     （欠的那趟落盘提前发出去）—— 状态马上要换新的一张，不 flush 就丢了；
-   *   · 最后 `onPick`：解码、建新会话、重置（旧的那条会话在左栏「对话」里
-   *     原样留着，不删）。
-   */
-  const onDropPhoto = useCallback((file: File) => {
-    if (busy) return
-    flushEdit()
-    flushPersist()
-    void onPick(file)
-  }, [busy, flushEdit, flushPersist, onPick])
+  }, [
+    history, say, runSuggest, setCurrentSession, moveCursor, clearTransient,
+    clearLivePhoto, resetExportFilename,
+  ])
 
   /**
    * 把"手上这一张"整个放下：照片、对话、参数、快照、会话 id，一件不留。
@@ -1079,12 +1876,14 @@ export default function App() {
     dirtyRef.current = null
     setImage(null)
     setHistory([])
+    clearLivePhoto()
     // ⚠️ 走 `moveCursor`：归零也要连影子 ref 一起清（不清的话，下一条会话里
     //   读 ref 的那一处会拿到上一张照片的位置 —— 正是 `cursorIdRef` 要防的事）。
     moveCursor(null)
     setMessages([])
     setCards([])
     setParams(ZERO)
+    setLayers([])
     // ★ 2026-10-05（滤镜）：滤镜跟参数一起归零 —— 它是"这张照片上盖着的那层
     //   颜色"，照片都没了还留着它，下一张照片一进来就被盖上一层（而且因为
     //   `useLuts` 挂在 `image` 上，缩略图也跟着作废了，格子上还亮着，很怪）。
@@ -1112,14 +1911,35 @@ export default function App() {
     //   掩码要么对不上号（提交时报"掩码尺寸对不上"）、要么落点全错。
     setTool(null)
     closeCrop()
+    closePerspective()
     closeRetouch()
+    // ★ 2026-10-17（磨皮画笔）：和点修同一条 —— 掩码尺寸就是上一张照片的尺寸。
+    closeTransparent()
+    closeClone()
+    closeSmooth()
+    closePortrait()
+    closeLocal()
+    closeText()
+    closeFrame()
+    closeCanvasFrame()
+    closeDouble()
+    closeLiquify()
+    closeSticker()
+    closeShape()
+    closeDoodle()
+    closeLight()
+    closeDuotone()
     dismissAsk()
     setOriginalPreview(null)
     // ★ 2026-10-06（对比）：那份备好的原图同理（上面那句的同一个理由）——
     //   留着的话下一张照片一进来按「对比」，左边是**上一张**。
     setCompareSrc(null)
+    resetExportFilename()
     originalFileRef.current = null
-  }, [history, setCurrentSession, dismissAsk, moveCursor, closeRetouch, clearTransient])
+  }, [history, setCurrentSession, dismissAsk, moveCursor, closeCrop, closePerspective, closeRetouch,
+    closeTransparent, closeClone, closeSmooth, closePortrait, closeLocal, closeDouble,
+    closeText, closeFrame, closeLiquify, closeSticker, closeShape, closeDoodle, closeLight, closeDuotone,
+    clearTransient, clearLivePhoto, resetExportFilename])
 
   /**
    * 「照着这张调」—— 用户挑了一张参考图（spec §4.6 的"我想要这种色调"）。
@@ -1140,7 +1960,7 @@ export default function App() {
    * ⚠️ **合流点做三件事**（少写哪一条，屏幕上那套颜色就和拟合的世界对不上）：
    *   ① 六个拟合参数被**换掉**（`MatchedTone` 只有六个键 —— 想整份替换过不了
    *      typecheck）；
-   *   ② **五条参与颜色的新参数被归零**（自然饱和度 / 三条色彩平衡 / 分离色调强度）：
+   *   ② **七条参与颜色的新参数被归零**（自然饱和度 / 三条色彩平衡 / 三段分级强度与平衡）：
    *      拟合是从 `ZERO` 起跑的，它的世界里这五条就是 0 —— 用户先拖过色彩平衡
    *      再"照着调"，不归零的话结果里会**悄悄混进**拟合没看过的色偏，而画面
    *      看起来"就是有点不对"，无从排查。两条**色相不归零**（强度为 0 时它们
@@ -1165,15 +1985,22 @@ export default function App() {
       setParams(p => ({
         ...p,
         ...matched,
-        // ★ 2026-10-04：五条参与颜色的新参数归零 —— 拟合从 `ZERO` 起跑，它的世界里
-        //   这五条就是 0（理由见上面那段 ⚠️）。逐条写死（同 `clampAdjustments` 那条
+        // ★ 2026-10-04：参与颜色的新参数归零 —— 拟合从 `ZERO` 起跑，它的世界里
+        //   这些参数就是 0（理由见上面那段 ⚠️）。逐条写死（同 `clampAdjustments` 那条
         //   道理：漏掉一条，编译期就红 —— 返回值必须是完整的 `Adjustments`）。
         //   两条色相**故意不在这儿**：强度为 0 时它们本来就不起作用。
         vibrance: 0,
+        tint: 0,
+        bwAmount: 0,
+        bwRed: 0,
+        bwGreen: 0,
+        bwBlue: 0,
         cbCyanRed: 0,
         cbMagentaGreen: 0,
         cbYellowBlue: 0,
         splitAmount: 0,
+        splitMidAmount: 0,
+        splitBalance: 0,
       }))
     } catch {
       noticeBad('这张参考图打不开，换一张试试')
@@ -1181,6 +2008,41 @@ export default function App() {
       ref?.bitmap.close()
     }
   }, [image, noticeBad])
+
+  /**
+   * 「自动」—— 本地读一张缩小的底图，按直方图把影调拉回一个保守的中点。
+   * 不联网、不花钱；只覆盖八项影调/白平衡参数，清晰度、暗角、HSL、曲线、
+   * 透视和镜头虚化等用户自己的选择原样保留。改参数走和滑块同一条落盘/账本路。
+   */
+  const autoEnhance = useCallback(() => {
+    if (!image) return
+    try {
+      const auto = autoAdjustments(samplePixels(image.bitmap))
+      setParams(p => ({ ...p, ...auto }))
+    } catch (e) {
+      console.error('自动调色没算出来', e)
+      noticeBad('这张照片的自动调色没算出来。再试一次；还不行就拖滑块手动调。')
+    }
+  }, [image, noticeBad])
+
+  /** 「推荐」：从当前底图的本地采样挑一整套内置预设；不调用模型。 */
+  const recommendLook = useCallback(() => {
+    if (!image) return
+    try {
+      const rec = recommendPreset(samplePixels(image.bitmap))
+      if (!rec) {
+        noticeBad('这张照片没有足够的颜色信息，先手动挑一套预设。')
+        return
+      }
+      const preset = PRESETS.find(p => p.id === rec.id)
+      if (!preset) return
+      choosePreset(preset)
+      noticeOk(`给你挑了「${preset.label}」，不合适再自己调。`)
+    } catch (e) {
+      console.error('推荐预设没算出来', e)
+      noticeBad('这张照片的推荐没算出来。再试一次；还不行就从左边挑一套预设。')
+    }
+  }, [image, noticeBad, noticeOk, choosePreset])
 
   /**
    * 「照着这张调」的**第二条来源**（★ 2026-10-05，用户：「这个用户应该有两个
@@ -1216,6 +2078,36 @@ export default function App() {
    *    history 里推一步、并且 `setImage` —— 而那时候屏幕上已经什么都没有了，
    *    会凭空长出一张没有会话、也不会落盘的照片。
    */
+  /**
+   * 「复制调色 / 粘贴调色」—— 跨照片的轻量剪贴板，不要求先起名存预设。
+   * 参数和滤镜引用一起带走；粘贴时参数走 `clampAdjustments`，旧版本缺的键补 0。
+   */
+  const copyAdjustments = useCallback(() => {
+    const next = makeAdjustmentClipboard(params, lut)
+    setAdjustmentClipboard(next)
+    try {
+      localStorage.setItem(ADJUSTMENT_CLIPBOARD_KEY, encodeAdjustmentClipboard(next))
+    } catch {
+      // 隐私模式 / 存储已满：内存里这一份仍然能用。
+    }
+    noticeOk('这套调色已复制。换一张照片后点「粘贴调色」就能套上。')
+  }, [params, lut, noticeOk])
+
+  const pasteAdjustments = useCallback(() => {
+    if (!adjustmentClipboard) return
+    const wanted = adjustmentClipboard.lut
+    const lutAvailable = !wanted || !lutsApi.lutsKnown
+      || lutsApi.luts.some(item => item.id === wanted.lutId)
+    setPresetBlend(null)
+    setParams({ ...adjustmentClipboard.params })
+    setLut(lutAvailable && wanted ? { ...wanted } : null)
+    if (wanted && !lutAvailable) {
+      noticeBad('调色已粘贴；原来那支滤镜已经不在了，只套了参数。')
+    } else {
+      noticeOk('调色已粘贴。')
+    }
+  }, [adjustmentClipboard, lutsApi.luts, lutsApi.lutsKnown, noticeBad, noticeOk])
+
   const startNew = useCallback(() => {
     if (busy) return
     // ★ 第一句（在动状态之前）：把上一条**还没到点**的那趟落盘提前发出去。
@@ -1296,10 +2188,10 @@ export default function App() {
     //   AI 回复的太快，它跟图片应该是同时出的」）。原来在这儿 `say`，同样是
     //   "先冒一句、再干等十来秒"。号仍然是这条助手消息的 id，由调用方先发。
     const mid = nextId()
-    void runGenerate(p.editPrompt, mid, params, lut, image.bitmap,
+    void runGenerate(p.editPrompt, mid, params, lut, layers, image.bitmap,
       { stepId: p.stepId, keepFromMsg: p.keepFromMsg ?? mid }, p.reply)
     // ⚠️ 依赖数组里去掉了 `say` —— 这个回调不再用它了（按"读到的才写进依赖"）。
-  }, [busy, pendingReplace, image, params, lut, runGenerate])
+  }, [busy, pendingReplace, image, params, lut, layers, runGenerate])
 
   /**
    * ★ 2026-10-11（设计跟进 T3）：**路由失败**的现场 + 哪条气泡挂「再试一次」
@@ -1510,6 +2402,96 @@ export default function App() {
     setPending(p => (p ? { ...p, marker: { x, y } } : p))
   }, [])
 
+  /**
+   * ★ 2026-10-17（白平衡吸管）：和「图上点选」是同一套画布坐标，但用途不同 ——
+   * 这里读数、改参数，不插消息、不花钱。点失效就明确请用户换一块中性色。
+   */
+  const onWhiteBalancePick = useCallback((x: number, y: number) => {
+    setWbPicking(false)
+    if (!image) return
+    try {
+      const sample = samplePixelAt(image.bitmap, x, y)
+      const wb = whiteBalanceFromSample(sample)
+      if (!wb) {
+        noticeBad('这块太黑、太亮或颜色太重，换一块灰色或白色再点。')
+        return
+      }
+      setParams(p => ({ ...p, ...wb }))
+    } catch (e) {
+      console.error('白平衡取样失败', e)
+      noticeBad('这块颜色没取到，再点一次；还不行就手动拖色温。')
+    }
+  }, [image, noticeBad])
+
+  const toggleWhiteBalancePick = useCallback(() => {
+    setPending(null)
+    setHslPicking(false)
+    setColorPicking(false)
+    setWbPicking(v => !v)
+  }, [])
+
+  /**
+   * HSL 定向调色：点一下照片 → 找到最近色带 → 面板切过去。
+   * 只改"看哪一条色带"，不动任何参数；太灰/太暗时明确请用户换一块颜色。
+   */
+  const onHslPickPoint = useCallback((x: number, y: number) => {
+    setHslPicking(false)
+    if (!image) return
+    try {
+      const sample = samplePixelAt(image.bitmap, x, y)
+      const band = hslBandForRgb(sample)
+      if (!band) {
+        noticeBad('这块太灰、太暗或几乎没有颜色，换一块有颜色的地方再点。')
+        return
+      }
+      setHslPickedBand(band.id)
+      setHslPickSeq(s => s + 1)
+    } catch (e) {
+      console.error('HSL 取色失败', e)
+      noticeBad('这块颜色没取到，再点一次；还不行就手动选色带。')
+    }
+  }, [image, noticeBad])
+
+  const toggleHslPick = useCallback(() => {
+    setPending(null)
+    setWbPicking(false)
+    setColorPicking(false)
+    setHslPicking(v => !v)
+  }, [])
+
+  /**
+   * 颜色取样读的是**当前渲染后的画布**，不是底图：用户想知道眼前这个颜色，
+   * 包括调色、LUT 和图层之后的结果。它只产生读数，不写参数、不记账本。
+   */
+  const onColorSamplePoint = useCallback((x: number, y: number) => {
+    setColorPicking(false)
+    const source = canvasElRef.current ?? image?.bitmap
+    if (!source) return
+    try {
+      setColorSample(colorReading(samplePixelAt(source, x, y)))
+    } catch (e) {
+      console.error('颜色取样失败', e)
+      noticeBad('这个颜色没取到，再点一次；还不行就放大照片后再试。')
+    }
+  }, [image, noticeBad])
+
+  const toggleColorSample = useCallback(() => {
+    setPending(null)
+    setWbPicking(false)
+    setHslPicking(false)
+    setColorPicking(v => !v)
+  }, [])
+
+  const copyColorSample = useCallback(async () => {
+    if (!colorSample) return
+    try {
+      await navigator.clipboard.writeText(colorSample.hex)
+      noticeOk(`已复制 ${colorSample.hex}`)
+    } catch {
+      noticeBad(`复制没成功；这个颜色是 ${colorSample.hex}。`)
+    }
+  }, [colorSample, noticeBad, noticeOk])
+
   /** 上一条歧义不做数了（用户说「不用了」、跳走、或者换了句话）。一处全清。 */
   const cancelPick = useCallback(() => setPending(null), [])
 
@@ -1548,13 +2530,13 @@ export default function App() {
       // ★ 2026-10-05（滤镜）：传**当下**的 `lut`（这条路就是"此刻这张照片"，
       //   没有跳转，和 `params` 一样）。⚠️ 因此 `lut` 必须进下面那个依赖数组。
       // ★ 2026-10-06：末参 `'好，就改这里。'` 那句话推迟到生成成功才说（见上）。
-      await runGenerate(text, mid, params, lut, marked,
+      await runGenerate(text, mid, params, lut, layers, marked,
         { stepId: cursorId, keepFromMsg: pendingKeepFrom }, '好，就改这里。')
     } catch (e) {
       console.error(e)
       say('这一步没成功，再试一次？')
     }
-  }, [busy, marker, pendingText, pendingKeepFrom, image, cursorId, params, lut, runGenerate, say])
+  }, [busy, marker, pendingText, pendingKeepFrom, image, cursorId, params, lut, layers, runGenerate, say])
 
   const onJump = useCallback((id: number) => {
     const target = history.find(s => s.id === id)
@@ -1608,7 +2590,7 @@ export default function App() {
    * ⚠️ 不碰对话、不切步骤、不花钱 —— 和"翻版本"同一族契约（`39fb4d0`）。
    * ⚠️ 位置（`cursorId`）**不动**：翻账本翻的是"这一版现在的样子"，不是跳到别的版本。
    */
-  const ledgerStep = useCallback((dir: -1 | 1) => {
+  const applyLedger = useCallback((move: (s: Snapshot) => Snapshot) => {
     const cur = history.find(s => s.id === cursorId)
     if (!cur) return
     // 先把待办定稿，在同一拍里拿到"定稿后的它"（不能只 setHistory 等渲染）
@@ -1616,13 +2598,13 @@ export default function App() {
     const p = editPendingRef.current
     if (p && p.stepId === cur.id) {
       editPendingRef.current = null
-      const next = { base: cur.base, params, lut }
+      const next = { base: cur.base, params, lut, layers: cur.layers, label: '调色' }
       if (!sameEdit(p.before, next)) {
         const seq = ++editSeqRef.current
         base = pushEdit(cur, { ...p.before, seq }, next, seq)
       }
     }
-    const target = dir < 0 ? undoEdit(base) : redoEdit(base)
+    const target = move(base)
     // ⚠️★ 2026-10-08（评审 Important）：这里判"到头"要**两个条件一起**。
     //   只看 `target === base` 会吃掉两种情况，而其中一种是**真的有事发生**：
     //   账本在中间（future 非空、「下一步」可点）时拖了一下滑块 —— 上面那下
@@ -1651,8 +2633,41 @@ export default function App() {
     //   **对象身份**：同一条链上的调色笔共用同一个位图对象（账本的不变量 ②），
     //   只有真换过像素的那几笔才不是 —— 换过就得把这张位图重传给服务端
     //   （`baseChanged`），没换过只送参数。
-    markDirty(cur.id, target.base !== base.base)
+    markDirty(cur.id, target.base !== base.base, !sameEditLayers(target.layers, base.layers))
   }, [history, cursorId, params, lut, markDirty, applySnapshot])
+
+  const ledgerStep = useCallback((dir: -1 | 1) => {
+    applyLedger(dir < 0 ? undoEdit : redoEdit)
+  }, [applyLedger])
+
+  const ledgerJump = useCallback((index: number) => {
+    applyLedger(s => jumpLedger(s, index))
+  }, [applyLedger])
+
+  /**
+   * 桌面 / iPad 键盘：⌘Z（macOS）或 Ctrl+Z 翻当前版本的账本；
+   * 加 Shift（或用 Ctrl+Y）重做。输入框、忙碌态和正在操作画布的工具里不抢键。
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.isComposing) return
+      if (!image || busy !== null || tool !== null) return
+      if (location.pathname !== '/app' && location.pathname !== '/app/adjust') return
+      const target = e.target
+      if (target instanceof Element
+        && target.closest('input, textarea, select, [contenteditable="true"]')) return
+      const key = e.key.toLowerCase()
+      if (key === 'z') {
+        e.preventDefault()
+        ledgerStep(e.shiftKey ? 1 : -1)
+      } else if (key === 'y' && !e.shiftKey) {
+        e.preventDefault()
+        ledgerStep(1)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [image, busy, tool, ledgerStep])
 
   /**
    * ★ 2026-10-08（调色区账本，Task 4）：调色区的**现场**与「当前这一版」之间
@@ -1684,7 +2699,10 @@ export default function App() {
       if (!editPendingRef.current) {
         editPendingRef.current = {
           stepId: cur.id,
-          before: { base: cur.base, params: cur.params, lut: cur.lut, seq: 0 },
+          before: {
+            base: cur.base, params: cur.params, lut: cur.lut, layers: cur.layers,
+            label: cur.editLabel, seq: 0,
+          },
         }
       }
       setHistory(h => h.map(s => (s.id === cur.id ? { ...s, params, lut } : s)))
@@ -1847,7 +2865,7 @@ export default function App() {
     //   —— `runGenerate` 直接读闭包的话，新那一步会记成**跳转前**的滤镜，
     //   而画面（跳转后）是另一回事：和刚修掉的"小图 vs 主画面"是同一种不一致，
     //   只是走「再来一版」这条窄路。`params` 一直是显式传参才躲过了这一条。
-    void runGenerate(target.prompt, mid, target.params, target.lut, target.base.bitmap,
+    void runGenerate(target.prompt, mid, target.params, target.lut, target.layers ?? [], target.base.bitmap,
       { stepId: id, keepFromMsg: mid }, '好，又出了一版。')
     // ⚠️ 依赖数组里去掉了 `say` —— 这个回调不再用它了（按"读到的才写进依赖"）。
   }, [busy, history, onJump, runGenerate])
@@ -1878,6 +2896,7 @@ export default function App() {
    */
   const thumbStateRef = useRef<{
     id: number; base: DecodedImage; params: Adjustments; lut: LutRef | null
+    layers?: readonly EditLayer[]
   } | null>(null)
   useEffect(() => {
     const canvas = canvasElRef.current
@@ -1895,17 +2914,32 @@ export default function App() {
     if (editPendingRef.current) return
     const t = thumbStateRef.current
     if (t && t.id === cur.id && t.base === cur.base
-        && t.params === cur.params && t.lut === cur.lut) return
-    try {
-      // ⚠️ 先把记号写上、再抓：`makeThumbnail` 抛的时候（拿不到 2D 上下文）
-      //   记号已经落定 → 下一次不会为同一个状态再抓一遍（不然一次失败会让
-      //   这个 effect 每次渲染都重试一次，报错刷屏）。
-      thumbStateRef.current = { id: cur.id, base: cur.base, params: cur.params, lut: cur.lut }
-      setHistory(h => attachThumb(h, cur.id, makeThumbnail(canvas)))
-    } catch (e) {
-      // 缩略图是锦上添花的东西，抓不到不该影响用户修图
-      console.error('缩略图生成失败（不影响修图）', e)
+        && t.params === cur.params && t.lut === cur.lut
+        && sameEditLayers(t.layers as EditLayer[] | undefined, cur.layers)) return
+    // ⚠️ 先把记号写上、再抓：`makeThumbnail` 抛的时候（拿不到 2D 上下文）
+    //   记号已经落定 → 下一次不会为同一个状态再抓一遍（不然一次失败会让
+    //   这个 effect 每次渲染都重试一次，报错刷屏）。
+    thumbStateRef.current = {
+      id: cur.id, base: cur.base, params: cur.params, lut: cur.lut, layers: cur.layers,
     }
+    let alive = true
+    void (async () => {
+      try {
+        await preloadStickerImages(cur.layers ?? [])
+        await preloadLocalMasks(cur.layers ?? [])
+        if (!alive) return
+        setHistory(h => attachThumb(
+          h, cur.id, makeThumbnail(
+            compositeEditLayers(canvas, cur.layers ?? [], { localsAlreadyApplied: true }),
+            GALLERY_THUMB_MAX_SIDE,
+          ),
+        ))
+      } catch (e) {
+        // 缩略图是锦上添花的东西，抓不到不该影响用户修图
+        console.error('缩略图生成失败（不影响修图）', e)
+      }
+    })()
+    return () => { alive = false }
   }, [history, cursorId])
 
   // ★ 2026-10-08：落盘那个 800ms 防抖 effect（"把现在这一趟存回服务端"）和
@@ -1918,6 +2952,50 @@ export default function App() {
   // 跳转 / 标签页标题）整段搬进 `app/useNav` —— 连"**不引路由库**"那条硬约束和
   // `go` 里两条 ⚠️（`window.history` 与 `replace`）也一起。这里只剩接线。
   const { view, go } = useNav({ checking, user })
+  /** 多张照片统一进批量处理；相机桥 / 文件夹导入和相册多选共用这一条。 */
+  const onPickMany = useCallback((files: File[], wish: string, sidecars?: File[]) => {
+    setBatchSeed(sidecars?.length ? [...files, ...sidecars] : files)
+    if (wish) {
+      noticeBad('多选会进入批量处理；批量页先按统一参数来，刚才那句话这次没有用上。')
+    }
+    go({ kind: 'gallery' })
+  }, [go, noticeBad])
+
+  /** 相机录好的短片：进作品页并打开「短片调色」，预热那一份文件。 */
+  const onRecordVideo = useCallback((file: File) => {
+    setVideoSeed([file])
+    go({ kind: 'gallery' })
+  }, [go])
+
+  const onHdrMany = useCallback((files: File[]) => {
+    setHdrSeed(files)
+    go({ kind: 'gallery' })
+  }, [go])
+
+  const onFocusMany = useCallback((files: File[]) => {
+    setFocusSeed(files)
+    go({ kind: 'gallery' })
+  }, [go])
+
+  /**
+   * ★ 2026-10-10：**拖/粘进来的照片 = 换一张改**；一次多张则全部送批量。
+   *
+   * 三句的顺序照 `startNew`：
+   *   · `busy` 时不接（生成回来会往 history 里推一步，而屏幕已经换了底图）；
+   *   · 先 `flushEdit`（"没定稿的一笔调色"记进账本）再 `flushPersist`
+   *     （欠的那趟落盘提前发出去）—— 状态马上要换新的一张，不 flush 就丢了；
+   *   · 单张走 `onPick`；多张走 `onPickMany`，不静默丢掉第一张之后的文件。
+   */
+  const onDropPhotos = useCallback((files: File[]) => {
+    if (busy || files.length === 0) return
+    flushEdit()
+    flushPersist()
+    if (files.length > 1) {
+      onPickMany(files, '')
+      return
+    }
+    void onPick(files[0]!)
+  }, [busy, flushEdit, flushPersist, onPick, onPickMany])
 
   /** ★ 2026-10-10：拖/粘一张照片进来 = 换一张改（见 `usePhotoDrop`）。
    *  ⚠️ 它必须住在 `view` 定义**之后**（`active` 要读它）—— 往前挪一格就是
@@ -1925,7 +3003,7 @@ export default function App() {
    *  这种"声明顺序"问题，是渲染时当场炸（和拆 App 那轮踩的同一个坑）。 */
   const dropping = usePhotoDrop({
     active: view.kind === 'edit' && !!image && !busy,
-    onDrop: onDropPhoto,
+    onDrop: onDropPhotos,
   })
 
   /**
@@ -1943,7 +3021,12 @@ export default function App() {
   // ★ 2026-10-06（裁剪）：**裁剪的现场跟着一起收** —— 两个是同一个动作里设的，
   //   留下一个就是"框还在、工具没了"那种半截状态（回到调色屏时框会重新出现，
   //   而用户以为自己已经出去了）。
-  useEffect(() => { setTool(null); closeCrop(); closeRetouch() }, [view.kind])
+  useEffect(() => {
+    setTool(null); closeCrop(); closePerspective(); closeRetouch(); closeTransparent(); closeClone();
+    closeSmooth(); closePortrait(); closeLocal(); closeText(); closeFrame(); closeCanvasFrame(); closeDouble();
+    closeLiquify(); closeSticker(); closeShape(); closeDoodle(); closeLight(); closeDuotone()
+    setWbPicking(false); setHslPicking(false)
+  }, [view.kind])
 
   /**
    * ★ 2026-10-05（滤镜，设计 §5 那三条入口里的第二条）：**离开「滤镜」那一页时**
@@ -1988,6 +3071,7 @@ export default function App() {
     // ★ 2026-10-05 终审修复：清单到手没有（面板靠它区分"取不到"和"没有"）。
     lutsKnown: lutsApi.lutsKnown,
     lut,
+    lutCube: lutsApi.cube,
     lutThumbs: lutsApi.thumbs,
     onPickLut: (id: number | null) => setLut(id === null ? null : { lutId: id, amount: 100 }),
     onLutAmount: (amount: number) => setLut((cur) => (cur ? { ...cur, amount } : cur)),
@@ -2045,6 +3129,12 @@ export default function App() {
   //   —— 用户要能把手里那条链接对上号，才明白是**链接**错了。
   if (view.kind === 'notfound') return <NotFound onGo={go} />
 
+  // ★ 2026-10-19：公开分享页**不需要登录**。它排在登录墙前面 ——
+  //   拿到链接的人可能是完全没账号的访客；先撞登录页就等于把分享的门关上了。
+  if (view.kind === 'shared') {
+    return <SharedWorkPage token={view.token} onHome={() => go({ kind: 'landing' })} />
+  }
+
   // 没登录就只有登录页。底下那些修图的东西一样都不挂载：三个 AI 接口现在
   // 都只认登录过的人（否则 401），挂上去也只是让用户先挑好照片再被拒。
   //
@@ -2058,11 +3148,15 @@ export default function App() {
   if (!user) return <LoginPage onDone={() => me().then(setUser)} />
 
   return (
-    <div className="shell">
+    <div className="shell" data-theme={appearance}>
       {/* ★ 2026-10-10：拖着一张照片悬在窗口上时的提示层（松手 = 换成它改）。
           它 `position: fixed` 全屏，摆在页面哪一层都一样（放最前面，读起来
           就是"先盖着、下面才是页面"）。 */}
-      {dropping && <div className="drop-veil">松手，换这张照片</div>}
+      {dropping > 0 && (
+        <div className="drop-veil">
+          {dropping === 1 ? '松手，换这张照片' : `松手，把 ${dropping} 张照片送进批量处理`}
+        </div>
+      )}
       {/* 左栏在**所有**界面里都在：作品页、详情页是同一个壳，换的只是右边那一格。
           ⚠️ 它**不收"有没有照片"那个参数**（2026-10-04 试过一版，被用户否掉：
           「微调的按钮要一直在」）—— 没照片时该变的是照片那块地方，见下面 `stage`。 */}
@@ -2107,8 +3201,26 @@ export default function App() {
                   ⚠️ 左栏那一格**不跟着变**（`Nav` 不收这类参数）—— 变的是**这块地方**，
                   不是"这里有没有这件事"。两者分开才是他说的那个形状。 */}
               {busy ? <div className="hint">{busy}</div>
-                : view.kind === 'adjust' ? <AdjustEmpty onPick={onPick} />
-                  : <Uploader onPick={onPick} />}
+                : view.kind === 'adjust' ? (
+                  <AdjustEmpty
+                    onPick={onPick}
+                    onPickMany={onPickMany}
+                    onHdrMany={onHdrMany}
+                    onFocusMany={onFocusMany}
+                    appearance={appearance}
+                  />
+                )
+                   : <Uploader
+                       onPick={onPick}
+                       onPickLivePhoto={(pair, wish) => {
+                         void onPick(pair.image, wish, undefined, pair)
+                       }}
+                       onPickMany={onPickMany}
+                       onRecordVideo={onRecordVideo}
+                       onHdrMany={onHdrMany}
+                       onFocusMany={onFocusMany}
+                       appearance={appearance}
+                     />}
             </main>
           )}
 
@@ -2132,13 +3244,13 @@ export default function App() {
                   image={image}
                   cube={lutsApi.cube}
                   mine={myPresets}
-                  activeId={activePresetId(params, lut !== null, myPresets)}
+                  activeId={presetBlend?.id ?? activePresetId(params, lut !== null, myPresets)}
                   // 展开拷贝：PRESETS 是模块级共享对象，直接传引用会让拖滑块改坏预设
                   // （和面板上原来那排药丸同一条理由）。
-                  onPick={(p) => setParams({ ...p.adjustments })}
+                  onPick={choosePreset}
                   // 「原图」= 参数归零 **+ 滤镜也摘掉**（和面板那颗「重置」同一件事：
                   // 只归零参数的话，画面还是那套颜色，而用户以为按了"回到最初"）。
-                  onClear={() => { setParams(ZERO); setLut(null) }}
+                  onClear={() => { setPresetBlend(null); setParams(ZERO); setLut(null) }}
                 />
               )}
               <div className="stage">
@@ -2152,25 +3264,60 @@ export default function App() {
                   <ToolBar active={tool} onPick={pickTool}>
                     {/* 第二行 = 当前工具的控件（★ 2026-10-08 拆成
                         `ui/CropControls` / `ui/RetouchControls` 两个组件，
-                        DOM 一个字没改；各自的"长什么样、为什么这样"在组件文件头）。
+                        ★ 2026-10-17 加了 `ui/SmoothControls`；DOM 与写法
+                        同点修那套）。
 
-                        ⚠️⚠️ **两个工具的第二行收在一条三目里**（2026-10-07 踩过）：
-                        写成两个并排的 `&&` 时，React 的 children 会变成一个
+                        ⚠️⚠️ **各工具的第二行收在一条三目里**（2026-10-07 踩过）：
+                        写成几个并排的 `&&` 时，React 的 children 会变成一个
                         `[false, false]` 的**数组** —— 数组永远 truthy，
                         `ToolBar` 那条"没有 children 就不画第二行"的判据当场失效，
-                        开「对比」（两个都 false）也会长出一条空的第二行、
+                        开「对比」（全 false）也会长出一条空的第二行、
                         把照片推下去 37px。`App.test.tsx` 里那条
                         「★「对比」不算"工具开着"」正是它的守卫。 */}
-                    {tool === 'crop' && crop && image ? (
+                    {tool === 'outpaint' && image ? (
+                      <OutpaintControls
+                        image={image}
+                        busy={busy !== null}
+                        canGenerate={cursorId !== null && history.at(-1)?.id === cursorId}
+                        onBack={() => pickTool('crop')}
+                        onCancel={() => pickTool(null)}
+                        onGenerate={aspect => void generateOutpaint(aspect)}
+                      />
+                    ) : tool === 'crop' && crop && image ? (
                       <CropControls
                         image={image}
                         spec={crop.spec}
                         turns={crop.turns}
                         aspect={crop.aspect}
+                        guide={crop.guide}
                         onPickAspect={pickCropAspect}
+                        onFlip={toggleCropFlip}
+                        onGrid={toggleCropGrid}
+                        onAutoStraighten={autoStraighten}
+                        onSmartCompose={() => void smartCompose()}
+                        smartComposing={smartComposing}
                         onTurns={setCropAngle}
+                        onPerspective={() => pickTool('perspective')}
+                        onOutpaint={() => pickTool('outpaint')}
+                        onUpscale={() => void runUpscale()}
+                        upscaling={upscaling}
+                        canUpscale={canUpscale}
+                        upscaleTarget={upscaleTarget}
+                        upscaleFactor={upscaleFactor}
+                        onUpscaleFactor={setUpscaleFactor}
                         onCancel={cancelCrop}
                         onDone={commitCrop}
+                      />
+                    ) : tool === 'perspective' && perspective && image ? (
+                      <PerspectiveControls
+                        applying={perspectiveApplying}
+                        dirty={perspective.dirty}
+                        autoDetecting={perspectiveAutoDetecting}
+                        onAuto={() => void autoPerspective()}
+                        onBack={() => pickTool('crop')}
+                        onReset={resetPerspective}
+                        onCancel={cancelPerspective}
+                        onDone={commitPerspective}
                       />
                     ) : tool === 'retouch' && retouch && image ? (
                       <RetouchControls
@@ -2184,8 +3331,456 @@ export default function App() {
                         // 凭空把它拉回来）。
                         onMode={m => setRetouch(r => (r ? { ...r, mode: m } : r))}
                         onRadius={radius => setRetouch(r => (r ? { ...r, radius } : r))}
+                        onCutout={() => pickTool('transparent')}
+                        onClone={() => pickTool('clone')}
+                        onAiErase={() => pickTool('aiErase')}
                         onCancel={cancelRetouch}
                         onDone={commitRetouch}
+                      />
+                    ) : tool === 'aiErase' && aiErase && image ? (
+                      <AiEraseControls
+                        image={image}
+                        mode={aiErase.mode}
+                        radius={aiErase.radius}
+                        prompt={aiErase.prompt}
+                        dirty={aiErase.dirty}
+                        applying={aiErasing}
+                        blocked={busy !== null}
+                        onMode={m => setAiErase(s => (s ? { ...s, mode: m } : s))}
+                        onRadius={radius => setAiErase(s => (s ? { ...s, radius } : s))}
+                        onPrompt={prompt => setAiErase(s => (s ? { ...s, prompt } : s))}
+                        onCancel={cancelAiErase}
+                        onDone={commitAiErase}
+                      />
+                    ) : tool === 'transparent' && transparent && image ? (
+                      <TransparentControls
+                        image={image}
+                        mode={transparent.mode}
+                        radius={transparent.radius}
+                        dirty={transparent.dirty}
+                        applying={transparentizing}
+                        tolerance={transparent.tolerance}
+                        picking={transparent.picking}
+                        selecting={transparent.selecting}
+                        backgroundKind={transparent.backgroundKind}
+                        backgroundColor={transparent.backgroundColor}
+                        backgroundName={transparent.backgroundName}
+                        backgroundScale={transparent.backgroundScale}
+                        backgroundX={transparent.backgroundX}
+                        backgroundY={transparent.backgroundY}
+                        backgroundFlip={transparent.backgroundFlip}
+                        onMode={m => setTransparent(r => (r ? { ...r, mode: m } : r))}
+                        onRadius={radius => setTransparent(r => (r ? { ...r, radius } : r))}
+                        onTolerance={tolerance => setTransparent(r => (r ? { ...r, tolerance } : r))}
+                        onAutoSelect={() => void autoSelectSubject()}
+                        onPickBackground={startPickBackground}
+                        onBackgroundKind={setBackgroundKind}
+                        onBackgroundColor={setBackgroundColor}
+                        onChooseBackground={file => void chooseBackground(file)}
+                        onBackgroundScale={setBackgroundScale}
+                        onBackgroundX={setBackgroundX}
+                        onBackgroundY={setBackgroundY}
+                        onBackgroundFlip={toggleBackgroundFlip}
+                        onBack={() => pickTool('retouch')}
+                        onCancel={cancelTransparent}
+                        onDone={commitTransparent}
+                      />
+                    ) : tool === 'clone' && clone && image ? (
+                      <CloneControls
+                        image={image}
+                        radius={clone.radius}
+                        hasSource={!!clone.source}
+                        picking={clone.picking}
+                        dirty={clone.dirty}
+                        applying={cloneApplying}
+                        onPickSource={startPickSource}
+                        onRadius={radius => setClone(c => (c ? { ...c, radius } : c))}
+                        onReset={resetClone}
+                        onBack={() => pickTool('retouch')}
+                        onCancel={cancelClone}
+                        onDone={commitClone}
+                      />
+                    ) : tool === 'smooth' && smooth && image ? (
+                      // ★ 2026-10-17（磨皮画笔）：和点修同一套写法（三个 setter
+                      //   都是"改现场本身"；r 为 null 时原样返回）。
+                      <SmoothControls
+                        image={image}
+                        mode={smooth.mode}
+                        radius={smooth.radius}
+                        strength={smooth.strength}
+                        texture={smooth.texture}
+                        dirty={smooth.dirty}
+                        smoothing={smoothing}
+                        onMode={m => setSmooth(r => (r ? { ...r, mode: m } : r))}
+                        onRadius={radius => setSmooth(r => (r ? { ...r, radius } : r))}
+                        onStrength={strength => setSmooth(r => (r ? { ...r, strength } : r))}
+                        onTexture={texture => setSmooth(r => (r ? { ...r, texture } : r))}
+                        onCancel={cancelSmooth}
+                        onDone={commitSmooth}
+                      />
+                    ) : tool === 'portrait' && portrait && image ? (
+                      <PortraitControls
+                        detecting={portrait.detecting}
+                        manualPicking={portrait.manualPicking}
+                        faceCount={portrait.faces.length}
+                        faceIndex={portrait.faceIndex}
+                        slim={portrait.slim}
+                        head={portrait.head}
+                        eyes={portrait.eyes}
+                        nose={portrait.nose}
+                        chin={portrait.chin}
+                        smile={portrait.smile}
+                        neck={portrait.neck}
+                        doubleChin={portrait.doubleChin}
+                        shoulder={portrait.shoulder}
+                        body={portrait.body}
+                        legs={portrait.legs}
+                        crown={portrait.crown}
+                        blemish={portrait.blemish}
+                        blemishEmpty={portrait.blemishEmpty}
+                        smooth={portrait.smooth}
+                        light={portrait.light}
+                        whiten={portrait.whiten}
+                        rosy={portrait.rosy}
+                        lip={portrait.lip}
+                        blush={portrait.blush}
+                        lipShade={portrait.lipShade}
+                        dirty={portrait.dirty}
+                        applying={portraitApplying}
+                        onManualFace={startManualFace}
+                        onRetryAuto={retryAutoFace}
+                        onFace={selectPortraitFace}
+                        onSlim={v => setPortrait(p => (p ? { ...p, slim: v } : p))}
+                        onHead={v => setPortrait(p => (p ? { ...p, head: v } : p))}
+                        onCrown={v => setPortrait(p => (p ? { ...p, crown: v } : p))}
+                        onEyes={v => setPortrait(p => (p ? { ...p, eyes: v } : p))}
+                        onNose={v => setPortrait(p => (p ? { ...p, nose: v } : p))}
+                        onChin={v => setPortrait(p => (p ? { ...p, chin: v } : p))}
+                        onSmile={v => setPortrait(p => (p ? { ...p, smile: v } : p))}
+                        onNeck={v => setPortrait(p => (p ? { ...p, neck: v } : p))}
+                        onDoubleChin={v => setPortrait(p => (p ? { ...p, doubleChin: v } : p))}
+                        onShoulder={v => setPortrait(p => (p ? { ...p, shoulder: v } : p))}
+                        onBody={v => setPortrait(p => (p ? { ...p, body: v } : p))}
+                        onLegs={v => setPortrait(p => (p ? { ...p, legs: v } : p))}
+                        onBlemish={() => setPortrait(p => (p ? {
+                          ...p, blemish: !p.blemish, blemishEmpty: false,
+                        } : p))}
+                        onSmooth={v => setPortrait(p => (p ? { ...p, smooth: v } : p))}
+                        onLight={v => setPortrait(p => (p ? { ...p, light: v } : p))}
+                        onWhiten={v => setPortrait(p => (p ? { ...p, whiten: v } : p))}
+                        onRosy={v => setPortrait(p => (p ? { ...p, rosy: v } : p))}
+                        onLip={v => setPortrait(p => (p ? { ...p, lip: v } : p))}
+                        onBlush={v => setPortrait(p => (p ? { ...p, blush: v } : p))}
+                        onLipShade={lipShade => setPortrait(p => (p ? { ...p, lipShade } : p))}
+                        onAuto={() => setPortrait(p => (p ? {
+                          ...p,
+                          slim: 6, head: 0, crown: 0, eyes: 5, nose: 3, chin: 4,
+                          smile: 5, body: 0, legs: 0,
+                          blemish: true, blemishEmpty: false,
+                          smooth: 22, light: 30, whiten: 12, rosy: 8,
+                          lip: 10, blush: 8, dirty: true,
+                        } : p))}
+                        onReset={resetPortrait}
+                        onCancel={cancelPortrait}
+                        onDone={commitPortrait}
+                      />
+                    ) : tool === 'local' && local && image ? (
+                      <LocalControls
+                        image={effectiveImage ?? image}
+                        mode={local.mode}
+                        radius={local.radius}
+                        maskFeather={local.maskFeather}
+                        exposure={local.exposure}
+                        contrast={local.contrast}
+                        saturation={local.saturation}
+                        temperature={local.temperature}
+                        tint={local.tint}
+                        whites={local.whites}
+                        blacks={local.blacks}
+                        dehaze={local.dehaze}
+                        highlights={local.highlights}
+                        shadows={local.shadows}
+                        vibrance={local.vibrance}
+                        clarity={local.clarity}
+                        effect={local.effect}
+                        effectStrength={local.effectStrength}
+                        toneRange={local.toneRange}
+                        angle={local.angle}
+                        hairShade={local.hairShade}
+                        eyeShadowShade={local.eyeShadowShade}
+                        eyebrowShade={local.eyebrowShade}
+                        contourShade={local.contourShade}
+                        highlightShade={local.highlightShade}
+                        aegyoSalShade={local.aegyoSalShade}
+                        eyelinerShade={local.eyelinerShade}
+                        irisShade={local.irisShade}
+                        maskKind={local.maskKind}
+                        gradient={local.gradient}
+                        colorTarget={local.colorTarget}
+                        colorPick={local.colorPick}
+                        colorConnected={local.colorConnected}
+                        colorTolerance={local.colorTolerance}
+                        colorFeather={local.colorFeather}
+                        luminanceRange={local.luminanceRange}
+                        luminanceWidth={local.luminanceWidth}
+                        luminanceFeather={local.luminanceFeather}
+                        invert={local.invert}
+                        edge={local.edge}
+                        opacity={local.opacity}
+                        dirty={local.dirty}
+                        localizing={localizing}
+                        autoSelecting={autoSelecting}
+                        localLayers={layers.filter(isLocalLayer)}
+                        editingId={localEditingId}
+                        loadingLayer={localLoadingLayer}
+                        onMode={m => setLocal(r => (r ? { ...r, mode: m } : r))}
+                        onRadius={radius => setLocal(r => (r ? { ...r, radius } : r))}
+                        onMaskFeather={maskFeather => setLocal(
+                          r => (r ? { ...r, maskFeather } : r),
+                        )}
+                        onExposure={v => setLocal(r => (r ? { ...r, exposure: v } : r))}
+                        onContrast={v => setLocal(r => (r ? { ...r, contrast: v } : r))}
+                        onSaturation={v => setLocal(r => (r ? { ...r, saturation: v } : r))}
+                        onTemperature={v => setLocal(r => (r ? { ...r, temperature: v } : r))}
+                        onTint={v => setLocal(r => (r ? { ...r, tint: v } : r))}
+                        onWhites={v => setLocal(r => (r ? { ...r, whites: v } : r))}
+                        onBlacks={v => setLocal(r => (r ? { ...r, blacks: v } : r))}
+                        onDehaze={v => setLocal(r => (r ? { ...r, dehaze: v } : r))}
+                        onHighlights={v => setLocal(r => (r ? { ...r, highlights: v } : r))}
+                        onShadows={v => setLocal(r => (r ? { ...r, shadows: v } : r))}
+                        onVibrance={v => setLocal(r => (r ? { ...r, vibrance: v } : r))}
+                        onClarity={v => setLocal(r => (r ? { ...r, clarity: v } : r))}
+                        onEffect={effect => setLocal(r => (r ? { ...r, effect } : r))}
+                        onEffectStrength={v => setLocal(r => (r ? { ...r, effectStrength: v } : r))}
+                        onToneRange={toneRange => setLocal(r => (r ? { ...r, toneRange } : r))}
+                        onAngle={angle => setLocal(r => (r ? { ...r, angle } : r))}
+                        onHairShade={hairShade => setLocal(r => (r ? { ...r, hairShade } : r))}
+                        onEyeShadowShade={eyeShadowShade => setLocal(
+                          r => (r ? { ...r, eyeShadowShade } : r),
+                        )}
+                        onEyebrowShade={eyebrowShade => setLocal(
+                          r => (r ? { ...r, eyebrowShade } : r),
+                        )}
+                        onContourShade={contourShade => setLocal(
+                          r => (r ? { ...r, contourShade } : r),
+                        )}
+                        onHighlightShade={highlightShade => setLocal(
+                          r => (r ? { ...r, highlightShade } : r),
+                        )}
+                        onAegyoSalShade={aegyoSalShade => setLocal(
+                          r => (r ? { ...r, aegyoSalShade } : r),
+                        )}
+                        onEyelinerShade={eyelinerShade => setLocal(
+                          r => (r ? { ...r, eyelinerShade } : r),
+                        )}
+                        onIrisShade={irisShade => setLocal(
+                          r => (r ? { ...r, irisShade } : r),
+                        )}
+                        onAutoEyes={autoSelectEyes}
+                        onAutoTeeth={autoSelectTeeth}
+                        onAutoUnderEye={autoSelectUnderEye}
+                        onAutoSubject={() => void autoSelectLocalSubject('subject')}
+                        onAutoBackground={() => void autoSelectLocalSubject('background')}
+                        onAutoSky={() => void autoSelectLocalSky()}
+                        onBlurBackground={() => void blurLocalBackground()}
+                        onColorSplash={startColorSplash}
+                        onMaskKind={setMaskKind}
+                        onInvertMask={invertSelection}
+                        onStartColorPick={startColorPick}
+                        onColorConnected={setColorConnected}
+                        onColorTolerance={setColorTolerance}
+                        onColorFeather={setColorFeather}
+                        onLuminanceRange={setLuminanceRange}
+                        onLuminanceWidth={setLuminanceWidth}
+                        onLuminanceFeather={setLuminanceFeather}
+                        onMaskEdge={setMaskEdge}
+                        onOpacity={opacity => setLocal(r => (r ? { ...r, opacity } : r))}
+                        onGradientFeather={feather => setLocal(r => {
+                          if (!r) return r
+                          return {
+                            ...r,
+                            gradient: { ...r.gradient, feather },
+                            dirty: r.maskKind === 'brush' ? r.dirty : true,
+                          }
+                        })}
+                        onEditLayer={id => void openLocalLayer(id)}
+                        onDeleteLayer={deleteLocalLayer}
+                        onSaveLayer={() => void saveLocalLayer()}
+                        onCancel={cancelLocal}
+                        onDone={commitLocal}
+                        onLiquify={() => pickTool('liquify')}
+                      />
+                    ) : tool === 'liquify' && liquify && image ? (
+                      <LiquifyControls
+                        image={image}
+                        mode={liquify.mode}
+                        radius={liquify.radius}
+                        strength={liquify.strength}
+                        dirty={liquify.dirty}
+                        applying={liquifying}
+                        onMode={m => setLiquify(r => (r ? { ...r, mode: m } : r))}
+                        onRadius={radius => setLiquify(r => (r ? { ...r, radius } : r))}
+                        onStrength={strength => setLiquify(r => (r ? { ...r, strength } : r))}
+                        onReset={resetLiquify}
+                        onTone={() => pickTool('local')}
+                        onCancel={cancelLiquify}
+                        onDone={commitLiquify}
+                      />
+                    ) : tool === 'text' && text && image ? (
+                      <TextControls
+                        image={image}
+                        options={text}
+                        writing={writing}
+                        layers={layers.filter((layer): layer is TextLayer => layer.kind !== 'shape')}
+                        editingId={textEditingId}
+                        onChange={patch => setText(r => (r ? { ...r, ...patch } : r))}
+                        onNew={newText}
+                        onEdit={editText}
+                        onDelete={deleteText}
+                        onCancel={cancelText}
+                        onDone={commitText}
+                      />
+                    ) : tool === 'frame' && frame && image ? (
+                      <FrameControls
+                        options={frame}
+                        applying={framing}
+                        onStyle={style => setFrame(r => (r ? { ...r, style } : r))}
+                        onWidth={widthPct => setFrame(r => (r ? { ...r, widthPct } : r))}
+                        onColor={color => setFrame(r => (r ? { ...r, color } : r))}
+                        onCanvas={() => pickTool('canvas')}
+                        onSticker={() => pickTool('sticker')}
+                        onShape={() => pickTool('shape')}
+                        onDouble={() => pickTool('double')}
+                        onDoodle={() => pickTool('doodle')}
+                        onLight={() => pickTool('light')}
+                        onDuotone={() => pickTool('duotone')}
+                        onCancel={cancelFrame}
+                        onDone={commitFrame}
+                      />
+                    ) : tool === 'canvas' && canvasFrame && image ? (
+                      <CanvasFrameControls
+                        options={canvasFrame}
+                        applying={canvasFraming}
+                        onChange={patch => setCanvasFrame(r => (r ? { ...r, ...patch } : r))}
+                        onFrame={() => pickTool('frame')}
+                        onSticker={() => pickTool('sticker')}
+                        onShape={() => pickTool('shape')}
+                        onDouble={() => pickTool('double')}
+                        onDoodle={() => pickTool('doodle')}
+                        onLight={() => pickTool('light')}
+                        onDuotone={() => pickTool('duotone')}
+                        onCancel={cancelCanvasFrame}
+                        onDone={commitCanvasFrame}
+                      />
+                    ) : tool === 'sticker' && sticker && image ? (
+                      <StickerControls
+                        options={sticker}
+                        applying={sticking}
+                        layers={layers.filter((layer): layer is StickerLayer =>
+                          layer.kind === 'sticker')}
+                        editingId={stickerEditingId}
+                        hasCustom={!!customStickerPreview}
+                        customName={customStickerName}
+                        onChange={patch => setSticker(s => (s ? { ...s, ...patch } : s))}
+                        onNew={newSticker}
+                        onEdit={editSticker}
+                        onDelete={deleteSticker}
+                        onChooseFile={file => void chooseCustom(file)}
+                        onCanvas={() => pickTool('canvas')}
+                        onFrame={() => pickTool('frame')}
+                        onShape={() => pickTool('shape')}
+                        onDouble={() => pickTool('double')}
+                        onDoodle={() => pickTool('doodle')}
+                        onLight={() => pickTool('light')}
+                        onDuotone={() => pickTool('duotone')}
+                        onCancel={cancelSticker}
+                        onDone={commitSticker}
+                      />
+                    ) : tool === 'shape' && shape && image ? (
+                      <ShapeControls
+                        options={shape}
+                        applying={shaping}
+                        layers={layers.filter((layer): layer is ShapeLayer => layer.kind === 'shape')}
+                        editingId={shapeEditingId}
+                        onChange={patch => setShape(s => (s ? { ...s, ...patch } : s))}
+                        onNew={newShape}
+                        onEdit={editShape}
+                        onDelete={deleteShape}
+                        onCanvas={() => pickTool('canvas')}
+                        onFrame={() => pickTool('frame')}
+                        onSticker={() => pickTool('sticker')}
+                        onDouble={() => pickTool('double')}
+                        onDoodle={() => pickTool('doodle')}
+                        onLight={() => pickTool('light')}
+                        onDuotone={() => pickTool('duotone')}
+                        onCancel={cancelShape}
+                        onDone={commitShape}
+                      />
+                    ) : tool === 'double' && image ? (
+                      <DoubleExposureControls
+                        name={double?.name ?? null}
+                        mode={double?.mode ?? 'screen'}
+                        opacity={double?.opacity ?? 50}
+                        applying={doubleApplying}
+                        onChooseFile={file => void chooseDouble(file)}
+                        onMode={mode => setDouble(d => (d ? { ...d, mode } : d))}
+                        onOpacity={opacity => setDouble(d => (d ? { ...d, opacity } : d))}
+                        onCanvas={() => pickTool('canvas')}
+                        onFrame={() => pickTool('frame')}
+                        onSticker={() => pickTool('sticker')}
+                        onShape={() => pickTool('shape')}
+                        onDoodle={() => pickTool('doodle')}
+                        onLight={() => pickTool('light')}
+                        onDuotone={() => pickTool('duotone')}
+                        onCancel={cancelDouble}
+                        onDone={commitDouble}
+                      />
+                    ) : tool === 'doodle' && doodle && image ? (
+                      <DoodleControls
+                        doodle={doodle}
+                        applying={doodling}
+                        onChange={patch => setDoodle(d => (d ? { ...d, ...patch } : d))}
+                        onUndo={undoStroke}
+                        onClear={clearStrokes}
+                        onCanvas={() => pickTool('canvas')}
+                        onFrame={() => pickTool('frame')}
+                        onSticker={() => pickTool('sticker')}
+                        onShape={() => pickTool('shape')}
+                        onDouble={() => pickTool('double')}
+                        onLight={() => pickTool('light')}
+                        onDuotone={() => pickTool('duotone')}
+                        onCancel={cancelDoodle}
+                        onDone={commitDoodle}
+                      />
+                    ) : tool === 'light' && light && image ? (
+                      <LightControls
+                        options={light}
+                        applying={lighting}
+                        onChange={patch => setLight(l => (l ? { ...l, ...patch } : l))}
+                        onCanvas={() => pickTool('canvas')}
+                        onFrame={() => pickTool('frame')}
+                        onSticker={() => pickTool('sticker')}
+                        onShape={() => pickTool('shape')}
+                        onDouble={() => pickTool('double')}
+                        onDoodle={() => pickTool('doodle')}
+                        onDuotone={() => pickTool('duotone')}
+                        onCancel={cancelLight}
+                        onDone={commitLight}
+                      />
+                    ) : tool === 'duotone' && duotone && image ? (
+                      <DuotoneControls
+                        options={duotone}
+                        applying={duotoneApplying}
+                        onChange={patch => setDuotone(d => (d ? { ...d, ...patch } : d))}
+                        onCanvas={() => pickTool('canvas')}
+                        onFrame={() => pickTool('frame')}
+                        onSticker={() => pickTool('sticker')}
+                        onShape={() => pickTool('shape')}
+                        onDouble={() => pickTool('double')}
+                        onDoodle={() => pickTool('doodle')}
+                        onLight={() => pickTool('light')}
+                        onCancel={cancelDuotone}
+                        onDone={commitDuotone}
                       />
                     ) : null}
                     {/* ★ 2026-10-06（对比）：它**不传 children** —— 一个开关没有
@@ -2226,16 +3821,43 @@ export default function App() {
                     把 1MB 的 3D 纹理重传一遍（Canvas 那两个 effect 分得开，
                     是为这件事）。 */}
                 <Canvas
-                  image={image}
+                  // ★ 2026-10-17（液化）：Canvas 显示工作副本的预览位图；
+                  //   App 自己的 `image` 仍然只给提交 / 账本使用。
+                  image={clonePreview ?? portraitPreview ?? liquifyPreview ?? effectiveImage}
                   params={params}
+                  layers={layers}
+                  hiddenLayerId={tool === 'text'
+                    ? textEditingId
+                    : tool === 'shape' ? shapeEditingId : null}
                   lutCube={lutsApi.cube}
                   lutAmount={lut?.amount ?? 0}
                   canvasRef={canvasElRef}
                   originalPreview={originalPreview}
                   picking={picking}
+                  sampling={wbPicking || (tool === 'transparent' && !!transparent?.picking)
+                    || (tool === 'clone' && !!clone?.picking)
+                    || (tool === 'local' && !!local?.colorPick)
+                    || hslPicking || colorPicking}
+                  onSamplePoint={tool === 'local' && local?.colorPick
+                    ? sampleColorAt
+                    : tool === 'transparent' && transparent?.picking
+                      ? pickBackground
+                      : tool === 'clone' && clone?.picking
+                        ? pickSource
+                        : hslPicking ? onHslPickPoint
+                          : colorPicking ? onColorSamplePoint : onWhiteBalancePick}
+                  sampleHint={tool === 'local' && local?.colorPick
+                    ? '点一下要选的颜色'
+                    : tool === 'transparent'
+                      ? '点一下要去掉的背景'
+                      : tool === 'clone' && clone?.picking
+                        ? '点一下要复制的源点'
+                        : hslPicking ? '点一下画面里要调的颜色'
+                          : colorPicking ? '点一下画面里要读取的颜色' : undefined}
                   marker={marker}
                   onPickPoint={onPickPoint}
                   onFail={noticeBad}
+                  onHistogram={view.kind === 'adjust' ? setHistogram : undefined}
                   // ★ 2026-10-06（缩放）：**换了一张照片**的信号 —— 传的是
                   //   `sessionId`，`Canvas` 拿它当"该把放大镜收回适应窗口了"
                   //   的判据。⚠️ 传它不传 `image`：同一条会话里换步骤
@@ -2252,6 +3874,8 @@ export default function App() {
                   // ★ 2026-10-06（裁剪）：框 + 预览那一帧的现场。没在裁时是 null
                   //   —— 那时画布上一个内联样式都不留（和"适应窗口"那一帧同一条规矩）。
                   crop={cropScene}
+                  perspective={perspectiveScene}
+                  doubleExposure={doubleScene}
                   // ★ 2026-10-06：生成中给照片盖一层淡淡的暗罩 + 转圈（那十几秒
                   //   照片原来完全没反应）。传的是 `generating` 不是 `busy` ——
                   //   「正在思考」/上传/切会话那几句**不盖**（一闪一暗会闪），
@@ -2259,7 +3883,12 @@ export default function App() {
                   // ★ 2026-10-07（点修）：**擦除也可能慢**（大块要几秒，见
                   //   `ERASE_VEIL_PIXELS`）——慢的那一档也盖同一层暗罩，
                   //   小斑块（毫秒级）不盖，免得闪。
-                  busy={generating || erasing}
+                  busy={generating || erasing || transparentizing || !!transparent?.selecting
+                    || perspectiveApplying || smoothing || localizing || autoSelecting
+                    || writing || framing
+                    || doubleApplying || liquifying || sticking || shaping
+                    || portraitApplying || !!portrait?.detecting || cloneApplying
+                    || doodling || lighting || duotoneApplying || aiErasing}
                   // ★ 2026-10-06（对比，spec §3.3）：开关 + 那份够清楚的原图 +
                   //   右下角那排里那颗的回调。⚠️ 原图**不在**这里备（懒做在 App
                   //   顶上那条 effect 里）；备的路上 `compareWith` 就是 null，
@@ -2279,7 +3908,38 @@ export default function App() {
                   //   ⚠️ 它**不动 `resetKey` / `viewLocked`** —— 点修要的就是
                   //   "放大着修细节"（和「对比」同一条裁定：把视图拽回适应窗口
                   //   正好毁掉这个用法）。手势的停用由涂抹层自己盖住照片区完成。
-                  retouch={retouchScene}
+                  // ★ 2026-10-17（磨皮画笔）：**同一个涂抹层**（掩码协议一模一样），
+                  //   两个现场同一时刻最多有一个非 null（`tool` 单选）——
+                  //   `smoothScene ?? retouchScene` 就是全部接线，画布不多一个 prop。
+                  retouch={aiEraseScene ?? localScene ?? transparentScene ?? smoothScene ?? retouchScene}
+                  gradient={gradientScene}
+                  // ★ 2026-10-17（文字）：预览 / 拖动现场。和上面几个工具同一时刻
+                  //   最多一个非 null（`tool` 单选）。
+                  text={textScene}
+                  // ★ 2026-10-17（边框）：四条边的预览现场。
+                  frame={frameScene}
+                  canvasFrame={canvasFrameScene}
+                  liquify={liquifyScene}
+                  sticker={stickerScene}
+                  shape={shapeScene}
+                  doodle={doodleScene}
+                  light={lightScene}
+                  duotone={duotoneScene}
+                  // ★ 2026-10-19（镜头虚化）：只在调色屏、没有别的工具、
+                  //   且虚化强度真的 > 0 时画焦点环。参数 -100~100 ↔ 0~1。
+                  lensFocus={view.kind === 'adjust' && tool === null && params.lensBlur > 0
+                    ? {
+                      x: params.lensShape > 50 ? 0.5 : (params.lensFocusX + 100) / 200,
+                      y: (params.lensFocusY + 100) / 200,
+                      shape: params.lensShape > 50 ? 'tilt' : 'radial',
+                      angle: params.lensAngle * 0.9,
+                      band: 0.08 + ((params.lensRange + 100) / 200) * 0.42,
+                      onChange: changeLensFocus,
+                    }
+                    : null}
+                  faceShape={faceScene}
+                  facePick={facePickScene}
+                  clone={cloneScene}
                 />
                 {/* ★ 2026-10-08（用户原话：「给调色界面添加上一步下一步的箭头
                     回溯按钮，但是这个是不跟对话区联动的 —— 相当于一个宏观
@@ -2298,7 +3958,7 @@ export default function App() {
                     ⚠️ **只在调色屏**（和预设栏、工具行、微调面板同一条判据）：
                     修图屏那块地方是转盘，两个同一屏里并排就是同一件事两个开关。
                     ⚠️ **账本只有一笔时不画**（刚上传 / 没动过）—— 不留一组按不动的按钮。
-                    ⚠️ **正在裁剪 / 点修时收起来**：那两个是"在这张图上干活"的
+                    ⚠️ **正在裁剪 / 点修 / 磨皮时收起来**：那是三个"在这张图上干活"的
                     模态工具（框 / 涂抹都按当前这版算），翻一笔会把用户的活儿
                     留在原地、换个底子接着算 —— 「对比」不算（那正是比版本的时候）。
                     ⚠️ 位置是**镜像 `.zoom-bar`**（右下角那排缩放）：同样离照片
@@ -2308,7 +3968,12 @@ export default function App() {
                   const cur = history.find(s => s.id === cursorId)
                   const total = cur ? ledgerTotal(cur) : 1
                   if (view.kind !== 'adjust' || !image || !cur || total <= 1) return null
-                  if (tool === 'crop' || tool === 'retouch') return null
+                  if (tool === 'crop' || tool === 'perspective' || tool === 'outpaint' || tool === 'retouch'
+                    || tool === 'transparent' || tool === 'clone' || tool === 'aiErase'
+                    || tool === 'smooth' || tool === 'portrait'
+                    || tool === 'local' || tool === 'liquify' || tool === 'text'
+                    || tool === 'frame' || tool === 'sticker' || tool === 'shape' || tool === 'double'
+                    || tool === 'doodle' || tool === 'light' || tool === 'duotone') return null
                   // 位置走 `ledgerIndex`（`past.length + 1`）—— **唯一**那份口径，
                   // 别在这儿再数一遍（数法一旦和 `core/ledger.ts` 分家就是"两处各
                   // 说各话、谁也不报错"）。
@@ -2316,6 +3981,8 @@ export default function App() {
                     <StepNav
                       index={ledgerIndex(cur)}
                       total={total}
+                      items={ledgerLabels(cur)}
+                      onJump={ledgerJump}
                       onPrev={() => ledgerStep(-1)}
                       onNext={() => ledgerStep(1)}
                     />
@@ -2338,6 +4005,39 @@ export default function App() {
                   onSave={onSave}
                   onNew={startNew}
                   busy={busy !== null}
+                  exportSettings={
+                    <ExportSettings
+                      options={exportOptions}
+                      onFormat={setExportFormat}
+                      onQuality={setExportQuality}
+                      onLongEdge={setExportLongEdge}
+                      onAspect={setExportAspect}
+                      onFit={setExportFit}
+                      onMetadata={setExportMetadata}
+                      onLocation={setExportLocation}
+                      onCreator={setExportCreator}
+                      onCopyright={setExportCopyright}
+                      onColorSpace={setExportColorSpace}
+                      filename={exportFilename}
+                      onFilename={setExportFilename}
+                      onSaveDefaults={saveExportDefaults}
+                      copySupported={copySupported}
+                      heicSupported={heicSupported}
+                      onCopy={onCopy}
+                      onExportPlatforms={onExportPlatforms}
+                      livePhoto={livePhotoPair ? {
+                        status: livePhotoEvidence?.status ?? 'checking',
+                        detail: livePhotoEvidence?.detail
+                          ?? '正在核对照片和动作的 Apple 实况标识…',
+                      } : null}
+                      onExportLivePhoto={onExportLivePhoto}
+                      canShareArchive={canShareArchive}
+                      watermark={exportWatermark}
+                      watermarkLogo={exportLogo}
+                      onWatermark={setExportWatermark}
+                      onWatermarkLogo={pickExportLogo}
+                    />
+                  }
                 />
               </div>
               {/* ★ 2026-10-04：**调色那一屏没有对话栏。**
@@ -2366,12 +4066,14 @@ export default function App() {
                 <ChatPanel
                   messages={messages}
                   cards={cards}
+                  online={online}
                   busy={busy}
                   suggesting={suggesting}
                   draft={draft}
                   onSend={send}
                   onStop={stopGeneration}
                   onAskSuggest={onAskSuggest}
+                  aiActions={aiActions}
                   // ★ 2026-10-10：这两对是「等待要诚实」那批 ——
                   //   `generating`（这份文件上面那个 `busy === BUSY_GENERATING`）
                   //   决定那一格是「停止」还是禁用的「发送」；
@@ -2455,7 +4157,7 @@ export default function App() {
               {view.kind === 'adjust' && (
                 <AdjustmentPanel
                   value={params}
-                  onChange={setParams}
+                  onChange={changeParams}
                   // ★ 2026-10-05：从「滤镜」那一页按「去调色里套一张」过来的那一趟，
                   //   这一栏**进来就是开着的**（见 `lutOpenNext` 那段）。
                   defaultLutOpen={lutOpenNext.current}
@@ -2463,9 +4165,35 @@ export default function App() {
                   //   只归零参数的话，用户按了重置、画面还是那套颜色（滤镜是
                   //   另一条路，不归 params 管），而面板上那格还亮着 —— 他会以为
                   //   是重置坏了。
-                  onReset={() => { setParams(ZERO); setLut(null) }}
+                  onReset={() => { setPresetBlend(null); setParams(ZERO); setLut(null) }}
+                  onCopyAdjustments={copyAdjustments}
+                  onPasteAdjustments={pasteAdjustments}
+                  canPasteAdjustments={adjustmentClipboard !== null}
+                  photoFile={originalFileRef.current}
+                  image={image}
+                  presetAmount={presetBlend?.amount}
+                  presetLabel={presetBlend?.label}
+                  onPresetAmount={setPresetStrength}
+                  onAuto={autoEnhance}
+                  onRecommend={recommendLook}
                   onMatchReference={file => void matchReference(file)}
                   onMatchWork={w => void matchWork(w)}
+                  whiteBalancePicking={wbPicking}
+                  onWhiteBalance={toggleWhiteBalancePick}
+                  hslPicking={hslPicking}
+                  onHslPick={toggleHslPick}
+                  hslPickedBand={hslPickedBand}
+                  hslPickSeq={hslPickSeq}
+                  colorSampling={colorPicking}
+                  colorSample={colorSample}
+                  onColorSample={toggleColorSample}
+                  onCopyColor={copyColorSample}
+                  histogram={histogram}
+                  layers={layers}
+                  onToggleLayer={toggleLayer}
+                  onMoveLayer={moveLayer}
+                  onDeleteLayer={deleteLayer}
+                  onEditLayer={editLayer}
                   // ★ 2026-10-10（「我的预设」）：清单四态 + 存/改名/删三个动作
                   //   （见上面那三个回调）。面板只摆样子 —— 和滤镜那一包同一条分层。
                   presets={presetsApi.presets}
@@ -2510,6 +4238,16 @@ export default function App() {
           空态同一条路**（`startNew` + 回修图页），别在这儿另写一条。 */}
       {view.kind === 'gallery' && (
         <GalleryPage onOpen={(id) => go({ kind: 'work', id })}
+                     currentParams={image ? params : null}
+                     defaultStyleId={defaultStyleId}
+                     batchSeed={batchSeed}
+                     onBatchSeedUsed={() => setBatchSeed(null)}
+                     videoSeed={videoSeed}
+                     onVideoSeedUsed={() => setVideoSeed(null)}
+                     hdrSeed={hdrSeed}
+                     onHdrSeedUsed={() => setHdrSeed(null)}
+                     focusSeed={focusSeed}
+                     onFocusSeedUsed={() => setFocusSeed(null)}
                      onNew={() => { startNew(); go({ kind: 'edit' }) }} />
       )}
       {view.kind === 'work' && (
@@ -2559,13 +4297,21 @@ export default function App() {
       {view.kind === 'account' && (
         <AccountPage
           user={user}
+          defaultStyleId={defaultStyleId}
+          styleOptions={styleOptions}
+          styleOptionsKnown={presetsApi.known}
+          onDefaultStyleChange={saveDefaultStyle}
+          appearance={appearance}
+          onAppearanceChange={saveAppearancePreference}
           // 「模型」那一行从这儿出发（§3.6）。**只传 go，不传网址** ——
           // "哪一页对应哪个网址"只有 ui/view.ts 说了算（和上面作品页同一条规矩）。
           onGo={go}
           onSignedOut={() => setUser(null)}
           // ★ 2026-10-09：改名成功之后把新的那份 user 换进来 —— `user` 是
           //   **App 的 state**（这一页只是看一眼），名字得有一个来源。
-          onUserChanged={setUser}
+          onUserChanged={u => setUser(prev => prev
+            ? { ...u, preferences: prev.preferences }
+            : u)}
         />
       )}
       {/* 模型设置（§7.4，Task 9）。*它自己不拉名单之外的东西* ——

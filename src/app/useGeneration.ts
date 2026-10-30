@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { applyDeltas, type Adjustments } from '../../shared/adjustments.ts'
 import { sameLutName, type LutMeta, type LutRef } from '../../shared/lut.ts'
+import type { EditLayer } from '../../shared/layers.ts'
 import { samePresetName } from '../../shared/preset.ts'
 import type { RouteDecision, SuggestCard } from '../../shared/protocol.ts'
 import { errorText, isAbort, isUnauthorized, postEdit, postSuggest } from '../api/client'
@@ -8,6 +9,7 @@ import { bitmapsToClose, cutAfter, pushSnapshot, type Snapshot } from '../core/h
 import type { Preset } from '../core/presets'
 import type { DecodedImage } from '../image/decode'
 import { prepareForModel, prepareForRouting, type Sizable } from '../image/prepare'
+import { applyLocalLayers, isLocalLayer, preloadLocalMasks } from '../image/localLayer'
 import type { ChatMessage } from '../ui/ChatPanel'
 
 /**
@@ -62,9 +64,13 @@ export type GenerationDeps = {
   /** 当前底图。生成送的是**它**（不是原图、也不是画布），见 `runGenerate`。 */
   image: DecodedImage | null
   setImage: (img: DecodedImage) => void
+  /** 新版本出生时把文字层状态一起换过去（★ 2026-10-19）。 */
+  setLayers: (layers: EditLayer[]) => void
   /** 当前参数。参数那半立刻生效（本地、免费），生成那半只把它当**文本上下文**。 */
   params: Adjustments
   setParams: (p: Adjustments) => void
+  /** 当前这一版的文字层（★ 2026-10-19）；新版本要接着带过去。 */
+  layers: EditLayer[]
   /**
    * 当前滤镜（★ 2026-10-05）。**它只服务"就是此刻"那两条路**（`send` / 卡片
    * 触发的 `applyDecision` —— 那两条传的是"现在手上这个"）。
@@ -87,7 +93,7 @@ export type GenerationDeps = {
   luts: LutMeta[]
   /**
    * ★ 2026-10-10（「我的预设」）：用户自己的预设清单 —— **前端形态**
-   * （`core/presets` 的 `Preset`：`label` 是名字、`adjustments` 是那 15 个参数；
+   * （`core/presets` 的 `Preset`：`label` 是名字、`adjustments` 是那 50 个参数；
    * App 传的是它 `useMemo` 过的那个数组）。
    *
    * ⚠️ 它和协议里的 `RouteRequest.presets`（发给模型的那份"名字 + 参数"）是
@@ -160,7 +166,7 @@ export type GenerationDeps = {
 
 export function useGeneration(deps: GenerationDeps) {
   const {
-    image, setImage, params, setParams, lut, setLut, luts, myPresets, baseSeqRef, idRef, setBusy,
+    image, setImage, setLayers, params, setParams, layers, lut, setLut, luts, myPresets, baseSeqRef, idRef, setBusy,
     setUser, noticeBad, setCards, setPending, setPendingReplace, pendingRef, setMessages, setHistory,
     flushEdit, tipId, setCursorId, cursorIdRef, markDirty,
   } = deps
@@ -191,6 +197,7 @@ export function useGeneration(deps: GenerationDeps) {
     editPrompt: string
     paramsAtStep: Adjustments
     lutAtStep: LutRef | null
+    layersAtStep: EditLayer[]
     source: Sizable
     origin: { stepId: number; keepFromMsg: number }
     reply: string
@@ -237,7 +244,7 @@ export function useGeneration(deps: GenerationDeps) {
    */
   const runGenerate = useCallback(async (
     editPrompt: string, messageId: number, paramsAtStep: Adjustments,
-    lutAtStep: LutRef | null, source: Sizable,
+    lutAtStep: LutRef | null, layersAtStep: EditLayer[], source: Sizable,
     /**
      * ★ 2026-10-05：这一版是从哪长出来的 —— 切口的**切点** + 切对话时
      * "从哪条消息起保留"（设计 §4.2/4.3）。
@@ -272,9 +279,28 @@ export function useGeneration(deps: GenerationDeps) {
     //   钱已经花了，但写错地方更坏（§9 那三条"错了不会报错"里就有"串会话"）。
     const seqAtStart = baseSeqRef.current
     setBusy(BUSY_GENERATING)
+    // ★ 2026-10-19：局部层是**像素效果**，不是叠图。生成只看得到一张图，
+    //   所以先把局部层烤进送出去的那张，再从新步骤的 `layers` 里摘掉它们
+    //   （否则生成回来的画面上会再叠一遍，位置还对不上）。
+    let layersForStep = layersAtStep
     try {
+      let modelSource: Sizable = source
+      const local = layersAtStep.filter(isLocalLayer)
+      if (local.length > 0) {
+        await preloadLocalMasks(local)
+        const flattened = await applyLocalLayers(source, local)
+        if (flattened) {
+          modelSource = flattened
+          layersForStep = layersAtStep.filter(layer => !isLocalLayer(layer))
+        }
+      }
       // source 直接就是能 drawImage 的东西（位图或画布），不用再拆一层
-      const prepared = await prepareForModel(source)
+      let prepared: Awaited<ReturnType<typeof prepareForModel>>
+      try {
+        prepared = await prepareForModel(modelSource)
+      } finally {
+        if (modelSource !== source) (modelSource as ImageBitmap).close()
+      }
       const out = await postEdit({
         imageDataUrl: prepared.dataUrl,
         editPrompt,
@@ -329,7 +355,9 @@ export function useGeneration(deps: GenerationDeps) {
           //   中文那句还得再过一遍模型才能变成它，而重跑不该再花一次路由的钱。
           //   （"保留人脸"那半句是服务端 buildEditPrompt 补的，重跑同样会补。）
           prompt: editPrompt,
-          base: nextBase, params: paramsAtStep, isOriginal: false, thumb: '',
+          base: nextBase, params: paramsAtStep, layers: layersForStep,
+          isOriginal: false, thumb: '',
+          editLabel: '生成式编辑',
           // ★ 2026-10-05（滤镜）：这一步的滤镜**用传进来的那个**（`lutAtStep`），
           //   不是闭包里"此刻手上"的那个 —— 理由见函数头（`onRerun` 先跳再重掷）。
           lut: lutAtStep,
@@ -367,6 +395,7 @@ export function useGeneration(deps: GenerationDeps) {
       //   （`x.id <= stepId || x.id >= keepFromMsg`），先插再切虽然也留得住，
       //   但"先切干净、再落新的一句"读起来才是这件事本身。
       setMessages(m => [...m, { id: messageId, role: 'assistant', text: reply }])
+      setLayers(layersForStep)
       setImage(nextBase)
       // ★ 2026-10-08（账本 Task 7）：**新版本出生 = 这一版的现在变了**，而且变的
       //   是**像素**（`nextBase` 是刚花钱生成回来的那张）—— 记给落盘那边，
@@ -400,7 +429,7 @@ export function useGeneration(deps: GenerationDeps) {
       //   ⚠️ 环境还成不成立**不在这一刻判**（用户可能跳走又跳回来）——
       //   点击那一刻再验（见 retryGeneration）。
       retryRef.current = {
-        editPrompt, paramsAtStep, lutAtStep, source, origin, reply, seq: seqAtStart,
+        editPrompt, paramsAtStep, lutAtStep, layersAtStep, source, origin, reply, seq: seqAtStart,
       }
       setRetryId(say(errorText(e, '这次没改成功，再试一次？')))
     } finally {
@@ -461,7 +490,7 @@ export function useGeneration(deps: GenerationDeps) {
       return
     }
     void runGenerate(r.editPrompt, nextId(), r.paramsAtStep, r.lutAtStep,
-      r.source, r.origin, r.reply)
+      r.layersAtStep, r.source, r.origin, r.reply)
     // ⚠️ 依赖里没有 `nextId`（它只碰 ref —— 和 `say` 那边一个口径）。
   }, [runGenerate, noticeBad])
 
@@ -587,7 +616,7 @@ export function useGeneration(deps: GenerationDeps) {
       // ★ T11：传 `nextLut`（这一步做完之后那个），和 `nextParams` 对称 ——
       //   理由见上面滤镜那块。⚠️ 别"顺手"改回闭包的 `lut`。
       //   ⚠️ 切点用上面那个 `cur`（读一次、用两处 —— 见它那段注释）。
-      await runGenerate(d.editPrompt, mid, nextParams, nextLut, image.bitmap,
+      await runGenerate(d.editPrompt, mid, nextParams, nextLut, layers, image.bitmap,
         { stepId: cur, keepFromMsg }, replyText)
       return
     }
@@ -610,7 +639,7 @@ export function useGeneration(deps: GenerationDeps) {
     // ★ 2026-10-05（设计 §4.5）：`tipId` 和 `setPendingReplace` 也进来 ——
     //   前者判"出发的那一步还是不是最新"（要不要先问一句），后者是挂那条确认条；
     //   漏了 `tipId`，站在新 tip 上生成会被当成"从旧步骤出发"，白白多问一次。
-  }, [params, say, runGenerate, image, lut, luts, myPresets, setLut, tipId, setPendingReplace])
+  }, [params, layers, say, runGenerate, image, lut, luts, myPresets, setLut, tipId, setPendingReplace])
 
   /**
    * 拉建议卡片。

@@ -17,6 +17,8 @@ import type { WorkMeta } from '../../shared/works.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
 import AdjustmentPanel from './AdjustmentPanel.tsx'
 import { ZERO, type Adjustments } from '../../shared/adjustments.ts'
+import type { HslBandId } from '../core/hslPick'
+import type { ColorReading } from '../core/colorSample'
 
 /** 「从我的作品里选」拉的清单 —— 假掉它（真的会走网络）。
  *  `fileUrl` 等其余导出**保留真的**：纯字符串拼接，真跑一遍正好把
@@ -48,12 +50,44 @@ let needThumbsCalls = 0
 let pickedLut: number | null | 'x' = 'x'
 let wentImport = false
 let retriedLuts = 0
+let autoCalls = 0
+let recommendCalls = 0
+let hslPickCalls = 0
+let colorSampleCalls = 0
+let copyColorCalls = 0
 
-function Harness({ lutOpen = false, luts = lutsFromTest }: { lutOpen?: boolean; luts?: LutMeta[] } = {}) {
-  const [v, setV] = useState<Adjustments>(ZERO)
+function Harness({
+  lutOpen = false, luts = lutsFromTest, initial,
+  hslPickedBand = null, hslPickSeq = 0,
+  colorSampling = false, colorSample = null,
+}: {
+  lutOpen?: boolean
+  luts?: LutMeta[]
+  initial?: Partial<Adjustments>
+  hslPickedBand?: HslBandId | null
+  hslPickSeq?: number
+  colorSampling?: boolean
+  colorSample?: ColorReading | null
+} = {}) {
+  const [v, setV] = useState<Adjustments>({ ...ZERO, ...initial })
   return (
     <AdjustmentPanel
       value={v} onChange={setV} onReset={() => setV(ZERO)}
+      onCopyAdjustments={() => {}}
+      onPasteAdjustments={() => {}}
+      canPasteAdjustments={false}
+      photoFile={null}
+      image={{ width: 1200, height: 800 }}
+      onAuto={() => { autoCalls++ }}
+      onRecommend={() => { recommendCalls++ }}
+      hslPicking={false}
+      onHslPick={() => { hslPickCalls++ }}
+      hslPickedBand={hslPickedBand}
+      hslPickSeq={hslPickSeq}
+      colorSampling={colorSampling}
+      colorSample={colorSample}
+      onColorSample={() => { colorSampleCalls++ }}
+      onCopyColor={() => { copyColorCalls++ }}
       defaultLutOpen={lutOpen}
       onMatchReference={f => { matchedRef = f }}
       onMatchWork={w => { matchedWork = w }}
@@ -66,6 +100,11 @@ function Harness({ lutOpen = false, luts = lutsFromTest }: { lutOpen?: boolean; 
       onNeedLutThumbs={() => { needThumbsCalls++ }}
       onGoImport={() => { wentImport = true }}
       onRetryLuts={() => { retriedLuts++ }}
+      layers={[]}
+      onToggleLayer={() => {}}
+      onMoveLayer={() => {}}
+      onDeleteLayer={() => {}}
+      onEditLayer={() => {}}
       // ★ 2026-10-10（「我的预设」）：这一份测的是面板本体的行为（折叠 / 分组 /
       //   照着这张调），预设那一块的验收在 `App.adjust.test.tsx`（R3）——
       //   这里给个"没有、到手了"的安静底，只为满足 props 形状。
@@ -93,27 +132,180 @@ async function click(el: Element) {
   })
 }
 
+async function search(container: HTMLElement, text: string) {
+  const input = container.querySelector('.panel-search input') as HTMLInputElement
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  await act(async () => {
+    setter.call(input, text)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  return input
+}
+
 /** 按组标题找那一组（组数/顺序变了时，找错的组会当场红，不会静默串组）。 */
 function groupOf(container: HTMLElement, title: string): HTMLElement {
   return [...container.querySelectorAll<HTMLElement>('.panel-group')]
     .find(g => g.querySelector('.panel-group-title')?.textContent === title)!
 }
 
+describe('★ 参数搜索：九十四根滑杆不用一路滚', () => {
+  it('按参数名只留下包含它的组，并显示对应滑杆', async () => {
+    const container = await mount(<Harness />)
+    await search(container, '磨皮')
+    const titles = [...container.querySelectorAll('.panel-groups .panel-group-title')]
+      .map(e => e.textContent)
+    expect(titles).toEqual(['效果'])
+    expect(groupOf(container, '效果').querySelector('.slider-label')?.textContent)
+      .not.toBe('亮度')
+    expect([...groupOf(container, '效果').querySelectorAll('.slider-label')]
+      .map(e => e.textContent)).toContain('磨皮')
+  })
+
+  it('按组名也能找到；清空后十三组原样回来', async () => {
+    const container = await mount(<Harness />)
+    const input = await search(container, '细节')
+    expect([...container.querySelectorAll('.panel-groups .panel-group-title')]
+      .map(e => e.textContent)).toEqual(['细节'])
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape', bubbles: true, cancelable: true,
+      }))
+    })
+    expect(input.value).toBe('')
+    expect(container.querySelectorAll('.panel-groups .panel-group').length).toBe(13)
+    expect(container.querySelector('.panel-search-empty')).toBeNull()
+  })
+
+  it('没有结果时明确说清，并提供清除按钮', async () => {
+    const container = await mount(<Harness />)
+    await search(container, '不存在的参数')
+    expect(container.querySelector('.panel-groups .panel-group')).toBeNull()
+    expect(container.querySelector('.panel-search-empty')?.textContent)
+      .toContain('不存在的参数')
+    const clear = container.querySelector('.panel-search-clear') as HTMLButtonElement
+    expect(clear.getAttribute('aria-label')).toBe('清除参数搜索')
+    await click(clear)
+    expect((container.querySelector('.panel-search input') as HTMLInputElement).value).toBe('')
+    expect(container.querySelectorAll('.panel-groups .panel-group').length).toBe(13)
+  })
+})
+
 describe('面板的分组（2026-10-04）', () => {
-  it('五个组标题都在（光效/色彩/色彩平衡/分离色调/效果）', async () => {
+  it('★ 颜色取样：入口只发动作，读数显示 HEX / RGB / HSL 并可复制', async () => {
+    colorSampleCalls = 0
+    copyColorCalls = 0
+    const container = await mount(
+      <Harness colorSample={{
+        rgb: [18, 52, 86], hex: '#123456', hsl: [210, 65, 20],
+      }} />,
+    )
+    const sampleButton = [...container.querySelectorAll('button')]
+      .find(button => button.textContent?.trim() === '颜色取样')!
+    await click(sampleButton)
+    expect(colorSampleCalls).toBe(1)
+
+    const reading = container.querySelector('[aria-label="颜色读数"]')!
+    expect(reading.textContent).toContain('#123456')
+    expect(reading.textContent).toContain('RGB 18 · 52 · 86')
+    expect(reading.textContent).toContain('HSL 210° · 65% · 20%')
+    await click(reading.querySelector('.color-sample-copy')!)
+    expect(copyColorCalls).toBe(1)
+  })
+
+  it('★ 面板头的「自动」把动作交给上层（本地算法在 App 里）', async () => {
+    autoCalls = 0
+    const container = await mount(<Harness />)
+    await click([...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '自动')!)
+    expect(autoCalls).toBe(1)
+  })
+
+  it('panel recommend delegates to the app', async () => {
+    recommendCalls = 0
+    const container = await mount(<Harness />)
+    await click([...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '推荐')!)
+    expect(recommendCalls).toBe(1)
+  })
+
+  it('十三个组标题都在（光效/色彩/黑白/色彩平衡/分离色调/效果/细节/HSL/曲线/美颜/几何/镜头/镜头校正）', async () => {
     const container = await mount(<Harness />)
     // ⚠️ 数的是 **`.panel-groups` 里面**那几组（★ 2026-10-05）：从滤镜那一栏进来
     //    之后，「滤镜」也是一个 `.panel-group`（同样的折叠长相），但它是**参数组
     //    之外的**一段（设计 §5.2 有意沿用同一个语言）。不圈定范围的话，这条会
-    //    把"滤镜"也算进"五组参数"里 —— 那两件事就混了。
+    //    把"滤镜"也算进"八组参数"里 —— 那两件事就混了。
     const titles = [...container.querySelectorAll('.panel-groups .panel-group-title')]
       .map(e => e.textContent)
-    expect(titles).toEqual(['光效', '色彩', '色彩平衡', '分离色调', '效果'])
+    expect(titles).toEqual([
+      '光效', '色彩', '黑白', '色彩平衡', '分离色调', '效果', '细节', 'HSL', '曲线', '美颜', '几何',
+      '镜头', '镜头校正',
+    ])
   })
 
-  it('15 根滑块都在（每组里数量对）', async () => {
+  it('51 根滑块都在（36 根基础 + HSL 当前色带 3 根 + 美颜 2 根 + 几何 2 根 + 镜头 5 根 + 镜头校正 3 根）', async () => {
     const container = await mount(<Harness />)
-    expect(container.querySelectorAll('.slider').length).toBe(15)
+    expect(container.querySelectorAll('.slider').length).toBe(51)
+  })
+
+  it('光效组：白色 / 黑色色阶都是 -100~100', async () => {
+    const container = await mount(<Harness />)
+    const group = groupOf(container, '光效')
+    expect([...group.querySelectorAll('.slider-label')].map(e => e.textContent))
+      .toEqual(['亮度', '对比度', '高光', '阴影', '白色色阶', '黑色色阶'])
+    const inputs = [...group.querySelectorAll<HTMLInputElement>('input[type="range"]')]
+    expect(inputs.slice(4).map(i => [i.min, i.max])).toEqual([
+      ['-100', '100'], ['-100', '100'],
+    ])
+  })
+
+  it('效果组：清晰度 / 暗角 / 磨皮 / 去雾 / HDR / 柔光，去雾 -100~100，HDR / 柔光 0~100', async () => {
+    const container = await mount(<Harness />)
+    const group = groupOf(container, '效果')
+    expect([...group.querySelectorAll('.slider-label')].map(e => e.textContent))
+      .toEqual(['清晰度', '暗角', '磨皮', '去雾', 'HDR 光比', '柔光'])
+    const dehaze = [...group.querySelectorAll<HTMLInputElement>('input[type="range"]')][3]!
+    expect([dehaze.min, dehaze.max]).toEqual(['-100', '100'])
+    const hdr = [...group.querySelectorAll<HTMLInputElement>('input[type="range"]')][4]!
+    expect([hdr.min, hdr.max]).toEqual(['0', '100'])
+    const glow = [...group.querySelectorAll<HTMLInputElement>('input[type="range"]')][5]!
+    expect([glow.min, glow.max]).toEqual(['0', '100'])
+  })
+
+  it('色彩组：色温与色调并排，色调也是 -100~100', async () => {
+    const container = await mount(<Harness />)
+    const group = groupOf(container, '色彩')
+    expect([...group.querySelectorAll('.slider-label')].map(e => e.textContent))
+      .toEqual(['色温', '色调', '自然饱和度', '饱和度'])
+    const tint = [...group.querySelectorAll<HTMLInputElement>('input[type="range"]')][1]!
+    expect([tint.min, tint.max]).toEqual(['-100', '100'])
+  })
+
+  it('白平衡预设只改色温 / 色调，保留曝光', async () => {
+    const container = await mount(<Harness initial={{ exposure: 17 }} />)
+    const group = groupOf(container, '色彩')
+    const presets = group.querySelector('[aria-label="白平衡预设"]') as HTMLElement
+    expect([...presets.querySelectorAll('button')].map(b => b.textContent?.trim()))
+      .toEqual(['日光', '阴天', '阴影', '钨丝灯', '荧光灯'])
+
+    await click([...presets.querySelectorAll('button')]
+      .find(b => b.textContent?.trim() === '阴天')!)
+    const valueOf = (label: string) => [...group.querySelectorAll('.slider')]
+      .find(row => row.querySelector('.slider-label')?.textContent === label)
+      ?.querySelector('.slider-value')?.textContent
+    expect(valueOf('色温')).toBe('12')
+    expect(valueOf('色调')).toBe('4')
+    expect((presets.querySelector('button[aria-pressed="true"]') as HTMLButtonElement).textContent?.trim())
+      .toBe('阴天')
+  })
+
+  it('黑白组：强度 0~100，红 / 绿 / 蓝混色各为 -100~100', async () => {
+    const container = await mount(<Harness />)
+    const group = groupOf(container, '黑白')
+    expect([...group.querySelectorAll('.slider-label')].map(e => e.textContent))
+      .toEqual(['黑白强度', '红色混色', '绿色混色', '蓝色混色'])
+    const inputs = [...group.querySelectorAll<HTMLInputElement>('input[type="range"]')]
+    expect([inputs[0]!.min, inputs[0]!.max]).toEqual(['0', '100'])
+    for (const input of inputs.slice(1)) expect([input.min, input.max]).toEqual(['-100', '100'])
   })
 
   it('色彩平衡那组里有一个色轮 + 三根轴', async () => {
@@ -122,6 +314,158 @@ describe('面板的分组（2026-10-04）', () => {
     expect(group.querySelector('.color-wheel')).toBeTruthy()
     const labels = [...group.querySelectorAll('.slider-label')].map(e => e.textContent)
     expect(labels).toEqual(['青 — 红', '洋红 — 绿', '黄 — 蓝'])
+  })
+
+  it('细节组七根都在：锐化半径 / 蒙版、彩色降噪等控制齐全', async () => {
+    const container = await mount(<Harness />)
+    const group = groupOf(container, '细节')
+    const labels = [...group.querySelectorAll('.slider-label')].map(e => e.textContent)
+    expect(labels).toEqual([
+      '纹理', '锐化', '锐化半径', '锐化蒙版', '降噪', '彩色降噪', '颗粒',
+    ])
+    const inputs = [...group.querySelectorAll<HTMLInputElement>('input[type="range"]')]
+    expect([inputs[0]!.min, inputs[0]!.max]).toEqual(['-100', '100'])
+    for (const input of inputs.slice(1)) {
+      expect(input.min).toBe('0')
+      expect(input.max).toBe('100')
+    }
+  })
+
+  it('HSL 组：八个色带，切到绿带后三根滑块读的是绿色通道', async () => {
+    const container = await mount(<Harness initial={{ hslGreenHue: 40 }} />)
+    const group = groupOf(container, 'HSL')
+    const bands = [...group.querySelectorAll<HTMLButtonElement>('.hsl-band')]
+    expect(bands.map(b => b.textContent?.trim())).toEqual(['红', '橙', '黄', '绿', '青', '蓝', '紫', '洋红'])
+
+    const green = bands.find(b => b.textContent?.trim() === '绿')!
+    await click(green)
+    expect(green.getAttribute('aria-pressed')).toBe('true')
+    const labels = [...group.querySelectorAll('.slider-label')].map(e => e.textContent)
+    expect(labels).toEqual(['色相', '饱和度', '明度'])
+    const values = [...group.querySelectorAll('.slider-value')].map(e => e.textContent)
+    expect(values[0]).toBe('40')
+    expect(values[1]).toBe('0')
+    expect(values[2]).toBe('0')
+  })
+
+  it('★ HSL 定向取色：按钮交给上层；取回蓝色后自动切到蓝带', async () => {
+    hslPickCalls = 0
+    const container = await mount(<Harness hslPickedBand="blue" hslPickSeq={1} />)
+    const group = groupOf(container, 'HSL')
+    const pick = [...group.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '从照片取色')!
+    await click(pick)
+    expect(hslPickCalls).toBe(1)
+
+    const blue = [...group.querySelectorAll<HTMLButtonElement>('.hsl-band')]
+      .find(b => b.getAttribute('aria-label') === '蓝色')!
+    expect(blue.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('曲线组：五个控制点可键盘调整，拉直按钮把五个点归零', async () => {
+    const container = await mount(<Harness initial={{ curveMidtones: 100 }} />)
+    const group = groupOf(container, '曲线')
+    expect(group.querySelector('.curve-svg')).toBeTruthy()
+    const points = [...group.querySelectorAll<SVGGElement>('[role="slider"]')]
+    expect(points).toHaveLength(5)
+    const middle = points[2]!
+    expect(middle.getAttribute('aria-valuenow')).toBe('100')
+    await act(async () => {
+      middle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(middle.getAttribute('aria-valuenow')).toBe('98')
+    await click(group.querySelector('.curve-reset')!)
+    expect(middle.getAttribute('aria-valuenow')).toBe('0')
+  })
+
+  it('★ RGB 曲线：切到红色通道，拖中间点只改红色参数；切回 RGB 整体曲线不受影响', async () => {
+    const container = await mount(<Harness />)
+    const group = groupOf(container, '曲线')
+    const channel = (name: string) => [...group.querySelectorAll<HTMLButtonElement>('.crop-chip')]
+      .find(b => (b.textContent ?? '').trim() === name)!
+
+    await click(channel('红'))
+    let points = [...group.querySelectorAll<SVGGElement>('[role="slider"]')]
+    expect(points.map(p => p.getAttribute('aria-label'))).toEqual([
+      '红色曲线 黑场', '红色曲线 阴影', '红色曲线 中间调',
+      '红色曲线 高光', '红色曲线 白场',
+    ])
+    const redMiddle = points[2]!
+    await act(async () => {
+      redMiddle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(redMiddle.getAttribute('aria-valuenow')).toBe('2')
+
+    await click(channel('RGB'))
+    points = [...group.querySelectorAll<SVGGElement>('[role="slider"]')]
+    expect(points[2]!.getAttribute('aria-label')).toBe('曲线 中间调')
+    expect(points[2]!.getAttribute('aria-valuenow')).toBe('0')
+  })
+
+  it('美颜组：美白 / 红润两根都是 0~100', async () => {
+    const container = await mount(<Harness />)
+    const group = groupOf(container, '美颜')
+    expect([...group.querySelectorAll('.slider-label')].map(e => e.textContent))
+      .toEqual(['美白', '红润'])
+    for (const input of group.querySelectorAll<HTMLInputElement>('input[type="range"]')) {
+      expect(input.min).toBe('0')
+      expect(input.max).toBe('100')
+    }
+  })
+
+  it('几何组：垂直透视 / 水平透视两根都是 -100~100', async () => {
+    const container = await mount(<Harness />)
+    const group = groupOf(container, '几何')
+    expect([...group.querySelectorAll('.slider-label')].map(e => e.textContent))
+      .toEqual(['垂直透视', '水平透视'])
+    for (const input of group.querySelectorAll<HTMLInputElement>('input[type="range"]')) {
+      expect(input.min).toBe('-100')
+      expect(input.max).toBe('100')
+    }
+  })
+
+  it('镜头组：虚化强度 0~100，清晰范围 / 过渡 / 焦点左右 / 焦点上下 -100~100', async () => {
+    const container = await mount(<Harness />)
+    const group = groupOf(container, '镜头')
+    expect([...group.querySelectorAll('.slider-label')].map(e => e.textContent))
+      .toEqual(['虚化强度', '清晰范围', '过渡', '焦点左右', '焦点上下'])
+    const inputs = [...group.querySelectorAll<HTMLInputElement>('input[type="range"]')]
+    expect(inputs.map(i => [i.min, i.max])).toEqual([
+      ['0', '100'], ['-100', '100'], ['-100', '100'], ['-100', '100'], ['-100', '100'],
+    ])
+  })
+
+  it('★ 镜头组切到移轴：隐藏焦点左右，换成角度和清晰带位置', async () => {
+    const container = await mount(<Harness />)
+    const group = groupOf(container, '镜头')
+    const tilt = [...group.querySelectorAll('button')]
+      .find(node => (node.textContent ?? '').trim() === '移轴')!
+    expect(tilt).toBeTruthy()
+
+    await click(tilt)
+
+    expect([...group.querySelectorAll('.slider-label')].map(e => e.textContent))
+      .toEqual(['虚化强度', '清晰范围', '过渡', '清晰带位置', '移轴角度'])
+    expect(group.querySelector('[aria-label="虚化方式"]')?.textContent).toContain('移轴')
+
+    const radial = [...group.querySelectorAll('button')]
+      .find(node => (node.textContent ?? '').trim() === '径向')!
+    await click(radial)
+    expect([...group.querySelectorAll('.slider-label')].map(e => e.textContent))
+      .toEqual(['虚化强度', '清晰范围', '过渡', '焦点左右', '焦点上下'])
+  })
+
+  it('镜头校正组：畸变校正 / 色差校正 / 暗角校正都从 -100 到 100', async () => {
+    const container = await mount(<Harness />)
+    const group = groupOf(container, '镜头校正')
+    expect([...group.querySelectorAll('.slider-label')].map(e => e.textContent))
+      .toEqual(['畸变校正', '色差校正', '暗角校正'])
+    const inputs = [...group.querySelectorAll<HTMLInputElement>('input[type="range"]')]
+    expect(inputs.map(i => [i.min, i.max])).toEqual([
+      ['-100', '100'], ['-100', '100'], ['-100', '100'],
+    ])
   })
 
   /**
@@ -156,20 +500,74 @@ describe('面板的分组（2026-10-04）', () => {
     expect(container.querySelectorAll('.slider').length).toBe(before)
   })
 
-  it('分离色调的三根用各自的范围（色相到 360，强度到 100）', async () => {
+  it('★ 分组重置：只清当前组，别的组原样保留', async () => {
+    const container = await mount(<Harness initial={{ exposure: 17, contrast: 12, saturation: 33 }} />)
+    const reset = container.querySelector('[aria-label="重置光效"]') as HTMLButtonElement
+    expect(reset).toBeTruthy()
+    await click(reset)
+
+    const valueOf = (label: string) => [...container.querySelectorAll('.slider')]
+      .find(row => row.querySelector('.slider-label')?.textContent === label)
+      ?.querySelector('.slider-value')?.textContent
+    expect(valueOf('亮度')).toBe('0')
+    expect(valueOf('对比度')).toBe('0')
+    expect(valueOf('饱和度')).toBe('33')
+    expect(container.querySelector('[aria-label="重置光效"]')).toBeNull()
+    expect(container.querySelector('[aria-label="重置色彩"]')).toBeTruthy()
+  })
+
+  it('★ 短手机视口默认先收起面板；展开、再收起时参数和入口都还在', async () => {
+    const oldWidth = window.innerWidth
+    const oldHeight = window.innerHeight
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 664 })
+    try {
+      const container = await mount(<Harness initial={{ exposure: 17 }} />)
+      const toggle = () => container.querySelector<HTMLButtonElement>('.panel-collapse-toggle')!
+      const content = () => container.querySelector<HTMLElement>('#adjustment-panel-content')!
+
+      expect(toggle().getAttribute('aria-expanded')).toBe('false')
+      expect(toggle().getAttribute('aria-label')).toBe('展开调色参数')
+      expect(container.querySelector('.panel')?.classList.contains('panel-collapsed')).toBe(true)
+      expect(content()).toBeTruthy()
+
+      await click(toggle())
+      expect(container.querySelector('.panel')?.classList.contains('panel-collapsed')).toBe(false)
+      expect(toggle().getAttribute('aria-expanded')).toBe('true')
+      expect(toggle().getAttribute('aria-label')).toBe('收起调色面板')
+      expect(container.querySelectorAll('.panel-group').length).toBeGreaterThan(10)
+
+      await click(toggle())
+      expect(container.querySelector('.panel')?.classList.contains('panel-collapsed')).toBe(true)
+      expect(toggle().getAttribute('aria-expanded')).toBe('false')
+      expect(toggle().getAttribute('aria-label')).toBe('展开调色参数')
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: oldWidth })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: oldHeight })
+    }
+  })
+
+  it('色彩分级六根：高光 / 阴影 / 中间调三色相、两组强度与明暗平衡', async () => {
     const container = await mount(<Harness />)
     const group = groupOf(container, '分离色调')
-    const ranges = [...group.querySelectorAll('input[type=range]')]
-      .map(i => (i as HTMLInputElement).getAttribute('max'))
-    expect(ranges.filter(m => m === '360')).toHaveLength(2)   // 两条色相带
-    expect(ranges).toContain('100')                           // 强度
+    expect([...group.querySelectorAll('.slider-label')].map(e => e.textContent))
+      .toEqual([
+        '亮部颜色', '暗部颜色', '强度',
+        '中间调颜色', '中间调强度', '明暗平衡',
+      ])
+    const ranges = [...group.querySelectorAll<HTMLInputElement>('input[type=range]')]
+      .map(i => [i.min, i.max])
+    expect(ranges).toEqual([
+      ['0', '360'], ['0', '360'], ['0', '100'],
+      ['0', '360'], ['0', '100'], ['-100', '100'],
+    ])
   })
 
   /**
    * ★ 2026-10-05：原来这里有一条「套一个预设 → 新参数一并归零」（点面板上那排
    * 药丸，看色轮回中心）。**那排药丸搬去照片左边的预设栏了**（`PresetRail`），
    * 面板里不再有预设入口，所以这条测试跟着搬走 —— 它的两半现在住在这儿：
-   *   · "每个预设都是 `{...ZERO, …}` 的长拷贝、十五个键一个不缺"
+   *   · "每个预设都是 `{...ZERO, …}` 的长拷贝、五十个键一个不缺"
    *     → `core/presets.test.ts`（字段完整性那条）；
    *   · "点一下 = **整组赋值**，不是往当前参数上叠"
    *     → `App.test.tsx`「只动参数（不推快照、不说话）也要落盘」那条
@@ -186,7 +584,7 @@ describe('面板的分组（2026-10-04）', () => {
  */
 describe('「照着这张调」的两个来源（2026-10-05）', () => {
   const W = (id: number, updatedAt = 1): WorkMeta =>
-    ({ id, alias: null, createdAt: 1, updatedAt, bytes: 1, hasThumb: true })
+    ({ id, alias: null, createdAt: 1, updatedAt, bytes: 1, hasThumb: true, rating: 0, flag: 0 })
 
   beforeEach(() => {
     listWorksMock.mockReset()

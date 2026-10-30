@@ -1,4 +1,6 @@
-import { ZERO, PARAM_KEYS, type Adjustments } from '../../shared/adjustments.ts'
+import {
+  blendAdjustments, ZERO, PARAM_KEYS, type Adjustments,
+} from '../../shared/adjustments.ts'
 
 export type Preset = {
   id: string
@@ -7,7 +9,7 @@ export type Preset = {
 }
 
 /**
- * 一键风格 = 一组预设好的八参数值。
+ * 一键风格 = 一组预设好的调色参数。
  * 不需要单独的引擎——应用预设就是把这组值直接赋给 params。
  */
 export const PRESETS: readonly Preset[] = [
@@ -49,9 +51,13 @@ export const PRESETS: readonly Preset[] = [
   {
     id: 'bw',
     label: '黑白',
-    // 饱和度 -100 在 shader 里正好是 `sat = 0`（朝灰点插值到 0）= 真灰，
-    // 不是"接近灰"；对比度/清晰度提一档，否则纯灰会显得平。
-    adjustments: { ...ZERO, contrast: 18, highlights: -14, shadows: 8, saturation: -100, clarity: 22, vignette: 10 },
+    // 用专用黑白混色保留通道权重：红多、绿少、蓝略增，肤色和天空不会一起
+    // 压成同一档灰；对比度 / 清晰度提一档，否则纯灰会显得平。
+    adjustments: {
+      ...ZERO, contrast: 18, highlights: -14, shadows: 8,
+      bwAmount: 100, bwRed: 35, bwGreen: -20, bwBlue: 10,
+      clarity: 22, vignette: 10,
+    },
   },
   {
     id: 'teal-orange',
@@ -82,6 +88,56 @@ export const PRESETS: readonly Preset[] = [
     label: '硬朗',
     // 风光那一路：反差 + 清晰度拉满，别用饱和度（会糊成一片），用自然饱和度。
     adjustments: { ...ZERO, exposure: 4, contrast: 24, highlights: -18, shadows: -10, vibrance: 20, clarity: 32, vignette: 12 },
+  },
+  // ── ★ 2026-10-17：磨皮（skinSmooth）进预设 —— 人像方向的起点 ────────────
+  {
+    id: 'portrait',
+    label: '柔光人像',
+    // 柔 = 低反差 + 负清晰度 + 磨皮中等偏上（55：能看出皮肤变干净，
+    // 又不到"塑料脸"那一档）；亮度微提、阴影抬一点让脸不发黑。
+    // ⚠️ skinSmooth 55 是**皮肤识别兜底**过的值 —— 磨皮只作用在被认成
+    //   肤色的像素上，背景再细也不会被糊。
+    adjustments: { ...ZERO, exposure: 4, contrast: -8, highlights: 8, shadows: 18, temperature: 4, vibrance: 8, clarity: -6, skinSmooth: 55, skinBrighten: 15, skinRosy: 8 },
+  },
+  // ── ★ 2026-10-17：细节组进预设 —— 街拍方向 ────────────────────────────
+  {
+    id: 'street',
+    label: '街拍质感',
+    // 锐一点、暗部抬一点、加一层轻颗粒：城市街道和夜景的方向。
+    // 颗粒只给 18，放大看有质感、缩略图不脏；锐化 32 够看出边缘，不出现白边。
+    adjustments: { ...ZERO, contrast: 10, shadows: 10, vibrance: 8, clarity: 10, sharpen: 32, grain: 18 },
+  },
+  // ── ★ 2026-10-18：夜景增强进预设 —— 暗光 / 高感照片的起点 ─────────────
+  {
+    id: 'night',
+    label: '夜景增强',
+    // 先把暗部抬起来、灯牌高光压住，再降噪；HDR 和一点柔光让霓虹不过分硬。
+    adjustments: {
+      ...ZERO, exposure: 8, contrast: 8, highlights: -18, shadows: 24,
+      vibrance: 12, clarity: 8, hdr: 38, noiseReduction: 28, glow: 10,
+    },
+  },
+  // ── ★ 2026-10-17：去雾进预设 —— 风景方向 ─────────────────────────────
+  {
+    id: 'landscape',
+    label: '通透风景',
+    // 雾天 / 远山最常点的组合：去雾把灰白的一层拉开，清晰度和自然饱和度
+    // 补回空气感；高光压一点，云层不过曝。
+    adjustments: { ...ZERO, exposure: 2, contrast: 8, highlights: -14, shadows: 8, vibrance: 12, clarity: 10, dehaze: 34 },
+  },
+  // ── ★ 2026-10-18：HDR 进预设 —— 大光比风景 ─────────────────────────
+  {
+    id: 'hdr-landscape',
+    label: 'HDR 风景',
+    // 逆光 / 大光比：暗部抬起来、高光压回去，再加一点局部反差和自然饱和度。
+    adjustments: { ...ZERO, contrast: 6, highlights: -26, shadows: 24, vibrance: 10, clarity: 14, hdr: 45 },
+  },
+  // ── ★ 2026-10-18：柔光进预设 —— 梦幻 / 逆光人像 ─────────────────────
+  {
+    id: 'soft-glow',
+    label: '柔光',
+    // 高光轻轻溢出、清晰度收一点，脸和灯牌都会柔下来；饱和度只加一点。
+    adjustments: { ...ZERO, exposure: 2, highlights: 6, shadows: 12, vibrance: 6, clarity: -8, glow: 40 },
   },
 ]
 
@@ -122,4 +178,43 @@ export function activePresetId(
   if (lutOn) return null
   if (PARAM_KEYS.every(k => a[k] === 0)) return ORIGINAL_ID
   return [...PRESETS, ...mine].find(p => PARAM_KEYS.every(k => p.adjustments[k] === a[k]))?.id ?? null
+}
+
+/**
+ * 从一组参数反推“它像哪套预设的百分之几”。刷新页面或恢复会话后，
+ * 参数仍然能还原强度滑杆和预设点亮状态，不需要给会话协议再加字段。
+ *
+ * 只有所有非零参数都严格符合同一比例时才算命中；普通手调参数不会
+ * 因为“看起来差不多”被误认成预设。
+ */
+export function inferPresetBlend(
+  a: Adjustments, mine: readonly Preset[] = [],
+): { preset: Preset; amount: number } | null {
+  if (PARAM_KEYS.every(k => a[k] === 0)) return null
+  for (const preset of [...PRESETS, ...mine]) {
+    let amount: number | null = null
+    let matches = true
+    for (const key of PARAM_KEYS) {
+      const target = preset.adjustments[key]
+      const got = a[key]
+      if (target === 0) {
+        if (got !== 0) {
+          matches = false
+          break
+        }
+        continue
+      }
+      if (amount === null) amount = Math.round((got / target) * 100)
+      if (got !== Math.round((target * amount) / 100)) {
+        matches = false
+        break
+      }
+    }
+    if (!matches || amount === null || amount <= 0 || amount > 100) continue
+    const blended = blendAdjustments(ZERO, preset.adjustments, amount)
+    if (PARAM_KEYS.every(k => a[k] === blended[k])) {
+      return { preset, amount }
+    }
+  }
+  return null
 }

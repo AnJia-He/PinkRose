@@ -12,7 +12,10 @@ import { resolveClients, type ClientDeps } from './clientFor.ts'
 import { nowMs } from './clock.ts'
 import type { Config } from './config.ts'
 import { handleEdit } from './edit.ts'
-import { HttpError, asObject, readJsonBody, sendBytes, sendError, sendJson, str } from './http.ts'
+import {
+  HttpError, asObject, readJsonBody, readRequestBytes,
+  sendBytes, sendError, sendJson, str,
+} from './http.ts'
 import {
   activateConfig, createConfig, deleteConfig, listConfigs, normalizeBaseUrl,
   resolveSecretById, updateConfig, type ModelConfigDeps, type ModelKind,
@@ -21,6 +24,7 @@ import { assertModelHostAllowed, assertResolvedHostAllowed } from './hostGuard.t
 import { createLut, deleteLut, handleLutFile, listLuts, lutUsage, renameLut } from './luts.ts'
 import { createPreset, deletePreset, listPresets, renamePreset } from './presets.ts'
 import { QUOTA_BYTES, storedBytes } from './quota.ts'
+import { readPreferences, writePreferences } from './prefs.ts'
 import { createLimiter, type Limiter } from './ratelimit.ts'
 import { probeConnection } from './modeltest.ts'
 import type { SerialQueue } from './queue.ts'
@@ -36,9 +40,26 @@ import {
 import type { Storage } from './storage.ts'
 import { SnError } from './sn.ts'
 import { handleSuggest } from './suggest.ts'
+import { renderMotionMp4 } from './motion.ts'
+import { convertToAvif } from './imageConvert.ts'
+import { convertToHeic, getHeicCapability } from './heicConvert.ts'
+import {
+  convertImportBytesToJpeg, convertImportToJpeg, getImportCapability, IMPORT_SOURCE_LIMIT,
+} from './importConvert.ts'
+import {
+  createVideoSession, deleteVideoSession, finishVideo, getVideoSession,
+  parseVideoFinish, parseVideoFrameBatch, saveVideoMusic, saveVideoSource, writeVideoFrames,
+} from './video.ts'
+import {
+  addWorksToAlbum, createAlbum, deleteAlbum, listAlbums,
+  removeWorksFromAlbum, renameAlbum,
+} from './albums.ts'
 import {
   handleCreateWork, handleDeleteWork, handleDeleteWorks, handleGetWork,
-  handleListWorks, handleRenameWork, handleReplaceWork, handleWorkFile, handleWorkThumb,
+  handleFlagWork, handleFlagWorks, handleListWorks, handleRateWork, handleRateWorks,
+  handleRenameWork, handleReplaceWork,
+  handleCreateWorkShare, handleGetSharedWork, handleRevokeWorkShare, handleSharedWorkFile,
+  handleWorkFile, handleWorkThumb, handleColorWork, handleColorWorks,
 } from './works.ts'
 
 export type AppDeps = {
@@ -336,6 +357,24 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       sendJson(res, 200, { ok: true })
       return
     }
+    // ── 公开分享（2026-10-19）────────────────────────────────────────────
+    // token 本身就是能力：拿到链接的人能看图，但看不到配方 / 用户 / 文件名。
+    // 这两条**必须在 requireUser 之前**；关掉分享后同一个 token 立刻 404。
+    const sharedFileRoute = /^\/api\/share\/([A-Za-z0-9_-]{16,64})\/(image|thumb)$/.exec(path)
+    if (req.method === 'GET' && sharedFileRoute) {
+      res.setHeader('cache-control', 'no-store')
+      const { bytes, contentType } = await handleSharedWorkFile(
+        sharedFileRoute[1]!, storeDeps, sharedFileRoute[2] === 'thumb',
+      )
+      sendBytes(res, 200, bytes, contentType)
+      return
+    }
+    const sharedRoute = /^\/api\/share\/([A-Za-z0-9_-]{16,64})$/.exec(path)
+    if (req.method === 'GET' && sharedRoute) {
+      res.setHeader('cache-control', 'no-store')
+      sendJson(res, 200, handleGetSharedWork(sharedRoute[1]!, storeDeps))
+      return
+    }
     // ── 账号：注册 / 登录 / 退出 / 我是谁 / 改密码 ─────────────────────────
     // 这五个不需要 requireUser：注册和登录正是来拿票的，退出只清一个 cookie，
     // 另外两个（/api/me、/api/password）自己在下面调 requireUser。
@@ -428,9 +467,16 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
         .prepare('SELECT COUNT(*) AS n FROM works WHERE user_id = ?')
         .get(user.id) as { n: number }).n
       sendJson(res, 200, {
-        user,
+        user: { ...user, preferences: readPreferences(deps.auth.db, user.id) },
         usage: { count, bytes: storedBytes(deps.auth.db, user.id), limit: QUOTA_BYTES },
       })
+      return
+    }
+    if (req.method === 'PATCH' && path === '/api/me') {
+      const user = requireUser(deps, req, res)
+      const body = asObject(await readJsonBody(req))
+      const preferences = writePreferences(deps.auth.db, user.id, body.preferences)
+      sendJson(res, 200, { user: { ...user, preferences } })
       return
     }
     if (req.method === 'DELETE' && path === '/api/account') {
@@ -463,6 +509,46 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       sendJson(res, 200, { user: next })
       return
     }
+    if (path === '/api/albums') {
+      const user = requireUser(deps, req, res)
+      if (req.method === 'GET') {
+        sendJson(res, 200, listAlbums(user, storeDeps))
+        return
+      }
+      if (req.method === 'POST') {
+        sendJson(res, 200, createAlbum(await readJsonBody(req), user, storeDeps))
+        return
+      }
+    }
+    const albumOneRoute = /^\/api\/albums\/(\d+)$/.exec(path)
+    if (albumOneRoute && req.method === 'PATCH') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, renameAlbum(
+        Number(albumOneRoute[1]), await readJsonBody(req), user, storeDeps,
+      ))
+      return
+    }
+    if (albumOneRoute && req.method === 'DELETE') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, deleteAlbum(Number(albumOneRoute[1]), user, storeDeps))
+      return
+    }
+    const albumWorksRoute = /^\/api\/albums\/(\d+)\/works$/.exec(path)
+    if (albumWorksRoute && req.method === 'POST') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, addWorksToAlbum(
+        Number(albumWorksRoute[1]), await readJsonBody(req), user, storeDeps,
+      ))
+      return
+    }
+    const albumRemoveRoute = /^\/api\/albums\/(\d+)\/works\/remove$/.exec(path)
+    if (albumRemoveRoute && req.method === 'POST') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, removeWorksFromAlbum(
+        Number(albumRemoveRoute[1]), await readJsonBody(req), user, storeDeps,
+      ))
+      return
+    }
     if (req.method === 'POST' && path === '/api/works') {
       // 顺序同 /api/password：先认人，再读体。没登录的人不该有资格让服务器缓冲 12 MB。
       const user = requireUser(deps, req, res)
@@ -475,13 +561,15 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     }
     if (req.method === 'GET' && path === '/api/works') {
       const user = requireUser(deps, req, res)
+      const albumRaw = url.searchParams.get('album')
+      const albumId = albumRaw === null ? undefined : Number(albumRaw)
       // 依赖的形状和上面那条 POST 一字不差（理由也一样：库藏在 auth 里，整个 deps
       // 传下去编译器当场会拦）。GET 所以**不读请求体** —— 没什么可读的。
       //
       // 这条回的是**全部作品的元数据**，一张图、一条配方都不带 —— 要一次给完、
       // 又要小，才能让前端自己分组、搜索、再按屏幕上的位置去单取图（裁定 ③，
       // 细节见 works.ts 的 handleListWorks）。
-      sendJson(res, 200, handleListWorks(user, storeDeps))
+      sendJson(res, 200, handleListWorks(user, storeDeps, albumId))
       return
     }
     // ★ 全仓库第一个带路径参数的接口。这个仓库没有路由表（全是精确匹配），
@@ -504,6 +592,19 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       sendBytes(res, 200, bytes, contentType)
       return
     }
+    // 分享开关：POST = 开启 / 取回 token；DELETE = 停止分享（幂等）。
+    // 两条都不读请求体，也不 bump updated_at（它同时是图片缓存钥匙和日期名）。
+    const shareWorkRoute = /^\/api\/works\/(\d+)\/share$/.exec(path)
+    if (shareWorkRoute && req.method === 'POST') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, handleCreateWorkShare(Number(shareWorkRoute[1]), user, storeDeps))
+      return
+    }
+    if (shareWorkRoute && req.method === 'DELETE') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, handleRevokeWorkShare(Number(shareWorkRoute[1]), user, storeDeps))
+      return
+    }
     // 单张的详情（GET）和改名（PATCH）—— 两条共用这一个正则。锚定整串的理由同上一条：
     // 不锚定的话 `/api/works/1/file/../../etc` 也能匹配上。
     //
@@ -522,7 +623,20 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       // 顺序同 /api/password 和 /api/works：先认人，再读体。没登录的人不该有资格
       // 让服务器缓冲 12 MB —— 而且畸形请求体的 400 会盖住"没登录"这个更重要的结局。
       const user = requireUser(deps, req, res)
-      sendJson(res, 200, handleRenameWork(Number(oneRoute[1]), await readJsonBody(req), user, storeDeps))
+      const body = await readJsonBody(req)
+      const hasRating = Object.prototype.hasOwnProperty.call(body, 'rating')
+      const hasFlag = Object.prototype.hasOwnProperty.call(body, 'flag')
+      const hasColor = Object.prototype.hasOwnProperty.call(body, 'color')
+      const hasAlias = Object.prototype.hasOwnProperty.call(body, 'alias')
+      let meta = hasFlag
+        ? handleFlagWork(Number(oneRoute[1]), body, user, storeDeps)
+        : null
+      if (hasRating) meta = handleRateWork(Number(oneRoute[1]), body, user, storeDeps)
+      if (hasColor) meta = handleColorWork(Number(oneRoute[1]), body, user, storeDeps)
+      if (hasAlias || (!hasRating && !hasFlag && !hasColor)) {
+        meta = handleRenameWork(Number(oneRoute[1]), body, user, storeDeps)
+      }
+      sendJson(res, 200, meta)
       return
     }
     // 删除（DELETE）和替换（PUT）走的是同一个 `/api/works/:id`，复用上面那个正则。
@@ -546,6 +660,114 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
     if (req.method === 'POST' && path === '/api/works/delete') {
       const user = requireUser(deps, req, res)
       sendJson(res, 200, await handleDeleteWorks(await readJsonBody(req), user, storeDeps))
+      return
+    }
+    if (req.method === 'POST' && path === '/api/works/rate') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, handleRateWorks(await readJsonBody(req), user, storeDeps))
+      return
+    }
+    if (req.method === 'POST' && path === '/api/works/flag') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, handleFlagWorks(await readJsonBody(req), user, storeDeps))
+      return
+    }
+    if (req.method === 'POST' && path === '/api/works/color') {
+      const user = requireUser(deps, req, res)
+      sendJson(res, 200, handleColorWorks(await readJsonBody(req), user, storeDeps))
+      return
+    }
+    // 照片视频：先认人，再读帧。客户端只传已缩到目标画幅的 JPEG，
+    // 原始照片不经过这里。
+    if (req.method === 'POST' && path === '/api/motion') {
+      requireUser(deps, req, res)
+      // 帧在 JSON 里是 base64，10MB 原始帧会膨胀到 ~13MB；这条入口单独
+      // 放宽到 16MB，仍由 motion.ts 再做一次总大小校验。
+      const bytes = await renderMotionMp4(await readJsonBody(req, 16 * 1024 * 1024))
+      sendBytes(res, 200, bytes, 'video/mp4')
+      return
+    }
+    // AVIF 导出：本机 ffmpeg 转码，客户端只发已经修好的图。
+    if (req.method === 'POST' && path === '/api/convert/avif') {
+      requireUser(deps, req, res)
+      // 12MB 源图 base64 之后 ~16MB，留 24MB 的余量。
+      const bytes = await convertToAvif(await readJsonBody(req, 24 * 1024 * 1024))
+      sendBytes(res, 200, bytes, 'image/avif')
+      return
+    }
+    if (req.method === 'GET' && path === '/api/convert/heic/capability') {
+      requireUser(deps, req, res)
+      sendJson(res, 200, await getHeicCapability())
+      return
+    }
+    // HEIC 导出：优先 macOS sips，其次 ImageMagick；客户端只发已修好的图。
+    if (req.method === 'POST' && path === '/api/convert/heic') {
+      requireUser(deps, req, res)
+      // 24MB 源图 base64 之后约 32MB，再给 JSON 字段留一点余量。
+      const bytes = await convertToHeic(await readJsonBody(req, 36 * 1024 * 1024))
+      sendBytes(res, 200, bytes, 'image/heic')
+      return
+    }
+    // 导入前先用轻量能力查询决定是否值得发送大 RAW 原文件。
+    if (req.method === 'GET' && path === '/api/import/capability') {
+      requireUser(deps, req, res)
+      sendJson(res, 200, await getImportCapability())
+      return
+    }
+    // 普通上传的 HEIC / RAW / TIFF 兜底：只在前端两种原生解码都失败后调用。
+    if (req.method === 'POST' && path === '/api/import/convert') {
+      requireUser(deps, req, res)
+      const binary = req.headers['content-type']?.startsWith('application/octet-stream')
+      // 新客户端直接传二进制，避免 base64 多占 33%；旧 JSON 路径继续兼容。
+      const converted = binary
+        ? await convertImportBytesToJpeg(
+          await readRequestBytes(req, IMPORT_SOURCE_LIMIT),
+          url.searchParams.get('name') ?? '',
+        )
+        : await convertImportToJpeg(await readJsonBody(req, 180 * 1024 * 1024))
+      sendBytes(res, 200, converted, 'image/jpeg')
+      return
+    }
+    // ── 短片调色（2026-10-20）。见 server/video.ts 顶上那段：源片流式上传、
+    // 帧分批进临时目录、ffmpeg 编码后连原声一起返回。五条接口都要登录，
+    // 而且会话只认创建它的那个人。
+    if (req.method === 'POST' && path === '/api/video/session') {
+      const user = requireUser(deps, req, res)
+      const session = await createVideoSession(user.id)
+      sendJson(res, 200, { id: session.id })
+      return
+    }
+    const videoRoute = /^\/api\/video\/session\/([a-f0-9]{24})\/(source|frames|finish|music)$/.exec(path)
+    if (videoRoute) {
+      const user = requireUser(deps, req, res)
+      const session = getVideoSession(videoRoute[1]!, user.id)
+      const action = videoRoute[2]
+      if (req.method === 'POST' && action === 'source') {
+        const index = Number(url.searchParams.get('index') ?? '0')
+        sendJson(res, 200, await saveVideoSource(req, session, index))
+        return
+      }
+      if (req.method === 'POST' && action === 'music') {
+        sendJson(res, 200, await saveVideoMusic(req, session))
+        return
+      }
+      if (req.method === 'POST' && action === 'frames') {
+        // 8 帧 × 2MB 上限，base64 后 ~22MB；这条单独放宽，别动全局的 12MB。
+        const batch = parseVideoFrameBatch(await readJsonBody(req, 24 * 1024 * 1024), session)
+        sendJson(res, 200, { frames: await writeVideoFrames(session, batch) })
+        return
+      }
+      if (req.method === 'POST' && action === 'finish') {
+        const request = parseVideoFinish(await readJsonBody(req), session)
+        sendBytes(res, 200, await finishVideo(session, request), 'video/mp4')
+        return
+      }
+    }
+    const videoDelete = /^\/api\/video\/session\/([a-f0-9]{24})$/.exec(path)
+    if (req.method === 'DELETE' && videoDelete) {
+      const user = requireUser(deps, req, res)
+      await deleteVideoSession(videoDelete[1]!, user.id)
+      sendJson(res, 200, { ok: true })
       return
     }
     // ── 会话（2026-10-01）。设计和约束见 docs/superpowers/specs/2026-10-01-sessions-design.md
@@ -865,7 +1087,8 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
 /** 见上面那句：未知路径该用哪一份壳（`app.html` 优先给 App 那几屏，缺了就退 index）。 */
 function shellFor(root: string, path: string): string {
   const appPath = path === '/app' || path.startsWith('/app/') ||
-    path === '/works' || path.startsWith('/works/')
+    path === '/works' || path.startsWith('/works/') ||
+    path === '/s' || path.startsWith('/s/')
   const appShell = join(root, 'app.html')
   return appPath && existsSync(appShell) ? appShell : join(root, 'index.html')
 }

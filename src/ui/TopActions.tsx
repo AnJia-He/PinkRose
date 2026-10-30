@@ -30,7 +30,7 @@ type Props = {
    *  「分享」还是「下载」。App 只在挂载时算一次：设备能力不会中途变。 */
   canShare: boolean
   /** 正在导出的是哪一个（几颗按钮共用一个"忙"，同一时刻只可能有一颗在转）。 */
-  delivering: 'share' | 'download' | 'save' | null
+  delivering: 'share' | 'download' | 'save' | 'copy' | 'platforms' | 'live' | null
   onShare: () => void
   onDownload: () => void
   onSave: () => void
@@ -41,10 +41,12 @@ type Props = {
    *  `busy !== null` 会恒真、这颗按钮永远按不动（2026-10-08 拆件时踩过，
    *  四条用例当场红）。 */
   busy: boolean
+  /** 「导出设置」那一块（格式 / 质量 / 尺寸）。不传 = 只有默认快捷导出。 */
+  exportSettings?: React.ReactNode
 }
 
 export default function TopActions({
-  canShare, delivering, onShare, onDownload, onSave, onNew, busy,
+  canShare, delivering, onShare, onDownload, onSave, onNew, busy, exportSettings,
 }: Props) {
   return (
     <div className="actions stage-bar">
@@ -83,6 +85,7 @@ export default function TopActions({
           ⚠️ 忙的时候 disabled：生成在跑的那十几秒里，那一次回来时会往 history 里
           写一步，而那时候这张照片早就不在屏幕上了。 */}
       <button onClick={onNew} disabled={busy}>新的一张</button>
+      {exportSettings}
     </div>
   )
 }

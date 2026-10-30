@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MAX_STRAIGHTEN, clampRect, cropOutputSize, effectiveAngle, fitAspect, inscribedRect,
+  MAX_STRAIGHTEN, clampRect, cropOutputSize, effectiveAngle, fitAspect, inscribedRect, nextCropGuide,
   rectFromSize, rotatedBounds, type CropSpec,
 } from './crop'
 
@@ -24,6 +24,15 @@ const cornersInside = (
     }
   }
 }
+
+describe('nextCropGuide', () => {
+  it('按 关 → 三分 → 黄金分割 → 对角线 循环', () => {
+    expect(nextCropGuide('off')).toBe('thirds')
+    expect(nextCropGuide('thirds')).toBe('golden')
+    expect(nextCropGuide('golden')).toBe('diagonal')
+    expect(nextCropGuide('diagonal')).toBe('off')
+  })
+})
 
 describe('rotatedBounds —— 转过来之后占多大一块', () => {
   it('不转就是原来那块', () => {

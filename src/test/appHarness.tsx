@@ -15,6 +15,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect } from 'vitest'
 import type { RouteDecision, SuggestResponse } from '../../shared/protocol.ts'
 import { ZERO, type Adjustments } from '../../shared/adjustments.ts'
+import { DEFAULT_STYLE_KEY } from '../app/defaultStyle'
+import { APPEARANCE_KEY } from '../app/appearance'
 import { MAX_LUT_FILE_BYTES, type LutMeta } from '../../shared/lut.ts'
 import type { PresetMeta } from '../../shared/preset.ts'
 import type {
@@ -33,18 +35,58 @@ const canvasPropsStore = vi.hoisted(() => ({
   //   ★ 2026-10-06（工具行）：`viewLocked` 同理 —— 工具开着时的手势停用
   //   （滚轮 / 拖动 / 双击不响应、右下角那排按钮不画）**那一半量在真画布那边**
   //   （`Canvas.zoom.test.tsx` 里量真的 DOM），这儿只钉 App 有没有把它送出去。
-  props: [] as { originalPreview: string | null; picking: boolean; marker: unknown
+  props: [] as { originalPreview: string | null; picking: boolean
+                  sampling: boolean
+                  onSamplePoint: ((x: number, y: number) => void) | undefined
+                  marker: unknown
                   params: Record<string, number>; busy: boolean; viewLocked: boolean
                   // ★ 2026-10-06（裁剪）：`crop` 是"框 + 预览那一帧"的现场 ——
                   //   真画布按它转照片、摆框（那两条量在 `Canvas.zoom.test.tsx`
                   //   里），这一层只钉 App 有没有把现场交下去。
                   crop: unknown
+                  perspective: unknown
+                  doubleExposure: unknown
                   // ★ 2026-10-06（对比）：开关 / 备好的原图 / 那颗按钮的回调，
                   //   外加 `resetKey`（"对比不算工具开着"那条要钉住它**不因它变**）。
                   comparing: boolean; compareWith: string | null; resetKey: unknown
                   onCompare: (() => void) | undefined
                   // ★ 2026-10-07（点修）：涂抹的现场（笔刷 + 掩码本体 + "涂过了"的回调）。
-                  retouch: unknown }[],
+                  retouch: unknown
+                  // ★ 2026-10-17（局部渐变）：线性 / 径向蒙版的现场。
+                  gradient: unknown
+                  // ★ 2026-10-17（文字）：预览 / 拖动现场。
+                  text: unknown
+                  // ★ 2026-10-19：已提交的文字层 + 正在编辑的那一层 id。
+                  layers: unknown
+                  hiddenLayerId: unknown
+                  // ★ 2026-10-17（边框）：预览现场。
+                  frame: unknown
+                  // ★ 2026-10-17（贴纸）：预览现场。
+                  sticker: unknown
+                  // ★ 2026-10-19（形状）：两个归一化端点 + 预览现场。
+                  shape: unknown
+                  // ★ 2026-10-18（涂鸦）：已完成笔画 + 当前笔刷。
+                  doodle: unknown
+                  // ★ 2026-10-18（光效）：预设 + 强度。
+                  light: unknown
+                  // ★ 2026-10-19（双色调）：暗部 / 亮部 / 强度。
+                  duotone: unknown
+                  // ★ 2026-10-18（画布）：比例 / 背景 / 边距。
+                  canvasFrame: unknown
+                  /** 人像工具的人脸定位框（只画提示）。 */
+                  faceShape: {
+                    face: { x: number; y: number; w: number; h: number }
+                    faces?: { x: number; y: number; w: number; h: number }[]
+                    all?: boolean
+                    selected?: number
+                    onPickFace?: (index: number) => void
+                  } | null
+                  facePick: {
+                    onPick: (face: { x: number; y: number; w: number; h: number; confidence: number }) => void
+                  } | null
+                  clone: unknown
+                  /** ★ 2026-10-19（镜头虚化）：可拖焦点环的现场。 */
+                  lensFocus: { x: number; y: number; onChange: (x: number, y: number) => void } | null }[],
 }))
 
 /** 画布：真的那个要 WebGL2。这里给一个真 <canvas> 并挂上 ref ——
@@ -52,11 +94,12 @@ const canvasPropsStore = vi.hoisted(() => ({
 vi.mock('../ui/Canvas', async () => {
   const React = await import('react')
   return {
-    default: ({ canvasRef, image, params, originalPreview, picking, marker, onPickPoint, busy, viewLocked, crop, comparing, compareWith, resetKey, onCompare, retouch }: any) => {
+    default: ({ canvasRef, image, params, layers, hiddenLayerId, originalPreview, picking, sampling, onSamplePoint, marker, onPickPoint, busy, viewLocked, crop, perspective, doubleExposure, comparing, compareWith, resetKey, onCompare, retouch, gradient, text, frame, canvasFrame, sticker, shape, doodle, light, duotone, faceShape, facePick, clone, lensFocus }: any) => {
       canvasPropsStore.images.push(image)
       canvasPropsStore.props.push({
-        originalPreview, picking, marker, params, busy, viewLocked, crop,
-        comparing, compareWith, resetKey, onCompare, retouch,
+        originalPreview, picking, sampling, onSamplePoint, marker, params, busy, viewLocked, crop, perspective, doubleExposure,
+        comparing, compareWith, resetKey, onCompare, retouch, gradient, text, layers, hiddenLayerId,
+        frame, canvasFrame, sticker, shape, doodle, light, duotone, faceShape, facePick, clone, lensFocus,
       })
       return React.createElement('canvas', {
         ref: (node: HTMLElement | null) => {
@@ -91,6 +134,15 @@ vi.mock('../render/limits', async (importOriginal) => {
 
 /** 真的缩像素要 2D 画布，jsdom 没有。 */
 vi.mock('../image/resize', () => ({ resizeBitmap: vi.fn() }))
+vi.mock('../image/upscale', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/upscale')>()
+  return {
+    ...actual,
+    upscaleToBitmap: vi.fn(async (_src: ImageBitmap, width: number, height: number) => ({
+      width, height, __tag: 'upscaled', close: vi.fn(),
+    })),
+  }
+})
 
 /** 导出那一条：`buildExportBlob` 要 canvas.toBlob（jsdom 没实现），
  *  `downloadImage` 要点一个 <a>，都会真动手。**`buildFilename` 保留真的** ——
@@ -100,9 +152,40 @@ vi.mock('../export/save', async (importOriginal) => {
   return {
     ...actual,
     buildExportBlob: vi.fn(),
+    markExportCanvas: vi.fn((canvas: HTMLCanvasElement) => canvas),
     downloadImage: vi.fn(),
     shareImage: vi.fn(),
     canShareImage: vi.fn(),
+  }
+})
+
+/** 相似照片只验接线；真实 dHash 在 `core/perceptualHash.test.ts`。 */
+vi.mock('../image/perceptualHash', () => ({
+  perceptualHashFromBlob: vi.fn((blob: Blob) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(blob)
+  })),
+}))
+
+/** 作品页「挑最好」只验接线；评分算法在 `core/cull.test.ts`。 */
+vi.mock('../image/cull', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/cull')>()
+  return { ...actual, analyzePhotoBlob: vi.fn() }
+})
+
+/** 扩图那一步要 2D 画布拼目标比例；jsdom 没有。留一个带比例记号的假画布，
+ *  让 App 测试能断言"送去的确实是扩过的那张"。 */
+vi.mock('../export/outpaint', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../export/outpaint')>()
+  return {
+    ...actual,
+    makeOutpaintCanvas: vi.fn((src: { __tag?: string; width: number; height: number },
+      aspect: string) => ({
+      width: src.width, height: src.height,
+      __tag: `outpaint-${aspect}:${src.__tag ?? 'canvas'}`,
+    })),
   }
 })
 
@@ -146,11 +229,182 @@ vi.mock('../image/mark', () => ({ markImage: vi.fn(), MARKER_RADIUS_RATIO: 0.06 
  *  假实现返回一张带记号的小位图，"送进去的是哪张、换上来的是哪张"都看得见。 */
 vi.mock('../image/crop', () => ({ cropToBitmap: vi.fn() }))
 
+/** ★ 2026-10-17（自动水平）：纯算法在 `core/horizon.test.ts` 里真算；
+ *  这里只假掉"把位图缩到画布读像素"那一步（jsdom 没有 2D 上下文），
+ *  验 App 的接线：点了按钮 → 找到的角真的拨到「水平矫正」上。 */
+vi.mock('../image/straighten', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/straighten')>()
+  return { ...actual, detectStraighten: vi.fn() }
+})
+
+/** ★ 2026-10-18（智能构图）：读像素那一步在 jsdom 里跑不了；
+ *  纯几何在 `core/smartCrop.test.ts` 真算，这里只验 App 接线。 */
+vi.mock('../image/smartCrop', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/smartCrop')>()
+  return { ...actual, detectSubjectBox: vi.fn() }
+})
+
 /** ★ 2026-10-07（点修）：同理整个假掉 —— `eraseToBitmap` 要真 2D 上下文 +
  *  `createImageBitmap`，jsdom 两样都没有。这一层验的是**接线**（送进去的是
  *  哪张底图、掩码是不是现场那张、推了步、参数/滤镜没丢、太大要拦）；
  *  像素和耗时是真照片探针的事（`.superpowers/scratch/retouch-probe/`）。 */
 vi.mock('../image/erase', () => ({ eraseToBitmap: vi.fn() }))
+
+/** ★ 2026-10-18（AI 消除）：裁切 / 回贴要真 2D 画布和 createImageBitmap，
+ *  jsdom 两样都没有。纯算法在 `image/aiErase.test.ts` 真算；这一层只验接线：
+ *  送出去的是不是当前选区、回图有没有换底图、掩码外有没有被动到。 */
+vi.mock('../image/aiErase', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/aiErase')>()
+  return { ...actual, buildInpaintInput: vi.fn(), compositeInpaint: vi.fn() }
+})
+
+/** ★ 2026-10-18（自动去斑）：检测是纯函数（`core/blemish.test.ts` 真算），
+ *  像素修补要 2D 画布 + createImageBitmap，jsdom 里只验接线。 */
+vi.mock('../image/blemish', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/blemish')>()
+  return { ...actual, blemishToBitmap: vi.fn() }
+})
+
+/** ★ 2026-10-17（磨皮画笔）：和点修同一条 —— `smoothToBitmap` 要真 2D 上下文 +
+ *  `createImageBitmap`。只假这一个导出（`DEFAULT_SMOOTH_STRENGTH` /
+ *  `defaultSmoothRadius` 这些纯常量保留真的）；像素对不对在
+ *  `image/smooth.test.ts`（纯函数、真算），这一层只验接线。 */
+vi.mock('../image/smooth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/smooth')>()
+  return { ...actual, smoothToBitmap: vi.fn() }
+})
+vi.mock('../image/transparency', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/transparency')>()
+  return { ...actual, transparentToBitmap: vi.fn() }
+})
+vi.mock('../image/backgroundSelect', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/backgroundSelect')>()
+  return { ...actual, selectBackgroundToMask: vi.fn(), selectSubjectToMask: vi.fn() }
+})
+vi.mock('../image/skyMask', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/skyMask')>()
+  return { ...actual, selectSkyToMask: vi.fn() }
+})
+vi.mock('../image/backgroundReplace', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/backgroundReplace')>()
+  return { ...actual, replaceBackgroundToBitmap: vi.fn() }
+})
+vi.mock('../image/faceDetect', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/faceDetect')>()
+  return { ...actual, detectFaceInBitmap: vi.fn(), detectFacesInBitmap: vi.fn() }
+})
+vi.mock('../image/faceShape', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/faceShape')>()
+  return { ...actual, faceShapeToBitmap: vi.fn() }
+})
+vi.mock('../image/faceLight', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/faceLight')>()
+  return { ...actual, faceLightToBitmap: vi.fn() }
+})
+vi.mock('../image/skinTone', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/skinTone')>()
+  return { ...actual, skinToneToBitmap: vi.fn() }
+})
+vi.mock('../image/makeup', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/makeup')>()
+  return { ...actual, makeupToBitmap: vi.fn() }
+})
+vi.mock('../image/clone', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/clone')>()
+  return { ...actual, cloneToBitmap: vi.fn() }
+})
+vi.mock('../image/facePartMask', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/facePartMask')>()
+  return { ...actual, selectFacePartToMask: vi.fn() }
+})
+vi.mock('../image/perspective', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/perspective')>()
+  return { ...actual, perspectiveToBitmap: vi.fn() }
+})
+vi.mock('../image/doubleExposure', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/doubleExposure')>()
+  return {
+    ...actual,
+    doubleExposureToBitmap: vi.fn(),
+    makeDoubleExposurePreview: vi.fn(() => 'data:image/png;base64,DOUBLE'),
+  }
+})
+
+/** ★ 2026-10-17（局部）：同理整个假掉 —— 只验接线，像素在 `image/localAdjust.test.ts`。
+ *  ★ 2026-10-18（发色）：色板常量要留真的，UI 的第二行靠它摆色号。 */
+vi.mock('../image/localAdjust', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/localAdjust')>()
+  return { ...actual, localAdjustToBitmap: vi.fn() }
+})
+
+/** ★ 2026-10-17（文字）：同理整个假掉 —— 只验接线，排版/像素在 `image/text.test.ts`。 */
+vi.mock('../image/text', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/text')>()
+  return {
+    ...actual,
+    textToBitmap: vi.fn(),
+    compositeTextLayers: vi.fn((source: unknown) => source),
+    textLayersToBitmap: vi.fn(async (source: unknown) => source),
+  }
+})
+
+/** ★ 2026-10-19：通用文字 / 形状层；jsdom 没有 2D 上下文，像素活假掉。 */
+vi.mock('../image/layers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/layers')>()
+  return {
+    ...actual,
+    compositeEditLayers: vi.fn((source: unknown) => source),
+    editLayersToBitmap: vi.fn(async (source: unknown) => source),
+  }
+})
+
+/** ★ 2026-10-17（边框）：只验接线；像素在 `image/frame.test.ts`（纯函数）。 */
+vi.mock('../image/frame', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/frame')>()
+  return { ...actual, frameToBitmap: vi.fn() }
+})
+
+/** ★ 2026-10-18（画布）：只验接线；布局和绘制在 `image/canvasFrame.test.ts`。 */
+vi.mock('../image/canvasFrame', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/canvasFrame')>()
+  return { ...actual, canvasFrameToBitmap: vi.fn() }
+})
+
+/** ★ 2026-10-17（贴纸）：只验接线；SVG path 和布局在 `image/sticker.test.ts`。 */
+vi.mock('../image/sticker', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/sticker')>()
+  return {
+    ...actual,
+    stickerToBitmap: vi.fn(),
+    stickerBitmapToDataUrl: vi.fn(() => 'data:image/png;base64,U1RJQ0tFUg=='),
+    cacheStickerImage: vi.fn(),
+    preloadStickerImages: vi.fn(async () => {}),
+  }
+})
+
+/** ★ 2026-10-19（形状）：只验接线；path 和绘制在 `image/shape.test.ts`。 */
+vi.mock('../image/shape', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/shape')>()
+  return { ...actual, shapeToBitmap: vi.fn() }
+})
+
+/** ★ 2026-10-18（涂鸦）：只验接线；笔画绘制在 `image/doodle.test.ts`。 */
+vi.mock('../image/doodle', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/doodle')>()
+  return { ...actual, doodleToBitmap: vi.fn() }
+})
+
+/** ★ 2026-10-18（光效）：只验接线；绘制在 `image/light.test.ts`。 */
+vi.mock('../image/light', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/light')>()
+  return { ...actual, lightToBitmap: vi.fn() }
+})
+
+/** ★ 2026-10-19（双色调）：只验接线；像素映射在 `image/duotone.test.ts`。 */
+vi.mock('../image/duotone', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../image/duotone')>()
+  return { ...actual, duotoneToBitmap: vi.fn() }
+})
 
 /** 解码用户选的文件：要 createImageBitmap + 2D 画布。
  *  用 importOriginal 保留它的转发导出（size 那几个），因为别处会 import。 */
@@ -165,7 +419,7 @@ vi.mock('../image/decode', async (importOriginal) => {
  *  事，假掉拟合就等于把要测的东西一起假掉了。 */
 vi.mock('../image/sample', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../image/sample')>()
-  return { ...actual, samplePixels: vi.fn() }
+  return { ...actual, samplePixels: vi.fn(), samplePixelAt: vi.fn() }
 })
 
 /** 三个网络出口。**保留真的 ApiError** —— App 里靠 `instanceof ApiError`
@@ -260,10 +514,37 @@ import * as api from '../api/client'
 import * as limitsMod from '../render/limits'
 import * as resizeMod from '../image/resize'
 import * as saveMod from '../export/save'
+import * as perceptualHashMod from '../image/perceptualHash'
+import * as imageCullMod from '../image/cull'
 import * as thumbMod from '../core/thumbnail'
 import * as markMod from '../image/mark'
 import * as cropMod from '../image/crop'
 import * as eraseMod from '../image/erase'
+import * as aiEraseMod from '../image/aiErase'
+import * as blemishMod from '../image/blemish'
+import * as smoothMod from '../image/smooth'
+import * as backgroundSelectMod from '../image/backgroundSelect'
+import * as skyMaskMod from '../image/skyMask'
+import * as backgroundReplaceMod from '../image/backgroundReplace'
+import * as faceDetectMod from '../image/faceDetect'
+import * as faceShapeMod from '../image/faceShape'
+import * as faceLightMod from '../image/faceLight'
+import * as skinToneMod from '../image/skinTone'
+import * as makeupMod from '../image/makeup'
+import * as cloneMod from '../image/clone'
+import * as facePartMaskMod from '../image/facePartMask'
+import * as transparentMod from '../image/transparency'
+import * as perspectiveMod from '../image/perspective'
+import * as doubleMod from '../image/doubleExposure'
+import * as localMod from '../image/localAdjust'
+import * as textMod from '../image/text'
+import * as frameMod from '../image/frame'
+import * as canvasFrameMod from '../image/canvasFrame'
+import * as stickerMod from '../image/sticker'
+import * as shapeMod from '../image/shape'
+import * as doodleMod from '../image/doodle'
+import * as lightMod from '../image/light'
+import * as duotoneMod from '../image/duotone'
 import { stampBrush } from '../core/retouch'
 import * as sampleMod from '../image/sample'
 import * as lutsMod from '../api/luts'
@@ -302,7 +583,10 @@ export let root: Root
 /** 默认"已经登录"的那个人。修图那些测试的前提都是他。 */
 export const LOGGED_IN = { id: 1, username: '小明', email: 'a@b.com' }
 /** 后端此刻认不认人。null = 没登录（`/api/me` 回 401）。 */
-export let meUser: { id: number; username: string; email: string } | null = LOGGED_IN
+export let meUser: {
+  id: number; username: string; email: string
+  preferences?: Record<string, unknown> | null
+} | null = LOGGED_IN
 /**
  * ★ 2026-10-04：`/api/me` 现在还会带 `usage`（作品张数 / 占的空间 / 上限）——
  * 用户管理页的「使用情况」那一格吃的就是它（数据源从"前端拉整份作品清单自己加"
@@ -377,7 +661,7 @@ export function jsonResponse(body: unknown, status = 200) {
  *  详情页的用例也要造同一种东西，**造两份**的话哪天接口多一个字段，
  *  只会有一份跟着改。第三个参数 `alias` 从 Task 11 起就在（默认 null = 用时间当名字）。 */
 export const WORK = (id: number, updatedAt: number, alias: string | null = null) =>
-  ({ id, alias, createdAt: updatedAt, updatedAt, bytes: 100, hasThumb: true })
+  ({ id, alias, createdAt: updatedAt, updatedAt, bytes: 100, hasThumb: true, rating: 0, flag: 0 })
 
 /** 服务端上那条滤镜（`vi.mock('../api/luts')` 的默认清单就是它）。
  *  ★ 2026-10-05（T12）：作品配方里只存滤镜的**名字**，「套到别的图上」凭它找回 id。 */
@@ -647,6 +931,9 @@ beforeEach(() => {
   //   而这一个文件测的是 App。摆成 `/` 的话每一条用例渲染出来的都是落地页
   //   （App 里那条 `view.kind === 'landing'` 的早返回），**76 条一起红**。
   history.replaceState(null, '', '/app')
+  // 默认风格是本机偏好：上一个用例存了它，下一个用例上传时就会自动套上。
+  localStorage.removeItem(DEFAULT_STYLE_KEY)
+  localStorage.removeItem(APPEARANCE_KEY)
   vi.clearAllMocks()
   bitmapSeq = 0
   decodedBitmaps.length = 0
@@ -679,6 +966,24 @@ beforeEach(() => {
   // 要测分享的那几条自己打开。
   vi.mocked(saveMod.canShareImage).mockReturnValue(false)
   vi.mocked(saveMod.buildExportBlob).mockResolvedValue(new Blob(['x'], { type: 'image/jpeg' }))
+  vi.mocked(perceptualHashMod.perceptualHashFromBlob).mockImplementation(
+    (blob: Blob) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(blob)
+    }),
+  )
+  vi.mocked(imageCullMod.analyzePhotoBlob).mockImplementation(
+    (blob: Blob) => new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        try { resolve(JSON.parse(String(reader.result)) as never) } catch (error) { reject(error) }
+      }
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(blob)
+    }),
+  )
   vi.mocked(saveMod.shareImage).mockResolvedValue(undefined)
   // ★ 2026-10-08（终审）：滤镜清单的**默认**也得在这里重立 —— `clearAllMocks()`
   //   只清调用记录、**不恢复实现**，而「删 Lut 时没定稿的那一笔也扫」那条用例
@@ -701,10 +1006,115 @@ beforeEach(() => {
   vi.mocked(eraseMod.eraseToBitmap).mockResolvedValue({
     bitmap: fakeBitmap('erased'), coverage: 1200, usedSource: true,
   })
+  // ★ 2026-10-17（磨皮画笔）：「磨这里」磨出来的那一张（记号 `smoothed`）。
+  vi.mocked(smoothMod.smoothToBitmap).mockResolvedValue({
+    bitmap: fakeBitmap('smoothed'), covered: 1200,
+  })
+  // ★ 2026-10-18（AI 消除）：送模的方图和回贴各留一个记号。默认回图是
+  //   `inpainted`；用例可以改 `postEdit` 的应答来演失败 / 尺寸不符。
+  vi.mocked(aiEraseMod.buildInpaintInput).mockResolvedValue({
+    imageDataUrl: 'data:image/jpeg;base64,AIERASE',
+    size: { width: 1024, height: 1024 },
+  })
+  vi.mocked(aiEraseMod.compositeInpaint).mockResolvedValue(fakeBitmap('inpainted'))
+  vi.mocked(blemishMod.blemishToBitmap).mockResolvedValue({
+    bitmap: fakeBitmap('blemished'), spots: 2, healed: 1200, usedSource: true,
+  })
+  vi.mocked(transparentMod.transparentToBitmap).mockResolvedValue({
+    bitmap: fakeBitmap('transparent'), covered: 1200,
+  })
+  vi.mocked(backgroundSelectMod.selectBackgroundToMask).mockImplementation(
+    async (_src: ImageBitmap, mask: Uint8Array) => {
+      mask.fill(255, 0, Math.floor(mask.length / 2))
+      return {
+        mask, covered: Math.floor(mask.length / 2),
+        seed: [0, 180, 0] as [number, number, number], threshold: 0.1,
+      }
+    })
+  vi.mocked(backgroundSelectMod.selectSubjectToMask).mockImplementation(
+    async (_src: ImageBitmap, mask: Uint8Array) => {
+      mask.fill(255)
+      const w = 1200
+      const h = 800
+      for (let y = 160; y < h - 80; y++) {
+        mask.fill(0, y * w + 240, y * w + 960)
+      }
+      return { subjectRatio: 0.45, threshold: 0.12, covered: Math.floor(mask.length * 0.55) }
+    })
+  vi.mocked(skyMaskMod.selectSkyToMask).mockImplementation(
+    async (_src: ImageBitmap, mask: Uint8Array) => {
+      const covered = Math.floor(mask.length * 0.45)
+      mask.fill(0)
+      mask.fill(255, 0, covered)
+      return { covered, ratio: 0.45 }
+    })
+  vi.mocked(backgroundReplaceMod.replaceBackgroundToBitmap).mockResolvedValue({
+    bitmap: fakeBitmap('replaced'), covered: 1200,
+  })
+  const FACE = { x: 300, y: 120, w: 420, h: 520, confidence: 0.9 }
+  vi.mocked(faceDetectMod.detectFaceInBitmap).mockResolvedValue(FACE)
+  vi.mocked(faceDetectMod.detectFacesInBitmap).mockResolvedValue([FACE])
+  vi.mocked(faceShapeMod.faceShapeToBitmap).mockImplementation(
+    async (_src: ImageBitmap, face, _opts, maxSide) => ({
+      bitmap: fakeBitmap(maxSide ? 'portrait-preview' : 'portrait'),
+      changed: 1200,
+      scale: maxSide ? 0.6 : 1,
+      face,
+    }))
+  vi.mocked(faceLightMod.faceLightToBitmap).mockImplementation(
+    async (_src: ImageBitmap, face, opts, maxSide) => ({
+      bitmap: fakeBitmap(maxSide ? 'face-light-preview' : 'face-light'),
+      changed: (opts.strength ?? 0) > 0 ? 900 : 0,
+      scale: maxSide ? 0.6 : 1,
+      face,
+    }))
+  vi.mocked(skinToneMod.skinToneToBitmap).mockImplementation(
+    async (_src: ImageBitmap, face, opts, maxSide) => ({
+      bitmap: fakeBitmap(maxSide ? 'skin-tone-preview' : 'skin-tone'),
+      changed: (opts.whiten ?? 0) > 0 || (opts.rosy ?? 0) > 0 ? 700 : 0,
+      scale: maxSide ? 0.6 : 1,
+      face,
+    }))
+  vi.mocked(makeupMod.makeupToBitmap).mockImplementation(
+    async (_src: ImageBitmap, face, opts, maxSide) => ({
+      bitmap: fakeBitmap(maxSide ? 'makeup-preview' : 'makeup'),
+      changed: (opts.lip ?? 0) > 0 || (opts.blush ?? 0) > 0 ? 800 : 0,
+      scale: maxSide ? 0.6 : 1,
+      face,
+    }))
+  vi.mocked(cloneMod.cloneToBitmap).mockImplementation(
+    async (_src: ImageBitmap, _strokes, maxSide) => ({
+      bitmap: fakeBitmap(maxSide ? 'clone-preview' : 'clone'),
+      changed: 1200,
+    }))
+  vi.mocked(facePartMaskMod.selectFacePartToMask).mockImplementation(
+    async (_src: ImageBitmap, _face, _part, mask: Uint8Array) => {
+      mask.fill(0)
+      const w = 1200
+      mask.fill(255, 300 * w + 360, 300 * w + 460)
+      mask.fill(255, 300 * w + 740, 300 * w + 840)
+      return { covered: 200 }
+    })
+  vi.mocked(perspectiveMod.perspectiveToBitmap).mockResolvedValue(fakeBitmap('perspective'))
+  vi.mocked(doubleMod.doubleExposureToBitmap).mockResolvedValue(fakeBitmap('double'))
+  vi.mocked(localMod.localAdjustToBitmap).mockResolvedValue({
+    bitmap: fakeBitmap('localized'), covered: 1200,
+  })
+  vi.mocked(textMod.textToBitmap).mockResolvedValue({ bitmap: fakeBitmap('texted') })
+  vi.mocked(frameMod.frameToBitmap).mockResolvedValue({ bitmap: fakeBitmap('framed') })
+  vi.mocked(canvasFrameMod.canvasFrameToBitmap).mockResolvedValue({
+    bitmap: fakeBitmap('canvas-frame'),
+  })
+  vi.mocked(stickerMod.stickerToBitmap).mockResolvedValue({ bitmap: fakeBitmap('stickered') })
+  vi.mocked(shapeMod.shapeToBitmap).mockResolvedValue({ bitmap: fakeBitmap('shaped') })
+  vi.mocked(doodleMod.doodleToBitmap).mockResolvedValue(fakeBitmap('doodle'))
+  vi.mocked(lightMod.lightToBitmap).mockResolvedValue(fakeBitmap('lighted'))
+  vi.mocked(duotoneMod.duotoneToBitmap).mockResolvedValue(fakeBitmap('duotone'))
   // 「照着这张调」的两个采样点：jsdom 里读不了像素，默认给一块中性灰。
   // 只有照调那条用例会覆盖它（覆盖成"源图和参考图分得开"的假数据 ——
   // 拟合要真的算出一个不为零的结果）。
   vi.mocked(sampleMod.samplePixels).mockReturnValue([[128, 128, 128]])
+  vi.mocked(sampleMod.samplePixelAt).mockReturnValue([200, 190, 170])
   // 路由用它（模拟"当前看到的画面"）
   vi.mocked(prepareMod.prepareForRouting).mockResolvedValue({
     dataUrl: 'data:image/jpeg;base64,ROUTING', width: 512, height: 341,
@@ -734,6 +1144,12 @@ beforeEach(() => {
   meUsageGate = null
   fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === '/api/me') {
+      if (init?.method === 'PATCH') {
+        if (!meUser) return jsonResponse({ error: { code: 'UNAUTHORIZED', message: '先登录一下' } }, 401)
+        const body = JSON.parse(String(init.body)) as { preferences?: Record<string, unknown> }
+        meUser = { ...meUser, preferences: body.preferences ?? null }
+        return jsonResponse({ user: meUser })
+      }
       // `meGate` 演"跟随请求还在半路"：挂住不回，等测试放行
       if (meGate) await meGate.promise
       // `meFails` 演的是"登录/注册成功之后那一次问不出来"（服务器重启、网络瞬断）
@@ -892,10 +1308,16 @@ export async function renderApp() {
   await act(async () => { root.render(<App />) })
 }
 
-export async function uploadPhoto() {
+export async function uploadPhoto(extraFiles: File[] = []) {
+  return uploadFiles([
+    new File(['x'], 'p.jpg', { type: 'image/jpeg' }),
+    ...extraFiles,
+  ])
+}
+
+export async function uploadFiles(files: File[]) {
   const input = container.querySelector('input[type="file"]') as HTMLInputElement
-  const file = new File(['x'], 'p.jpg', { type: 'image/jpeg' })
-  Object.defineProperty(input, 'files', { value: [file], configurable: true })
+  Object.defineProperty(input, 'files', { value: files, configurable: true })
   await act(async () => {
     input.dispatchEvent(new Event('change', { bubbles: true }))
     await new Promise(r => setTimeout(r, 0))
@@ -1028,7 +1450,7 @@ export async function reopenApp(): Promise<void> {
 // 拆出去的文件只认这一个 import（顺带把"mock 先注册、模块后加载"那条顺序
 // 关在这个文件里，外面不用操心）。
 export { MAX_LUT_FILE_BYTES, MIN_SLICE_RATIO, PRESETS, ZERO, act, createRoot, formatSize, matchToReference, modelValue, pie3dPaths, stampBrush }
-export { decodeMod, prepareMod, api, limitsMod, resizeMod, saveMod, thumbMod, markMod, cropMod, eraseMod, sampleMod, lutsMod, ledgerMod }
+export { decodeMod, prepareMod, api, limitsMod, resizeMod, saveMod, thumbMod, markMod, cropMod, eraseMod, sampleMod, lutsMod, ledgerMod, textMod, frameMod, canvasFrameMod, stickerMod, doodleMod, lightMod }
 export type { Adjustments, LutMeta, Rgb, RouteDecision, SessionDetail, SessionStep, SuggestResponse }
 
 // ⚠️ 上面那三个 `vi.hoisted` 的值**不能直接 export**（esbuild 会报

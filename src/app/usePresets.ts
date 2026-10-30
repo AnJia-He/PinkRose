@@ -10,7 +10,9 @@ import type { PresetMeta } from '../../shared/preset.ts'
  * 动名字（trim），名单的真值只有它那一份（`LutSettings` 的导入 / 改名 / 删除
  * 三处都是 `await loadLuts()`，别新发明一种）。
  */
-export function usePresets(): { presets: PresetMeta[]; known: boolean; refresh: () => Promise<void> } {
+export function usePresets(enabled = true): {
+  presets: PresetMeta[]; known: boolean; refresh: () => Promise<void>
+} {
   const [presets, setPresets] = useState<PresetMeta[]>([])
   /**
    * 清单**真的从服务端拿到过一次**没有（同 `useLuts` 的 `lutsKnown`）。
@@ -28,6 +30,7 @@ export function usePresets(): { presets: PresetMeta[]; known: boolean; refresh: 
    * 界面会给"清单还没到手"的说法。
    */
   const refresh = useCallback(async (): Promise<void> => {
+    if (!enabled) return
     try {
       const { presets: list } = await listPresets()
       setPresets(list)
@@ -35,10 +38,15 @@ export function usePresets(): { presets: PresetMeta[]; known: boolean; refresh: 
     } catch (e) {
       console.error('预设清单没取回来：', e)
     }
-  }, [])
+  }, [enabled])
 
-  // 登录后拉一次清单（App 挂载时）
+  // 登录后才拉清单；退出时清掉，防止下一账号短暂看到上一账号的预设。
   useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => {
+    if (enabled) return
+    setPresets([])
+    setKnown(false)
+  }, [enabled])
 
   return { presets, known, refresh }
 }

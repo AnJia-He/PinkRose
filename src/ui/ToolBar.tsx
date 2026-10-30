@@ -9,9 +9,14 @@
  *   用法上（spec §3.3 要的是两张图同步缩放）。「对比」是个开关、没有自己的控件，
  *   所以它不传 children。
  */
-import { Crop, Eraser, SquareSplitHorizontal } from 'lucide-react'
+import {
+  Brush, Crop, Eraser, Feather, ScanFace, SquareSplitHorizontal, Sticker, Type,
+} from 'lucide-react'
 
-export type ToolId = 'crop' | 'retouch' | 'compare'
+export type ToolId =
+  'crop' | 'perspective' | 'retouch' | 'transparent' | 'smooth' | 'local' | 'liquify'
+  | 'frame' | 'sticker' | 'shape' | 'double' | 'text' | 'compare' | 'portrait' | 'clone'
+  | 'outpaint' | 'doodle' | 'light' | 'duotone' | 'canvas' | 'aiErase'
 
 /**
  * ★ 2026-10-09（用户原话：「给这些也找到合适的图标组件」—— 对着这排工具说的，
@@ -24,7 +29,13 @@ export type ToolId = 'crop' | 'retouch' | 'compare'
  *       概念，全站不许两个概念共用一个图标）、
  *     对比 = `SquareSplitHorizontal`（**一张图被竖线劈成左右两半** —— 和「对比」
  *       真开起来的样子一模一样，见 `CompareSplit` 那条左右分屏）。
- *   · **同一个概念全站同一个图标**：这三颗现在各用各处一次，没有第二处。
+ *     磨皮 = `Feather`（★ 2026-10-17：这一趟的动词是"磨"—— 把皮肤磨得柔和；
+ *       羽毛是"柔和 / 质感"的通用符号，全站没有第二处用它。⚠️ 别用任何魔法棒
+ *       系图标 —— 那是「说话改图」的概念（见点修那条）；也别用 `Droplet`，
+ *       那是「色彩」组的）。
+ *     局部 = `Brush`（★ 2026-10-17：涂哪儿调哪儿；和点修的橡皮分开 —— 一个是
+ *       画笔、一个是擦除，不能让两个工具长得一样）。
+ *   · **同一个概念全站同一个图标**：这几颗现在各用各处一次，没有第二处。
  *   · **线宽显式写 1.5**（尺子守卫扫 `src/ui` 下所有 tsx，不写就是 lucide
  *     默认的 2）。
  * ⚠️ 尺寸 14 跟这一屏的既有口径走（面板组头 / 对话加号里那一行都是 14；
@@ -36,6 +47,13 @@ export type ToolId = 'crop' | 'retouch' | 'compare'
 const CELLS: { id: ToolId; name: string; icon: React.ReactNode }[] = [
   { id: 'crop', name: '裁剪', icon: <Crop size={14} strokeWidth={1.5} aria-hidden="true" /> },
   { id: 'retouch', name: '点修', icon: <Eraser size={14} strokeWidth={1.5} aria-hidden="true" /> },
+  { id: 'smooth', name: '磨皮', icon: <Feather size={14} strokeWidth={1.5} aria-hidden="true" /> },
+  { id: 'portrait', name: '人像', icon: <ScanFace size={14} strokeWidth={1.5} aria-hidden="true" /> },
+  { id: 'local', name: '局部', icon: <Brush size={14} strokeWidth={1.5} aria-hidden="true" /> },
+  // ★ 2026-10-17：「装饰」= 边框 + 贴纸，用 `Sticker` 认这一整类。
+  { id: 'frame', name: '装饰', icon: <Sticker size={14} strokeWidth={1.5} aria-hidden="true" /> },
+  // ★ 2026-10-17：「文字」用 `Type` —— 全站唯一一处；它说的就是"往图上写字"。
+  { id: 'text', name: '文字', icon: <Type size={14} strokeWidth={1.5} aria-hidden="true" /> },
   { id: 'compare', name: '对比', icon: <SquareSplitHorizontal size={14} strokeWidth={1.5} aria-hidden="true" /> },
 ]
 
@@ -44,20 +62,44 @@ export default function ToolBar(props: {
   onPick: (t: ToolId | null) => void
   children?: React.ReactNode
 }) {
+  // 液化是「局部」的子模式：没有自己的格子，但整颗「局部」保持点亮。
+  const activeCell = props.active === 'liquify' ? 'local'
+    : props.active === 'outpaint' ? 'crop'
+    : props.active === 'sticker' || props.active === 'shape' ? 'frame'
+      : props.active === 'double' ? 'frame'
+      : props.active === 'canvas' ? 'frame'
+      : props.active === 'doodle' ? 'frame'
+      : props.active === 'light' ? 'frame'
+      : props.active === 'duotone' ? 'frame'
+      : props.active === 'transparent' || props.active === 'clone' || props.active === 'aiErase' ? 'retouch'
+        : props.active === 'perspective' ? 'crop'
+      : props.active
   return (
     <div className="tool-row">
       <div className="tool-row-main">
         {CELLS.map(c => (
           <button
             key={c.id} type="button" aria-label={c.name}
-            className={`tool-cell${props.active === c.id ? ' on' : ''}`}
+            className={`tool-cell${activeCell === c.id ? ' on' : ''}`}
             // 再点一下当前这颗 = 收回（和左栏那些格子的手感一致）
-            onClick={() => props.onPick(props.active === c.id ? null : c.id)}
+            onClick={() => {
+              // AI 消除也挂在「点修」这一格下。再点「点修」时回到普通点修，
+              // 而不是把整格收掉 —— 用户要的是换手法，不是退出工具行。
+              if (activeCell === c.id && props.active === 'aiErase' && c.id === 'retouch') {
+                props.onPick('retouch')
+              } else {
+                props.onPick(activeCell === c.id ? null : c.id)
+              }
+            }}
           >{c.icon}{c.name}</button>
         ))}
       </div>
       {props.active && props.children ? (
-        <div className="tool-row-second">{props.children}</div>
+        <div className={`tool-row-second${props.active === 'portrait' ? ' portrait-row' : ''}${
+          props.active === 'local' ? ' local-row' : ''
+        }${props.active === 'smooth' ? ' smooth-row' : ''}`}>
+          {props.children}
+        </div>
       ) : null}
     </div>
   )

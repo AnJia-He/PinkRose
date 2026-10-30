@@ -9,12 +9,14 @@ import { listModels, type PublicConfig } from '../api/models.ts'
 import { Btn } from './kit/Btn.tsx'
 import { Field, TextInput } from './kit/Field.tsx'
 import type { View } from './view.ts'
+import type { Appearance } from '../app/appearance.ts'
 
 /**
  * 用户管理（§3.6）。**先只做骨架**，它是 §12 的第三段。
  *
- * 现在有：用户名 / 使用情况 / 模型 / 改密码 / 注销账号 / 退出登录。
- * 还差（各自等依赖到位）：默认导出尺寸、默认风格、本地文件夹、深色浅色 ——
+ * 现在有：用户名 / 使用情况 / 模型 / 默认风格 / 改密码 / 注销账号 / 退出登录。
+ * 设置页现有：账号 / 模型 / 默认风格 / 界面外观 / 用量 / 导出默认值（导出面板里）。
+ * 默认导出尺寸 / 格式已在导出面板提供「设为默认」——
  * 正合 §12 自己那句「每段做完都能单独用、单独验收」。
  *
  * ⚠️ 页面上**不许出现我们自己用的模型名或接口地址**（§7.3）。
@@ -45,6 +47,8 @@ type Usage =
 
 export function AccountPage({
   user, onGo, onSignedOut, onUserChanged,
+  defaultStyleId, styleOptions, styleOptionsKnown = true, onDefaultStyleChange,
+  appearance, onAppearanceChange,
 }: {
   user: AccountUser
   onGo: (v: View) => void
@@ -58,6 +62,21 @@ export function AccountPage({
    * 事实有两个答案 —— 而它们迟早会对不上（改完名切走再回来，App 手里还是旧的）。
    */
   onUserChanged: (u: AccountUser) => void
+  /** 当前默认风格（预设 id）；null = 新照片从原图起手。 */
+  defaultStyleId: string | null
+  /** 内置 + 我的预设；`mine` 只用来分组显示。 */
+  styleOptions: readonly { id: string; label: string; mine?: boolean }[]
+  /** 「我的预设」清单到手了没有；没到手时不能把账号里的数字 id 说成"已不存在"。 */
+  styleOptionsKnown?: boolean
+  /**
+   * 改默认风格。**返回是否同步到账号** —— 本机那份调用方已经先写好了，
+   * 网络失败时这一页只说"已保存到这台设备"，不把用户挡在设置里。
+   */
+  onDefaultStyleChange: (id: string | null) => Promise<{ synced: boolean }>
+  /** 修图界面外观：深色 / 浅色。 */
+  appearance: Appearance
+  /** 改外观；返回是否同步到账号，本机值已经由调用方先写好。 */
+  onAppearanceChange: (value: Appearance) => Promise<{ synced: boolean }>
 }) {
   const [leaving, setLeaving] = useState(false)
   const [usage, setUsage] = useState<Usage>({ state: 'loading' })
@@ -81,6 +100,10 @@ export function AccountPage({
   const [delOpen, setDelOpen] = useState(false)
   const [delBusy, setDelBusy] = useState(false)
   const [delMsg, setDelMsg] = useState<string | null>(null)
+  const [styleBusy, setStyleBusy] = useState(false)
+  const [styleMsg, setStyleMsg] = useState<string | null>(null)
+  const [appearanceBusy, setAppearanceBusy] = useState(false)
+  const [appearanceMsg, setAppearanceMsg] = useState<string | null>(null)
 
   useEffect(() => {
     // ★ 2026-10-04：改走 `GET /api/me` 的 usage（作品张数 / 占的空间 / 上限）。
@@ -149,6 +172,44 @@ export function AccountPage({
     ).finally(() => setNameBusy(false))
   }
 
+  /**
+   * 改默认风格。下拉一改就保存 —— 这一格没有「保存」按钮：
+   * 它本来就只有一个选择动作，再让用户按第二下只会多一次"到底存没存"的疑问。
+   */
+  const chooseDefaultStyle = (raw: string) => {
+    if (styleBusy) return
+    const id = raw || null
+    const label = id ? styleOptions.find(o => o.id === id)?.label : null
+    setStyleBusy(true)
+    setStyleMsg(null)
+    onDefaultStyleChange(id).then(
+      (r) => {
+        if (!id) {
+          setStyleMsg(r.synced
+            ? '以后新打开的照片从原图起手，已同步到账号。'
+            : '以后新打开的照片从原图起手；账号同步没成功，下次联网再试。')
+          return
+        }
+        setStyleMsg(r.synced
+          ? `下一张新照片会用「${label ?? '这套预设'}」起手，已同步到账号。`
+          : `下一张新照片会用「${label ?? '这套预设'}」起手；已保存到这台设备，账号同步没成功。`)
+      },
+      (e) => setStyleMsg(errorText(e, '没保存成功，再试一次。')),
+    ).finally(() => setStyleBusy(false))
+  }
+
+  const chooseAppearance = (next: Appearance) => {
+    if (appearanceBusy || next === appearance) return
+    setAppearanceBusy(true)
+    setAppearanceMsg(null)
+    onAppearanceChange(next).then(
+      (r) => setAppearanceMsg(r.synced
+        ? `已切到${next === 'light' ? '浅色' : '深色'}界面，并同步到账号。`
+        : `已切到${next === 'light' ? '浅色' : '深色'}界面；账号同步没成功，下次联网再试。`),
+      (e) => setAppearanceMsg(errorText(e, '没切成功，再试一次。')),
+    ).finally(() => setAppearanceBusy(false))
+  }
+
   const confirmDelete = () => {
     if (delBusy) return
     setDelBusy(true)
@@ -163,6 +224,11 @@ export function AccountPage({
 
   /** §6.6 的 80% 提醒：那一格数字变色 + 下面那句带出路的提醒，都由它决定。 */
   const usageWarn = usage.state === 'ready' && usage.bytes / usage.limit >= 0.8
+  /** 账号里记的那套预设可能已经被删了 —— 下拉要如实显示，不许静默显示成"不预设"。 */
+  const styleUnknown = !!defaultStyleId && !styleOptions.some(o => o.id === defaultStyleId)
+  const styleMissing = styleUnknown && styleOptionsKnown
+  const builtinStyles = styleOptions.filter(o => !o.mine)
+  const mineStyles = styleOptions.filter(o => o.mine)
 
   /** ★ 2026-10-11：右列「剩余 >99.9%」那行的字（三档规则全在 `restPctLabel` 里）。
       只有 `ready` 时给字；loading / 拿不到都是**空串** —— 那一行整个不渲染，不许编一个数
@@ -320,7 +386,78 @@ export function AccountPage({
             </div>
           </section>
 
-          {/* ③ 「作品空间用量」框（§3.6 / §6.6）。**拿不到就整个框不出现** ——
+          {/*
+            ③ 「修图偏好」（★ 2026-10-19）：默认风格 = 下一张新照片从哪套预设起手。
+
+            ⚠️ 只影响**新打开的照片**。这一页改它时，App 那一层只写偏好，
+              绝不 `setParams` —— 用户正在修的那张不能因为设置而跳色。
+            ⚠️ 文案把边界说清（"下一张"），否则用户会以为当前这张也会跟着变。
+          */}
+          <section className="account-tile">
+            <h2 className="account-tile-title">修图偏好</h2>
+            <div className="account-card">
+              <label className="account-row account-style-row">
+                <span className="account-row-label">默认风格</span>
+                <select
+                  className="account-select"
+                  aria-label="默认风格"
+                  value={defaultStyleId ?? ''}
+                  disabled={styleBusy}
+                  onChange={(e) => chooseDefaultStyle(e.target.value)}
+                >
+                  <option value="">不预设（原图起手）</option>
+                  {builtinStyles.length > 0 && (
+                    <optgroup label="内置风格">
+                      {builtinStyles.map(o => (
+                        <option key={o.id} value={o.id}>{o.label}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {mineStyles.length > 0 && (
+                    <optgroup label="我的预设">
+                      {mineStyles.map(o => (
+                        <option key={o.id} value={o.id}>{o.label}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {styleMissing && (
+                    <option value={defaultStyleId!}>这套预设已不存在</option>
+                  )}
+                  {styleUnknown && !styleOptionsKnown && (
+                    <option value={defaultStyleId!}>正在读取我的预设…</option>
+                  )}
+                </select>
+              </label>
+              <div className="account-row account-appearance-row">
+                <span className="account-row-label">界面外观</span>
+                <div className="account-appearance-choices" role="group" aria-label="界面外观">
+                  {([
+                    ['dark', '深色'],
+                    ['light', '浅色'],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`crop-chip${appearance === value ? ' on' : ''}`}
+                      aria-pressed={appearance === value}
+                      disabled={appearanceBusy}
+                      onClick={() => chooseAppearance(value)}
+                    >{label}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <p className="account-hint">
+              只用于下一张新打开的照片；正在编辑的这张不会变。相机拍到的新照片也会按它起手。
+            </p>
+            <p className="account-hint">
+              修图界面默认深色，减少环境光对颜色判断的影响；浅色适合白天、投影或系统本身偏亮的场景。
+            </p>
+            {styleMsg && <p className="account-msg ok">{styleMsg}</p>}
+            {appearanceMsg && <p className="account-msg ok">{appearanceMsg}</p>}
+          </section>
+
+          {/* ④ 「作品空间用量」框（§3.6 / §6.6）。**拿不到就整个框不出现** ——
               见上面 Usage 那段（不能说成"0"，也不能画一个空壳子）。
               ⚠️ 原来行首那个「使用情况」标签删了：这一框的小标题就是它，
               同一个意思不说两遍。 */}

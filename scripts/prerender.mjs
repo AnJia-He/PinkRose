@@ -71,7 +71,9 @@ writeFileSync(INDEX, injected)
 // ③ 自查：片段里引的每个 /assets/xxx 都必须在 dist 里真存在。
 //   SSR 构建和客户端构建的 hash 规则理论上是同一套 —— 但这事**只在运行时看得出来**：
 //   对不上的话页面上的图全 404，而 build 一声不吭。
-const refs = [...new Set([...injected.matchAll(/\/assets\/[^"'\s)]+/g)].map((m) => m[0]))]
+const refs = [...new Set(
+  [...injected.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((m) => m[1]),
+)]
 const missing = refs.filter((r) => !existsSync(join(DIST, r)))
 if (missing.length) {
   console.error('预渲染引用的这些文件不在 dist 里（两边的 hash 规则对不上？）：')

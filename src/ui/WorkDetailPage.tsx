@@ -4,9 +4,13 @@ import { BtnLink } from './kit/Btn.tsx'
 import { ErrorState } from './kit/ErrorState.tsx'
 import { RenameInput } from './kit/RenameInput.tsx'
 import { PresetSaveRow } from './PresetManager.tsx'
-import { getWork, renameWork, deleteWork, fullUrl } from '../api/works'
+import RatingStars from './RatingStars.tsx'
+import {
+  getWork, renameWork, deleteWork, rateWork, fullUrl,
+  createWorkShare, revokeWorkShare,
+} from '../api/works'
 import { errorText, ApiError } from '../api/client'
-import { workName, type WorkMeta, type WorkDetail } from '../../shared/works.ts'
+import { cameraName, workName, type WorkMeta, type WorkDetail } from '../../shared/works.ts'
 import { buildFilename } from '../export/save'
 import { PARAM_LABELS, PARAM_KEYS, clampAdjustments, isChanged, type Adjustments } from '../../shared/adjustments.ts'
 
@@ -31,6 +35,13 @@ export function downloadName(w: WorkMeta): string {
   return buildFilename(stem, 'image/jpeg')
 }
 
+function sourceTimestamp(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} `
+    + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
 /**
  * 一张作品的详情页 —— **「这张图怎么来的」**（spec §3.5.1）。
  *
@@ -46,7 +57,7 @@ export function downloadName(w: WorkMeta): string {
  *
  * ★ 2026-10-10（「我的预设」，设计 §5.4）：调色那栏多了**第二个去处** ——
  *   「把这套存成预设」（就地展开一行「起名 + 存下来」，组件和面板头那块**同一份**）。
- *   存的是**用户眼前这份配方**，而且**只有那十五个参数**（§0：预设不含 Lut）。
+ *   存的是**用户眼前这份配方**，而且**只有那九十四个参数**（§0：预设不含 Lut）。
  */
 export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: {
   id: number
@@ -57,7 +68,7 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
   canApply: boolean
   /** ★ 2026-10-10（「我的预设」，设计 §5.4）：把**这份配方**存成一套预设 ——
    *  交出去的就是这一页正列着的那份（**不是**修图页上手上那套：用户看的正是这份），
-   *  **不带 Lut**（§0：预设只含那十五个参数）。失败那句话由 `PresetSaveRow`
+   *  **不带 Lut**（§0：预设只含那九十四个参数）。失败那句话由 `PresetSaveRow`
    *  就地显示 —— 这一层和 App 那层都不 catch（`LutSettings` 先例）。 */
   onSavePreset: (name: string, params: Adjustments) => Promise<void>
 }) {
@@ -83,11 +94,22 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
   const [busy, setBusy] = useState(false)
   /** 「把这套存成预设」那一行摊开了没有（**就地展开** —— 全站不弹窗）。 */
   const [presetOpen, setPresetOpen] = useState(false)
+  /** 公开分享链接（null = 还没开启 / 已停止）。 */
+  const [shareToken, setShareToken] = useState<string | null>(null)
+  const [sharePanel, setSharePanel] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     let alive = true
+    setShareToken(null)
+    setSharePanel(false)
+    setCopied(false)
     getWork(id).then(
-      (w) => { if (alive) setWork(w) },
+      (w) => {
+        if (!alive) return
+        setWork(w)
+        setShareToken(w.shareToken ?? null)
+      },
       (e) => {
         if (!alive) return
         setGone(e instanceof ApiError && e.status === 404)
@@ -148,6 +170,77 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
     }
   }
 
+  async function doRate(rating: number) {
+    if (!work || busy) return
+    const previous = work.rating
+    setWork(w => (w ? { ...w, rating } : w))
+    setBusy(true)
+    try {
+      const got = await rateWork(id, rating)
+      setWork(w => (w ? { ...w, rating: got.rating } : w))
+    } catch (e) {
+      setWork(w => (w ? { ...w, rating: previous } : w))
+      setFailed(errorText(e, '评分没存上，再试一次'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const shareUrl = (token: string) => `${location.origin}/s/${token}`
+
+  async function openShare() {
+    setSharePanel(true)
+    if (shareToken || busy) return
+    setBusy(true)
+    try {
+      const { token } = await createWorkShare(id)
+      setShareToken(token)
+    } catch (e) {
+      setFailed(errorText(e, '分享链接没生成，再试一次'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function copyShare() {
+    if (!shareToken) return
+    try {
+      await navigator.clipboard.writeText(shareUrl(shareToken))
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1800)
+    } catch {
+      setFailed('复制不了链接，长按上面的地址手动复制。')
+    }
+  }
+
+  async function shareToSystem() {
+    if (!shareToken) return
+    const url = shareUrl(shareToken)
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: work?.alias?.trim() || 'PinkRose 作品', url })
+        return
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'AbortError') return
+      }
+    }
+    await copyShare()
+  }
+
+  async function stopShare() {
+    if (busy) return
+    setBusy(true)
+    try {
+      await revokeWorkShare(id)
+      setShareToken(null)
+      setSharePanel(false)
+    } catch (e) {
+      setFailed(errorText(e, '没停止成，再试一次'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (failed && !work) return (
     <section className="detail">
       {gone ? (
@@ -201,9 +294,10 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
    *  在这一处归一化，下面显示 / 「原样」判据 / `onApply` 三处就都只剩 null 了。 */
   const lut = work.recipe.lut ?? null
   /** 「这一张是原样」那句的判据 —— ★ 2026-10-05：**带上滤镜**。
-   *  有滤镜就不是"原样"（哪怕十五个参数一个都没动）——
+   *  有滤镜就不是"原样"（哪怕九十四个参数一个都没动）——
    *  判据漏了它的话，屏幕上会一边列着「滤镜 黄昏」一边说"没有调过色"。 */
   const recipeEmpty = changed.length === 0 && !lut
+  const camera = cameraName(work)
 
   return (
     <section className="detail">
@@ -228,6 +322,40 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
         )}
       </header>
 
+      <div className="detail-rating">
+        <RatingStars value={work.rating ?? 0} label="作品星级" disabled={busy}
+          onChange={rating => void doRate(rating)} />
+      </div>
+
+      {(work.sourceName || camera || work.lensModel || work.capturedAt) && (
+        <dl className="detail-source" aria-label="作品来源">
+          {work.sourceName && (
+            <div>
+              <dt>原文件</dt>
+              <dd>{work.sourceName}</dd>
+            </div>
+          )}
+          {camera && (
+            <div>
+              <dt>机身</dt>
+              <dd>{camera}</dd>
+            </div>
+          )}
+          {work.lensModel && (
+            <div>
+              <dt>镜头</dt>
+              <dd>{work.lensModel}</dd>
+            </div>
+          )}
+          {work.capturedAt && (
+            <div>
+              <dt>拍摄</dt>
+              <dd>{sourceTimestamp(work.capturedAt)}</dd>
+            </div>
+          )}
+        </dl>
+      )}
+
       {failed && <p className="detail-error">{failed}</p>}
 
       {/* ⚠️ **两条都必须走 `fullUrl`（原图），不是 `fileUrl`。**
@@ -244,6 +372,9 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
       <img className="detail-image" src={fullUrl(work)} alt={name} />
 
       <div className="detail-actions">
+        <button className="detail-share-toggle" disabled={busy} onClick={() => void openShare()}>
+          {shareToken ? '分享链接' : '生成分享链接'}
+        </button>
         {/* 下载给的是**存在服务器上的那一份**（裁定 ①：存的不是上传的原图，是导出
             用的那个产物，所以"看到的"和"下载到的"必须是同一个东西）—— 它和上面那张
             大图现在是**同一条 URL**，所以这句话今天成立；C1 之前它也写着这句，
@@ -270,6 +401,30 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
           <button className="detail-delete" disabled={busy} onClick={() => setConfirming(true)}>删除</button>
         )}
       </div>
+
+      {sharePanel && (
+        <div className="detail-share">
+          <input
+            className="detail-share-url"
+            readOnly
+            aria-label="分享链接"
+            value={shareToken ? shareUrl(shareToken) : '正在生成分享链接…'}
+            onFocus={e => e.currentTarget.select()}
+          />
+          <div className="detail-share-actions">
+            <button disabled={!shareToken || busy} onClick={() => void copyShare()}>
+              {copied ? '已复制' : '复制链接'}
+            </button>
+            <button disabled={!shareToken || busy} onClick={() => void shareToSystem()}>系统分享</button>
+            <button className="detail-share-stop" disabled={!shareToken || busy}
+                    onClick={() => void stopShare()}>停止分享</button>
+            <button onClick={() => setSharePanel(false)}>关闭</button>
+          </div>
+          <p className="detail-share-hint">
+            拿到链接的人可以看这张图，不能改。停止分享后链接立即失效。
+          </p>
+        </div>
+      )}
 
       <div className="how">
         <h2 className="how-title">这张图怎么来的</h2>
@@ -319,7 +474,7 @@ export function WorkDetailPage({ id, onBack, onApply, canApply, onSavePreset }: 
           {!canApply && <p className="recipe-hint">先回修图页传一张照片，才能套上去。</p>}
           {/* 起名那一行**就地展开**在这儿（全站不弹窗）。组件和面板头那座
               「我的预设」的第一行是**同一份**（`PresetSaveRow`）—— 交出去的只有
-              `params`：配方里的 Lut **不进预设**（§0：预设只含那十五个参数）。 */}
+              `params`：配方里的 Lut **不进预设**（§0：预设只含那九十四个参数）。 */}
           {presetOpen && (
             <div className="recipe-preset">
               <PresetSaveRow params={params} onSave={onSavePreset} />

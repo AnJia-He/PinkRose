@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
-import { stampBrush, stampStroke, type BrushMode } from '../core/retouch'
+import { penPressureScale, stampBrush, stampStroke, type BrushMode } from '../core/retouch'
 import { bindWindowDrag } from './kit/windowDrag.ts'
 
 /**
@@ -40,8 +40,15 @@ export default function RetouchOverlay(props: {
   mask: Uint8Array
   /** 掩码有实际改动时喊一声（App 拿它让「擦掉这里」亮起来）。 */
   onMaskChange: () => void
+  /** 外部整张写掩码时递增；一变化就把整张红色预览重画一遍。 */
+  revision?: number
+  /** 只看不涂：给色彩范围蒙版预览用，指针事件穿到画布上（点画面 = 取色）。 */
+  readOnly?: boolean
 }) {
-  const { box, imageWidth: W, imageHeight: H, radius, mode, mask, onMaskChange } = props
+  const {
+    box, imageWidth: W, imageHeight: H, radius, mode, mask, onMaskChange, revision,
+    readOnly = false,
+  } = props
   const layerRef = useRef<HTMLDivElement | null>(null)
   const previewRef = useRef<HTMLCanvasElement | null>(null)
   /** 这一笔的落脚点（图片坐标）+ 按下那一刻量的层原点。null = 没在画。 */
@@ -83,6 +90,29 @@ export default function RetouchOverlay(props: {
     ctx.putImageData(img, x0, y0)
   }
 
+  /**
+   * 自动选区（主体 / 背景 / 天空 / 眼牙眼下 / 反选）是**整张**掩码被外部写好，
+   * 不走 pointer 事件，所以必须有一个版本信号把整张红色预览重画出来。
+   * 普通画笔仍然只画脏矩形，不在这里每帧扫全图。
+   */
+  useEffect(() => {
+    if (revision === undefined) return
+    const canvas = previewRef.current
+    const ctx = canvas?.getContext('2d')
+    if (!canvas || !ctx) return
+    const img = ctx.createImageData(W, H)
+    for (let i = 0, p = 0; i < mask.length; i++, p += 4) {
+      const v = mask[i]!
+      if (!v) continue
+      img.data[p] = 255
+      img.data[p + 1] = 59
+      img.data[p + 2] = 48
+      img.data[p + 3] = Math.round((v / 255) * 128)
+    }
+    ctx.clearRect(0, 0, W, H)
+    ctx.putImageData(img, 0, 0)
+  }, [revision, mask, W, H])
+
   const onPointerDown = (e: RPointerEvent<HTMLDivElement>) => {
     e.stopPropagation()
     const el = layerRef.current
@@ -95,14 +125,16 @@ export default function RetouchOverlay(props: {
     // 起笔必须在照片里面（留白上按一下不算）
     if (p.x < 0 || p.y < 0 || p.x > W || p.y > H) return
     strokeRef.current = { lastX: p.x, lastY: p.y, ox: r.left, oy: r.top }
-    if (stampBrush(mask, W, H, p.x, p.y, radius, mode)) onMaskChange()
+    const startRadius = radius * penPressureScale(e.pointerType, e.pressure)
+    if (stampBrush(mask, W, H, p.x, p.y, startRadius, mode)) onMaskChange()
     paintPreview(p.x, p.y, p.x, p.y)
 
     const onMove = (ev: PointerEvent) => {
       const s = strokeRef.current
       if (!s) return
       const q = toImage(ev.clientX, ev.clientY, s.ox, s.oy)
-      if (stampStroke(mask, W, H, s.lastX, s.lastY, q.x, q.y, radius, mode)) onMaskChange()
+      const moveRadius = radius * penPressureScale(ev.pointerType, ev.pressure)
+      if (stampStroke(mask, W, H, s.lastX, s.lastY, q.x, q.y, moveRadius, mode)) onMaskChange()
       paintPreview(s.lastX, s.lastY, q.x, q.y)
       s.lastX = q.x
       s.lastY = q.y
@@ -131,12 +163,12 @@ export default function RetouchOverlay(props: {
   return (
     <div
       ref={layerRef}
-      className="retouch"
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerLeave={() => setCursor(null)}
-      onClick={e => e.stopPropagation()}
-      onDoubleClick={e => e.stopPropagation()}
+      className={`retouch${readOnly ? ' readonly' : ''}`}
+      onPointerDown={readOnly ? undefined : onPointerDown}
+      onPointerMove={readOnly ? undefined : onPointerMove}
+      onPointerLeave={readOnly ? undefined : () => setCursor(null)}
+      onClick={readOnly ? undefined : e => e.stopPropagation()}
+      onDoubleClick={readOnly ? undefined : e => e.stopPropagation()}
     >
       <canvas
         ref={previewRef}
@@ -145,7 +177,7 @@ export default function RetouchOverlay(props: {
         height={H}
         style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
       />
-      {cursor && (
+      {!readOnly && cursor && (
         <span
           className="retouch-cursor"
           style={{

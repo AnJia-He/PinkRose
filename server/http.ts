@@ -28,6 +28,36 @@ export class HttpError extends Error {
  */
 export const DEFAULT_BODY_LIMIT = 12 * 1024 * 1024
 
+/** 读出原始请求体；二进制文件不经过字符串 / base64 转换。 */
+export function readRequestBytes(
+  req: IncomingMessage, limitBytes = DEFAULT_BODY_LIMIT,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    let tooLarge = false
+    req.on('data', (chunk: Buffer) => {
+      if (tooLarge) return
+      size += chunk.length
+      if (size > limitBytes) {
+        tooLarge = true
+        chunks.length = 0
+        reject(new HttpError(
+          'BAD_REQUEST',
+          `请求体超过 ${Math.round(limitBytes / 1024 / 1024)} MB 上限`,
+          413,
+        ))
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      if (!tooLarge) resolve(Buffer.concat(chunks))
+    })
+    req.on('error', reject)
+  })
+}
+
 /** 读出并解析 JSON 请求体。超限或格式错都抛 HttpError('BAD_REQUEST')。 */
 export function readJsonBody(req: IncomingMessage, limitBytes = DEFAULT_BODY_LIMIT): Promise<unknown> {
   return new Promise((resolve, reject) => {

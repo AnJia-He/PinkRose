@@ -197,6 +197,11 @@ async function main() {
     await page.click('.nav-item:has-text("调色")')
     await page.waitForTimeout(600)
     await grab(page, 'App · 调色面板')
+    await page.getByRole('button', { name: '我的预设' }).click()
+    await page.waitForTimeout(400)
+    await grab(page, 'App · 我的预设')
+    await page.getByRole('button', { name: '我的预设' }).click()
+    await page.waitForTimeout(200)
 
     // ★ 2026-10-06（终审 B）：**工具行的字上次一条都没进过稿子** —— 这一趟原来
     //   到「调色面板」就停了，而点开「裁剪」之后那一行（自由 / 1:1 / 左转 / 右转 /
@@ -207,7 +212,30 @@ async function main() {
     await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
     await page.waitForTimeout(300)
     await grab(page, 'App · 调色面板 · 开着裁剪')
+    await page.getByRole('button', { name: 'AI 扩图' }).click()
+    await page.waitForTimeout(300)
+    await grab(page, 'App · 调色面板 · 开着 AI 扩图')
+    await page.getByRole('button', { name: '返回裁剪' }).click()
+    await page.waitForTimeout(300)
     await page.click('.crop-tools button:has-text("取消")')
+    await page.waitForTimeout(300)
+
+    // ★ 2026-10-18（AI 消除）：点修里的付费子模式。只打开、不提交 ——
+    //   抓的是用户真的会看到的「会消耗生成额度」和主按钮，不花一次调用。
+    await page.click('.tool-cell:has-text("点修")')
+    await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+    await page.getByRole('button', { name: 'AI 消除', exact: true }).first().click()
+    await page.waitForTimeout(300)
+    await grab(page, 'App · 调色面板 · 开着 AI 消除')
+    await page.locator('.crop-tools button', { hasText: '取消' }).click()
+    await page.waitForTimeout(300)
+
+    // ★ 2026-10-18（一键美颜）：人像第二行的自然起点也要进文案稿。
+    await page.click('.tool-cell:has-text("人像")')
+    await page.waitForSelector('.tool-row-second', { timeout: 5_000 })
+    await page.waitForTimeout(300)
+    await grab(page, 'App · 调色面板 · 开着人像')
+    await page.locator('.crop-tools button', { hasText: '取消' }).click()
     await page.waitForTimeout(300)
 
     // 存一张，好让作品页/详情页有东西可看
@@ -245,6 +273,37 @@ async function main() {
     await page.waitForSelector('.gallery-cell', { timeout: 15_000 })
     await page.waitForTimeout(1200)
     await grab(page, '作品页')
+
+    await page.getByRole('button', { name: '多选' }).click()
+    await page.locator('.gallery-cell').first().click()
+    await page.waitForTimeout(300)
+    await grab(page, '作品页 · 多选')
+    await page.locator('.gallery-select-cancel').click()
+    await page.waitForFunction(() => !document.querySelector('.gallery-select'), null, { timeout: 5_000 })
+
+    // ★ 2026-10-17（批量处理）：它是作品页里的模式，不是新网址；先把工作区的
+    //   静态文案抓下来，再原路返回继续后面的详情页。多图处理中的进度 / 失败文案
+    //   由 `batch-probe` 类真浏览器探针负责，这里不跑付费或重活。
+    await page.getByRole('button', { name: '批量处理' }).click()
+    await page.waitForSelector('.batch-page', { timeout: 15_000 })
+    await page.waitForTimeout(300)
+    await grab(page, '作品页 · 批量处理')
+    await page.locator('.batch-back').click()
+    await page.waitForSelector('.gallery-cell', { timeout: 15_000 })
+
+    await page.getByRole('button', { name: '拼图' }).click()
+    await page.waitForSelector('.collage-page', { timeout: 15_000 })
+    await page.waitForTimeout(300)
+    await grab(page, '作品页 · 拼图')
+    await page.locator('.batch-back').click()
+    await page.waitForSelector('.gallery-cell', { timeout: 15_000 })
+
+    await page.getByRole('button', { name: '打印排版' }).click()
+    await page.waitForSelector('.print-page', { timeout: 15_000 })
+    await page.waitForTimeout(300)
+    await grab(page, '作品页 · 打印排版')
+    await page.locator('.batch-back').click()
+    await page.waitForSelector('.gallery-cell', { timeout: 15_000 })
 
     await page.click('.gallery-cell')
     await page.waitForSelector('.detail-image', { timeout: 15_000 })

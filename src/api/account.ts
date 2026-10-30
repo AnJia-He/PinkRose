@@ -1,7 +1,13 @@
-import { del, get, post } from './client'
+import { del, get, patch, post } from './client'
 
 /** 后端给的公开信息。**绝不含密码或哈希。** */
-export type AccountUser = { id: number; username: string; email: string }
+export type AccountUser = {
+  id: number
+  username: string
+  email: string
+  /** 账号级偏好（今天主要是导出默认值）；老接口缺这一格时按没有处理。 */
+  preferences?: Record<string, unknown> | null
+}
 
 /** 用量（§6.6）：作品张数 / 总共占了多少字节 / 上限。 */
 export type Usage = { count: number; bytes: number; limit: number }
@@ -51,6 +57,13 @@ export async function changePassword(oldPassword: string, newPassword: string): 
  */
 export async function changeUsername(username: string): Promise<AccountUser> {
   return (await post<{ user: AccountUser }>('/api/username', { username })).user
+}
+
+/** 保存账号级偏好；成功返回**带新偏好**的 user，调用方据此更新 App 的 user。 */
+export async function savePreferences(
+  preferences: Record<string, unknown>,
+): Promise<AccountUser> {
+  return (await patch<{ user: AccountUser }>('/api/me', { preferences })).user
 }
 
 /**

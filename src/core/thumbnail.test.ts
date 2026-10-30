@@ -14,17 +14,18 @@ const src = (width: number, height: number) => ({ width, height }) as unknown as
  * 还往控制台刷 "Not implemented"），所以把这两个方法换成**记录用的假货** ——
  * 这一条本来要看的也不是像素，是"画了多大、按什么格式编的"。
  */
-function stubCanvas() {
+function stubCanvas(transparent = false) {
   const drawn: Array<[number, number]> = []
   const coded: Array<{ type?: string; quality?: number }> = []
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
     // `drawImage(source, dx, dy, dw, dh)` —— 只看目标宽高（第 3、4 个参数）
     drawImage: (...args: unknown[]) => { drawn.push([args[3] as number, args[4] as number]) },
+    getImageData: () => ({ data: new Uint8ClampedArray([0, 0, 0, transparent ? 0 : 255]) }),
   } as unknown as CanvasRenderingContext2D)
   vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockImplementation(
     (type?: string, quality?: number) => {
       coded.push({ type, quality })
-      return 'data:image/jpeg;base64,xxx'
+      return `data:${type};base64,xxx`
     })
   return { drawn, coded }
 }
@@ -69,5 +70,11 @@ describe('bitmapToDataUrl：送服务端的原图', () => {
     const { drawn } = stubCanvas()
     bitmapToDataUrl(src(1400, 900))
     expect(drawn).toEqual([[1400, 900]])
+  })
+
+  it('★ 底图有透明像素 → 改存 PNG；普通照片仍走 JPEG', () => {
+    const clear = stubCanvas(true)
+    expect(bitmapToDataUrl(src(1200, 800))).toBe('data:image/png;base64,xxx')
+    expect(clear.coded).toEqual([{ type: 'image/png', quality: undefined }])
   })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseCube, LutParseError, lutNameOk, sameLutName, normalizeLutRef, MAX_LUT_SIZE } from './lut.ts'
+import { parseCube, lutNameOk, sameLutName, normalizeLutRef, MAX_LUT_SIZE } from './lut.ts'
 
 /** 造一个 size 级、每格由 fn 决定的 .cube 文本。默认红变最快（x 最快）。 */
 function cubeText(size: number, fn: (r: number, g: number, b: number) => [number, number, number]): string {
@@ -43,9 +43,32 @@ describe('parseCube', () => {
     expect(cube.domainMax).toEqual([2, 2, 2])
   })
 
-  it('1D 明确拒绝', () => {
-    expect(() => parseCube('LUT_1D_SIZE 32\n0 0 0\n')).toThrow(LutParseError)
-    expect(() => parseCube('LUT_1D_SIZE 32\n0 0 0\n')).toThrow(/1D/)
+  it('1D 三通道曲线展开成现有渲染链能直接用的 3D 表', () => {
+    const cube = parseCube([
+      'LUT_1D_SIZE 3',
+      '0 0 0',
+      '0.5 0.25 0.75',
+      '1 1 1',
+    ].join('\n'))
+    expect(cube.size).toBe(3)
+    const at = (r: number, g: number, b: number) => {
+      const offset = ((b * cube.size + g) * cube.size + r) * 4
+      return [...cube.rgba.slice(offset, offset + 4)]
+    }
+    expect(at(0, 0, 0)).toEqual([0, 0, 0, 255])
+    expect(at(1, 1, 1)).toEqual([128, 64, 191, 255])
+    expect(at(2, 0, 0)).toEqual([255, 0, 0, 255])
+  })
+
+  it('1D LUT 保留自己的 DOMAIN_MIN / MAX', () => {
+    const cube = parseCube([
+      'LUT_1D_SIZE 2',
+      'DOMAIN_MIN 0 0 0',
+      'DOMAIN_MAX 2 2 2',
+      '0 0 0',
+      '1 1 1',
+    ].join('\n'))
+    expect(cube.domainMax).toEqual([2, 2, 2])
   })
 
   it('级数超限拒绝，并说出那个数', () => {

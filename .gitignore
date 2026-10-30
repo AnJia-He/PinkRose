@@ -49,6 +49,13 @@ test-photos/
 # 这条放行的是 png 那一套。
 !create-image/logo-小皇帝/**
 
+# 例外：主屏 Web App 图标要入库（★ 2026-10-18）—— Manifest 和 iOS 主屏都靠
+# 这三个稳定文件名，不能落到 Vite 的哈希资源里；换机器 clone 后少了它们，
+# 「加到主屏幕」会退回截图或空图标。只放行这三个，不放行 public 下其它图片。
+!public/app-icon-192.png
+!public/app-icon-512.png
+!public/apple-touch-icon.png
+
 # Python
 __pycache__/
 *.py[cod]

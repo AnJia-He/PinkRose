@@ -28,5 +28,5 @@
     // `Buffer` / `process` / `import.meta.url`（脚本在 Node 里跑）+ playwright 的类型。
     "types": ["node"]
   },
-  "include": ["scripts/check-lut.ts"]
+  "include": ["scripts/check-lut.ts", "scripts/camera-bridge.ts"]
 }

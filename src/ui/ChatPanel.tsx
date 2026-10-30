@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { SuggestCard } from '../../shared/protocol.ts'
 import type { LutMeta, LutRef } from '../../shared/lut.ts'
-import { MoreHorizontal, Pencil, Plus, RotateCw, SlidersHorizontal, Sparkles } from 'lucide-react'
+import {
+  MoreHorizontal, Pencil, Plus, RotateCw, SlidersHorizontal, Sparkles, WandSparkles,
+} from 'lucide-react'
 import LutPicker from './LutPicker.tsx'
 import { SelectBar } from './kit/SelectBar.tsx'
 import { RenameInput } from './kit/RenameInput.tsx'
@@ -19,6 +21,13 @@ export type ChatMessage = {
   id: number
   role: 'user' | 'assistant'
   text: string
+}
+
+/** 加号工具行里的一键 AI 动作；动作本身在 App 里（按钮只负责点）。 */
+export type ChatAiAction = {
+  id: string
+  label: string
+  run: () => void
 }
 
 /**
@@ -55,6 +64,8 @@ function useBusySeconds(busy: string | null): number {
 type Props = {
   messages: ChatMessage[]
   cards: SuggestCard[]
+  /** 浏览器当前是否联网。断网时只拦需要服务器的 AI 路径，本地工具照常。 */
+  online?: boolean
   /** 非 null 时显示"正在…"气泡，并禁用发送和卡片 */
   busy: string | null
   /** 正在等建议卡片。**它不拦人** —— 只是在这一格上挂一句"正在看…"，
@@ -69,6 +80,8 @@ type Props = {
   /** ★ 2026-10-10：加号工具行里那颗**「帮我想想」**—— 再要一批建议卡
    *  （卡片只在上传后出一次、10 秒收掉；接口一直是现成的，缺的就是这个入口）。 */
   onAskSuggest: () => void
+  /** 一键 AI 动作（修老照片 / 消除路人 / 换天空 / 动漫化 / 手绘化）；没有照片时不传。 */
+  aiActions?: readonly ChatAiAction[]
   /**
    * ★ 2026-10-10：**这一段是不是真的在生成**（App 那边是
    * `busy === BUSY_GENERATING` 的身份比较，别在这儿字符串嗅探）。
@@ -194,7 +207,8 @@ type Props = {
 }
 
 export default function ChatPanel({
-  messages, cards, busy, suggesting, onSend, onStop, onAskSuggest, generating, retryId, onRetry,
+  messages, cards, online = true, busy, suggesting, onSend, onStop, onAskSuggest, aiActions,
+  generating, retryId, onRetry,
   routeRetryId, onRetryRoute,
   onCard, onRerun, rerunnable,
   jumpableIds, marking, canConfirmMark, onConfirmMark, onCancelMark, draft,
@@ -203,6 +217,7 @@ export default function ChatPanel({
   originalId, onDeleteMessage, onDeleteMessages,
   title, canRename, onRename,
 }: Props) {
+  const offline = !online
   /**
    * ★ 2026-10-09：顶上那个标题**正在改**（`RenameInput` 顶掉了 `<h2>`）。
    *
@@ -510,7 +525,7 @@ export default function ChatPanel({
                       消息当下**最该点**的一颗。
                       点了就消失（App 那边点一次算一次）——这里不做开合。 */}
                   {retryId === m.id && (
-                    <button className="bubble-retry" disabled={!!busy} onClick={onRetry}>
+                    <button className="bubble-retry" disabled={!!busy || offline} onClick={onRetry}>
                       再试一次
                     </button>
                   )}
@@ -521,7 +536,7 @@ export default function ChatPanel({
                       生成失败要重跑的是整套生成现场，路由失败只要把那句话
                       再说一遍 —— 两件事、两套验证，条件也不该揉进一个判据。 */}
                   {routeRetryId === m.id && (
-                    <button className="bubble-retry" disabled={!!busy} onClick={onRetryRoute}>
+                    <button className="bubble-retry" disabled={!!busy || offline} onClick={onRetryRoute}>
                       再试一次
                     </button>
                   )}
@@ -536,7 +551,7 @@ export default function ChatPanel({
                       图标是 svg，进不了 textContent，所以按文字找按钮的地方
                       和读屏软件看到的都只有「再来一版」这四个字。 */}
                   {rerunnable.includes(m.id) && (
-                    <button className="bubble-rerun" disabled={!!busy} onClick={() => onRerun(m.id)}>
+                    <button className="bubble-rerun" disabled={!!busy || offline} onClick={() => onRerun(m.id)}>
                       <RotateCw size={13} strokeWidth={1.5} aria-hidden="true" />
                       再来一版
                     </button>
@@ -661,7 +676,7 @@ export default function ChatPanel({
               ⚠️ 两个都跟卡片一样挂 busy：正忙的时候点下去什么也不会发生
               （confirmMark 自己也有闸门），而"点了没反应"比"点不动"更让人懵。 */}
           {canConfirmMark && (
-            <button className="card" onClick={onConfirmMark} disabled={!!busy}>就改这里</button>
+            <button className="card" onClick={onConfirmMark} disabled={!!busy || offline}>就改这里</button>
           )}
           <button className="card" onClick={onCancelMark} disabled={!!busy}>不用了</button>
         </div>
@@ -685,7 +700,7 @@ export default function ChatPanel({
             <button
               key={`${c.label}-${c.route}`}
               className="card"
-              disabled={!!busy}
+              disabled={!!busy || offline}
               onClick={() => onCard(c)}
             >
               {c.label}
@@ -722,6 +737,12 @@ export default function ChatPanel({
           onExit={exitSelect} />
       )}
 
+      {!selecting && offline && (
+        <p className="chat-offline" role="status">
+          当前离线：本地调色、LUT、人像和导出照常；AI 对话与生成需要联网。
+        </p>
+      )}
+
       {!selecting && (
       <form
         className="chat-input"
@@ -729,7 +750,7 @@ export default function ChatPanel({
           e.preventDefault()
           const input = e.currentTarget.elements.namedItem('text') as HTMLInputElement
           const v = input.value.trim()
-          if (!v || busy) return
+          if (!v || busy || offline) return
           input.value = ''
           // ★ 2026-10-06：发送 = 表态"我要看最新的" —— 就算刚才翻在上面读历史，
           // 这一下也贴回底（下面那条"内容变了才跟"的规矩管不到这一步）。
@@ -790,7 +811,7 @@ export default function ChatPanel({
             ⚠️ 停止**不 disabled** —— 一个按不动的"停止"比没有更让人着急。 */}
         {generating
           ? <button type="button" className="stop" onClick={onStop}>停止</button>
-          : <button type="submit" disabled={!!busy}>发送</button>}
+          : <button type="submit" disabled={!!busy || offline}>发送</button>}
       </form>
       )}
 
@@ -830,13 +851,22 @@ export default function ChatPanel({
               忙的时候（或正在要）禁用：点了也没反应的按钮不留（老规矩）。
               ★ 2026-10-11（用户：「点击加号后的展开设计的更美观一点」）：补上
               `Sparkles` 图标 —— 原来一粒带图标一粒不带，并排看着像两个体系。 */}
-          <button className="chat-tool" disabled={!!busy || suggesting}
+          <button className="chat-tool" disabled={!!busy || suggesting || offline}
             onClick={onAskSuggest}>
             <span className="chat-tool-icon">
               <Sparkles size={20} strokeWidth={1.5} aria-hidden="true" />
             </span>
             帮我想想
           </button>
+          {aiActions?.map(action => (
+            <button key={action.id} className="chat-tool"
+              disabled={!!busy || offline} onClick={action.run}>
+              <span className="chat-tool-icon">
+                <WandSparkles size={20} strokeWidth={1.5} aria-hidden="true" />
+              </span>
+              {action.label}
+            </button>
+          ))}
         </div>
       )}
       {/* 点开是**和微调区同一套格子**（同一个组件，两处长得一样 —— 用户当场

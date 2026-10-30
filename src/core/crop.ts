@@ -17,7 +17,23 @@
  *    代价是"转完再去抠一个角"这一版做不了，写在 spec 的已知边界里。
  */
 export type CropRect = { x: number; y: number; w: number; h: number }
-export type CropSpec = { rect: CropRect; angle: number }
+export type CropSpec = {
+  rect: CropRect
+  angle: number
+  /** 水平翻转（左右镜像）。不改尺寸，只改画出来的像素方向。 */
+  flipH?: boolean
+  /** 垂直翻转（上下镜像）。 */
+  flipV?: boolean
+}
+export type CropGuide = 'off' | 'thirds' | 'golden' | 'diagonal'
+
+/** 构图参考线循环：关 → 三分 → 黄金分割 → 对角线 → 关。 */
+export function nextCropGuide(guide: CropGuide): CropGuide {
+  return guide === 'off' ? 'thirds'
+    : guide === 'thirds' ? 'golden'
+      : guide === 'golden' ? 'diagonal'
+        : 'off'
+}
 export const MAX_STRAIGHTEN = 15
 /** 框的最小边长（归一化）：别让它缩成一条线。
  *  ★ 2026-10-06（T4）：**导出了** —— `ui/CropOverlay` 拖把手时要在内接区里

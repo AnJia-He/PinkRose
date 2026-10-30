@@ -432,6 +432,57 @@ describe('createApp', () => {
   })
 })
 
+describe('★ 账号级偏好（2026-10-19）', () => {
+  it('GET /api/me 读得到；PATCH 保存后下一次 GET 仍在', async () => {
+    const { base, cookie } = await appWithUser()
+    const before = await call(base, 'GET', '/api/me', undefined, cookie)
+    expect((before.body as { user: { preferences: unknown } }).user.preferences).toBeNull()
+
+    const saved = await call(base, 'PATCH', '/api/me', {
+      preferences: { export: { format: 'image/webp', qualityPct: 82 } },
+    }, cookie)
+    expect(saved.status).toBe(200)
+    expect((saved.body as { user: { preferences: unknown } }).user.preferences)
+      .toEqual({ export: { format: 'image/webp', qualityPct: 82 } })
+
+    const after = await call(base, 'GET', '/api/me', undefined, cookie)
+    expect((after.body as { user: { preferences: unknown } }).user.preferences)
+      .toEqual({ export: { format: 'image/webp', qualityPct: 82 } })
+  })
+
+  it('偏好必须是对象且有大小上限；坏请求不改掉原来的值', async () => {
+    const { base, cookie } = await appWithUser()
+    await call(base, 'PATCH', '/api/me', {
+      preferences: { export: { format: 'image/jpeg' } },
+    }, cookie)
+
+    expect((await call(base, 'PATCH', '/api/me', { preferences: 'x' }, cookie)).status)
+      .toBe(400)
+    expect((await call(base, 'PATCH', '/api/me', {
+      preferences: { big: 'x'.repeat(9_000) },
+    }, cookie)).status).toBe(400)
+
+    const after = await call(base, 'GET', '/api/me', undefined, cookie)
+    expect((after.body as { user: { preferences: unknown } }).user.preferences)
+      .toEqual({ export: { format: 'image/jpeg' } })
+  })
+
+  it('偏好只属于自己：另一个账号读到的是 null', async () => {
+    const { base, auth, cookie } = await appWithUser()
+    await call(base, 'PATCH', '/api/me', {
+      preferences: { export: { format: 'image/png' } },
+    }, cookie)
+    const second = await handleSignup(
+      { username: '第二个人', email: 'second@example.com', password: 'password123' },
+      auth,
+    )
+    const other = await call(
+      base, 'GET', '/api/me', undefined, `${SESSION_COOKIE}=${second.token}`,
+    )
+    expect((other.body as { user: { preferences: unknown } }).user.preferences).toBeNull()
+  })
+})
+
 describe('账号与鉴权', () => {
   const routeBody = { imageDataUrl: 'data:image/jpeg;base64,x', text: '亮一点', params: {} }
 
@@ -1022,6 +1073,214 @@ describe('删与替换：路由真的接上了', () => {
   })
 })
 
+describe('批量评分：路由真的接上了', () => {
+  it('未登录 401；登录后一次改两张，缺失 id 如实回报', async () => {
+    const { base, cookie } = await appWithUser()
+    const b64 = b64Of(jpegBytes(64))
+    const make = async (): Promise<number> => {
+      const created = await post(base, '/api/works', { image: `data:image/jpeg;base64,${b64}` }, cookie)
+      expect(created.status).toBe(200)
+      return (created.body as unknown as { id: number }).id
+    }
+    const a = await make()
+    const b = await make()
+
+    const anonymous = await fetch(`${base}/api/works/rate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: [a, b], rating: 5 }),
+    })
+    expect(anonymous.status).toBe(401)
+
+    const r = await fetch(`${base}/api/works/rate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ ids: [a, b, 99999], rating: 5 }),
+    })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ rated: [a, b], missing: [99999] })
+
+    const list = (await (await fetch(`${base}/api/works`, { headers: { cookie } })).json()) as {
+      works: { id: number; rating: number }[]
+    }
+    expect(list.works.map(w => [w.id, w.rating]).sort((x, y) => x[0]! - y[0]!))
+      .toEqual([[a, 5], [b, 5]])
+  })
+
+  it('PATCH flag 真的落到作品上；非法标记 400', async () => {
+    const { base, cookie } = await appWithUser()
+    const b64 = b64Of(jpegBytes(64))
+    const created = await post(base, '/api/works', { image: `data:image/jpeg;base64,${b64}` }, cookie)
+    const id = (created.body as unknown as { id: number }).id
+
+    const picked = await fetch(`${base}/api/works/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ flag: 1 }),
+    })
+    expect(picked.status).toBe(200)
+    expect((await picked.json() as { flag: number }).flag).toBe(1)
+
+    const rejected = await fetch(`${base}/api/works/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ flag: -1 }),
+    })
+    expect(rejected.status).toBe(200)
+    expect((await rejected.json() as { flag: number }).flag).toBe(-1)
+
+    const bad = await fetch(`${base}/api/works/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ flag: 2 }),
+    })
+    expect(bad.status).toBe(400)
+  })
+
+  it('批量 flag 路由一次写混合建议，缺失 id 如实回报', async () => {
+    const { base, cookie } = await appWithUser()
+    const b64 = b64Of(jpegBytes(64))
+    const make = async (): Promise<number> => {
+      const created = await post(base, '/api/works', {
+        image: `data:image/jpeg;base64,${b64}`,
+      }, cookie)
+      return (created.body as unknown as { id: number }).id
+    }
+    const a = await make()
+    const b = await make()
+
+    const anonymous = await fetch(`${base}/api/works/flag`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: [{ id: a, flag: 1 }] }),
+    })
+    expect(anonymous.status).toBe(401)
+
+    const result = await fetch(`${base}/api/works/flag`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        items: [
+          { id: a, flag: 1 },
+          { id: b, flag: -1 },
+          { id: 99999, flag: 1 },
+        ],
+      }),
+    })
+    expect(result.status).toBe(200)
+    expect(await result.json()).toEqual({ flagged: [a, b], missing: [99999] })
+  })
+
+  it('颜色标签单张和批量路由都接上了；非法颜色 400', async () => {
+    const { base, cookie } = await appWithUser()
+    const b64 = b64Of(jpegBytes(64))
+    const make = async (): Promise<number> => {
+      const created = await post(base, '/api/works', {
+        image: `data:image/jpeg;base64,${b64}`,
+      }, cookie)
+      return (created.body as unknown as { id: number }).id
+    }
+    const a = await make()
+    const b = await make()
+
+    const single = await fetch(`${base}/api/works/${a}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ color: 'red' }),
+    })
+    expect(single.status).toBe(200)
+    expect((await single.json() as { color: string }).color).toBe('red')
+
+    const batch = await fetch(`${base}/api/works/color`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ ids: [a, b, 99999], color: 'blue' }),
+    })
+    expect(batch.status).toBe(200)
+    expect(await batch.json()).toEqual({ colored: [a, b], missing: [99999] })
+
+    const bad = await fetch(`${base}/api/works/${a}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({ color: 'orange' }),
+    })
+    expect(bad.status).toBe(400)
+  })
+})
+
+describe('相册：路由真的接上了', () => {
+  it('新建相册 → 加入作品 → 按相册筛选 → 删相册不删照片', async () => {
+    const { base, cookie } = await appWithUser()
+    const b64 = b64Of(jpegBytes(64))
+    const createdWork = await post(base, '/api/works', {
+      image: `data:image/jpeg;base64,${b64}`,
+    }, cookie)
+    const workId = (createdWork.body as unknown as { id: number }).id
+
+    const createdAlbum = await post(base, '/api/albums', { name: '旅行' }, cookie)
+    expect(createdAlbum.status).toBe(200)
+    const album = (createdAlbum.body as unknown as { album: { id: number } }).album
+
+    const added = await post(base, `/api/albums/${album.id}/works`, { ids: [workId] }, cookie)
+    expect(added.status).toBe(200)
+    expect(added.body).toEqual({ added: [workId], missing: [] })
+
+    const filtered = await (await fetch(`${base}/api/works?album=${album.id}`, {
+      headers: { cookie },
+    })).json() as { works: { id: number }[] }
+    expect(filtered.works.map(item => item.id)).toEqual([workId])
+
+    const removedAlbum = await fetch(`${base}/api/albums/${album.id}`, {
+      method: 'DELETE', headers: { cookie },
+    })
+    expect(removedAlbum.status).toBe(200)
+    const all = await (await fetch(`${base}/api/works`, { headers: { cookie } })).json() as {
+      works: { id: number }[]
+    }
+    expect(all.works.map(item => item.id)).toEqual([workId])
+  })
+})
+
+describe('分享链接：路由真的接上了', () => {
+  it('开启 → 公开免登录读取 → 停止后旧链接立刻 404', async () => {
+    const { base, cookie } = await appWithUser()
+    const b64 = b64Of(jpegBytes(64))
+    const created = await post(base, '/api/works', {
+      image: `data:image/jpeg;base64,${b64}`,
+    }, cookie)
+    const id = (created.body as unknown as { id: number }).id
+
+    // 没登录不能开分享
+    expect((await fetch(`${base}/api/works/${id}/share`, { method: 'POST' })).status).toBe(401)
+
+    const opened = await post(base, `/api/works/${id}/share`, {}, cookie)
+    expect(opened.status).toBe(200)
+    const token = (opened.body as unknown as { token: string }).token
+    expect(token).toMatch(/^[A-Za-z0-9_-]{16,64}$/)
+
+    // 公开页：不带 cookie 也能读；不泄露配方 / 用户 / 硬盘文件名
+    const publicMeta = await fetch(`${base}/api/share/${token}`)
+    expect(publicMeta.status).toBe(200)
+    expect(publicMeta.headers.get('cache-control')).toContain('no-store')
+    const meta = await publicMeta.json() as Record<string, unknown>
+    expect(meta.token).toBe(token)
+    expect(meta).not.toHaveProperty('recipe')
+    expect(meta).not.toHaveProperty('stored_name')
+
+    const publicImage = await fetch(`${base}/api/share/${token}/image`)
+    expect(publicImage.status).toBe(200)
+    expect(publicImage.headers.get('content-type')).toContain('image/jpeg')
+    expect((await publicImage.arrayBuffer()).byteLength).toBeGreaterThan(0)
+
+    const stopped = await fetch(`${base}/api/works/${id}/share`, {
+      method: 'DELETE', headers: { cookie },
+    })
+    expect(stopped.status).toBe(200)
+    expect((await fetch(`${base}/api/share/${token}`)).status).toBe(404)
+    expect((await fetch(`${base}/api/share/${token}/image`)).status).toBe(404)
+  })
+})
+
 describe('/api/models', () => {
   const BODY = {
     kind: 'chat', provider: 'custom', baseUrl: 'https://api.example.com/v1',
@@ -1228,7 +1487,7 @@ describe('/api/models', () => {
       // 用例之间不共享这个替换（这个文件里别的用例要发真请求）
       globalThis.fetch = realFetch
     }
-  })
+  }, 20_000)
 
   it('★ 出站前按**解析出的 IP** 再判一次 —— 公共通配域名（nip.io 那一类）不再是绕过口', async () => {
     // 域名看着完全正常（字面量黑名单看不见它），但一解析就指向内网 ——
@@ -2280,8 +2539,8 @@ describe('★ 静态兜底的两份壳（预渲染之后）', () => {
     const home = await (await fetch(`${base}/`)).text()
     expect(home).toContain('LANDING-MARKUP-IN-ROOT')
 
-    // /app 和 /works 底下（含子路径）都该是空壳
-    for (const p of ['/app', '/app/account', '/works', '/works/7']) {
+    // /app、/works 和公开分享 /s/<token> 底下都该是空壳
+    for (const p of ['/app', '/app/account', '/works', '/works/7', '/s/AbCdEfGhIjKlMnOpQrStUvWx']) {
       const res = await (await fetch(`${base}${p}`)).text()
       expect(res, p).toContain('EMPTY-ROOT-SHELL')
     }

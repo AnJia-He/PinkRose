@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { signup, login, logout, me } from './account'
+import { signup, login, logout, me, savePreferences } from './account'
 
 const calls: { url: string; init: RequestInit | undefined }[] = []
 beforeEach(() => {
@@ -35,6 +35,16 @@ describe('账号接口', () => {
   it('me() 是 GET', async () => {
     await me()
     expect(calls[0]!.init?.method).toBe('GET')
+  })
+
+  it('savePreferences 走 PATCH /api/me，并把偏好放在 preferences 里', async () => {
+    const user = await savePreferences({ export: { format: 'image/png' } })
+    expect(calls[0]!.url).toBe('/api/me')
+    expect(calls[0]!.init?.method).toBe('PATCH')
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+      preferences: { export: { format: 'image/png' } },
+    })
+    expect(user.username).toBe('a')
   })
 
   /**

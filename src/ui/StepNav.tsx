@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 /**
@@ -28,18 +29,80 @@ export default function StepNav(props: {
   total: number
   onPrev: () => void
   onNext: () => void
+  /** 账本每一笔的名字（顺序 = 第 1 笔到最后）。不传 = 不展开历史列表。 */
+  items?: readonly string[]
+  /** 跳到第几笔（1 起数）。 */
+  onJump?: (index: number) => void
 }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent) => {
+      if (rootRef.current?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const canOpen = !!props.items && !!props.onJump
   return (
-    <div className="step-nav" role="group" aria-label="调整记录">
+    <div className="step-nav" role="group" aria-label="调整记录" ref={rootRef}>
       <button type="button" className="step-nav-btn" aria-label="上一步" title="上一步"
+        aria-keyshortcuts="Meta+Z Control+Z"
         disabled={props.index <= 1} onClick={props.onPrev}>
         <ChevronLeft size={15} strokeWidth={1.5} aria-hidden="true" />
       </button>
-      <span className="step-nav-count">{`${props.index} / ${props.total}`}</span>
+      {canOpen ? (
+        <button
+          type="button"
+          className={`step-nav-count${open ? ' on' : ''}`}
+          aria-label="编辑历史"
+          aria-expanded={open}
+          title="编辑历史"
+          onClick={() => setOpen(o => !o)}
+        >{`${props.index} / ${props.total}`}</button>
+      ) : (
+        <span className="step-nav-count">{`${props.index} / ${props.total}`}</span>
+      )}
       <button type="button" className="step-nav-btn" aria-label="下一步" title="下一步"
+        aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y"
         disabled={props.index >= props.total} onClick={props.onNext}>
         <ChevronRight size={15} strokeWidth={1.5} aria-hidden="true" />
       </button>
+      {open && props.items && props.onJump && (
+        <div className="step-history" role="menu" aria-label="编辑历史">
+          {props.items.map((label, i) => {
+            const at = i + 1
+            const on = at === props.index
+            return (
+              <button
+                key={`${at}-${label}`}
+                type="button"
+                role="menuitem"
+                className={`step-history-item${on ? ' on' : ''}${at > props.index ? ' future' : ''}`}
+                aria-current={on ? 'step' : undefined}
+                onClick={() => {
+                  props.onJump?.(at)
+                  setOpen(false)
+                }}
+              >
+                <span className="step-history-index">{at}</span>
+                <span className="step-history-label">{label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

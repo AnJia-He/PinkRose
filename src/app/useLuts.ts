@@ -17,7 +17,7 @@ import type { Adjustments } from '../../shared/adjustments.ts'
  *    而不是这个入口。留着它是接口那一半（"这个 hook 知道当事人手上是什么参数"），
  *    别当成笔误删掉。
  */
-export function useLuts({ lut, image, params: _params, onError }: {
+export function useLuts({ lut, image, params: _params, onError, enabled = true }: {
   lut: LutRef | null
   image: DecodedImage | null
   params: Adjustments
@@ -29,6 +29,12 @@ export function useLuts({ lut, image, params: _params, onError }: {
    * 可选：不传就只留 console（测试和别的调用点不必被迫接一个通报）。
    */
   onError?: (msg: string) => void
+  /**
+   * 登录之后才允许拉个人资产。App 在“我是谁”还没问完时会先渲染一次，
+   * 这时 `user` 还是 null；不挡住的话未登录访客也会打 `/api/luts` 并留下 401。
+   * 退出登录时也要清空，避免下一个人短暂看到上一个人的清单。
+   */
+  enabled?: boolean
 }) {
   const [luts, setLuts] = useState<LutMeta[]>([])
   /**
@@ -87,6 +93,7 @@ export function useLuts({ lut, image, params: _params, onError }: {
    *   `null` 的意思只有一个：**这次没问出来，什么都不许照**。
    */
   const reload = useCallback(async (): Promise<LutMeta[] | null> => {
+    if (!enabled) return null
     try {
       const { luts: list } = await listLuts()
       setLuts(list)
@@ -96,14 +103,25 @@ export function useLuts({ lut, image, params: _params, onError }: {
       console.error('滤镜清单没取回来：', e)
       return null
     }
-  }, [])
+  }, [enabled])
 
-  // 登录后拉一次清单（App 挂载时）
+  // 登录后才拉清单；退出时把上一账号的清单与现场清干净。
   useEffect(() => { void reload() }, [reload])
+  useEffect(() => {
+    if (enabled) return
+    cubeSeq.current++
+    thumbSeq.current++
+    setLuts([])
+    setLutsKnown(false)
+    setCube(null)
+    setThumbs({ none: null, byId: {} })
+    cubes.current.clear()
+  }, [enabled])
 
   // 当前滤镜换了 → 取它的 cube（认不出来的当"没有"）
   useEffect(() => {
     const seq = ++cubeSeq.current
+    if (!enabled) { setCube(null); return }
     if (lutId === null) { setCube(null); return }
     void loadCube(lutId).then((c) => {
       if (seq !== cubeSeq.current) return
@@ -113,7 +131,7 @@ export function useLuts({ lut, image, params: _params, onError }: {
       //   （这条 effect 的依赖是 `lutId`，没变），得换一个滤镜才动。
       if (c === null) onErrorRef.current?.('那个 Lut 没取回来 —— 换一个试试，或者刷新一下。')
     })
-  }, [lutId, loadCube])
+  }, [enabled, lutId, loadCube])
 
   // 换照片 → 缩略图作废（下次打开格子重画；这里的 `image` 刻意进依赖）
   useEffect(() => {

@@ -18,7 +18,7 @@ import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import CropOverlay, { type CropBox } from './CropOverlay'
-import { MIN_SIDE, type CropRect } from '../core/crop'
+import { MIN_SIDE, type CropGuide, type CropRect } from '../core/crop'
 
 const BOX: CropBox = { left: 0, top: 0, width: 800, height: 600 }
 const FULL: CropRect = { x: 0, y: 0, w: 1, h: 1 }
@@ -36,6 +36,7 @@ function Harness(props: {
   initial: CropRect
   aspect?: number | null
   inner?: CropRect
+  guide?: CropGuide
   seen: CropRect[]
   onOuter?: () => void
 }) {
@@ -46,6 +47,7 @@ function Harness(props: {
         box={BOX} rect={rect}
         aspect={props.aspect ?? null}
         inner={props.inner ?? FULL}
+        guide={props.guide}
         onRect={r => { props.seen.push(r); setRect(r) }}
       />
     </div>
@@ -56,6 +58,7 @@ async function mount(props: {
   initial: CropRect
   aspect?: number | null
   inner?: CropRect
+  guide?: CropGuide
   onOuter?: () => void
 }) {
   const container = document.createElement('div')
@@ -75,6 +78,12 @@ const down = (el: Element, clientX: number, clientY: number) =>
 const move = (clientX: number, clientY: number) =>
   act(async () => { window.dispatchEvent(new MouseEvent('pointermove', { clientX, clientY })) })
 const up = () => act(async () => { window.dispatchEvent(new MouseEvent('pointerup')) })
+const key = (el: Element, value: string, shiftKey = false) =>
+  act(async () => {
+    el.dispatchEvent(new KeyboardEvent('keydown', {
+      key: value, shiftKey, bubbles: true, cancelable: true,
+    }))
+  })
 
 /** 拖一个把手：从它的位置拖走 (dx, dy) 像素。 */
 async function drag(el: Element, from: [number, number], by: [number, number]) {
@@ -138,6 +147,58 @@ describe('框里按下 = 整体平移', () => {
     const r = c.seen.at(-1)!
     near(r.x, 0.5); near(r.y, 0)          // 右边贴 1、上边贴 0
     near(r.w, 0.5); near(r.h, 0.5)
+  })
+})
+
+describe('键盘精确构图', () => {
+  it('焦点在裁剪框上：方向键移动 1px，Shift 加速到 10px', async () => {
+    const c = await mount({ initial: { x: 0.25, y: 0.25, w: 0.5, h: 0.5 } })
+    await key(c.frame(), 'ArrowRight')
+    near(c.seen.at(-1)!.x, 0.25 + 1 / 800)
+    await key(c.frame(), 'ArrowDown', true)
+    near(c.seen.at(-1)!.y, 0.25 + 10 / 600)
+    expect(c.seen.at(-1)!.w).toBeCloseTo(0.5, 6)
+    expect(c.seen.at(-1)!.h).toBeCloseTo(0.5, 6)
+  })
+
+  it('焦点在把手上：方向键只改对应轴，并继续受内接区约束', async () => {
+    const c = await mount({
+      initial: { x: 0.25, y: 0.25, w: 0.5, h: 0.5 },
+      inner: { x: 0.2, y: 0.2, w: 0.6, h: 0.6 },
+    })
+    await key(c.handle('se'), 'ArrowRight')
+    near(c.seen.at(-1)!.w, 0.5 + 1 / 800)
+    expect(c.seen.at(-1)!.h).toBeCloseTo(0.5, 6)
+    await key(c.handle('se'), 'ArrowDown', true)
+    near(c.seen.at(-1)!.h, 0.5 + 10 / 600)
+  })
+
+  it('锁比例时键盘缩放仍保持宽高比', async () => {
+    const c = await mount({
+      initial: { x: 0.2, y: 0.3, w: 0.4, h: 0.25 }, aspect: 1.6,
+    })
+    await key(c.handle('e'), 'ArrowRight', true)
+    const r = c.seen.at(-1)!
+    near(r.w, 0.4 + 10 / 800)
+    near(r.h, r.w / 1.6)
+  })
+
+  it('裁剪框和八个把手都在键盘顺序里', async () => {
+    const c = await mount({ initial: FULL })
+    expect(c.frame().tabIndex).toBe(0)
+    expect(c.frame().getAttribute('aria-label')).toContain('方向键移动')
+    const handles = [...c.container.querySelectorAll('.crop-h')] as HTMLElement[]
+    expect(handles.every(el => el.tabIndex === 0)).toBe(true)
+    expect(handles.map(el => el.getAttribute('aria-label'))).toEqual([
+      '裁剪框左上角把手；方向键调整大小',
+      '裁剪框上边把手；方向键调整大小',
+      '裁剪框右上角把手；方向键调整大小',
+      '裁剪框右边把手；方向键调整大小',
+      '裁剪框右下角把手；方向键调整大小',
+      '裁剪框下边把手；方向键调整大小',
+      '裁剪框左下角把手；方向键调整大小',
+      '裁剪框左边把手；方向键调整大小',
+    ])
   })
 })
 
@@ -224,5 +285,18 @@ describe('手势的边界', () => {
     const c = await mount({ initial: FULL })
     expect([...c.container.querySelectorAll('.crop-h')].map(e => e.getAttribute('data-h')))
       .toEqual(['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'])
+  })
+})
+
+describe('构图参考线', () => {
+  it('三分 / 黄金分割 / 对角线画在裁剪框里，关闭时一条不画', async () => {
+    const thirds = await mount({ initial: FULL, guide: 'thirds' })
+    expect(thirds.container.querySelectorAll('.crop-guides line')).toHaveLength(4)
+    const golden = await mount({ initial: FULL, guide: 'golden' })
+    expect(golden.container.querySelectorAll('.crop-guides line')).toHaveLength(4)
+    const diagonal = await mount({ initial: FULL, guide: 'diagonal' })
+    expect(diagonal.container.querySelectorAll('.crop-guides line')).toHaveLength(2)
+    const off = await mount({ initial: FULL, guide: 'off' })
+    expect(off.container.querySelector('.crop-guides')).toBeNull()
   })
 })

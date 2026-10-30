@@ -1,29 +1,47 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Aperture, Blend, ChevronDown, Droplet, Images, LayoutGrid, Monitor,
-  SlidersHorizontal, Sun, SunMoon,
+  Aperture, Blend, ChevronDown, ChevronUp, ClipboardPaste, Contrast, Copy, Droplet, Focus, Images, LayoutGrid, Monitor, RotateCcw,
+  Palette, Pipette, Rainbow, Ruler, Scan, ScanSearch, Search, SlidersHorizontal, Smile, Spline, Sun, SunMoon, X,
 } from 'lucide-react'
 import { fileUrl, listWorks } from '../api/works.ts'
 import {
-  PARAM_GROUPS, PARAM_LABELS, PARAM_RANGE, isChanged,
+  PARAM_GROUPS, PARAM_LABELS, PARAM_RANGE, ZERO, isChanged,
   type Adjustments,
 } from '../../shared/adjustments.ts'
+import type { HslBandId } from '../core/hslPick'
 import { workName, type WorkMeta } from '../../shared/works.ts'
-import type { LutMeta, LutRef } from '../../shared/lut.ts'
+import type { Cube, LutMeta, LutRef } from '../../shared/lut.ts'
 import type { PresetMeta } from '../../shared/preset.ts'
 import { Slider } from './kit/Slider.tsx'
 import { ColorWheel } from './ColorWheel.tsx'
+import HslControls from './HslControls.tsx'
+import ToneCurve from './ToneCurve.tsx'
+import Histogram from './Histogram.tsx'
+import type { HistogramData } from '../render/histogram'
 import LutPicker from './LutPicker.tsx'
 import { PresetManager } from './PresetManager.tsx'
+import PhotoInfoPanel from './PhotoInfoPanel.tsx'
+import LayerPanel from './LayerPanel.tsx'
+import LensProfilePicker from './LensProfilePicker.tsx'
+import LutExporter from './LutExporter.tsx'
+import type { EditLayer } from '../../shared/layers.ts'
+import type { ColorReading } from '../core/colorSample'
+import {
+  WHITE_BALANCE_PRESETS, activeWhiteBalancePreset, applyWhiteBalancePreset,
+} from '../core/whiteBalancePresets'
 
 /**
  * ★ 2026-10-08（用户原话：「给这些也找到合适的图标组件」—— 对着调色面板那几组说的）：
- * 六个组头（Lut + 五组参数）各配一个图标。选型照左栏那条规矩（见 `Nav.tsx` 顶部）：
+ * 十四个组头（Lut + 十三组参数）各配一个图标。选型照左栏那条规矩（见 `Nav.tsx` 顶部）：
  *   · **同一个概念全站同一个图标** —— Lut 用的滑杆就是左栏那格 / 对话加号里
  *     那一项用的 `SlidersHorizontal`，不在面板里另起一个；
- *   · **一个图标认一件事**，六颗摆在一列里一眼分得开：光效 = 太阳（明暗）、
- *     色彩 = 水滴（色）、色彩平衡 = 混合、分离色调 = 日月（高光=日 / 阴影=夜）、
- *     效果 = 光圈（清晰度 / 暗角这一类镜头感的东西）；
+ *   · **一个图标认一件事**，九颗摆在一列里一眼分得开：光效 = 太阳（明暗）、
+ *     色彩 = 水滴（色）、黑白 = 明暗对比圆、色彩平衡 = 混合、分离色调 = 日月（高光=日 / 阴影=夜）、
+ *     效果 = 光圈（清晰度 / 暗角这一类镜头感的东西）、
+ *     细节 = 放大镜（锐化 / 降噪 / 颗粒，都是凑近看的东西）、
+ *     HSL = 彩虹（八条色带）、曲线 = 一条折线（影调曲线）、
+ *     美颜 = 笑脸（美白 / 红润）；几何 = 扫描框（透视校正）；镜头 = 焦点框（景深虚化）；
+ *     镜头校正 = 尺子（直线是否还直）。
  *   · 尺寸跟这一屏的既有口径走（面板里 `Images`/`LayoutGrid`/箭头全是 14），
  *     线宽**显式** 1.5 —— 尺子守卫钉着"每个 lucide 图标都必须显式写"
  *     （不写就是 lucide 默认的 2，悄悄变粗）。
@@ -33,9 +51,17 @@ import { PresetManager } from './PresetManager.tsx'
 const GROUP_ICONS = {
   light: Sun,
   color: Droplet,
+  bw: Contrast,
   balance: Blend,
   split: SunMoon,
   effects: Aperture,
+  detail: ScanSearch,
+  hsl: Rainbow,
+  curve: Spline,
+  beauty: Smile,
+  geometry: Scan,
+  lens: Focus,
+  lensFix: Ruler,
 } as const
 
 /** 组头那颗图标。单独一层只为一件事：把"从 id 取组件"收在一处（上面那张表）。 */
@@ -48,6 +74,22 @@ type Props = {
   value: Adjustments
   onChange: (next: Adjustments) => void
   onReset: () => void
+  /** 把当前参数和滤镜引用放进跨照片的调色剪贴板。 */
+  onCopyAdjustments: () => void
+  /** 把剪贴板里的调色套到当前照片。 */
+  onPasteAdjustments: () => void
+  canPasteAdjustments: boolean
+  /** 编辑器手上这张原文件；用于按需读取 EXIF。 */
+  photoFile: File | null
+  image: { width: number; height: number }
+  /** 刚套上的预设强度；undefined = 没挂预设，不画这一行。 */
+  presetAmount?: number
+  presetLabel?: string
+  onPresetAmount?: (amount: number) => void
+  /** 本地直方图分析后套一组保守的自动影调；不联网、不花钱。 */
+  onAuto: () => void
+  /** 本地采样后从内置预设里挑一套；动作在 App，面板只交出一次点击。 */
+  onRecommend: () => void
   /**
    * 用户挑了一张参考图，要"照着它调"。
    *
@@ -77,6 +119,8 @@ type Props = {
   lutsKnown: boolean
   /** 现在用着哪个（null = 不用）。**有它的时候这一栏的标题点亮**（§5.2）。 */
   lut: LutRef | null
+  /** 当前 Lut 的 cube；导出当前外观时一起烘焙。 */
+  lutCube?: Cube | null
   /** 缩略图：`byId` 是 id → dataURL（缺的那格画占位），`none` 是「不用」那格。 */
   lutThumbs: { none: string | null; byId: Record<number, string> }
   onPickLut: (lutId: number | null) => void
@@ -107,6 +151,29 @@ type Props = {
   onSavePreset: (name: string, params: Adjustments) => Promise<void>
   onRenamePreset: (id: number, name: string) => Promise<void>
   onDeletePreset: (id: number) => Promise<void>
+  /** ★ 2026-10-17：白平衡吸管正在等用户点画面。 */
+  whiteBalancePicking?: boolean
+  onWhiteBalance?: () => void
+  /** ★ 2026-10-19：HSL 定向调色正在等用户点画面取色。 */
+  hslPicking?: boolean
+  onHslPick?: () => void
+  /** App 从照片颜色算出的色带；面板据此切到那一条。 */
+  hslPickedBand?: HslBandId | null
+  /** 同一个色带再次取色也要生效（用户可能先手选去了别的色带）。 */
+  hslPickSeq?: number
+  /** 点一下画面读取当前渲染颜色；只读数，不改参数。 */
+  colorSampling?: boolean
+  colorSample?: ColorReading | null
+  onColorSample?: () => void
+  onCopyColor?: () => void | Promise<void>
+  /** 实时直方图（来自渲染管线的小离屏缓冲）；null / 不传 = 还没算出来。 */
+  histogram?: HistogramData | null
+  /** ★ 2026-10-19（统一图层面板）：文字 / 形状 / 贴纸 / 局部层。 */
+  layers: readonly EditLayer[]
+  onToggleLayer: (id: string) => void
+  onMoveLayer: (id: string, dir: 'up' | 'down') => void
+  onDeleteLayer: (id: string) => void
+  onEditLayer: (id: string) => void
 }
 
 /**
@@ -137,13 +204,22 @@ const GRADIENTS: Partial<Record<keyof Adjustments, string>> = {
   cbYellowBlue: 'linear-gradient(90deg, #ffcc00, #ececf0 50%, #2f7cf6)',
   splitHiHue: 'linear-gradient(90deg,#ff2d2d,#ffef00,#00e000,#00e5e5,#0048ff,#e000ff,#ff2d2d)',
   splitLoHue: 'linear-gradient(90deg,#ff2d2d,#ffef00,#00e000,#00e5e5,#0048ff,#e000ff,#ff2d2d)',
+  splitMidHue: 'linear-gradient(90deg,#ff2d2d,#ffef00,#00e000,#00e5e5,#0048ff,#e000ff,#ff2d2d)',
 }
 
 export default function AdjustmentPanel({
-  value, onChange, onReset, onMatchReference, onMatchWork,
-  luts, lutsKnown, lut, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
+  value, onChange, onReset, onCopyAdjustments, onPasteAdjustments, canPasteAdjustments,
+  photoFile, image,
+  onAuto, onRecommend, onMatchReference, onMatchWork,
+  luts, lutsKnown, lut, lutCube, lutThumbs, onPickLut, onLutAmount, onNeedLutThumbs, onGoImport, onRetryLuts,
   presets, presetsKnown, onSavePreset, onRenamePreset, onDeletePreset,
+  whiteBalancePicking = false, onWhiteBalance,
+  hslPicking = false, onHslPick, hslPickedBand = null, hslPickSeq = 0,
+  colorSampling = false, colorSample = null, onColorSample, onCopyColor,
+  histogram,
+  layers, onToggleLayer, onMoveLayer, onDeleteLayer, onEditLayer,
   defaultLutOpen = false,
+  presetAmount, presetLabel, onPresetAmount,
 }: Props) {
   const refInput = useRef<HTMLInputElement>(null)
 
@@ -151,12 +227,29 @@ export default function AdjustmentPanel({
   // 折叠是"看哪儿"的问题，不属于那张参数表，也不该进网址（刷新后全展开是对的：
   // 收起来过的那几组是上一眼的事，不是这份作品的一部分）。
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+  // 手机上的参数面板占约 40vh。收起后把这块高度还给照片，同时把入口留在原处；
+  // 桌面面板是右侧常驻栏，按钮由 CSS 隐藏，不会把整栏关掉。
+  // 短视口（iPhone Safari 内容区常见 664~760px）默认先给照片，点一下再展开参数；
+  // 高一些的手机仍保持展开，避免每张图都多一次点击。
+  const [panelCollapsed, setPanelCollapsed] = useState(() =>
+    typeof window !== 'undefined' && window.innerWidth <= 640 && window.innerHeight <= 760)
+  const [query, setQuery] = useState('')
 
   // ★ 2026-10-05：「滤镜」那一栏开着没有。**默认收着**（设计 §5.2 / spec §8.3：
   //   用户原话「不要写个名字显示出来占空间」）—— 所以它不在上面那个
   //   `collapsed` 集合里：那套的默认是"全展开"，这一栏的默认是"收着"。
   //   `defaultLutOpen` 只从「滤镜」那一页那条路来（见 Props 那段）。
   const [lutOpen, setLutOpen] = useState(defaultLutOpen)
+  const [hslBandId, setHslBandId] = useState<HslBandId>('red')
+
+  // 照片取色回来后切到那条色带。值相同就不动，用户手选的色带不会被无谓打断。
+  useEffect(() => {
+    if (hslPickedBand) setHslBandId(hslPickedBand)
+  }, [hslPickedBand, hslPickSeq])
+
+  useEffect(() => {
+    if (query.trim()) setCollapsed(new Set())
+  }, [query])
 
   /**
    * 这一栏**开着**的时候去要缩略图（很贵：每个滤镜各画一张当前照片）。
@@ -188,11 +281,12 @@ export default function AdjustmentPanel({
   const [refOpen, setRefOpen] = useState(false)
   const [worksOpen, setWorksOpen] = useState(false)
   const [works, setWorks] = useState<WorksState>({ s: 'idle' })
+  const tiltLens = value.lensShape > 50
 
   /**
    * ★ 2026-10-10：「我的预设」那一块里面开着没有。**默认收着**（和滤镜那一栏
    *   同一条：收着是常态，别一进调色屏就占一截）。展开的内容是 `PresetManager`
-   *   整块 —— 它不进上面那个 `collapsed` 集合（那套管的是五组参数的默认展开）。
+   *   整块 —— 它不进上面那个 `collapsed` 集合（那套管的是十一组参数的默认展开）。
    */
   const [mineOpen, setMineOpen] = useState(false)
 
@@ -232,8 +326,15 @@ export default function AdjustmentPanel({
   /** 选好了（本地文件或作品都算）—— 展开区整个收起。 */
   const closeRef = () => { setRefOpen(false); setWorksOpen(false) }
 
+  const needle = query.trim().toLocaleLowerCase('zh-CN')
+  const matchingGroups = needle
+    ? PARAM_GROUPS.filter(g =>
+        g.title.toLocaleLowerCase('zh-CN').includes(needle)
+        || g.keys.some(k => PARAM_LABELS[k].toLocaleLowerCase('zh-CN').includes(needle)))
+    : PARAM_GROUPS
+
   return (
-    <aside className="panel">
+    <aside className={`panel${panelCollapsed ? ' panel-collapsed' : ''}`}>
       <div className="panel-head">
         <span>调色</span>
         {/* ★ 2026-10-10（「我的预设」，设计 §5.1）：存 / 改 / 删自己攒的那几套
@@ -247,12 +348,128 @@ export default function AdjustmentPanel({
                 onClick={() => setMineOpen(o => !o)}>
           我的预设
         </button>
+        <button className="panel-recommend" onClick={onRecommend}>推荐</button>
+        <button className="panel-auto" onClick={onAuto}>自动</button>
         <button onClick={onReset}>重置</button>
+        <button
+          type="button"
+          className="panel-collapse-toggle"
+          aria-expanded={!panelCollapsed}
+          aria-controls="adjustment-panel-content"
+          aria-label={panelCollapsed ? '展开调色参数' : '收起调色面板'}
+          title={panelCollapsed ? '展开调色参数，查看大图' : '收起调色面板，查看大图'}
+          onClick={() => setPanelCollapsed(v => !v)}
+        >
+          {panelCollapsed
+            ? <ChevronUp size={16} strokeWidth={1.5} aria-hidden="true" />
+            : <ChevronDown size={16} strokeWidth={1.5} aria-hidden="true" />}
+        </button>
       </div>
+      <div className="panel-content" id="adjustment-panel-content">
+      <div className="panel-clipboard" role="group" aria-label="调色剪贴板">
+        <button type="button" className="crop-chip" onClick={onCopyAdjustments}>
+          <Copy size={14} strokeWidth={1.5} aria-hidden="true" />
+          复制调色
+        </button>
+        <button
+          type="button"
+          className="crop-chip"
+          disabled={!canPasteAdjustments}
+          onClick={onPasteAdjustments}
+        >
+          <ClipboardPaste size={14} strokeWidth={1.5} aria-hidden="true" />
+          粘贴调色
+        </button>
+        {onColorSample && (
+          <button
+            type="button"
+            className={`crop-chip${colorSampling ? ' on' : ''}`}
+            aria-label="颜色取样"
+            aria-pressed={colorSampling}
+            onClick={onColorSample}
+          >
+            <Palette size={14} strokeWidth={1.5} aria-hidden="true" />
+            {colorSampling ? '点照片取色' : '颜色取样'}
+          </button>
+        )}
+        <PhotoInfoPanel file={photoFile} width={image.width} height={image.height} />
+      </div>
+      {colorSample && (
+        <div className="color-sample" aria-label="颜色读数">
+          <span
+            className="color-sample-swatch"
+            style={{ background: colorSample.hex }}
+            aria-hidden="true"
+          />
+          <code className="color-sample-hex">{colorSample.hex}</code>
+          <span>RGB {colorSample.rgb.join(' · ')}</span>
+          <span>HSL {colorSample.hsl[0]}° · {colorSample.hsl[1]}% · {colorSample.hsl[2]}%</span>
+          {onCopyColor && (
+            <button
+              type="button"
+              className="color-sample-copy"
+              aria-label={`复制颜色 ${colorSample.hex}`}
+              onClick={() => void onCopyColor()}
+            >复制</button>
+          )}
+        </div>
+      )}
+
+      <div className="panel-search" role="search">
+        <Search size={14} strokeWidth={1.5} aria-hidden="true" />
+        <input
+          value={query}
+          aria-label="搜索调色参数"
+          aria-controls="panel-param-groups"
+          placeholder="搜索参数，例如 亮度 / 色温"
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => {
+            if (e.key !== 'Escape') return
+            e.preventDefault()
+            setQuery('')
+          }}
+        />
+        {query && (
+          <button
+            type="button"
+            className="panel-search-clear"
+            aria-label="清除参数搜索"
+            onClick={() => setQuery('')}
+          >
+            <X size={14} strokeWidth={1.5} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+      {needle && matchingGroups.length === 0 && (
+        <p className="panel-search-empty" role="status">
+          没有找到「{query.trim()}」对应的调色参数。
+        </p>
+      )}
 
       {mineOpen && (
         <PresetManager presets={presets} known={presetsKnown} params={value}
           onSave={onSavePreset} onRename={onRenamePreset} onDelete={onDeletePreset} />
+      )}
+
+      <Histogram data={histogram} />
+
+      <LayerPanel
+        layers={layers}
+        onToggle={onToggleLayer}
+        onMove={onMoveLayer}
+        onDelete={onDeleteLayer}
+        onEdit={onEditLayer}
+      />
+
+      {presetAmount !== undefined && onPresetAmount && (
+        <Slider
+          label={presetLabel ? `${presetLabel}强度` : '预设强度'}
+          value={presetAmount}
+          min={0}
+          max={100}
+          changed={presetAmount !== 100}
+          onChange={onPresetAmount}
+        />
       )}
 
       {/* 「照着这张调」**故意摆在最前**（那排药丸搬走之后它就是这一栏的第一颗），
@@ -323,7 +540,7 @@ export default function AdjustmentPanel({
         ref={refInput}
         className="presets-ref-file"
         type="file"
-        accept="image/*"
+        accept="image/*,.heic,.heif"
         onChange={e => {
           const f = e.target.files?.[0]
           // 选完就收起展开区（两条来源一致：挑好了 = 这个动作做完了）。
@@ -336,7 +553,7 @@ export default function AdjustmentPanel({
 
       {/* ★ 2026-10-05：那排**文字药丸**（日系通透/胶片/黄昏…）搬去照片左边那条
           预设栏了（`ui/PresetRail`）—— 同一个功能在屏幕上出现两遍，用户会看见
-          两次一样的名字。这一屏的面板从此只有"滤镜 + 十五条参数"。
+          两次一样的名字。这一屏的面板从此只有"滤镜 + 九十四个参数"。
 
           ⚠️ 原来那条注释（"这一栏是 `.presets` 的兄弟，因为 `.presets button`
           的选择器特异性比 `.lut-tile` 强"）**随那排药丸一起失效了** —— `.presets`
@@ -365,12 +582,18 @@ export default function AdjustmentPanel({
             <LutPicker luts={luts} lutsKnown={lutsKnown} value={lut} thumbs={lutThumbs.byId}
               noneThumb={lutThumbs.none} onPick={onPickLut} onAmount={onLutAmount}
               onGoImport={onGoImport} onRetryLuts={onRetryLuts} />
+            <LutExporter
+              params={value}
+              cube={lutCube ?? null}
+              lutAmount={lut?.amount ?? 0}
+              filenameStem={photoFile?.name}
+            />
           </div>
         )}
       </section>
 
-      {/* ★ 2026-10-04：十五条参数按 `PARAM_GROUPS` 分组（光效 / 色彩 / 色彩平衡 /
-          分离色调 / 效果），每组可折叠。**分栏只发生在每一组的肚子里**（见
+      {/* ★ 2026-10-04：九十四个参数按 `PARAM_GROUPS` 分组（光效 / 色彩 / 黑白 / 色彩平衡 /
+          分离色调 / 效果 / 细节 / HSL / 曲线 / 美颜 / 几何 / 镜头 / 镜头校正），每组可折叠。**分栏只发生在每一组的肚子里**（见
           `.panel-group-body`），面板本身仍是"头 / 预设 / 组"的竖列。
           ⚠️ 原来分栏直接写在 `.panel` 上，靠 CSS 里一份"谁横跨全宽"的类名清单
           （`.panel-head, .presets { grid-column: 1 / -1 }`）撑着 —— 那份清单在
@@ -380,31 +603,50 @@ export default function AdjustmentPanel({
           ⚠️ 条数和每组的成员都从 `PARAM_GROUPS` 来，**一个字都不在这儿写死** ——
           加一根参数只改 `shared/adjustments.ts` 那一处（`AdjustmentPanel.test.ts`
           会读这份源码，挡住把标签抄回来的写法）。 */}
-      <div className="panel-groups">
-        {PARAM_GROUPS.map(g => (
+      <div className="panel-groups" id="panel-param-groups">
+        {matchingGroups.map(g => {
+          const changed = g.keys.some(key => isChanged(value, key))
+          return (
           <section className="panel-group" key={g.id}>
-            <button
-              className="panel-group-head"
-              // 收着 = false。**读屏用户就靠它知道这一组现在开着没有** ——
-              // 状态全在这一个属性上，别只让箭头转个方向就算数。
-              aria-expanded={!collapsed.has(g.id)}
-              onClick={() => setCollapsed(prev => {
-                const next = new Set(prev)
-                if (next.has(g.id)) next.delete(g.id)
-                else next.add(g.id)
-                return next
-              })}
-            >
-              <span className="panel-group-title">
-                <GroupIcon id={g.id} />
-                {g.title}
-              </span>
-              <ChevronDown
-                size={14}
-                className={collapsed.has(g.id) ? 'chev folded' : 'chev'}
-                aria-hidden="true"
-              />
-            </button>
+            <div className="panel-group-head-row">
+              <button
+                className="panel-group-head"
+                // 收着 = false。**读屏用户就靠它知道这一组现在开着没有** ——
+                // 状态全在这一个属性上，别只让箭头转个方向就算数。
+                aria-expanded={!collapsed.has(g.id)}
+                onClick={() => setCollapsed(prev => {
+                  const next = new Set(prev)
+                  if (next.has(g.id)) next.delete(g.id)
+                  else next.add(g.id)
+                  return next
+                })}
+              >
+                <span className="panel-group-title">
+                  <GroupIcon id={g.id} />
+                  {g.title}
+                </span>
+                <ChevronDown
+                  size={14}
+                  className={collapsed.has(g.id) ? 'chev folded' : 'chev'}
+                  aria-hidden="true"
+                />
+              </button>
+              {changed && (
+                <button
+                  type="button"
+                  className="panel-group-reset"
+                  aria-label={`重置${g.title}`}
+                  title={`只把「${g.title}」这一组恢复默认`}
+                  onClick={() => {
+                    const next = { ...value }
+                    for (const key of g.keys) next[key] = ZERO[key]
+                    onChange(next)
+                  }}
+                >
+                  <RotateCcw size={13} strokeWidth={1.5} aria-hidden="true" />
+                </button>
+              )}
+            </div>
             {!collapsed.has(g.id) && (
               <div className="panel-group-body">
                 {/* 色轮是**色彩平衡三根轴的二维视图**（不是第四个参数）：拖它 =
@@ -424,34 +666,110 @@ export default function AdjustmentPanel({
                     onChange={next => onChange({ ...value, ...next })}
                   />
                 )}
-                {g.keys.map(k => (
-                  // 动过的那一条挂个 `on`，样式靠它把标签和数字点亮（见 styles.css
-                  // 的 `.slider.on`）。**这是纯装饰**：值本身还是 value[k] 这
-                  // **一个**来源，不存在"记号和数据对不上"。写法跟 Uploader 那个
-                  // `.over` 同款。
-                  // ⚠️ "动过没有"的判据来自 shared/adjustments 的 `isChanged` ——
-                  //    作品详情页那张表问的是同一件事，两处**必须同一个判据**。
-                  //
-                  // ★ 2026-10-01：滑块本体换成 `kit/Slider`（Base UI 的行为 + 我们的
-                  //   长相）。它自己就是一个原生 `<input type="range">`，顺序和条数
-                  //   跟着 PARAM_GROUPS 走。
-                  // ★ 2026-10-04：范围/标签/渐变都从各自那张表取 —— 色相是
-                  //   [0, 360]、强度是 [0, 100]，**不再共用一套 ±100**。
-                  <Slider
-                    key={k}
-                    label={PARAM_LABELS[k]}
-                    value={value[k]}
-                    min={PARAM_RANGE[k][0]}
-                    max={PARAM_RANGE[k][1]}
-                    changed={isChanged(value, k)}
-                    gradient={GRADIENTS[k]}
-                    onChange={v => onChange({ ...value, [k]: v })}
+                {g.id === 'hsl' ? (
+                  <HslControls
+                    value={value}
+                    onChange={onChange}
+                    bandId={hslBandId}
+                    onBand={setHslBandId}
+                    picking={hslPicking}
+                    onPick={onHslPick}
                   />
-                ))}
+                ) : g.id === 'curve' ? (
+                  <ToneCurve value={value} onChange={onChange} />
+                ) : (
+                  <>
+                    {g.id === 'color' && (
+                      <div
+                        className="retouch-modes wb-presets"
+                        role="group"
+                        aria-label="白平衡预设"
+                      >
+                        {WHITE_BALANCE_PRESETS.map(preset => {
+                          const on = activeWhiteBalancePreset(value) === preset.id
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              className={`crop-chip${on ? ' on' : ''}`}
+                              aria-pressed={on}
+                              onClick={() => onChange(applyWhiteBalancePreset(value, preset.id))}
+                            >{preset.label}</button>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {g.id === 'lens' && (
+                      <div className="retouch-modes" role="group" aria-label="虚化方式">
+                        <button
+                          type="button"
+                          className={`crop-chip${tiltLens ? '' : ' on'}`}
+                          aria-pressed={!tiltLens}
+                          onClick={() => onChange({ ...value, lensShape: 0 })}
+                        >径向</button>
+                        <button
+                          type="button"
+                          className={`crop-chip${tiltLens ? ' on' : ''}`}
+                          aria-pressed={tiltLens}
+                          onClick={() => onChange({ ...value, lensShape: 100 })}
+                        >移轴</button>
+                      </div>
+                    )}
+                    {g.id === 'lensFix' && (
+                      <LensProfilePicker
+                        file={photoFile}
+                        value={value}
+                        onChange={onChange}
+                      />
+                    )}
+                    {g.keys.filter(k => g.id !== 'lens'
+                      || (k !== 'lensShape'
+                        && (!tiltLens || k !== 'lensFocusX')
+                        && (tiltLens || k !== 'lensAngle'))).map(k => (
+                      // 动过的那一条挂个 `on`，样式靠它把标签和数字点亮（见 styles.css
+                      // 的 `.slider.on`）。**这是纯装饰**：值本身还是 value[k] 这
+                      // **一个**来源，不存在"记号和数据对不上"。写法跟 Uploader 那个
+                      // `.over` 同款。
+                      // ⚠️ "动过没有"的判据来自 shared/adjustments 的 `isChanged` ——
+                      //    作品详情页那张表问的是同一件事，两处**必须同一个判据**。
+                      //
+                      // ★ 2026-10-01：滑块本体换成 `kit/Slider`（Base UI 的行为 + 我们的
+                      //   长相）。它自己就是一个原生 `<input type="range">`，顺序和条数
+                      //   跟着 PARAM_GROUPS 走。
+                      // ★ 2026-10-04：范围/标签/渐变都从各自那张表取 —— 色相是
+                      //   [0, 360]、强度是 [0, 100]，**不再共用一套 ±100**。
+                      <Slider
+                        key={k}
+                        label={g.id === 'lens' && tiltLens && k === 'lensFocusY'
+                          ? '清晰带位置'
+                          : PARAM_LABELS[k]}
+                        value={value[k]}
+                        min={PARAM_RANGE[k][0]}
+                        max={PARAM_RANGE[k][1]}
+                        changed={isChanged(value, k)}
+                        gradient={GRADIENTS[k]}
+                        onChange={v => onChange({ ...value, [k]: v })}
+                      />
+                    ))}
+                    {g.id === 'color' && onWhiteBalance && (
+                      <button
+                        type="button"
+                        className={`wb-picker${whiteBalancePicking ? ' on' : ''}`}
+                        aria-pressed={whiteBalancePicking}
+                        onClick={onWhiteBalance}
+                      >
+                        <Pipette size={14} strokeWidth={1.5} aria-hidden="true" />
+                        白平衡吸管
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </section>
-        ))}
+          )
+        })}
+      </div>
       </div>
     </aside>
   )

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { workName, matchesQuery, groupByDay, type WorkMeta } from './works.ts'
+import {
+  cameraName, workName, workNameAt, matchesQuery, groupByDay, type WorkMeta,
+} from './works.ts'
 
 const at = (s: string): number => new Date(s).getTime()
 const NOW = at('2026-09-25T20:00:00')
@@ -10,7 +12,8 @@ const w = (over: Partial<WorkMeta> = {}): WorkMeta => ({
   createdAt: at('2026-09-25T14:30:00'),
   updatedAt: at('2026-09-25T14:30:00'),
   bytes: 100,
-  hasThumb: true,
+  hasThumb: true, flag: 0,
+  rating: 0,
   ...over,
 })
 
@@ -26,6 +29,23 @@ describe('workName', () => {
   it('不是今年的，带上年份 —— 不然去年的 9月25 和今年的分不出来', () => {
     const old = w({ updatedAt: at('2025-09-25T14:30:00') })
     expect(workName(old, NOW)).toBe('2025年9月25日 14:30')
+  })
+
+  it('★ 可以按指定拍摄时间起名，已有名字仍然优先', () => {
+    const shot = at('2026-09-20T08:00:00')
+    expect(workNameAt(w(), NOW, shot)).toBe('9月20日 08:00')
+    expect(workNameAt(w({ alias: '日出' }), NOW, shot)).toBe('日出')
+  })
+})
+
+describe('cameraName', () => {
+  it('★ 机身名称去重：型号已经带厂商前缀时不再重复', () => {
+    expect(cameraName(w({ cameraMake: 'SONY', cameraModel: 'ILCE-7CM2' })))
+      .toBe('SONY ILCE-7CM2')
+    expect(cameraName(w({ cameraMake: 'Canon', cameraModel: 'Canon EOS R5' })))
+      .toBe('Canon EOS R5')
+    expect(cameraName(w({ cameraMake: null, cameraModel: 'X-T5' }))).toBe('X-T5')
+    expect(cameraName(w())).toBe(null)
   })
 })
 
@@ -51,6 +71,19 @@ describe('matchesQuery', () => {
     // 再让日期能搜中，用户会看到"搜出一堆屏幕上没这几个字的图"。
     expect(matchesQuery(w({ alias: '海边那张' }), '9月25', NOW)).toBe(false)
   })
+
+  it('★ 还能按原文件名、机身和镜头搜索', () => {
+    const raw = w({
+      sourceName: 'IMG_1234.JPG',
+      cameraMake: 'SONY',
+      cameraModel: 'ILCE-7CM2',
+      lensModel: 'FE 50mm F1.4 GM',
+    })
+    expect(matchesQuery(raw, 'img_1234', NOW)).toBe(true)
+    expect(matchesQuery(raw, 'ilce-7cm2', NOW)).toBe(true)
+    expect(matchesQuery(raw, '50mm f1.4', NOW)).toBe(true)
+    expect(matchesQuery(raw, 'nikon', NOW)).toBe(false)
+  })
 })
 
 describe('groupByDay', () => {
@@ -70,5 +103,20 @@ describe('groupByDay', () => {
 
   it('一条都没有 → 空数组，不是 null 也不是抛', () => {
     expect(groupByDay([], NOW)).toEqual([])
+  })
+
+  it('★ 可以按拍摄时间分组：标签、排序都用同一个时间选择器', () => {
+    const works = [
+      w({ id: 1, updatedAt: at('2026-09-25T10:00:00'), capturedAt: at('2026-09-20T08:00:00') }),
+      w({ id: 2, updatedAt: at('2026-09-24T10:00:00'), capturedAt: at('2026-09-22T09:00:00') }),
+      w({ id: 3, updatedAt: at('2026-09-23T10:00:00'), capturedAt: at('2026-09-22T09:00:03') }),
+    ]
+    const timeOf = (work: WorkMeta) => work.capturedAt ?? work.updatedAt
+
+    const groups = groupByDay(works, NOW, timeOf)
+
+    expect(groups.map(group => group.label)).toEqual(['9月22日', '9月20日'])
+    expect(groups[0]!.works.map(work => work.id)).toEqual([3, 2])
+    expect(groups[1]!.works.map(work => work.id)).toEqual([1])
   })
 })

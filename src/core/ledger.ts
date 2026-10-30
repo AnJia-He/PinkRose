@@ -1,5 +1,6 @@
 import { PARAM_KEYS, type Adjustments } from '../../shared/adjustments.ts'
 import type { LutRef } from '../../shared/lut.ts'
+import { sameEditLayers, type EditLayer } from '../../shared/layers.ts'
 import type { DecodedImage } from '../image/decode'
 // ⚠️ 和 `history.ts` 是**互相**引用：那边只 import 本文件的 `EditState` 类型，
 //    编译后一行不剩；本文件要 `bitmapsToClose` / `closeBitmaps` 是**真的运行时**
@@ -17,6 +18,10 @@ export type EditState = {
   base: DecodedImage
   params: Adjustments
   lut: LutRef | null
+  /** 这一笔的文字层（★ 2026-10-19）；缺席 = 没有文字层。 */
+  layers?: EditLayer[]
+  /** 这一笔在历史面板里叫什么（“裁剪”“调色”“这一磨”…）。 */
+  label?: string
   /** 入账序号（全局单调，App 的发号器给）：预算驱逐按它排队。 */
   seq: number
 }
@@ -66,7 +71,10 @@ export const LEDGER_PIXEL_BUDGET = 32_000_000
  */
 export function pushEdit(s: Snapshot, before: EditState, next: Omit<EditState, 'seq'>, _seq: number): Snapshot {
   /** 当前位置 —— 挪位置时它顶上 `future` 的队首（`seq: 0`，同 `undoEdit` 的口径）。 */
-  const here: EditState = { base: s.base, params: s.params, lut: s.lut, seq: 0 }
+  const here: EditState = {
+    base: s.base, params: s.params, lut: s.lut, layers: s.layers,
+    label: s.editLabel ?? '原图', seq: 0,
+  }
   const back = s.past.findIndex(e => sameEdit(e, next))
   if (back >= 0) {
     const hit = s.past[back]!
@@ -74,7 +82,8 @@ export function pushEdit(s: Snapshot, before: EditState, next: Omit<EditState, '
       ...s,
       past: s.past.slice(0, back),
       future: [...s.past.slice(back + 1), here, ...s.future],
-      base: hit.base, params: hit.params, lut: hit.lut,
+      base: hit.base, params: hit.params, lut: hit.lut, layers: hit.layers,
+      editLabel: hit.label ?? '调整',
     }
   }
   const fwd = s.future.findIndex(e => sameEdit(e, next))
@@ -84,10 +93,15 @@ export function pushEdit(s: Snapshot, before: EditState, next: Omit<EditState, '
       ...s,
       past: [...s.past, here, ...s.future.slice(0, fwd)],
       future: s.future.slice(fwd + 1),
-      base: hit.base, params: hit.params, lut: hit.lut,
+      base: hit.base, params: hit.params, lut: hit.lut, layers: hit.layers,
+      editLabel: hit.label ?? '调整',
     }
   }
-  return { ...s, past: [...s.past, before], future: [], base: next.base, params: next.params, lut: next.lut }
+  return {
+    ...s, past: [...s.past, before], future: [],
+    base: next.base, params: next.params, lut: next.lut, layers: next.layers,
+    editLabel: next.label ?? '调整',
+  }
 }
 
 /**
@@ -102,7 +116,10 @@ export function pushEdit(s: Snapshot, before: EditState, next: Omit<EditState, '
  */
 export function undoEdit(s: Snapshot): Snapshot {
   if (s.past.length === 0) return s
-  const cur: EditState = { base: s.base, params: s.params, lut: s.lut, seq: 0 }
+  const cur: EditState = {
+    base: s.base, params: s.params, lut: s.lut, layers: s.layers,
+    label: s.editLabel ?? '原图', seq: 0,
+  }
   return {
     ...s,
     past: s.past.slice(0, -1),
@@ -110,15 +127,64 @@ export function undoEdit(s: Snapshot): Snapshot {
     base: s.past[s.past.length - 1]!.base,
     params: s.past[s.past.length - 1]!.params,
     lut: s.past[s.past.length - 1]!.lut,
+    layers: s.past[s.past.length - 1]!.layers,
+    editLabel: s.past[s.past.length - 1]!.label ?? '调整',
   }
 }
 
 /** 下一步：`undoEdit` 的反面（`future` 空时同样返回同一引用）。 */
 export function redoEdit(s: Snapshot): Snapshot {
   if (s.future.length === 0) return s
-  const cur: EditState = { base: s.base, params: s.params, lut: s.lut, seq: 0 }
+  const cur: EditState = {
+    base: s.base, params: s.params, lut: s.lut, layers: s.layers,
+    label: s.editLabel ?? '原图', seq: 0,
+  }
   const head = s.future[0]!
-  return { ...s, past: [...s.past, cur], future: s.future.slice(1), base: head.base, params: head.params, lut: head.lut }
+  return {
+    ...s, past: [...s.past, cur], future: s.future.slice(1),
+    base: head.base, params: head.params, lut: head.lut, layers: head.layers,
+    editLabel: head.label ?? '调整',
+  }
+}
+
+/**
+ * 跳到账本里的任意一笔（1 起数）。越界会夹到两端。
+ *
+ * 和 `undoEdit` / `redoEdit` 是同一件事的“一步”和“直接跳”：目标之前进 `past`、
+ * 之后进 `future`，目标本身成为当前位置。引用不变时返回原对象。
+ */
+export function jumpLedger(s: Snapshot, index: number): Snapshot {
+  const total = ledgerTotal(s)
+  const target = Math.max(1, Math.min(total, Math.round(index)))
+  if (target === ledgerIndex(s)) return s
+  const states: EditState[] = [
+    ...s.past,
+    {
+      base: s.base, params: s.params, lut: s.lut, layers: s.layers,
+      label: s.editLabel ?? '原图', seq: 0,
+    },
+    ...s.future,
+  ]
+  const hit = states[target - 1]!
+  return {
+    ...s,
+    past: states.slice(0, target - 1),
+    future: states.slice(target),
+    base: hit.base,
+    params: hit.params,
+    lut: hit.lut,
+    layers: hit.layers,
+    editLabel: hit.label ?? '调整',
+  }
+}
+
+/** 账本每一笔的显示名（顺序 = 从出生到最后一笔）。 */
+export function ledgerLabels(s: Snapshot): string[] {
+  return [
+    ...s.past.map(e => e.label ?? '调整'),
+    s.editLabel ?? '原图',
+    ...s.future.map(e => e.label ?? '调整'),
+  ]
 }
 
 /**
@@ -141,13 +207,19 @@ export const ledgerTotal = (s: Snapshot): number => s.past.length + 1 + s.future
  *   · `lut` 也比值（`lutId` + `amount`）：它和 `params` 是并列的两件事（滤镜设计
  *     §3.2），一边有一边没有、或强度差 1，都算变过。
  */
-export function sameEdit(a: { base: DecodedImage; params: Adjustments; lut: LutRef | null },
-                         b: { base: DecodedImage; params: Adjustments; lut: LutRef | null }): boolean {
+export function sameEdit(a: { base: DecodedImage; params: Adjustments; lut: LutRef | null;
+                           layers?: EditLayer[] },
+                         b: { base: DecodedImage; params: Adjustments; lut: LutRef | null;
+                           layers?: EditLayer[] }): boolean {
   if (a.base !== b.base) return false
   for (const k of PARAM_KEYS) if (a.params[k] !== b.params[k]) return false
   const la = a.lut, lb = b.lut
-  if (la === null || lb === null) return la === lb
-  return la.lutId === lb.lutId && la.amount === lb.amount
+  if (la === null || lb === null) {
+    if (la !== lb) return false
+  } else if (la.lutId !== lb.lutId || la.amount !== lb.amount) {
+    return false
+  }
+  return sameEditLayers(a.layers, b.layers)
 }
 
 /**

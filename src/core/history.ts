@@ -1,5 +1,6 @@
 import type { Adjustments } from '../../shared/adjustments.ts'
 import type { LutRef } from '../../shared/lut.ts'
+import type { EditLayer } from '../../shared/layers.ts'
 import type { DecodedImage } from '../image/decode'
 import type { EditState } from './ledger'
 
@@ -8,6 +9,14 @@ export type Snapshot = {
   id: number
   /** 给用户看的短标签，比如"原图"。 */
   label: string
+  /**
+   * **当前位置这一笔**叫什么（“原图”“裁剪”“调色”“这一磨”…）。
+   *
+   * ★ 2026-10-19：账本历史面板要用它给每一笔起名字。`label` 是**版本**的
+   *   标签（原图 / 生成式编辑），这一份是**这一版里最后一笔编辑**的标签，
+   *   两者不是一回事。
+   */
+  editLabel?: string
   /**
    * 走到这一步的**那句话**（用户的原话，已经过服务端补全的英文 prompt）。
    *
@@ -24,7 +33,7 @@ export type Snapshot = {
   /**
    * 这一步用着哪个滤镜、强度多少（null = 没用）。
    *
-   * ★ 2026-10-05（滤镜）：和 `params` 是**并列的两件事**（滤镜不是第十六个数字，
+   * ★ 2026-10-05（滤镜）：和 `params` 是**并列的两件事**（滤镜不是参数里的一个数字，
    * 见设计 §3.2），但走的是**同一条路**：按步记下来、跟着这一步一起还原。
    * 今天它有三个用处：
    *   · 「回到这一步」（`App` 的 `onJump`）把 `setParams(target.params)` 和
@@ -47,6 +56,8 @@ export type Snapshot = {
    * 每个构造点都被编译期逼着表态 —— **原图那一步就是 `lut: null`**。
    */
   lut: LutRef | null
+  /** 这一步的文字层（★ 2026-10-19）。缺席 = 没有文字层，老数据照旧。 */
+  layers?: EditLayer[]
   /** 原图。这一条永远不会被挤出去。 */
   isOriginal: boolean
   /**

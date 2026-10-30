@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
-  FIT, clampView, fitBox, maxScale, oneToOne, panBy, zoomTo,
+  FIT, clampView, fitBox, maxScale, oneToOne, panBy, pinchView, zoomTo,
   type Size, type View,
 } from './viewport'
 
@@ -121,5 +121,65 @@ describe('panBy —— 拖着看', () => {
   it('拖过头就停在边界上（照片的边正好到画面正中间）', () => {
     expect(panBy({ scale: 2, x: 980, y: 0 }, 100, 0, BIG_FIT))
       .toEqual({ scale: 2, x: 1000, y: 0 })
+  })
+})
+
+describe('pinchView —— 双指缩放 + 同时拖动', () => {
+  it('两指拉开：按两指距离放大，指间那块细节跟着两指中心走', () => {
+    const next = pinchView(
+      FIT,
+      { mid: { x: 500, y: 400 }, distance: 100 },
+      { mid: { x: 650, y: 400 }, distance: 200 },
+      BIG_FIT,
+      AREA,
+    )
+    expect(next).toEqual({ scale: 2, x: 150, y: 0 })
+    // 原来压在初始中心的那一点，现在落在新的两指中心上。
+    expect(at(next, 0, 'x')).toBeCloseTo(650)
+  })
+
+  it('两指中点不动、距离不变：视图一点不抖', () => {
+    const next = pinchView(
+      FIT,
+      { mid: { x: 500, y: 400 }, distance: 120 },
+      { mid: { x: 500, y: 400 }, distance: 120 },
+      BIG_FIT,
+      AREA,
+    )
+    expect(next).toEqual(FIT)
+  })
+
+  it('两指收拢：最多回到适应窗口，不会缩到照片比屏幕还小', () => {
+    const next = pinchView(
+      { scale: 2, x: 150, y: 20 },
+      { mid: { x: 500, y: 400 }, distance: 300 },
+      { mid: { x: 500, y: 400 }, distance: 80 },
+      BIG_FIT,
+      AREA,
+    )
+    expect(next).toEqual(FIT)
+  })
+
+  it('已经放大时，两指同向拖动 = 平移（距离没变也不影响）', () => {
+    const next = pinchView(
+      { scale: 2, x: 0, y: 0 },
+      { mid: { x: 500, y: 400 }, distance: 200 },
+      { mid: { x: 530, y: 420 }, distance: 200 },
+      BIG_FIT,
+      AREA,
+    )
+    expect(next).toEqual({ scale: 2, x: 30, y: 20 })
+  })
+
+  it('放大上限仍由 maxScale 那条线管着', () => {
+    const next = pinchView(
+      FIT,
+      { mid: { x: 500, y: 400 }, distance: 10 },
+      { mid: { x: 500, y: 400 }, distance: 1000 },
+      BIG_FIT,
+      AREA,
+      6,
+    )
+    expect(next.scale).toBe(6)
   })
 })

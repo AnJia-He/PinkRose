@@ -16,7 +16,7 @@ const KEEP_CLAUSE = 'Keep everything else exactly as it is.'
 export const CARD_LABEL_MAX = 20
 
 /**
- * 提示词里的参数名。**故意只有八个老参数** —— 这是给模型看的那一份，
+ * 提示词里的参数名。**故意只列有稳定标尺的那些** —— 这是给模型看的那一份，
  * 和 `shared/adjustments.ts` 里界面那份**措辞不同**（比如 clarity 那边叫「清晰度」、
  * 这里叫「通透度」）。
  *
@@ -26,14 +26,56 @@ export const CARD_LABEL_MAX = 20
  * 没有标尺，乱设比不设坏；prompt 一个字不改）。收窄之后"这八个一个不少"
  * 照样是编译期的闸（漏一个就红），只是去掉了"参数层加字段这里必须跟着加"
  * 这条现在错误的要求。
+ * ★ 2026-10-17：磨皮（skinSmooth）是**故意加回来的第九个** —— 它和色轮相反：
+ *   单根 0~100 的滑杆，模型有标尺（"磨皮一点" = +20 这种量级它有概念），
+ *   而且"磨皮"正是用户张嘴就来的词，不给它这个键，这句话只能被错派去生成。
+ * ★ 2026-10-17（细节组）：锐化 / 降噪 / 颗粒也是单根 0~100 的滑杆，同样给模型。
+ * ★ 2026-10-22：彩色降噪也是单根 0~100，跟随“噪点 / 彩斑”这类说法走 params。
+ * ★ 2026-10-17（美颜）：美白 / 红润也是单根 0~100 的肤色效果，同样给模型。
+ * ★ 2026-10-17（几何）：透视校正也走 params；模型看得到楼体哪边窄，
+ *   给正负方向比让用户自己在两根滑杆上试更快。
+ * ★ 2026-10-17（镜头校正）：畸变和色差也走 params；它们都是单根滑杆，
+ *   而且正负方向可以由画面里的直线 / 色边判断。
+ * ★ 2026-10-17（去雾）：去雾 / 加雾都是单根 -100~100 的滑杆，模型有标尺。
+ * ★ 2026-10-18（HDR）：HDR / 大光比也是单根 0~100 的滑杆。
+ * ★ 2026-10-18（柔光）：柔光 / 光晕也是单根 0~100 的滑杆。
+ * ★ 2026-10-19（镜头焦点）：焦点 X / Y 是 -100~100 的位置滑杆，
+ *   用户说"焦点挪到左边 / 人脸那边"时模型能给一个方向。
+ * ★ 2026-10-19（影调补全）：白色色阶 / 黑色色阶 / 纹理也是标准单根滑杆。
+ * ★ 2026-10-21（移轴）：虚化方式和清晰带角度也是本地参数；
+ *   "移轴 / 微缩模型 / 清晰带斜一点"不该被派去生成。
  */
 type PromptParamKey =
-  | 'exposure' | 'contrast' | 'highlights' | 'shadows'
-  | 'saturation' | 'temperature' | 'clarity' | 'vignette'
+  | 'exposure' | 'contrast' | 'highlights' | 'shadows' | 'whites' | 'blacks'
+  | 'saturation' | 'temperature' | 'tint'
+  | 'bwAmount' | 'bwRed' | 'bwGreen' | 'bwBlue'
+  | 'clarity' | 'vignette'
+  | 'skinSmooth' | 'dehaze' | 'hdr' | 'glow' | 'texture'
+  | 'sharpen' | 'sharpenRadius' | 'sharpenMasking'
+  | 'noiseReduction' | 'colorNoiseReduction' | 'grain'
+  | 'skinBrighten' | 'skinRosy'
+  | 'perspectiveV' | 'perspectiveH'
+  | 'lensBlur' | 'lensRange' | 'lensFeather' | 'lensFocusX' | 'lensFocusY'
+  | 'lensShape' | 'lensAngle'
+  | 'lensDistortion' | 'lensChromatic'
 
 const PARAM_LABELS: Record<PromptParamKey, string> = {
   exposure: '亮度', contrast: '对比度', highlights: '高光', shadows: '阴影',
-  saturation: '饱和度', temperature: '色温(正数=更暖)', clarity: '通透度', vignette: '暗角',
+  whites: '白色色阶', blacks: '黑色色阶',
+  saturation: '饱和度', temperature: '色温(正数=更暖)',
+  tint: '色调(正数=偏洋红)',
+  bwAmount: '黑白强度', bwRed: '红色混色', bwGreen: '绿色混色', bwBlue: '蓝色混色',
+  clarity: '通透度', vignette: '暗角',
+  skinSmooth: '磨皮', dehaze: '去雾', hdr: 'HDR', glow: '柔光',
+  texture: '纹理',
+  sharpen: '锐化', sharpenRadius: '锐化半径', sharpenMasking: '锐化蒙版',
+  noiseReduction: '降噪', colorNoiseReduction: '彩色降噪', grain: '颗粒',
+  skinBrighten: '美白', skinRosy: '红润',
+  perspectiveV: '垂直透视', perspectiveH: '水平透视',
+  lensBlur: '虚化强度', lensRange: '清晰范围', lensFeather: '过渡',
+  lensFocusX: '虚化焦点X', lensFocusY: '虚化焦点Y',
+  lensShape: '移轴模式', lensAngle: '移轴角度',
+  lensDistortion: '畸变校正', lensChromatic: '色差校正',
 }
 
 /**
@@ -55,9 +97,9 @@ export function buildEditPrompt(edit: string): string {
 }
 
 /**
- * 非零参数写成 `对比度 +12` 这样的段。只遍历提示词自己那八个键
- * （`PromptParamKey`）—— 参数层后来加的七个不进提示词，`Object.keys` 拿到的
- * 就是上面那份对象里的八个，不是全 15 个。
+ * 非零参数写成 `对比度 +12` 这样的段。只遍历提示词自己那三十一个键
+ * （`PromptParamKey`）—— 参数层后来加的色彩平衡七条不进提示词，`Object.keys`
+ * 拿到的就是上面那份对象里的三十二个（含磨皮、去雾、HDR、柔光、细节组、美颜、几何、镜头和镜头校正）。
  *
  * `describeParams`（当前参数）和 `buildRouterUser` 里那一行预设清单共用它：
  * 两处给模型的是同一套标签、同一套量纲，各写一份的话哪天一定要漂。
@@ -97,7 +139,20 @@ export const ROUTER_SYSTEM = `你是修图助手的意图路由器。看照片�
 {
   "route": "params" | "generate" | "both",
   "param_deltas": {"exposure": 0, "contrast": 0, "highlights": 0, "shadows": 0,
-                   "saturation": 0, "temperature": 0, "clarity": 0, "vignette": 0},
+                   "whites": 0, "blacks": 0,
+                   "saturation": 0, "temperature": 0, "tint": 0,
+                   "bwAmount": 0, "bwRed": 0, "bwGreen": 0, "bwBlue": 0,
+                   "clarity": 0, "vignette": 0,
+                   "skinSmooth": 0, "dehaze": 0, "hdr": 0, "glow": 0,
+                   "texture": 0, "sharpen": 0,
+                   "sharpenRadius": 0, "sharpenMasking": 0, "noiseReduction": 0,
+                   "colorNoiseReduction": 0, "grain": 0,
+                   "skinBrighten": 0, "skinRosy": 0,
+                   "perspectiveV": 0, "perspectiveH": 0,
+                   "lensBlur": 0, "lensRange": 0, "lensFeather": 0,
+                   "lensFocusX": 0, "lensFocusY": 0,
+                   "lensShape": 0, "lensAngle": 0,
+                   "lensDistortion": 0, "lensChromatic": 0},
   "reply": "中文口语，一句话，不要术语",
   "edit_prompt": "英文，只描述要改的那一处，并显式列出要保留的东西。**走 params 时留空**",
   "needs_disambiguation": false,
@@ -114,14 +169,69 @@ export const ROUTER_SYSTEM = `你是修图助手的意图路由器。看照片�
 **route 只能是 params、generate、both 三者之一，没有第四种。**
 
 规则：
-- 调色（亮度 / 对比度 / 色温 / 通透度 / 饱和度 / 高光 / 阴影 / 暗角）**一律走 params**，
+- 调色（亮度 / 对比度 / 色温 / 色调 / 通透度 / 饱和度 / 高光 / 阴影 / 暗角）**一律走 params**，
+  「太绿 / 发青」给 tint 负增量，「偏洋红 / 发紫」给正增量；这和暖冷的色温是两条轴。
   用增量，不要输出绝对值。调色是最便宜、最快、可逆的一条路。
+- 磨皮（「磨皮」「皮肤磨一下」「皮肤修干净些」「脸上皮肤太糙」这类）**也走 params**，
+  给 skinSmooth 正增量（轻微 15~20，明显 30~50；「少磨一点 / 别磨了」给负值，
+  落到 0 为止）。它是本地效果 —— **不要**为磨皮走 generate，也不要写 edit_prompt。
+- 去雾（「雾蒙蒙」「灰蒙蒙」「空气不通透」「远处发白」这类）**也走 params**，
+  给 dehaze 正增量（轻微 15~25，明显 30~50）；「加一点雾 / 柔一点」给负值。
+  它是本地效果 —— **不要**为去雾走 generate。
+- HDR（「大光比」「逆光」「暗部死黑，高光又过曝」「明暗拉回来一点」这类）
+  **也走 params**，给 hdr 正增量（轻微 15~25，明显 30~50）。它只做本地
+  局部明暗映射，**不要**为 HDR 走 generate。
+- 柔光（「柔光」「光晕」「梦幻一点」「灯牌发光」这类）**也走 params**，
+  给 glow 正增量（轻微 15~25，明显 30~50）。它只让高光向周围溢出，
+  **不要**为柔光走 generate。
+- 锐化 / 锐化半径 / 锐化蒙版 / 降噪 / 彩色降噪 / 颗粒（「边缘清楚一点」「锐化范围大一点」
+  「只锐化轮廓、别放大噪点」「夜景噪点压一下」
+  「彩色斑点太脏」「加一点胶片颗粒」这类）**也走 params**，给对应字段正增量
+  （轻微 10~20，明显 30~50）。它们同样是本地效果，
+  **不要**为这几件事走 generate。
+- 白色色阶 / 黑色色阶（「高光再顶一点」「黑位提起来 / 压下去」这类）**也走 params**：
+  白色色阶调接近纯白的一端，黑色色阶调接近纯黑的一端；轻微 10~20，明显 25~45。
+  纹理（「皮肤 / 布料质感回来一点」「太锐了柔一点」）**也走 params**，给 texture
+  正负增量。三者都是本地滑杆，**不要**为它们走 generate。
+- 美白 / 红润（「脸白一点」「气色好一点」「红润一点」这类）**也走 params**，
+  给 skinBrighten / skinRosy 正增量（轻微 10~20，明显 30~50）。它们只作用在
+  肤色区域，是本地效果 —— **不要**为它们走 generate。
+- 透视校正（「把楼拍正」「梯形校正一下」「这条边拉直」这类）**也走 params**：
+  照片**上窄下宽**给 perspectiveV 正增量；上宽下窄给负值。
+  照片**左窄右宽**给 perspectiveH 负增量；右窄左宽给正值。
+  幅度轻微 15~25、明显 30~50。它只改采样网格，**不要**为它走 generate。
+- 镜头虚化（「背景虚化一点」「景深强一点」「把人像周围糊掉」这类）**也走 params**：
+  给 lensBlur 正增量（轻微 20~30，明显 40~70）；lensRange 调清晰范围，
+  lensFeather 调过渡，没把握就都留 0。用户说焦点往左 / 右 / 上 / 下挪时，
+  用 lensFocusX / lensFocusY 的增量（负值左 / 上，正值右 / 下，轻微 15~30）。
+  它是**径向景深效果**，不是人物背景抠图，
+  **不要**为它走 generate。
+- 移轴模糊（「移轴」「微缩模型」「中间一条清楚，上下糊掉」「清晰带斜一点」这类）
+  **也走 params**：从径向切到移轴给 lensShape 正增量 70~100，切回径向给负增量
+  -70~-100；当前还没虚化时，同时给 lensBlur 正增量 35~55。lensAngle 调清晰带倾斜，
+  **正角度让清晰带顺时针倾斜**，负角度逆时针（轻微 15~30，明显 40~70）；
+  宽度和过渡继续用 lensRange / lensFeather。它是本地效果，
+  **不要**为移轴走 generate。
+- 镜头校正（「广角拍弯了」「楼边不直」「画面两边有紫边 / 绿边」这类）**也走 params**：
+  直线向外鼓给 lensDistortion 正增量，向内凹给负值；色边给 lensChromatic，
+  轻微 10~20、明显 25~45，拿不准方向就用正值让用户再微调。两者都只改采样，
+  **不要**为它们走 generate。
+- 画质增强 / 修复模糊照片 / 去压缩噪点 / 把糊掉的照片修清楚这类**走 generate**：
+  edit_prompt 要写清 reduce compression artifacts and noise、recover detail、improve sharpness，
+  同时保留 facial identity、pose、expression、clothing、composition 和 natural skin texture；
+  不许美化、重塑或 **no added objects**。
+  单个「清晰度」滑杆仍走 params（给 clarity 增量）——只有明确要修一张糊照片时才走 generate。
+- 把彩色照片改成黑白 / 去色**走 params**：黑白强度给正增量（通常 100），
+  需要改变某色亮度时再调红 / 绿 / 蓝混色权重；这不是生成，不要为它调用图片模型。
+- 黑白上色 / 老照片上色 / 彩色化这类**走 generate**：
+  edit_prompt 要写清 natural colors、same person、original detail、original lighting；
+  不许新增物件、文字或水印：**no added objects**。
 - 只有结构性改动（去掉人物 / 把白天换成夜景 / 抹掉杂物）才走 generate。
 - 两种都有就走 both，**而且必须真是两件事**（例："把后面的人去掉，再整体调亮一点"）。
 - 打招呼 / 闲聊 / 和修图无关的话（"你好""谢谢""在吗"）：route 给 params、
   param_deltas 全 0、edit_prompt 留空，reply 自然接一句（可以问他想怎么改）。
   **这是合法输出，不是失败。** 不要为了"显得做了事"硬凑一个 edit_prompt。
-  例：「你好」→ {"route":"params","param_deltas":{"exposure":0,"contrast":0,"highlights":0,"shadows":0,"saturation":0,"temperature":0,"clarity":0,"vignette":0},"reply":"你好，照片有什么想调的吗？","edit_prompt":"","needs_disambiguation":false,"lut":null,"preset":null}
+  例：「你好」→ {"route":"params","param_deltas":{"exposure":0,"contrast":0,"highlights":0,"shadows":0,"whites":0,"blacks":0,"saturation":0,"temperature":0,"tint":0,"bwAmount":0,"bwRed":0,"bwGreen":0,"bwBlue":0,"clarity":0,"vignette":0,"skinSmooth":0,"dehaze":0,"hdr":0,"glow":0,"texture":0,"sharpen":0,"sharpenRadius":0,"sharpenMasking":0,"noiseReduction":0,"colorNoiseReduction":0,"grain":0,"skinBrighten":0,"skinRosy":0,"perspectiveV":0,"perspectiveH":0,"lensBlur":0,"lensRange":0,"lensFeather":0,"lensFocusX":0,"lensFocusY":0,"lensShape":0,"lensAngle":0,"lensDistortion":0,"lensChromatic":0},"reply":"你好，照片有什么想调的吗？","edit_prompt":"","needs_disambiguation":false,"lut":null,"preset":null}
 - ⚠️ **走 params 时，edit_prompt 必须是空字符串 ""。**
   不要用英文把 param_deltas 再描述一遍——那不是"第二件事"，是啰嗦。
   写了它，同一件事就会被做两遍（本地调一次、再送去生成调一次），画面会过头。

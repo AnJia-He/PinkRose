@@ -61,4 +61,27 @@ describe('cropToBitmap', () => {
     expect(calls[3]![2]).toBe(-600)
     expect(calls[3]![3]).toBe(-400)
   })
+
+  it('★ 翻转：在旋转之后、drawImage 之前做中心镜像', async () => {
+    const calls: (readonly unknown[])[] = []
+    const ctx = {
+      imageSmoothingQuality: '',
+      translate: (...a: number[]) => { calls.push(['translate', ...a]) },
+      rotate: (...a: number[]) => { calls.push(['rotate', ...a]) },
+      scale: (...a: number[]) => { calls.push(['scale', ...a]) },
+      drawImage: (...a: unknown[]) => { calls.push(['drawImage', ...a]) },
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue(ctx as unknown as CanvasRenderingContext2D)
+    vi.stubGlobal('createImageBitmap', vi.fn(async () =>
+      ({ width: 100, height: 100, close: vi.fn() }) as unknown as ImageBitmap))
+
+    await cropToBitmap(
+      { width: 100, height: 100 } as ImageBitmap,
+      { rect: { x: 0, y: 0, w: 1, h: 1 }, angle: 0, flipH: true, flipV: true },
+      0,
+    )
+    expect(calls.map(c => c[0])).toEqual(['translate', 'translate', 'rotate', 'scale', 'drawImage'])
+    expect(calls[3]).toEqual(['scale', -1, -1])
+  })
 })

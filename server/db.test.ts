@@ -89,6 +89,24 @@ describe('openDb', () => {
     'b01c4fa3e411291a6d31873f26b592897c82bdd32984e42beb0ccab42c5bccd0',
     // 9 —— wechat_openid 唯一索引（同一天。和 #8 拆开的原因见 db.ts 里那段注释）
     '175875bd0cf4284c4432bab80c9a4a51698977afd58541eac6db34480730c66c',
+    // 10 —— works.rating（2026-10-19，作品星级）
+    '3a79497270fbca9c6583144325b71a00fdf6e2a132b7b9b124c1af35471bb446',
+    // 11 - works.flag (2026-10-19: pick / reject)
+    '25a453c2f584b3377141c7d65fbfe4bcf398e408d5d53384ff674a23c991724e',
+    // 12 - albums / work_albums (2026-10-19)
+    '62fa6acb2c75e953186fa05020b2867cb1dc487402783c43688489d4d654ed90',
+    // 13 - works.share_token (2026-10-19)
+    '0221fe715ff4d1109b9cb652609cda2e9d931d511c83c0e5a330d204d7367f3f',
+    // 14 - works_share_token unique index (2026-10-19)
+    '91cf97853703c4e8160c171219f4102092f1f0164885d12dc0549ab6e7151bab',
+    // 15 - users.prefs JSON (2026-10-19)
+    'c6fc349c3c32deb5e16e27c9ab28e59c3ead41334fe53a3a10dc6a34fcc58124',
+    // 16 - works.color (2026-10-21, culling color label)
+    '4df804d830ddea2f2651073cf0991a4ea6029deb6b492bfac4c98301432a4cb7',
+    // 17 - works.source_name / captured_at (2026-10-21, camera burst source)
+    '540e83a430c944f41fef72502298100dccbe3ba1df673483dd48d9fe0bdb81f3',
+    // 18 - works camera / lens metadata (2026-10-21)
+    '2ef06937643b908b9d2ec1094ce9413cc872358ada0344d8d864f4492d3badf6',
   ]
 
   it('★ 已发布的迁移一个字都不许改 —— 指纹对不上 = "老库和新库从此是两个形状"', () => {

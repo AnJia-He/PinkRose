@@ -50,6 +50,8 @@ export type View =
   | { kind: 'sessions' }
   | { kind: 'gallery' }
   | { kind: 'work'; id: number }
+  // ★ 2026-10-19：公开分享页（不需要登录）。token 是能力本身，只读。
+  | { kind: 'shared'; token: string }
   // 用户管理（§3.6）。收在右上角那颗 👤 后面（§3.2）—— 一辈子点几次，不占一级导航
   | { kind: 'account' }
   // 模型设置（§7.4）。**挂在用户管理底下**：从那一页的「模型」那一行进去，
@@ -94,6 +96,10 @@ export function askedForFrontPage(search: string): boolean {
 }
 
 export function viewFromPath(path: string): View {
+  // 公开分享页：`/s/<token>`。token 形状和 server 那条路由一致 —— 认不出来
+  // 就按 notfound 处理，别把一段随便的路径当成 token 去请求。
+  const shared = /^\/s\/([A-Za-z0-9_-]{16,64})$/.exec(path)
+  if (shared) return { kind: 'shared', token: shared[1]! }
   // 详情页：新老两种形态都认
   const m = /^\/works\/(\d+)$/.exec(path) ?? /^\/app\/works\/(\d+)$/.exec(path)
   if (m) return { kind: 'work', id: Number(m[1]) }
@@ -123,6 +129,7 @@ export function pathOf(v: View): string {
   if (v.kind === 'sessions') return `${APP}/sessions`
   if (v.kind === 'gallery') return `${APP}/works`
   if (v.kind === 'work') return `${APP}/works/${v.id}`
+  if (v.kind === 'shared') return `/s/${v.token}`
   if (v.kind === 'account') return `${APP}/account`
   if (v.kind === 'models') return `${APP}/models`
   if (v.kind === 'luts') return `${APP}/luts`

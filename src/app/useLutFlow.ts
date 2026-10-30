@@ -114,9 +114,10 @@ export function useLutFlow(deps: LutFlowDeps) {
     if (list === null) return                // 没问出来 → 照旧，什么都不动
     const cur = lutRef.current               // 用一个 ref 读当下那个 id，别把它写进依赖
     if (cur && !list.some((l) => l.id === cur.lutId)) dropGoneLut(cur.lutId)
-    // ⚠️ 依赖写 `lutsApi.reload` 那个**稳定身份**（`useCallback([])`），不写整个
-    //   `lutsApi` —— 后者是每次渲染新造的对象，写进去这个回调和挂在它上面的
-    //   effect 会每次渲染都重跑一遍（理由见 App 里 `reloadLuts` 那段）。
+    // ⚠️ 依赖写 `lutsApi.reload` 这个**只在登录状态变化时才换的身份**
+    //   （`useCallback([enabled])`），不写整个 `lutsApi` —— 后者是每次渲染新造的
+    //   对象，写进去这个回调和挂在它上面的 effect 会每次渲染都重跑一遍
+    //   （理由见 App 里 `reloadLuts` 那段）。
   }, [lutsApi.reload, dropGoneLut])
 
   /**

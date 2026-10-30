@@ -37,6 +37,7 @@ import {
 } from './test/appHarness'
 import { act } from 'react'
 import { ZERO, type Adjustments } from '../shared/adjustments.ts'
+import { DEFAULT_TEXT } from '../shared/text.ts'
 import { PRESETS } from './core/presets'
 import * as decodeMod from './image/decode'
 import * as api from './api/client'
@@ -327,6 +328,26 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     expect(body.base).toBeUndefined()
   })
 
+  it('★ 恢复会话时文字层一起回来，画布上直接看得到', async () => {
+    const session = makeSession(7, 1, '上次那句', 'S7')
+    session.steps[0]!.layers = [{
+      kind: 'text',
+      id: 'text-restored',
+      options: { ...DEFAULT_TEXT, text: '回来吧', x: 0.3, y: 0.6, fontPx: 90 },
+    }]
+    withSessions([session])
+    await renderApp()
+
+    const layers = canvasProps.props.at(-1)?.layers as {
+      id: string; options: { text: string; x: number; y: number; fontPx: number }
+    }[]
+    expect(layers).toHaveLength(1)
+    expect(layers[0]).toMatchObject({
+      id: 'text-restored',
+      options: { text: '回来吧', x: 0.3, y: 0.6, fontPx: 90 },
+    })
+  })
+
   it('★ 跳版本之前先把**上一版欠的那趟**发出去（不等那 800ms）', async () => {
     // 消灭"两版同时脏"（spec §7.2）：跳走 = 那一版离开视线，它欠的账先结掉。
     // 落点：`onJump` 里 `flushEdit()` **之后**那一句 `flushPersist()`
@@ -407,7 +428,9 @@ describe('恢复：打开就接着上次那条', () => {
     await act(async () => { dl!.click(); await new Promise(r => setTimeout(r, 0)) })
     expect(saveMod.downloadImage).toHaveBeenCalledWith(expect.anything(), '古镇_pinkrose.jpg')
     expect(saveMod.buildExportBlob).toHaveBeenCalledWith(
-      expect.anything(), expect.objectContaining({ name: '古镇.jpg' }), 'image/jpeg', 0.95)
+      expect.anything(), expect.objectContaining({ name: '古镇.jpg' }),
+      'image/jpeg', 0.95, true, 'srgb', true,
+      expect.objectContaining({ creator: '', copyright: '' }))
 
     // ⑧ 刚接回来的这一版**就是服务端上那一版**：下一次落盘不许把整张底图重传
     //    （不记的话，服务端每收一次 `base` 就多存一个没人引用的文件，而这是
@@ -1070,6 +1093,7 @@ describe('恢复：打开就接着上次那条', () => {
       return inner(url, init)
     })
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     // 这一趟之前已经解出来过几张（上传那张走的是 `decodeImageFile`，不从这里过；
     // 记一笔是为了只数**恢复这一趟**解出来的）
     const decodedBefore = decodedBitmaps.length
@@ -1085,8 +1109,10 @@ describe('恢复：打开就接着上次那条', () => {
     expect(container.querySelector('.notice')?.textContent ?? '')
       .not.toContain('这是上次没做完的')
     // ③ 也不能静默：这一次作废要在控制台留痕
-    expect(errSpy.mock.calls.some(c => String(c[0]).includes('作废'))).toBe(true)
+    expect([...errSpy.mock.calls, ...infoSpy.mock.calls]
+      .some(c => String(c[0]).includes('作废'))).toBe(true)
     errSpy.mockRestore()
+    infoSpy.mockRestore()
 
     // ④ ★ 作废时那些位图要关掉，而且**一个对象只关一次**。
     //    两步共用一个位图对象（第 2 步 `reusesPrev`），所以这一步只该下载一次、
@@ -1188,6 +1214,7 @@ describe('恢复：打开就接着上次那条', () => {
       return fakeDecoded('upload')
     })
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
 
     await renderApp()               // 恢复上路，卡在列表那一趟
 
@@ -1206,7 +1233,8 @@ describe('恢复：打开就接着上次那条', () => {
     expect(container.querySelector('.notice')?.textContent ?? '')
       .not.toContain('这是上次没做完的')
     // ② 作废要有痕（不许静默）
-    expect(errSpy.mock.calls.some(c => String(c[0]).includes('作废'))).toBe(true)
+    expect([...errSpy.mock.calls, ...infoSpy.mock.calls]
+      .some(c => String(c[0]).includes('作废'))).toBe(true)
 
     await act(async () => { decodeGate.open(); await new Promise(r => setTimeout(r, 0)) })
     // ③ 上传照常跑完：画布上是用户那张，旧会话的话一句都没跟过来
@@ -1214,6 +1242,7 @@ describe('恢复：打开就接着上次那条', () => {
     expect(shown.bitmap.__tag).toBe('upload')
     expect(bubbleTexts()).not.toContain('S7第 0 步')
     errSpy.mockRestore()
+    infoSpy.mockRestore()
   })
 
   it('★ 接着说话不许撞号 —— 恢复之后新消息、新步骤的 id 要排在旧的后面', async () => {
@@ -1332,7 +1361,7 @@ describe('恢复：打开就接着上次那条', () => {
     expect(bubbleTexts()).toContain('S7第 0 步')
   })
 
-  it('★ 老格式的会话（params 只有八根）接回来：15 根滑块都在、一个 NaN 都没有', async () => {
+  it('★ 老格式的会话（params 只有八根）接回来：51 根滑块都在、一个 NaN 都没有', async () => {
     // 2026-10-04「专业面板」那一轮 Task 6。会话是之前存进库里的：那一步的 `params`
     // **只有那八根**，新加的那七条（自然饱和度 / 色彩平衡三轴 / 分离色调）在那种行里
     // 根本不存在 —— 取出来是 `undefined`。不归一化的话它一路飘到底：
@@ -1341,7 +1370,7 @@ describe('恢复：打开就接着上次那条', () => {
     //   · 这一份还会被当成"当前参数"接着用，下次落盘照旧缺着七个键。
     // —— 全都是"不报错"的那种坏。
     //
-    // ⚠️ 那两个 `as` 是**故意的**：类型上 `SessionStep['params']` 要十五个键，
+    // ⚠️ 那两个 `as` 是**故意的**：类型上 `SessionStep['params']` 要五十个键，
     //    可**库里老数据真就是这个形状** —— 夹具要演的是"类型系统拦不住"的
     //    那个样子，不是一份合法的 `Adjustments`。`messages: []` 只是把类型补全
     //    （brief 的夹具没写这一栏），不影响这条用例要量的东西。
@@ -1360,12 +1389,12 @@ describe('恢复：打开就接着上次那条', () => {
     // 恢复落在修图页；面板在「调色」那一屏 —— 照本组别处用例的走法切过去
     await goNav('调色')
 
-    // ① 面板上 15 根都在（新键缺失 → 落成 0，而不是消失）
-    expect(container.querySelectorAll('.slider').length).toBe(15)
+    // ① 面板上 51 根都在（36 根基础 + HSL 默认色带 3 根 + 美颜 2 根 + 几何 2 根 + 镜头 5 根 + 镜头校正 3 根）
+    expect(container.querySelectorAll('.panel .slider').length).toBe(51)
     // ② 而且每一根都**真的显示 0** —— 缺的新键不许是空数字：`undefined` 交给滑块，
     //    数字那格什么都不渲染、拇指停在量程最小端（"四条 -100"就是这么来的）。
-    expect([...container.querySelectorAll('.slider-value')].map(e => e.textContent))
-      .toEqual(Array<string>(15).fill('0'))
+    expect([...container.querySelectorAll('.panel .slider-value')].map(e => e.textContent))
+      .toEqual(Array<string>(51).fill('0'))
     // ③ 色轮上不许是 NaN：三根轴里任何一个 `undefined`，算出来就是 `NaN`
     //    （`data-x="NaN"` —— 真机库里那条老会话实测就是这个样子）。
     const wheel = container.querySelector('.color-wheel')

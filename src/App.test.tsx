@@ -12,19 +12,54 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { OK, bodyOf, canvasProps, clickByText, container, cropOnce, decision, fakeBitmap, fetchMock, goNav, jsonResponse, lastReply, makeGate, openChatTool, putCalls, renderApp, say, uploadPhoto, waitPersist, withPresets } from './test/appHarness'
+import { OK, bodyOf, canvasProps, clickByText, container, cropOnce, decision, fakeBitmap, fakeDecoded, fetchMock, goNav, jsonResponse, lastReply, makeGate, openChatTool, putCalls, renderApp, say, setMeUser, uploadFiles, uploadPhoto, waitPersist, withPresets } from './test/appHarness'
 import { act } from 'react'
-import { ZERO } from '../shared/adjustments.ts'
+import { clampAdjustments, ZERO } from '../shared/adjustments.ts'
 import { type PresetMeta } from '../shared/preset.ts'
 import * as decodeMod from './image/decode'
 import * as api from './api/client'
 import * as limitsMod from './render/limits'
 import * as resizeMod from './image/resize'
 import * as saveMod from './export/save'
+import { EXPORT_DEFAULTS_KEY } from './export/prefs'
 import { describe, expect, it, vi } from 'vitest'
 import type { RouteDecision } from './test/appHarness'
 
 describe('对话式修图：钱花在对的地方', () => {
+  it('文件选择器明确接受 iPhone 的 HEIC / HEIF，而不是只靠 image/* 猜', async () => {
+    await renderApp()
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    expect(input.accept).toContain('.heic')
+    expect(input.accept).toContain('.heif')
+  })
+
+  it('★ RAW 走相机内嵌 JPEG 预览时，明确说明不是完整 RAW 解档', async () => {
+    vi.mocked(decodeMod.decodeImageFile).mockResolvedValueOnce({
+      ...fakeDecoded('raw-preview'),
+      rawPreview: { width: 1600, height: 1067 },
+    })
+    await renderApp()
+    await uploadPhoto()
+    const text = container.textContent ?? ''
+    expect(text).toContain('相机内嵌的 JPEG 预览')
+    expect(text).toContain('1600×1067')
+    expect(text).toContain('不是完整 RAW 解档')
+    expect(canvasProps.images.at(-1)).toMatchObject({ bitmap: { __tag: 'raw-preview' } })
+  })
+
+  it('★ Display P3 源照片会明确说明当前编辑链转为 sRGB', async () => {
+    vi.mocked(decodeMod.decodeImageFile).mockResolvedValueOnce({
+      ...fakeDecoded('p3'),
+      sourceColorProfile: 'display-p3',
+    })
+    await renderApp()
+    await uploadPhoto()
+    const text = container.textContent ?? ''
+    expect(text).toContain('源色彩是 Display P3')
+    expect(text).toContain('编辑和导出先统一转成 sRGB')
+    expect(text).toContain('不会伪装成广色域编辑')
+  })
+
   it('说两句话改两次 —— 第二次送的是第一次改完的那张，不是最初那张', async () => {
     vi.mocked(api.postRoute).mockResolvedValue(
       decision({ route: 'generate', editPrompt: '去掉后面的路人' }))
@@ -758,6 +793,85 @@ describe('对话式修图：钱花在对的地方', () => {
     expect(decodeMod.decodeImageFile).toHaveBeenCalledTimes(2)
   })
 
+  it('★ 编辑中一次拖入多张 = 全部送进批量处理，后面的照片不被吞掉', async () => {
+    await renderApp()
+    await uploadPhoto()
+    const a = new File(['a'], '拖入-a.jpg', { type: 'image/jpeg' })
+    const b = new File(['b'], '拖入-b.jpg', { type: 'image/jpeg' })
+    const notes = new File(['x'], '说明.txt', { type: 'text/plain' })
+
+    await act(async () => {
+      dispatchDrop([a, notes, b])
+      await new Promise(r => setTimeout(r, 0))
+    })
+
+    expect(location.pathname).toBe('/app/works')
+    await vi.waitFor(
+      () => expect(container.querySelector('.batch-page')).toBeTruthy(),
+      { timeout: 10_000 },
+    )
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('拖入-a.jpg')
+      expect(container.textContent).toContain('拖入-b.jpg')
+      expect(container.textContent).toContain('2 / 20')
+      expect(container.textContent).not.toContain('说明.txt')
+    }, { timeout: 10_000 })
+    // 批量页收齐文件后再解码；拖放入口本身不该只把第一张当单图打开。
+    expect(decodeMod.decodeImageFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('★ 单张照片配同名 XMP：作为这张照片的初始调色，优先于默认风格', async () => {
+    await renderApp()
+    const sidecar = new File([
+      `<?xpacket?>
+      <x:xmpmeta xmlns:x="adobe:ns:meta/">
+        <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description rdf:about=""
+            xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+            crs:PresetName="导入配方"
+            crs:Exposure2012="1.5" />
+        </rdf:RDF>
+      </x:xmpmeta>`,
+    ], 'p.xmp', { type: 'application/rdf+xml' })
+    Object.defineProperty(sidecar, 'text', {
+      value: async () => [
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/">',
+        '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
+        '<rdf:Description rdf:about=""',
+        ' xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"',
+        ' crs:PresetName="导入配方" crs:Exposure2012="1.5" />',
+        '</rdf:RDF></x:xmpmeta>',
+      ].join(''),
+    })
+    await uploadPhoto([sidecar])
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('已套用同名 XMP 调色旁车「导入配方」')
+    })
+    await goNav('调色')
+    const exposure = [...container.querySelectorAll('.panel label.slider')]
+      .find(label => label.querySelector('.slider-label')?.textContent?.trim() === '亮度')
+    expect(exposure?.querySelector('.slider-value')?.textContent?.trim()).toBe('30')
+  })
+
+  it('★ 多张照片各带同名 XMP：全部进入批量并逐张配对旁车', async () => {
+    await renderApp()
+    const a = new File(['a'], 'a.CR3', { type: '' })
+    const b = new File(['b'], 'b.JPG', { type: 'image/jpeg' })
+    const ax = new File(['ax'], 'a.xmp', { type: 'application/rdf+xml' })
+    const bx = new File(['bx'], 'b.xmp', { type: 'application/rdf+xml' })
+    await uploadFiles([a, ax, b, bx])
+
+    await vi.waitFor(
+      () => expect(container.querySelector('.batch-page')).toBeTruthy(),
+      { timeout: 10_000 },
+    )
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('已匹配 2 份同名 XMP')
+      expect(container.textContent).not.toContain('a.xmp')
+    }, { timeout: 10_000 })
+  })
+
   it('（10-10）还没有照片时不接拖放 —— 那一屏是欢迎页自己的地盘', async () => {
     await renderApp()
     await act(async () => {
@@ -931,11 +1045,13 @@ describe('照片超出设备上限时：缩，但要说出来', () => {
 describe('导出：分享还是存下来，用户自己选', () => {
   /** 顶栏现在的按钮，从左到右。 */
   function topbarButtons(): string[] {
-    return [...container.querySelectorAll('.actions button')].map(b => b.textContent ?? '')
+    // 只数**顶栏这一排**的直接按钮；导出设置弹层里的「设为默认」住在
+    // `.actions` 里面的 `<details>` 里，不是这一排的动作。
+    return [...container.querySelectorAll('.actions > button')].map(b => b.textContent ?? '')
   }
 
   function topbar(label: string): HTMLButtonElement {
-    const btn = [...container.querySelectorAll('.actions button')]
+    const btn = [...container.querySelectorAll('.actions > button')]
       .find(b => (b.textContent ?? '').includes(label)) as HTMLButtonElement | undefined
     if (!btn) throw new Error(`顶栏没有「${label}」——现在只有 ${topbarButtons().join(' / ')}`)
     return btn
@@ -993,6 +1109,211 @@ describe('导出：分享还是存下来，用户自己选', () => {
     //   变异：把 onDownload 接成 onSave → 这里红。
     expect(fetchMock.mock.calls.some(
       c => c[0] === '/api/works' && c[1]?.method === 'POST')).toBe(false)
+  })
+
+  it('★ 自定义文件名：下载用用户填的名字，扩展名跟当前格式走', async () => {
+    vi.mocked(saveMod.canShareImage).mockReturnValue(false)
+    await renderApp()
+    await uploadPhoto()
+    const input = container.querySelector('input[name="export-filename"]') as HTMLInputElement
+    expect(input).toBeTruthy()
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, '海边的日落')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click('下载')
+    expect(vi.mocked(saveMod.downloadImage).mock.calls[0][1]).toBe('海边的日落.jpg')
+  })
+
+  it('★ 导出设置：WebP + 质量 80 → 下载的就是这套编码，文件名跟着换后缀', async () => {
+    vi.mocked(saveMod.canShareImage).mockReturnValue(false)
+    await renderApp()
+    await uploadPhoto()
+
+    const webp = container.querySelector(
+      'input[name="export-format"][value="image/webp"]') as HTMLInputElement
+    expect(webp, '导出设置里该有 WebP').toBeTruthy()
+    await act(async () => { webp.click() })
+
+    const quality = container.querySelector('input[name="export-quality"]') as HTMLInputElement
+    expect(quality, 'JPG / WebP 该有质量滑块').toBeTruthy()
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(quality, '80')
+      quality.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    await click('下载')
+
+    expect(vi.mocked(saveMod.buildExportBlob)).toHaveBeenCalledTimes(1)
+    const call = vi.mocked(saveMod.buildExportBlob).mock.calls[0]
+    expect(call[2]).toBe('image/webp')
+    expect(call[3]).toBeCloseTo(0.8, 6)
+    expect(vi.mocked(saveMod.downloadImage).mock.calls[0][1]).toBe('p_pinkrose.webp')
+  })
+
+  it('★ 导出设置：关掉「保留拍摄信息」→ 导出引擎收到 false', async () => {
+    vi.mocked(saveMod.canShareImage).mockReturnValue(false)
+    await renderApp()
+    await uploadPhoto()
+
+    const keep = container.querySelector('input[name="export-metadata"]') as HTMLInputElement
+    expect(keep, '导出设置里该有「保留拍摄信息」').toBeTruthy()
+    expect(keep.checked).toBe(true)
+    await act(async () => { keep.click() })
+    await click('下载')
+
+    expect(vi.mocked(saveMod.buildExportBlob)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(saveMod.buildExportBlob).mock.calls[0]![4]).toBe(false)
+  })
+
+  it('★ 只关掉 GPS：拍摄信息仍保留，位置单独传 false', async () => {
+    vi.mocked(saveMod.canShareImage).mockReturnValue(false)
+    await renderApp()
+    await uploadPhoto()
+    const location = container.querySelector(
+      'input[name="export-location"]') as HTMLInputElement
+    expect(location).toBeTruthy()
+    await act(async () => { location.click() })
+    await click('下载')
+    const call = vi.mocked(saveMod.buildExportBlob).mock.calls[0]!
+    expect(call[4]).toBe(true)
+    expect(call[6]).toBe(false)
+  })
+
+  it('★ 作者与版权进入导出引擎，留空时由引擎保留原值', async () => {
+    vi.mocked(saveMod.canShareImage).mockReturnValue(false)
+    await renderApp()
+    await uploadPhoto()
+    const creator = container.querySelector('input[name="export-creator"]') as HTMLInputElement
+    const copyright = container.querySelector('input[name="export-copyright"]') as HTMLInputElement
+    expect(creator).toBeTruthy()
+    expect(copyright).toBeTruthy()
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(creator, 'Photographer A')
+      creator.dispatchEvent(new Event('input', { bubbles: true }))
+      setter.call(copyright, '© 2026 Photographer A')
+      copyright.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click('下载')
+    const call = vi.mocked(saveMod.buildExportBlob).mock.calls[0]!
+    expect(call[7]).toEqual({
+      creator: 'Photographer A',
+      copyright: '© 2026 Photographer A',
+    })
+  })
+
+  it('★ 导出偏好：新照片沿用上次存下的格式 / 质量 / 尺寸 / 比例', async () => {
+    localStorage.setItem(EXPORT_DEFAULTS_KEY, JSON.stringify({
+      format: 'image/webp',
+      qualityPct: 82,
+      longEdge: 2048,
+      aspect: '4:5',
+      fit: 'blur',
+      preserveMetadata: false,
+    }))
+    try {
+      await renderApp()
+      await uploadPhoto()
+
+      expect((container.querySelector(
+        'input[name="export-format"][value="image/webp"]') as HTMLInputElement).checked).toBe(true)
+      expect((container.querySelector(
+        'input[name="export-quality"]') as HTMLInputElement).value).toBe('82')
+      expect((container.querySelector(
+        'input[name="export-size"][value="2048"]') as HTMLInputElement).checked).toBe(true)
+      expect((container.querySelector(
+        'input[name="export-aspect"][value="4:5"]') as HTMLInputElement).checked).toBe(true)
+      // WebP 也能保留拍摄信息；沿用上次关闭的选择时必须保持未勾选。
+      const metadata = container.querySelector(
+        'input[name="export-metadata"]') as HTMLInputElement
+      expect(metadata).toBeTruthy()
+      expect(metadata.checked).toBe(false)
+      expect(container.textContent).not.toContain('当前格式不写入拍摄信息')
+
+      const save = [...container.querySelectorAll('button')]
+        .find(b => (b.textContent ?? '').trim() === '设为默认')!
+      expect(save).toBeTruthy()
+      await act(async () => { save.click(); await new Promise(r => setTimeout(r, 0)) })
+      expect(JSON.parse(localStorage.getItem(EXPORT_DEFAULTS_KEY)!)).toMatchObject({
+        format: 'image/webp', qualityPct: 82, longEdge: 2048, aspect: '4:5',
+      })
+      expect(container.querySelector('.notice')?.textContent ?? '')
+        .toContain('以后下载和分享')
+    } finally {
+      localStorage.removeItem(EXPORT_DEFAULTS_KEY)
+    }
+  })
+
+  it('★ 账号级导出偏好：登录后覆盖本机默认值', async () => {
+    setMeUser({
+      id: 1, username: '小明', email: 'a@b.com',
+      preferences: {
+        export: {
+          format: 'image/png', qualityPct: 70, longEdge: null,
+          aspect: '1:1', fit: 'crop', preserveMetadata: true,
+        },
+      },
+    })
+    localStorage.removeItem(EXPORT_DEFAULTS_KEY)
+    await renderApp()
+    await uploadPhoto()
+
+    expect((container.querySelector(
+      'input[name="export-format"][value="image/png"]') as HTMLInputElement).checked).toBe(true)
+    expect((container.querySelector(
+      'input[name="export-aspect"][value="1:1"]') as HTMLInputElement).checked).toBe(true)
+    expect(container.querySelector('input[name="export-quality"]')).toBeNull()
+  })
+
+  it('★ 保存导出默认值不会冲掉账号里的默认风格（同一份 preferences 合并）', async () => {
+    setMeUser({
+      id: 1, username: '小明', email: 'a@b.com',
+      preferences: { style: 'portrait' },
+    })
+    await renderApp()
+    await uploadPhoto()
+
+    const save = [...container.querySelectorAll('button')]
+      .find(b => (b.textContent ?? '').trim() === '设为默认')
+    expect(save, '导出设置里该有「设为默认」').toBeTruthy()
+    await act(async () => { save!.click(); await new Promise(r => setTimeout(r, 0)) })
+
+    const patch = fetchMock.mock.calls.find(
+      ([u, init]) => u === '/api/me' && (init as RequestInit | undefined)?.method === 'PATCH',
+    )
+    expect(patch, '应把导出默认值同步到账号').toBeTruthy()
+    expect(bodyOf(patch!).preferences).toMatchObject({
+      style: 'portrait',
+      export: { format: 'image/jpeg' },
+    })
+  })
+
+  it('★ 导出设置：水印只画在导出副本上；存进作品不带水印', async () => {
+    vi.mocked(saveMod.canShareImage).mockReturnValue(false)
+    await renderApp()
+    await uploadPhoto()
+
+    const text = container.querySelector(
+      'input[name="export-watermark-text"]') as HTMLInputElement
+    expect(text, '导出设置里该有水印文字输入').toBeTruthy()
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(text, 'PinkRose')
+      text.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    await click('下载')
+    expect(saveMod.markExportCanvas).toHaveBeenCalledTimes(1)
+    const [source, watermark, logo] = vi.mocked(saveMod.markExportCanvas).mock.calls[0]!
+    expect(source).toBe(container.querySelector('.canvas-wrap canvas, canvas'))
+    expect(watermark).toMatchObject({ text: 'PinkRose', kind: 'text' })
+    expect(logo).toBeNull()
+
+    await click('存进作品')
+    expect(saveMod.markExportCanvas).toHaveBeenCalledTimes(1)
   })
 
   it('点「分享」→ 弹系统面板，**不走下载**', async () => {
@@ -1198,7 +1519,7 @@ describe('历史小图：每一步都看得见（照片上方那条时间轴上�
     await uploadPhoto()
     await say('亮一点')
 
-    expect(thumbOf(1)).toBe('thumb:' + JSON.stringify({ ...ZERO, exposure: 40 }))
+    expect(thumbOf(1)).toBe('thumb:' + JSON.stringify(clampAdjustments({ ...ZERO, exposure: 40 })))
   })
 
   it('没改图的那一趟不占格（时间轴上还是只有原图）', async () => {
@@ -1287,9 +1608,11 @@ describe('对话区跟着新消息往下走', () => {
 
 /** ★ 2026-10-10：往 document 上丢一个"文件被拖进来"的事件
  *  （jsdom 没有真 DataTransfer，手搓一个只有我们读的那两个字段的）。 */
-function dispatchDrop(file: File) {
+function dispatchDrop(file: File | File[]) {
   const ev = new Event('drop', { bubbles: true, cancelable: true })
-  Object.defineProperty(ev, 'dataTransfer', { value: { files: [file], types: ['Files'] } })
+  Object.defineProperty(ev, 'dataTransfer', {
+    value: { files: Array.isArray(file) ? file : [file], types: ['Files'] },
+  })
   document.dispatchEvent(ev)
 }
 
@@ -1365,7 +1688,7 @@ describe('★ 我的预设：对话那条（2026-10-10）', () => {
     await say('用我那套黄昏旅拍，再把路人去掉')
 
     // 时间轴那格的缩略图 = 那一套（抓的就是画布上此刻的颜色）
-    expect(thumbOf(1)).toBe('thumb:' + JSON.stringify(MINE))
+    expect(thumbOf(1)).toBe('thumb:' + JSON.stringify(clampAdjustments(MINE)))
     // 主画面也是它 —— 两边同一个值，才是"缩略图与主画面一致"
     expect(canvasProps.props.at(-1)?.params).toEqual(MINE)
 

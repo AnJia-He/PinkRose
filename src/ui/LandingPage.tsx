@@ -12,10 +12,10 @@ import nightMarket from '../assets/landing/night-market.jpg'
 import highway from '../assets/landing/highway.jpg'
 import beforeShot from '../assets/landing/before.jpg'
 import afterShot from '../assets/landing/after.jpg'
-// ★ 2026-10-07：**深浅两份合成一份**。App 从 10-05 起内页固定深色
+// ★ 2026-10-07：**深浅两份合成一份**。App 从 10-05 起内页默认深色
 // （`.shell` 声明 `color-scheme: dark`，用户拍板"门面跟随系统、App 内页固定深色"）
-// —— 浅色访客点进去看到的也是这套深色界面，所以 `<picture>` 那套"按模式选图"
-// 没有意义了，两张 `-dark` 文件退役。
+// —— 浅色访客点进去看到的也是这套默认深色界面（用户仍可在设置里切浅色），
+// 所以 `<picture>` 那套"按模式选图"没有意义了，两张 `-dark` 文件退役。
 // ⚠️ 这两张是**从活着的界面上拍的**（不是另画的）：拍法
 // `python .superpowers/scratch/landing-art/_shot_live3.py dark` →
 // `python .superpowers/scratch/landing-art/_to_webp.py`。
@@ -301,7 +301,8 @@ export default function LandingPage({ onEnter }: Props) {
               原话，用户点过一次就认得。同一件事在两个页面上各叫各的，最亏。
             · 「说不清，就拖滑块」→ **「说不清，就手动调色」** —— 八条滑块那件事
               在 App 里叫「调色」（09-30 统一过）。
-            · 「发出去的，还是你拍的那张」→ **「原图的拍摄信息不会丢」** ——
+            · 「发出去的，还是你拍的那张」→ **「原图的拍摄信息不会丢」**
+              （★ 2026-10-18 导出可主动移除元数据后，改成「拍摄信息默认原样保留」）——
               这一格讲的一直是拍摄信息（尺寸/时间/地点）保不保得住，
               老标题读起来像在说"照片没被压缩"。
 
@@ -330,13 +331,13 @@ export default function LandingPage({ onEnter }: Props) {
               <p>「亮一点」「暖一点」「天再蓝一点」，说什么都行。说不出来，拖一下滑块也可以。</p>
             </div>
             <div className="lp-cell">
-              <h3>原图的拍摄信息不会丢</h3>
+              <h3>拍摄信息默认原样保留</h3>
               {/* ★ 2026-09-30 改。原来写的是「尺寸一点没缩」—— 绝对话，而它在
                   **浏览器扛不动超大图**那一档是假的（那种情况 App 会先缩一档，
                   而且它自己老实说了"导出的图会比原图小一点"，落地页却说得斩钉截铁）。
                   改成**把例外说出来**：敢说"例外也会告诉你"比声称"没有例外"更可信 ——
                   和上面那段同一个道理。 */}
-              <p>尺寸、拍摄时间、地点，都原样留在文件里。唯一的例外是手机扛不动的超大图 —— 那种情况我们会当场跟你说清楚。</p>
+              <p>尺寸、拍摄时间、地点默认留在文件里；想保护位置隐私，也可以在导出设置里主动移除。手机扛不动的超大图会当场说明。</p>
             </div>
           </Reveal>
         </div>

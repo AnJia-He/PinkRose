@@ -34,6 +34,7 @@ function stripBlockComments(src: string) {
 
 const css = stripBlockComments(readFileSync(fileURLToPath(new URL('./styles.css', import.meta.url)), 'utf8'))
 const landing = stripBlockComments(readFileSync(fileURLToPath(new URL('./landing.css', import.meta.url)), 'utf8'))
+const indexHtml = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8')
 
 const APP_SIZES = new Set(['12', '13', '14', '15', '17', '20', '22', '26', '30'])
 const LANDING_SIZES = new Set(['14', '15', '16', '17', '20'])
@@ -192,5 +193,25 @@ describe('尺子守卫 · 隐藏字重', () => {  it('用了 <b>/<strong> 就必
       expect(css, `src/ui 用了 <b>/<strong>（${used}），但 styles.css 没有把它们的字重收到 600`)
         .toMatch(/b,\s*strong\s*\{[^}]*font-weight:\s*600/)
     }
+  })
+})
+
+describe('Apple 安全区', () => {
+  it('viewport 允许铺到刘海 / 灵动岛后面', () => {
+    expect(indexHtml).toMatch(/name="viewport"[^>]*viewport-fit=cover/)
+  })
+
+  it('App 外壳与登录页四边都避开安全区', () => {
+    for (const edge of ['top', 'right', 'bottom', 'left']) {
+      expect(css, `styles.css 少了 safe-area-inset-${edge}`)
+        .toContain(`env(safe-area-inset-${edge}, 0px)`)
+    }
+    expect(css).toMatch(/\.shell\s*\{[^}]*env\(safe-area-inset-top/)
+    expect(css).toMatch(/\.login\s*\{[^}]*env\(safe-area-inset-bottom/)
+  })
+
+  it('落地页固定导航避开顶部和左右安全区', () => {
+    expect(landing).toMatch(/\.lp-nav\s*\{[^}]*env\(safe-area-inset-top/)
+    expect(landing).toMatch(/\.lp-nav\s*\{[^}]*env\(safe-area-inset-left/)
   })
 })

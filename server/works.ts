@@ -1,13 +1,17 @@
 import type { Db } from './db.ts'
 import type { Storage } from './storage.ts'
 import type { PublicUser } from './account.ts'
+import { randomBytes } from 'node:crypto'
 import { nowMs } from './clock.ts'
 import { HttpError, asObject, str } from './http.ts'
 import { mimeOf, readImageDataUrl, saveOptionalThumb } from './imagedata.ts'
 import { assertRoomFor } from './quota.ts'
 import { ZERO, applyDeltas, type Adjustments } from '../shared/adjustments.ts'
 import { MAX_LUT_NAME } from '../shared/lut.ts'
-import type { Recipe, WorkDetail, WorkMeta } from '../shared/works.ts'
+import {
+  isWorkColor, type Recipe, type SharedWork, type WorkColor, type WorkDetail,
+  type WorkFlag, type WorkMeta,
+} from '../shared/works.ts'
 
 export type WorksDeps = { db: Db; storage: Storage; now?: () => number }
 
@@ -19,7 +23,32 @@ const MAX_EDIT_LEN = 200
 
 export type WorkRow = {
   id: number; user_id: number; stored_name: string; thumb_name: string | null
-  bytes: number; created_at: number; updated_at: number; alias: string | null; recipe: string
+  bytes: number; created_at: number; updated_at: number; alias: string | null
+  recipe: string; rating: number; flag: number; color: string | null
+  share_token: string | null; source_name: string | null; captured_at: number | null
+  camera_make: string | null; camera_model: string | null; lens_model: string | null
+}
+
+const MAX_SOURCE_NAME = 180
+const MAX_EQUIPMENT_NAME = 120
+
+function readSourceName(raw: unknown): string | null {
+  const value = str(raw).trim()
+  if (!value) return null
+  const name = value.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f\u007f]/g, '').trim()
+  return name ? name.slice(0, MAX_SOURCE_NAME) : null
+}
+
+function readCapturedAt(raw: unknown): number | null {
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 && value < 4_102_444_800_000
+    ? Math.round(value)
+    : null
+}
+
+function readEquipmentName(raw: unknown): string | null {
+  const value = str(raw).replace(/[\u0000-\u001f\u007f]/g, '').trim()
+  return value ? value.slice(0, MAX_EQUIPMENT_NAME) : null
 }
 
 /** 配方里的滤镜：只认 `{ name: 1–30 字, amount: 0–100 }`，别的形状当没有。 */
@@ -70,6 +99,11 @@ export async function handleCreateWork(
   // 整张图跟着一起丢 —— 那正是裁定 ② 要防的事，只是从另一条路绕回来了。
   const thumbRaw = str(o.thumb)
   const recipe = readRecipe(o.recipe)
+  const sourceName = readSourceName(o.sourceName)
+  const capturedAt = readCapturedAt(o.capturedAt)
+  const cameraMake = readEquipmentName(o.cameraMake)
+  const cameraModel = readEquipmentName(o.cameraModel)
+  const lensModel = readEquipmentName(o.lensModel)
 
   // ★ 2026-10-04（§6.6，5 GB 配额）：**先看配额再落盘**。缩略图那点字节先按 0 算
   //   （≤1 MB，5 GB 量级上它是零头），和 sessions 那边同一个口径。
@@ -86,9 +120,15 @@ export async function handleCreateWork(
     // id 是刚生出来的，不存在"浏览器缓存里还留着上一版"这回事。真正承重的那一处是
     // handleReplaceWork —— 那里为什么必须 bump，说在它上面。
     const r = deps.db.raw.prepare(
-      `INSERT INTO works (user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias, recipe)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
-    ).run(user.id, storedName, thumbName, image.bytes.byteLength, t, t, JSON.stringify(recipe))
+      `INSERT INTO works (
+         user_id, stored_name, thumb_name, bytes, created_at, updated_at,
+         alias, recipe, source_name, captured_at, camera_make, camera_model, lens_model
+       ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      user.id, storedName, thumbName, image.bytes.byteLength,
+      t, t, JSON.stringify(recipe), sourceName, capturedAt,
+      cameraMake, cameraModel, lensModel,
+    )
     return { id: Number(r.lastInsertRowid) }
   } catch (e) {
     // ★ 插不进库就把刚写的文件收回来。不收的话它们永远留在盘上，
@@ -148,6 +188,14 @@ export function toMeta(row: WorkRow): WorkMeta {
     updatedAt: row.updated_at,
     bytes: row.bytes,
     hasThumb: row.thumb_name !== null,
+    rating: row.rating ?? 0,
+    flag: row.flag === -1 ? -1 : row.flag === 1 ? 1 : 0,
+    color: isWorkColor(row.color) ? row.color : 'none',
+    sourceName: row.source_name ?? null,
+    capturedAt: row.captured_at ?? null,
+    cameraMake: row.camera_make ?? null,
+    cameraModel: row.camera_model ?? null,
+    lensModel: row.lens_model ?? null,
   }
 }
 
@@ -157,20 +205,118 @@ export function toMeta(row: WorkRow): WorkMeta {
  * §3.5：先摆骨架（哪天、几张），再一张一张去取图。所以这个响应要小、要一次给完，
  * 客户端才好自己分组、搜索、按 60 张一摆地懒加载（裁定 ③）。
  */
-export function handleListWorks(user: PublicUser, deps: WorksDeps): { works: WorkMeta[] } {
+export function handleListWorks(
+  user: PublicUser, deps: WorksDeps, albumId?: number,
+): { works: WorkMeta[] } {
+  if (albumId !== undefined && (!Number.isInteger(albumId) || albumId <= 0)) {
+    throw new HttpError('BAD_REQUEST', '相册 id 得是正整数', 400)
+  }
   // ⚠️ 不带 `recipe`（2026-10-04）：列表只要元数据，而配方是整块 JSON ——
   //    每一行都白捞一次（详情页那条 handleGetWork 才要它）。
-  const rows = deps.db.raw.prepare(
-    `SELECT id, user_id, stored_name, thumb_name, bytes, created_at, updated_at, alias
-     FROM works WHERE user_id = ? ORDER BY updated_at DESC`,
-  ).all(user.id) as unknown as WorkRow[]
+  const rows = albumId === undefined
+    ? deps.db.raw.prepare(
+      `SELECT id, user_id, stored_name, thumb_name, bytes, created_at, updated_at,
+              alias, rating, flag, color, source_name, captured_at,
+              camera_make, camera_model, lens_model
+       FROM works WHERE user_id = ? ORDER BY updated_at DESC`,
+    ).all(user.id) as unknown as WorkRow[]
+    : deps.db.raw.prepare(
+      `SELECT w.id, w.user_id, w.stored_name, w.thumb_name, w.bytes, w.created_at,
+              w.updated_at, w.alias, w.rating, w.flag, w.color, w.source_name, w.captured_at,
+              w.camera_make, w.camera_model, w.lens_model
+       FROM works w
+       JOIN work_albums wa ON wa.work_id = w.id
+       JOIN albums a ON a.id = wa.album_id AND a.user_id = w.user_id
+       WHERE w.user_id = ? AND wa.album_id = ?
+       ORDER BY w.updated_at DESC`,
+    ).all(user.id, albumId) as unknown as WorkRow[]
   return { works: rows.map(toMeta) }
 }
 
 /** 单张的详情 —— 比列表多一样：**配方**（§3.5.1 的"这张图怎么来的"） */
 export function handleGetWork(id: number, user: PublicUser, deps: WorksDeps): WorkDetail {
   const row = loadOwned(id, user, deps)
-  return { ...toMeta(row), recipe: JSON.parse(row.recipe) as Recipe }
+  return {
+    ...toMeta(row),
+    recipe: JSON.parse(row.recipe) as Recipe,
+    shareToken: row.share_token ?? null,
+  }
+}
+
+/** 分享 token 的形状：24 字节 base64url，正好 32 个字符。 */
+const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{16,64}$/
+
+function newShareToken(): string {
+  return randomBytes(24).toString('base64url')
+}
+
+/**
+ * 开启（或取回）一张作品的公开分享 token。
+ *
+ * 幂等：已经有 token 就原样返回；用户点几次「分享链接」不会每次都换一条
+ * —— 换掉的话，之前发出去的链接会**静默失效**。
+ */
+export function handleCreateWorkShare(
+  id: number, user: PublicUser, deps: WorksDeps,
+): { token: string } {
+  const row = loadOwned(id, user, deps)
+  if (row.share_token) return { token: row.share_token }
+  // 唯一索引极低概率撞上；重试几次足够，别把随机数当绝对。
+  for (let i = 0; i < 4; i++) {
+    const token = newShareToken()
+    try {
+      const r = deps.db.raw.prepare(
+        'UPDATE works SET share_token = ? WHERE id = ? AND user_id = ? AND share_token IS NULL',
+      ).run(token, id, user.id)
+      if (r.changes > 0) return { token }
+      // 另一个请求刚好先开了分享：用它的 token，别把用户引到 500。
+      const current = loadOwned(id, user, deps).share_token
+      if (current) return { token: current }
+    } catch (e) {
+      // 唯一索引撞了：换一个 token 再试；别的写入错误原样抛出去。
+      if (!String((e as Error)?.message ?? '').includes('UNIQUE constraint failed')) throw e
+    }
+  }
+  throw new HttpError('INTERNAL', '分享链接没建成，再试一次', 500)
+}
+
+/** 停止分享：清掉 token，旧链接立刻 404。 */
+export function handleRevokeWorkShare(
+  id: number, user: PublicUser, deps: WorksDeps,
+): { ok: true } {
+  loadOwned(id, user, deps)
+  deps.db.raw.prepare('UPDATE works SET share_token = NULL WHERE id = ? AND user_id = ?')
+    .run(id, user.id)
+  return { ok: true }
+}
+
+function sharedRow(token: string, deps: WorksDeps): WorkRow {
+  if (!SHARE_TOKEN_RE.test(token)) throw new HttpError('BAD_REQUEST', '这个分享链接不在了', 404)
+  const row = deps.db.raw.prepare('SELECT * FROM works WHERE share_token = ?')
+    .get(token) as WorkRow | undefined
+  if (!row) throw new HttpError('BAD_REQUEST', '这个分享链接不在了', 404)
+  return row
+}
+
+/** 公开分享页的元数据：**只给图、名字和时间**，不带配方 / 用户 / 文件名。 */
+export function handleGetSharedWork(token: string, deps: WorksDeps): SharedWork {
+  const row = sharedRow(token, deps)
+  return {
+    token,
+    alias: row.alias,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    hasThumb: row.thumb_name !== null,
+  }
+}
+
+/** 公开分享的图片字节。没有缩略图时退回原图（和作品详情同一条兜底）。 */
+export async function handleSharedWorkFile(
+  token: string, deps: WorksDeps, wantThumb = false,
+): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const row = sharedRow(token, deps)
+  const name = wantThumb ? row.thumb_name ?? row.stored_name : row.stored_name
+  return { bytes: await deps.storage.read(name), contentType: mimeOf(name) }
 }
 
 /** 别名最长多少。60 个字够放下一句描述，又不至于把列表撑变形 */
@@ -207,6 +353,169 @@ export function handleRenameWork(
   deps.db.raw.prepare('UPDATE works SET alias = ? WHERE id = ? AND user_id = ?')
     .run(alias, id, user.id)
   return toMeta({ ...row, alias })
+}
+
+function readRating(body: unknown): number {
+  const rating = Number(asObject(body).rating)
+  if (!Number.isInteger(rating) || rating < 0 || rating > 5) {
+    throw new HttpError('BAD_REQUEST', '星级只能是 0~5 的整数', 400)
+  }
+  return rating
+}
+
+function readFlag(body: unknown): WorkFlag {
+  const flag = Number(asObject(body).flag)
+  if (flag !== -1 && flag !== 0 && flag !== 1) {
+    throw new HttpError('BAD_REQUEST', '标记只能是 -1、0 或 1', 400)
+  }
+  return flag
+}
+
+function readColor(body: unknown): WorkColor {
+  const color = asObject(body).color
+  if (!isWorkColor(color)) {
+    throw new HttpError('BAD_REQUEST', '颜色标签只能是 none、red、yellow、green、blue 或 purple', 400)
+  }
+  return color
+}
+
+/** 给作品打分（0 = 清除评分，1~5 星）。不动 `updated_at`：不是图片字节变化。 */
+export function handleRateWork(
+  id: number, body: unknown, user: PublicUser, deps: WorksDeps,
+): WorkMeta {
+  const row = loadOwned(id, user, deps)
+  const rating = readRating(body)
+  deps.db.raw.prepare('UPDATE works SET rating = ? WHERE id = ? AND user_id = ?')
+    .run(rating, id, user.id)
+  return toMeta({ ...row, rating })
+}
+
+/** 选片标记（-1 排除 / 0 清除 / 1 保留）。和评分一样不动 `updated_at`。 */
+export function handleFlagWork(
+  id: number, body: unknown, user: PublicUser, deps: WorksDeps,
+): WorkMeta {
+  const row = loadOwned(id, user, deps)
+  const flag = readFlag(body)
+  deps.db.raw.prepare('UPDATE works SET flag = ? WHERE id = ? AND user_id = ?')
+    .run(flag, id, user.id)
+  return toMeta({ ...row, flag })
+}
+
+/** 批量选片标记：混合的保留 / 复查建议在一次往返里落库。 */
+export function handleFlagWorks(
+  body: unknown, user: PublicUser, deps: WorksDeps,
+): { flagged: number[]; missing: number[] } {
+  const o = asObject(body)
+  if (!Array.isArray(o.items)) throw new HttpError('BAD_REQUEST', '没给要标记的作品', 400)
+  if (o.items.length === 0) throw new HttpError('BAD_REQUEST', '没给要标记的作品', 400)
+  if (o.items.length > 500) throw new HttpError('BAD_REQUEST', '一次最多标记 500 张', 400)
+
+  const wanted = new Map<number, WorkFlag>()
+  for (const raw of o.items) {
+    const item = asObject(raw)
+    const id = Number(item.id)
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new HttpError('BAD_REQUEST', '作品 id 得都是正整数', 400)
+    }
+    wanted.set(id, readFlag(item))
+  }
+  const ids = [...wanted.keys()]
+  const placeholders = ids.map(() => '?').join(',')
+  const owned = deps.db.raw.prepare(
+    `SELECT id FROM works WHERE user_id = ? AND id IN (${placeholders})`,
+  ).all(user.id, ...ids) as { id: number }[]
+  const found = new Set(owned.map(row => row.id))
+  const flagged = ids.filter(id => found.has(id))
+  const missing = ids.filter(id => !found.has(id))
+
+  for (const flag of [-1, 0, 1] as const) {
+    const group = flagged.filter(id => wanted.get(id) === flag)
+    if (group.length === 0) continue
+    const marks = group.map(() => '?').join(',')
+    deps.db.raw.prepare(
+      `UPDATE works SET flag = ? WHERE user_id = ? AND id IN (${marks})`,
+    ).run(flag, user.id, ...group)
+  }
+  return { flagged, missing }
+}
+
+/** 选片颜色标签；和评分 / 保留排除一样不动 `updated_at`。 */
+export function handleColorWork(
+  id: number, body: unknown, user: PublicUser, deps: WorksDeps,
+): WorkMeta {
+  const row = loadOwned(id, user, deps)
+  const color = readColor(body)
+  deps.db.raw.prepare('UPDATE works SET color = ? WHERE id = ? AND user_id = ?')
+    .run(color, id, user.id)
+  return toMeta({ ...row, color })
+}
+
+/**
+ * 批量评分：一次只改评分，不改 `updated_at`。
+ * 不在当前用户作品集里的 id 单独放进 `missing`，其余照常更新。
+ */
+export function handleRateWorks(
+  body: unknown, user: PublicUser, deps: WorksDeps,
+): { rated: number[]; missing: number[] } {
+  const o = asObject(body)
+  const raw = o.ids
+  if (!Array.isArray(raw)) throw new HttpError('BAD_REQUEST', '没给要评分的作品', 400)
+  const ids = raw.map(x => Number(x))
+  if (ids.some(x => !Number.isInteger(x) || x <= 0)) {
+    throw new HttpError('BAD_REQUEST', '作品 id 得都是正整数', 400)
+  }
+  if (ids.length === 0) throw new HttpError('BAD_REQUEST', '没给要评分的作品', 400)
+  const unique = [...new Set(ids)]
+  if (unique.length > 500) throw new HttpError('BAD_REQUEST', '一次最多给 500 张评分', 400)
+  const rating = readRating(o)
+
+  const placeholders = unique.map(() => '?').join(',')
+  const owned = deps.db.raw.prepare(
+    `SELECT id FROM works WHERE user_id = ? AND id IN (${placeholders})`,
+  ).all(user.id, ...unique) as { id: number }[]
+  const found = new Set(owned.map(row => row.id))
+  const rated = unique.filter(id => found.has(id))
+  const missing = unique.filter(id => !found.has(id))
+
+  if (rated.length > 0) {
+    const ratedMarks = rated.map(() => '?').join(',')
+    deps.db.raw.prepare(
+      `UPDATE works SET rating = ? WHERE user_id = ? AND id IN (${ratedMarks})`,
+    ).run(rating, user.id, ...rated)
+  }
+  return { rated, missing }
+}
+
+/** 批量颜色标签：一次往返；不在当前用户作品集里的 id 单独放进 `missing`。 */
+export function handleColorWorks(
+  body: unknown, user: PublicUser, deps: WorksDeps,
+): { colored: number[]; missing: number[] } {
+  const o = asObject(body)
+  if (!Array.isArray(o.ids)) throw new HttpError('BAD_REQUEST', '没给要标色的作品', 400)
+  const ids = o.ids.map(x => Number(x))
+  if (ids.some(x => !Number.isInteger(x) || x <= 0)) {
+    throw new HttpError('BAD_REQUEST', '作品 id 得都是正整数', 400)
+  }
+  if (ids.length === 0) throw new HttpError('BAD_REQUEST', '没给要标色的作品', 400)
+  const unique = [...new Set(ids)]
+  if (unique.length > 500) throw new HttpError('BAD_REQUEST', '一次最多给 500 张标色', 400)
+  const color = readColor(o)
+
+  const placeholders = unique.map(() => '?').join(',')
+  const owned = deps.db.raw.prepare(
+    `SELECT id FROM works WHERE user_id = ? AND id IN (${placeholders})`,
+  ).all(user.id, ...unique) as { id: number }[]
+  const found = new Set(owned.map(row => row.id))
+  const colored = unique.filter(id => found.has(id))
+  const missing = unique.filter(id => !found.has(id))
+
+  if (colored.length > 0) {
+    const marks = colored.map(() => '?').join(',')
+    deps.db.raw.prepare(
+      `UPDATE works SET color = ? WHERE user_id = ? AND id IN (${marks})`,
+    ).run(color, user.id, ...colored)
+  }
+  return { colored, missing }
 }
 
 /**

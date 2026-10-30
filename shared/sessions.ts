@@ -1,5 +1,6 @@
 import type { Adjustments } from './adjustments.ts'
 import type { LutRef } from './lut.ts'
+import type { EditLayer } from './layers.ts'
 import { dayLabel } from './works.ts'
 
 /**
@@ -59,9 +60,11 @@ export type SessionStep = {
   /**
    * ★ 2026-10-05：这一步用着哪个滤镜、强度多少。**可选** ——
    * 2026-10-05 之前存的步骤没有这个键，一律当"没用滤镜"。
-   * ⚠️ 它和 `params` 是**并列的两件事**（滤镜不是第十六个数字，见设计 §3.2）。
+   * ⚠️ 它和 `params` 是**并列的两件事**（滤镜不是参数里的一个数字，见设计 §3.2）。
    */
   lut?: LutRef | null
+  /** 这一步的文字层（★ 2026-10-19）；老会话没有这个键 = 没有层。 */
+  layers?: EditLayer[] | null
   prompt?: string
   at: number
   reusesPrev: boolean
