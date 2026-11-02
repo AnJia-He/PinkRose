@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildEditPrompt, describeParams, buildRouterUser,
-  ROUTER_SYSTEM, SUGGEST_SYSTEM, PRESERVE_CLAUSE,
+  buildRouterSystem, ROUTER_SYSTEM, SUGGEST_SYSTEM, PRESERVE_CLAUSE,
 } from './prompt.ts'
 import { ZERO } from '../shared/adjustments.ts'
 
@@ -375,6 +375,20 @@ describe('ROUTER_SYSTEM', () => {
     //    真发生过一次（加 Lut 时示例跟了一手、加预设时没跟）—— 删掉补的键必须红。
     expect(ROUTER_SYSTEM).toContain('"intent":"chat"')
     expect(ROUTER_SYSTEM).toContain('"actions":[]')
+  })
+})
+
+describe('场景审美 Skill', () => {
+  it('只给本轮相关的场景规则，并保留版本号', () => {
+    const system = buildRouterSystem('这张夜景人像把脸修自然一点')
+    expect(system).toContain('【本轮审美重点】')
+    expect(system).toContain('portrait@1')
+    expect(system).toContain('street-night@1')
+    expect(system).not.toContain('product-food@1')
+  })
+
+  it('没有场景线索时完全不追加，不把所有风格硬套进来', () => {
+    expect(buildRouterSystem('再亮一点')).toBe(ROUTER_SYSTEM)
   })
 })
 

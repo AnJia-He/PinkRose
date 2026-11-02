@@ -10,7 +10,7 @@ import {
   type MemoryDeps,
 } from './memory.ts'
 import {
-  ROUTER_SYSTEM, buildRouterUser, type RouterMemoryInput, type RouterWebContext,
+  buildRouterSystem, buildRouterUser, type RouterMemoryInput, type RouterWebContext,
 } from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
 import { parsePublicSearchQuery, parseSearchIntent, type SearchIntent } from './searchIntent.ts'
@@ -178,7 +178,7 @@ function askRouter(
   deps: RouteDeps,
 ): Promise<string> {
   return deps.queue.run(() => deps.client.chatJson([
-    { role: 'system', content: ROUTER_SYSTEM },
+    { role: 'system', content: buildRouterSystem(req.text) },
     {
       role: 'user',
       content: [

@@ -386,7 +386,8 @@ type DirectorPlan = {
 - `server/replyGuide.ts`：保留并细化身份和可见回复边界；
 - `server/prompt.ts`：拆出通用导演协议、能力目录和生成保留项，不再把全部知识写在
   一个 prompt 常量里；
-- 新增 `server/skills/`：审美总规则和场景子规则；
+- 新增 `server/aesthetic/skills.ts`：审美总规则之外的人像、旅行、夜景、
+  产品食物、建筑、旧照和社交发布场景子规则；
 - 新增 `server/capabilities/`：能力描述、注册和版本管理；
 - 新增 `server/aestheticReview.ts`：确定性计划与画面风险复核；
 - `server/route.ts`：编排上下文、导演、搜索、编译和复核；
