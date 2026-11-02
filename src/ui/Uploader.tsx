@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
-import { Camera, FolderOpen, FolderUp, UserRound, Video } from 'lucide-react'
+import { Camera, FolderOpen, FolderUp, MoreHorizontal, UserRound, Video } from 'lucide-react'
 import { Btn } from './kit/Btn.tsx'
 import WelcomeGlobe from './WelcomeGlobe.tsx'
 import type { Appearance } from '../app/appearance.ts'
@@ -122,6 +122,8 @@ export default function Uploader({
   const [cameraOpen, setCameraOpen] = useState(false)
   /** 相机文件夹桥开着没有。 */
   const [bridgeOpen, setBridgeOpen] = useState(false)
+  /** 桌面端把低频导入方式收进一个有文字说明的菜单。 */
+  const [moreOpen, setMoreOpen] = useState(false)
   /** 用户同时选到一组或多组同名照片 + MOV 时，先让他决定打开哪一部分。 */
   const [livePhotos, setLivePhotos] = useState<LivePhotoPair[]>([])
   const [livePhotoEvidence, setLivePhotoEvidence] = useState<Record<string, LivePhotoEvidence>>({})
@@ -130,12 +132,32 @@ export default function Uploader({
   const folderRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const selfieRef = useRef<HTMLInputElement>(null)
+  const moreRef = useRef<HTMLDivElement>(null)
   const onPickRef = useRef(onPick)
   const wishRef = useRef(wish)
   useEffect(() => {
     onPickRef.current = onPick
     wishRef.current = wish
   })
+
+  useEffect(() => {
+    if (!moreOpen) return
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && moreRef.current?.contains(event.target)) return
+      setMoreOpen(false)
+    }
+    const closeEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setMoreOpen(false)
+      moreRef.current?.querySelector<HTMLButtonElement>('.composer-more-trigger')?.focus()
+    }
+    document.addEventListener('pointerdown', closeOutside)
+    document.addEventListener('keydown', closeEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside)
+      document.removeEventListener('keydown', closeEscape)
+    }
+  }, [moreOpen])
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -311,51 +333,105 @@ export default function Uploader({
             aria-label="想怎么改"
             autoComplete="off"
           />
-          <button
-            type="button"
-            className="composer-camera"
-            aria-label="实时相机"
-            title="打开实时相机取景"
-            onClick={() => setCameraOpen(true)}
-          >
-            <Video size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="composer-camera composer-bridge"
-            aria-label="相机桥"
-            title="从相机 tether 文件夹导入"
-            onClick={() => setBridgeOpen(true)}
-          >
-            <FolderOpen size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="composer-camera"
-            aria-label="导入文件夹"
-            title="把整个文件夹的照片送进批量处理"
-            onClick={() => folderRef.current?.click()}
-          >
-            <FolderUp size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="composer-camera"
-            aria-label="拍照"
-            title="用相机拍一张"
-            onClick={() => cameraRef.current?.click()}
-          >
-            <Camera size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            className="composer-camera composer-selfie"
-            aria-label="自拍"
-            title="用前置摄像头自拍一张"
-            onClick={() => selfieRef.current?.click()}
-          >
-            <UserRound size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
+          <div className="composer-import-direct">
+            <button
+              type="button"
+              className="composer-camera"
+              aria-label="实时相机"
+              title="打开实时相机取景"
+              onClick={() => setCameraOpen(true)}
+            >
+              <Video size={16} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="composer-camera composer-bridge"
+              aria-label="相机桥"
+              title="从相机 tether 文件夹导入"
+              onClick={() => setBridgeOpen(true)}
+            >
+              <FolderOpen size={16} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="composer-camera"
+              aria-label="导入文件夹"
+              title="把整个文件夹的照片送进批量处理"
+              onClick={() => folderRef.current?.click()}
+            >
+              <FolderUp size={16} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="composer-camera"
+              aria-label="拍照"
+              title="用相机拍一张"
+              onClick={() => cameraRef.current?.click()}
+            >
+              <Camera size={16} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="composer-camera composer-selfie"
+              aria-label="自拍"
+              title="用前置摄像头自拍一张"
+              onClick={() => selfieRef.current?.click()}
+            >
+              <UserRound size={16} strokeWidth={1.5} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="composer-more" ref={moreRef}>
+            <button
+              type="button"
+              className="composer-more-trigger"
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              aria-controls="composer-import-menu"
+              onClick={() => setMoreOpen(open => !open)}
+            >
+              <MoreHorizontal size={16} strokeWidth={1.5} aria-hidden="true" />
+              更多导入
+            </button>
+            {moreOpen && (
+              <div className="composer-import-menu" id="composer-import-menu" role="menu">
+                <button type="button" role="menuitem" onClick={() => {
+                  setMoreOpen(false)
+                  setCameraOpen(true)
+                }}>
+                  <Video size={16} strokeWidth={1.5} aria-hidden="true" />
+                  <span>用实时相机取景</span>
+                </button>
+                <button type="button" role="menuitem" onClick={() => {
+                  setMoreOpen(false)
+                  setBridgeOpen(true)
+                }}>
+                  <FolderOpen size={16} strokeWidth={1.5} aria-hidden="true" />
+                  <span>从相机导入</span>
+                </button>
+                <button type="button" role="menuitem" onClick={() => {
+                  setMoreOpen(false)
+                  folderRef.current?.click()
+                }}>
+                  <FolderUp size={16} strokeWidth={1.5} aria-hidden="true" />
+                  <span>导入整个文件夹</span>
+                </button>
+                <button type="button" role="menuitem" onClick={() => {
+                  setMoreOpen(false)
+                  cameraRef.current?.click()
+                }}>
+                  <Camera size={16} strokeWidth={1.5} aria-hidden="true" />
+                  <span>用相机拍一张</span>
+                </button>
+                <button type="button" role="menuitem" onClick={() => {
+                  setMoreOpen(false)
+                  selfieRef.current?.click()
+                }}>
+                  <UserRound size={16} strokeWidth={1.5} aria-hidden="true" />
+                  <span>用前置摄像头自拍</span>
+                </button>
+              </div>
+            )}
+          </div>
           {/* ⚠️ 主按钮**走 `<Btn>`**（全站只有一份长相那条规矩），
               这里只给它尺寸/圆角（`.composer-go` 在 styles.css 里）。 */}
           <Btn type="submit" className="composer-go">

@@ -28,6 +28,45 @@ async function waitFor(test: () => boolean, label: string): Promise<void> {
 }
 
 describe('上传前拍照入口', () => {
+  it('桌面首屏把高级导入收在带文字的「更多导入」里', async () => {
+    const onPick = vi.fn()
+    await act(async () => { root.render(<Uploader onPick={onPick} />) })
+
+    const trigger = container.querySelector('.composer-more-trigger') as HTMLButtonElement
+    expect(trigger).toBeTruthy()
+    expect(trigger.textContent).toContain('更多导入')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.composer-import-menu')).toBeNull()
+
+    await act(async () => { trigger.click() })
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    const menu = container.querySelector('.composer-import-menu')
+    expect(menu?.textContent).toContain('用相机拍一张')
+    expect(menu?.textContent).toContain('从相机导入')
+    expect(menu?.textContent).toContain('导入整个文件夹')
+    expect(menu?.textContent).toContain('用前置摄像头自拍')
+
+    const folder = container.querySelector('input[data-folder-picker]') as HTMLInputElement
+    const clickSpy = vi.spyOn(folder, 'click')
+    const folderItem = [...container.querySelectorAll('.composer-import-menu button')]
+      .find(button => (button.textContent ?? '').includes('导入整个文件夹')) as HTMLButtonElement
+    await act(async () => { folderItem.click() })
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('.composer-import-menu')).toBeNull()
+  })
+
+  it('「更多导入」可以用 Escape 收起', async () => {
+    const onPick = vi.fn()
+    await act(async () => { root.render(<Uploader onPick={onPick} />) })
+    const trigger = container.querySelector('.composer-more-trigger') as HTMLButtonElement
+    await act(async () => { trigger.click() })
+    expect(container.querySelector('.composer-import-menu')).toBeTruthy()
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(container.querySelector('.composer-import-menu')).toBeNull()
+  })
+
   it('相册多选不会悄悄丢掉后面的照片 —— 整批交给批量处理', async () => {
     const onPick = vi.fn()
     const onPickMany = vi.fn()

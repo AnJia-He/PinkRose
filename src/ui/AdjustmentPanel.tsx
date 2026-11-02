@@ -332,6 +332,7 @@ export default function AdjustmentPanel({
         g.title.toLocaleLowerCase('zh-CN').includes(needle)
         || g.keys.some(k => PARAM_LABELS[k].toLocaleLowerCase('zh-CN').includes(needle)))
     : PARAM_GROUPS
+  const hasAdjustment = Object.values(value).some(amount => amount !== 0)
 
   return (
     <aside className={`panel${panelCollapsed ? ' panel-collapsed' : ''}`}>
@@ -443,6 +444,12 @@ export default function AdjustmentPanel({
       {needle && matchingGroups.length === 0 && (
         <p className="panel-search-empty" role="status">
           没有找到「{query.trim()}」对应的调色参数。
+        </p>
+      )}
+      {!needle && !hasAdjustment && (
+        <p className="adjustment-start-hint" role="note">
+          <strong>第一次调色？</strong>
+          先从亮度、高光入手，或点「自动」看一版。
         </p>
       )}
 

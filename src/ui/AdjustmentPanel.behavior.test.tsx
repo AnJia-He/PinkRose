@@ -142,6 +142,19 @@ async function search(container: HTMLElement, text: string) {
   return input
 }
 
+describe('第一次调色的起点', () => {
+  it('未做任何调整时给出一个短起点，开始调整后自动消失', async () => {
+    const untouched = await mount(<Harness />)
+    const hint = untouched.querySelector('.adjustment-start-hint')
+    expect(hint?.textContent).toContain('第一次调色')
+    expect(hint?.textContent).toContain('亮度、高光')
+    expect(hint?.textContent).toContain('自动')
+
+    const adjusted = await mount(<Harness initial={{ exposure: 8 }} />)
+    expect(adjusted.querySelector('.adjustment-start-hint')).toBeNull()
+  })
+})
+
 /** 按组标题找那一组（组数/顺序变了时，找错的组会当场红，不会静默串组）。 */
 function groupOf(container: HTMLElement, title: string): HTMLElement {
   return [...container.querySelectorAll<HTMLElement>('.panel-group')]

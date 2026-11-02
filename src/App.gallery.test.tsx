@@ -1146,6 +1146,27 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     expect(container.querySelector('.welcome')).toBeTruthy()
   })
 
+  it('零作品时先收起高级创作工具，需要时再展开', async () => {
+    withWorks([])
+    await renderApp()
+    await goNav('作品')
+
+    const workbench = container.querySelector('.gallery-workbench') as HTMLElement
+    const toggle = container.querySelector('.gallery-tools-toggle') as HTMLButtonElement
+    expect(toggle).toBeTruthy()
+    expect(toggle.textContent).toContain('创作工具')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(workbench.classList.contains('empty-collapsed')).toBe(true)
+
+    await act(async () => {
+      toggle.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(workbench.classList.contains('empty-collapsed')).toBe(false)
+    expect(workbench.textContent).toContain('批量处理')
+  })
+
   it('作品页打不开：居中的一句 + 一颗「再试一次」，点了就重新 fetch（第一次 500、第二次成功）', async () => {
     // ★ 2026-10-11：错误态从"左上角红字 + 一句劝人刷新"改成**和空态同一副样子**
     //   （居中一句 + 一颗按钮）。那颗按钮不是装样子：它把这一页**同一个请求**

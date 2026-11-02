@@ -138,6 +138,8 @@ export function GalleryPage({
   const [works, setWorks] = useState<WorkMeta[] | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [q, setQ] = useState('')
+  /** 零作品时先收住高级创作入口；手机上仍由 CSS 保持原样。 */
+  const [emptyToolsOpen, setEmptyToolsOpen] = useState(false)
   /**
    * ★ 2026-10-10：**排序**。加它的来路：空间要满的时候（5 GB 配额，用户管理页
    * 会提醒），用户要来这儿找"谁最占地方" —— 按大小降序、每格把大小写出来。
@@ -1234,6 +1236,9 @@ export function GalleryPage({
     return <LazyWorkflow><PosterPanel onBack={() => setPosterOpen(false)} /></LazyWorkflow>
   }
 
+  const emptyWorks = works !== null && works.length === 0
+  const toolsCollapsed = !selecting && emptyWorks && !emptyToolsOpen
+
   return (
     <section className="gallery">
       <header className="gallery-head">
@@ -1251,8 +1256,29 @@ export function GalleryPage({
                  aria-label="找一张作品"
                  onChange={e => { setQ(e.target.value); resetLimit() }} />
         </div>
+        {emptyWorks && !selecting && (
+          <button
+            type="button"
+            className="gallery-tools-toggle"
+            aria-expanded={emptyToolsOpen}
+            aria-controls="gallery-workbench"
+            onClick={() => setEmptyToolsOpen(open => !open)}
+          >
+            {emptyToolsOpen ? '收起工具' : '创作工具'}
+            <ChevronDown
+              size={14}
+              strokeWidth={1.5}
+              aria-hidden="true"
+              className={emptyToolsOpen ? 'open' : undefined}
+            />
+          </button>
+        )}
         {!selecting && (
-          <section className="gallery-workbench" aria-label="创作工具">
+          <section
+            id="gallery-workbench"
+            className={`gallery-workbench${toolsCollapsed ? ' empty-collapsed' : ''}`}
+            aria-label="创作工具"
+          >
             <div className="gallery-tool-group">
               <h2 className="gallery-tool-group-title">批处理</h2>
               <div className="gallery-tool-list">
