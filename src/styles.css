@@ -5648,6 +5648,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* "还没有作品"是**这一页的主句**：它原来和下面那句小字一样大、一样灰，
    于是整屏看上去只是"没加载出来"。两句拉开档次才读得出"这是一句结论"。 */
 .gallery-empty-title { margin: 0; font-size: 17px; }
+.gallery-empty-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.gallery-empty-frame { display: none; }
 .gallery-error { margin: var(--sp-5) 0 0; color: var(--danger); }
 
 /* ── 对话列表（Task 6，§6.1）：**过程**的家 ────────────────────────
@@ -7345,6 +7352,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   .sessions > .gallery-head .gallery-search:hover {
     border-color: var(--line-3);
   }
+  .gallery-empty-mode .gallery-head .gallery-search,
+  .gallery-empty-mode .gallery-albums {
+    display: none;
+  }
 
   .gallery-view-tools {
     display: flex;
@@ -7547,8 +7558,72 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   .gallery-tools-toggle svg { transition: transform 160ms ease; }
   .gallery-tools-toggle svg.open { transform: rotate(180deg); }
   .gallery-workbench.empty-collapsed { display: none; }
+  .gallery-empty-mode .gallery-empty {
+    display: flex;
+    align-items: center;
+    gap: 26px;
+    max-width: 520px;
+    margin: 13vh auto 0;
+    padding: 26px 0;
+    text-align: left;
+  }
+  .gallery-empty-mode .gallery-empty-frame {
+    position: relative;
+    display: block;
+    flex: none;
+    width: 104px;
+    height: 82px;
+    border: 1px solid var(--line-2);
+    border-radius: 12px;
+    background:
+      radial-gradient(circle at 72% 28%, var(--accent-tint), transparent 42%),
+      linear-gradient(145deg, var(--raised), var(--panel));
+    box-shadow:
+      inset 0 1px 0 var(--glass-hi),
+      0 18px 30px -28px rgba(0, 0, 0, .9);
+  }
+  .gallery-empty-mode .gallery-empty-frame::before,
+  .gallery-empty-mode .gallery-empty-frame::after,
+  .gallery-empty-mode .gallery-empty-frame > span::before,
+  .gallery-empty-mode .gallery-empty-frame > span::after {
+    content: '';
+    position: absolute;
+    width: 17px;
+    height: 17px;
+    border-color: var(--accent-300);
+    border-style: solid;
+    opacity: .72;
+  }
+  .gallery-empty-mode .gallery-empty-frame::before {
+    top: 10px;
+    left: 10px;
+    border-width: 1px 0 0 1px;
+    border-radius: 5px 0 0;
+  }
+  .gallery-empty-mode .gallery-empty-frame::after {
+    top: 10px;
+    right: 10px;
+    border-width: 1px 1px 0 0;
+    border-radius: 0 5px 0 0;
+  }
+  .gallery-empty-mode .gallery-empty-frame > span::before {
+    bottom: 10px;
+    left: 10px;
+    border-width: 0 0 1px 1px;
+    border-radius: 0 0 0 5px;
+  }
+  .gallery-empty-mode .gallery-empty-frame > span::after {
+    right: 10px;
+    bottom: 10px;
+    border-width: 0 1px 1px 0;
+    border-radius: 0 0 5px;
+  }
+  .gallery-empty-mode .gallery-empty-title { font-size: 22px; }
+  .gallery-empty-mode .gallery-empty-copy { min-width: 0; }
+  .gallery-empty-mode .gallery-empty-copy .btn-primary { margin-top: 18px; }
   .gallery-view-tools { order: 1; }
   .gallery-workbench { order: 2; }
+  .gallery-tools-toggle { margin-left: auto; align-self: center; }
   .adjustment-start-hint { display: block; }
   .panel-head button { min-height: 30px; }
   .scope-mode { min-height: 28px; padding: 3px 9px; }

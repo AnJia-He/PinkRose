@@ -133,6 +133,7 @@ export default function Uploader({
   const cameraRef = useRef<HTMLInputElement>(null)
   const selfieRef = useRef<HTMLInputElement>(null)
   const moreRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const onPickRef = useRef(onPick)
   const wishRef = useRef(wish)
   useEffect(() => {
@@ -146,16 +147,40 @@ export default function Uploader({
       if (event.target instanceof Node && moreRef.current?.contains(event.target)) return
       setMoreOpen(false)
     }
+    const menuItems = () => Array.from(
+      menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
+    )
     const closeEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
+      event.preventDefault()
       setMoreOpen(false)
       moreRef.current?.querySelector<HTMLButtonElement>('.composer-more-trigger')?.focus()
     }
+    const moveFocus = (event: KeyboardEvent) => {
+      const items = menuItems()
+      if (items.length === 0) return
+      const index = items.indexOf(document.activeElement as HTMLButtonElement)
+      const target = event.key === 'ArrowDown'
+        ? items[(index + 1) % items.length]
+        : event.key === 'ArrowUp'
+          ? items[(index - 1 + items.length) % items.length]
+          : event.key === 'Home'
+            ? items[0]
+            : event.key === 'End'
+              ? items[items.length - 1]
+              : null
+      if (!target) return
+      event.preventDefault()
+      target.focus()
+    }
+    menuItems()[0]?.focus()
     document.addEventListener('pointerdown', closeOutside)
     document.addEventListener('keydown', closeEscape)
+    menuRef.current?.addEventListener('keydown', moveFocus)
     return () => {
       document.removeEventListener('pointerdown', closeOutside)
       document.removeEventListener('keydown', closeEscape)
+      menuRef.current?.removeEventListener('keydown', moveFocus)
     }
   }, [moreOpen])
 
@@ -393,7 +418,12 @@ export default function Uploader({
               更多导入
             </button>
             {moreOpen && (
-              <div className="composer-import-menu" id="composer-import-menu" role="menu">
+              <div
+                ref={menuRef}
+                className="composer-import-menu"
+                id="composer-import-menu"
+                role="menu"
+              >
                 <button type="button" role="menuitem" onClick={() => {
                   setMoreOpen(false)
                   setCameraOpen(true)

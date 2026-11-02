@@ -1240,7 +1240,7 @@ export function GalleryPage({
   const toolsCollapsed = !selecting && emptyWorks && !emptyToolsOpen
 
   return (
-    <section className="gallery">
+    <section className={`gallery${emptyWorks ? ' gallery-empty-mode' : ''}`}>
       <header className="gallery-head">
         <div className="gallery-head-main">
           <div className="gallery-title-block">
@@ -1255,24 +1255,24 @@ export function GalleryPage({
           <input className="gallery-search" value={q} placeholder="找一张…（名字、日期、文件名、相机或镜头）"
                  aria-label="找一张作品"
                  onChange={e => { setQ(e.target.value); resetLimit() }} />
+          {emptyWorks && !selecting && (
+            <button
+              type="button"
+              className="gallery-tools-toggle"
+              aria-expanded={emptyToolsOpen}
+              aria-controls="gallery-workbench"
+              onClick={() => setEmptyToolsOpen(open => !open)}
+            >
+              {emptyToolsOpen ? '收起工具' : '创作工具'}
+              <ChevronDown
+                size={14}
+                strokeWidth={1.5}
+                aria-hidden="true"
+                className={emptyToolsOpen ? 'open' : undefined}
+              />
+            </button>
+          )}
         </div>
-        {emptyWorks && !selecting && (
-          <button
-            type="button"
-            className="gallery-tools-toggle"
-            aria-expanded={emptyToolsOpen}
-            aria-controls="gallery-workbench"
-            onClick={() => setEmptyToolsOpen(open => !open)}
-          >
-            {emptyToolsOpen ? '收起工具' : '创作工具'}
-            <ChevronDown
-              size={14}
-              strokeWidth={1.5}
-              aria-hidden="true"
-              className={emptyToolsOpen ? 'open' : undefined}
-            />
-          </button>
-        )}
         {!selecting && (
           <section
             id="gallery-workbench"
@@ -1585,9 +1585,15 @@ export function GalleryPage({
             ⚠️ 主句的类名不是多余的：CSS 里"整屏看上去只是'没加载出来'"那句
             就是为它写的，别顺手删。 */
         <div className="gallery-empty empty-state">
-          <p className="gallery-empty-title">还没有作品。</p>
-          {/* §3.7：告诉用户"不行"的地方，都要同时告诉他"那怎么办" */}
-          <Btn onClick={onNew}>去改一张</Btn>
+          <div className="gallery-empty-frame" aria-hidden="true">
+            <span />
+          </div>
+          <div className="gallery-empty-copy">
+            <p className="gallery-empty-title">还没有作品。</p>
+            <p className="gallery-empty-note">选一张照片开始修，存下来后会出现在这里。</p>
+            {/* §3.7：告诉用户"不行"的地方，都要同时告诉他"那怎么办" */}
+            <Btn onClick={onNew}>去改一张</Btn>
+          </div>
         </div>
       )}
 

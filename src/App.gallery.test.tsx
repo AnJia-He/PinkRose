@@ -1167,6 +1167,16 @@ describe('作品页：先摆 60 张、按天分组、名字就是时间', () => 
     expect(workbench.textContent).toContain('批量处理')
   })
 
+  it('零作品时进入专用空态，只留下开始创作这一条路', async () => {
+    withWorks([])
+    await renderApp()
+    await goNav('作品')
+
+    expect(container.querySelector('.gallery')?.classList.contains('gallery-empty-mode')).toBe(true)
+    expect(container.querySelector('.gallery-empty-note')?.textContent)
+      .toBe('选一张照片开始修，存下来后会出现在这里。')
+  })
+
   it('作品页打不开：居中的一句 + 一颗「再试一次」，点了就重新 fetch（第一次 500、第二次成功）', async () => {
     // ★ 2026-10-11：错误态从"左上角红字 + 一句劝人刷新"改成**和空态同一副样子**
     //   （居中一句 + 一颗按钮）。那颗按钮不是装样子：它把这一页**同一个请求**

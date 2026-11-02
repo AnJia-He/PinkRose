@@ -65,6 +65,31 @@ describe('上传前拍照入口', () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
     expect(container.querySelector('.composer-import-menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('「更多导入」打开后焦点进入第一项，方向键可在选项间移动', async () => {
+    const onPick = vi.fn()
+    await act(async () => { root.render(<Uploader onPick={onPick} />) })
+    const trigger = container.querySelector('.composer-more-trigger') as HTMLButtonElement
+
+    await act(async () => { trigger.click() })
+    const items = [...container.querySelectorAll('.composer-import-menu button')]
+    expect(document.activeElement).toBe(items[0])
+
+    await act(async () => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+      )
+    })
+    expect(document.activeElement).toBe(items[1])
+
+    await act(async () => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }),
+      )
+    })
+    expect(document.activeElement).toBe(items[0])
   })
 
   it('相册多选不会悄悄丢掉后面的照片 —— 整批交给批量处理', async () => {
