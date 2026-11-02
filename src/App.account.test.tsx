@@ -6,7 +6,7 @@
  * ⚠️ 第一个 import（`test/appHarness`）**必须是它**：那堆 `vi.mock` 是
  *   在那个模块被求值时注册的，排在它后面加载的模块才拿得到假的。
  */
-import { CUBE2_TEXT, LOGGED_IN, MODEL, bodyOf, canvasProps, container, decision, fetchMock, goNav, jsonResponse, makeGate, renderApp, say, setMeFails, setMeGate, setMeUsage, setMeUsageGate, setMeUser, uploadPhoto, withModels, withModelsError, withPresets, withUsage, withUsageError } from './test/appHarness'
+import { CUBE2_TEXT, LOGGED_IN, MODEL, bodyOf, canvasProps, container, decision, fetchMock, goNav, jsonResponse, makeGate, renderApp, say, setMeFails, setMeGate, setMeUsage, setMeUsageGate, setMeUser, uploadPhoto, withMemoryProfile, withModels, withModelsError, withPresets, withUsage, withUsageError } from './test/appHarness'
 import { act } from 'react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -874,7 +874,7 @@ describe('用户管理页', () => {
     expect(container.querySelector('.account-label')?.textContent).toBe('用户名')
   })
 
-  it('★ 版式：四个分组按**单列**排（不再并排 tile 一行）（2026-10-11 / 10-19）', async () => {
+  it('★ 版式：五个分组按**单列**排（不再并排 tile 一行）（2026-10-11 / 10-19 / 11-02）', async () => {
     // 用户原话：「设置页看起来很业余很散漫」。真机体检
     //（`.superpowers/scratch/design-audit/report.md`）量出来的病根是**仪表盘排版**：
     // 三格并排装三块内容量差五倍的东西（账号 3 行 / 模型 1 行 / 用量一整张
@@ -889,10 +889,10 @@ describe('用户管理页', () => {
     const grid = container.querySelector('.account-grid')
     expect(grid).toBeTruthy()
     const tiles = [...grid!.children].filter(el => el.classList.contains('account-tile'))
-    expect(tiles, '四个分组，一个不多一个不少').toHaveLength(4)
-    // 单列的**顺序**就是阅读顺序：账号 → 模型配置 → 修图偏好 → 作品空间用量
+    expect(tiles, '五个分组，一个不多一个不少').toHaveLength(5)
+    // 单列的**顺序**就是阅读顺序：账号 → 模型配置 → 修图偏好 → 长期偏好 → 作品空间用量
     expect(tiles.map(t => t.querySelector('.account-tile-title')?.textContent))
-      .toEqual(['账号', '模型配置', '修图偏好', '作品空间用量'])
+      .toEqual(['账号', '模型配置', '修图偏好', '长期偏好', '作品空间用量'])
     // 「退出登录」不归任何一组（它是"离开这一页"，不是这一页上的一项设置）——
     // 收进版心那条流里就行，别收进任何一个 tile
     expect(grid!.querySelector('.account-signout')).toBeNull()
@@ -904,6 +904,45 @@ describe('用户管理页', () => {
     expect(gridRule, '单列的排法：flex 竖排').toContain('flex-direction: column')
     // 版心 680（原 1200）：1200 是"三格并排"要的宽度，单列不再需要
     expect(cssRule('.account-inner')).toContain('max-width: 680px')
+  })
+
+  it('★ 长期偏好可查看、关闭和清除，不展示任何内部压缩状态', async () => {
+    setMeUser({ ...LOGGED_IN })
+    await renderApp()
+    withMemoryProfile({
+      enabled: true,
+      summary: '喜欢自然肤色、低调对比和 4:5 画幅。',
+      updatedAt: 10,
+    })
+    await openAccount()
+
+    expect(container.textContent).toContain('喜欢自然肤色、低调对比和 4:5 画幅。')
+    expect(container.textContent).not.toContain('压缩')
+    expect(container.textContent).not.toContain('摘要')
+    const toggle = [...container.querySelectorAll('.account-memory-row button')]
+      .find(b => b.textContent === '已开启') as HTMLButtonElement | undefined
+    expect(toggle).toBeTruthy()
+    await act(async () => {
+      toggle?.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(fetchMock.mock.calls.some(c => c[0] === '/api/memory'
+      && (c[1] as RequestInit).method === 'PATCH')).toBe(true)
+    expect(container.querySelector('.account-memory-row button')?.textContent).toBe('已关闭')
+
+    const clear = container.querySelector('.account-memory-clear') as HTMLButtonElement
+    await act(async () => {
+      clear.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    const confirm = container.querySelector('.account-memory-actions .account-danger-submit') as HTMLButtonElement
+    await act(async () => {
+      confirm.click()
+      await new Promise(r => setTimeout(r, 0))
+    })
+    expect(fetchMock.mock.calls.some(c => c[0] === '/api/memory'
+      && (c[1] as RequestInit).method === 'DELETE')).toBe(true)
+    expect(container.textContent).toContain('长期偏好已清除。')
   })
 
   it('★ 默认风格：设置页选内置预设 → 存账号；下一张新照片按它起手', async () => {

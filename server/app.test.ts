@@ -15,6 +15,7 @@ import { SerialQueue } from './queue.ts'
 import { SESSION_COOKIE } from './session.ts'
 import { SenseNovaClient } from './sn.ts'
 import { createStorage, type Storage } from './storage.ts'
+import { saveProfileSummary } from './memory.ts'
 
 /**
  * 让 `node:fs.createReadStream` 对**被点名的那个路径**返回一个立刻报错的流。
@@ -448,6 +449,31 @@ describe('★ 账号级偏好（2026-10-19）', () => {
     const after = await call(base, 'GET', '/api/me', undefined, cookie)
     expect((after.body as { user: { preferences: unknown } }).user.preferences)
       .toEqual({ export: { format: 'image/webp', qualityPct: 82 } })
+  })
+
+  it('长期偏好可读取、关闭和清除；未登录不能读', async () => {
+    const { base, cookie, auth } = await appWithUser()
+    const user = auth.db.raw.prepare('SELECT id FROM users LIMIT 1').get() as { id: number }
+    saveProfileSummary(auth.db, user.id, '喜欢自然肤色和 4:5 画幅。')
+
+    const first = await call(base, 'GET', '/api/memory', undefined, cookie)
+    expect(first.status).toBe(200)
+    expect(first.body).toMatchObject({
+      memory: { enabled: true, summary: '喜欢自然肤色和 4:5 画幅。' },
+    })
+
+    const off = await call(base, 'PATCH', '/api/memory', { enabled: false }, cookie)
+    expect(off.body).toMatchObject({
+      memory: { enabled: false, summary: '喜欢自然肤色和 4:5 画幅。' },
+    })
+    expect((await call(base, 'PATCH', '/api/memory', { enabled: 'false' }, cookie)).status)
+      .toBe(400)
+
+    const cleared = await call(base, 'DELETE', '/api/memory', undefined, cookie)
+    expect(cleared.body).toMatchObject({
+      memory: { enabled: false, summary: null },
+    })
+    expect((await call(base, 'GET', '/api/memory')).status).toBe(401)
   })
 
   it('偏好必须是对象且有大小上限；坏请求不改掉原来的值', async () => {

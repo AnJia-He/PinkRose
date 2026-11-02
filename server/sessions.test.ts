@@ -22,6 +22,7 @@ import { DEFAULT_SHAPE } from '../shared/shape.ts'
 import { DEFAULT_STICKER } from '../shared/sticker.ts'
 import { QUOTA_BYTES } from './quota.ts'
 import { createLut } from './luts.ts'
+import { saveSessionSummary } from './memory.ts'
 import { b64Of, jpegBytes, jpegUrl } from './testImages.ts'
 
 let dir: string; let db: Db; let storage: Storage
@@ -207,6 +208,29 @@ describe('更新', () => {
     const after = (db.raw.prepare('SELECT messages FROM sessions WHERE id=?').get(id) as any).messages
     expect(after).toBe(before)
     expect(JSON.parse(after).length).toBe(1)
+  })
+
+  it('★ 只追加新消息时保留内部摘要；改写被摘要覆盖的旧消息时摘要立即作废', async () => {
+    const { id } = await handleCreateSession({ image: JPEG }, user, deps())
+    const first = [{ id: 1, role: 'user' as const, text: '把人物提亮', at: 0 }]
+    await handleUpdateSession(id, { messages: first }, user, deps())
+    expect(saveSessionSummary(db, user.id, id, '已确认只提亮人物', 1)).toBe(true)
+
+    await handleUpdateSession(id, {
+      messages: [
+        ...first,
+        { id: 2, role: 'assistant' as const, text: '人物提亮了，背景没动。', at: 0 },
+      ],
+    }, user, deps())
+    expect(db.raw.prepare('SELECT summary FROM session_memory WHERE session_id = ?').get(id))
+      .toMatchObject({ summary: '已确认只提亮人物' })
+    expect(handleGetSession(id, user, deps())).not.toHaveProperty('summary')
+
+    await handleUpdateSession(id, {
+      messages: [{ id: 1, role: 'user', text: '改成保留人物、提亮背景', at: 0 }],
+    }, user, deps())
+    expect(db.raw.prepare('SELECT * FROM session_memory WHERE session_id = ?').get(id))
+      .toBeUndefined()
   })
 
   // ★ 2026-10-05：列表按 `updated_at DESC` 排、按天分组 —— 那个日期说的是

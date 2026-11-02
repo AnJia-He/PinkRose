@@ -2,13 +2,14 @@ import { PARAM_KEYS, PARAM_MIN, PARAM_MAX } from '../shared/adjustments.ts'
 import { sameLutName } from '../shared/lut.ts'
 import { samePresetName } from '../shared/preset.ts'
 import type { LutDecision, ParamDeltas, PresetDecision, Route, RouteDecision } from '../shared/protocol.ts'
+import { cleanReplyText } from './replyGuide.ts'
 
 const ROUTES: readonly Route[] = ['params', 'generate', 'both']
 
 /** 降级时 prompt 的字符上限。 */
 const FALLBACK_PROMPT_MAX = 200
 
-const FALLBACK_REPLY = '我没太看明白，先按你说的试了一下。'
+const FALLBACK_REPLY = '这次我还没完全看懂，先按你的原话试了一版；你再说得具体一点，我就收得更准。'
 
 /**
  * 需要"点一下澄清"那条路上的兜底 —— **不能**用上面那句。
@@ -17,9 +18,10 @@ const FALLBACK_REPLY = '我没太看明白，先按你说的试了一下。'
  *   早就写下了这个毛病和补法，一直没动）：那一支是**先问再做** —— 生成被拦下、
  *   参数也没动，"先按你说的试了一下"是**假话**；而且它会紧挨着界面下一句
  *   「在图上点一下要改的地方？」出现，两句连着读互相打架。
- * ⚠️ 上面那句**一个字都不许改**：§4.7 的降级那条路正在用它（那条路是真的试了）。
+ * ⚠️ 上面那句仍必须说出"这次真的试了一版"：§4.7 的降级那条路确实执行了用户原话；
+ *   可以改得更温和、更具体，但不能改成没做过的空话。
  */
-const FALLBACK_REPLY_ASK = '我没太看明白。'
+const FALLBACK_REPLY_ASK = '我还不确定你指的是哪个位置；先在图上点一下，我就照着那里改。'
 
 export function inferRoute(hasParams: boolean, hasEdit: boolean): Route {
   if (hasParams && hasEdit) return 'both'
@@ -232,9 +234,10 @@ export function parseDecision(raw: unknown, userText = '', lutNames: readonly st
   // ★ 2026-10-06：模型**自己给了 reply** 没有（空串 / 非字符串都算没给）。
   //   "读懂了、说得清清楚楚"必须它**真说了话**——下面那句 reply 里的兜底文案
   //   是**我们的话**，不能拿来当"它说不用改"的证据。
-  const hasModelReply = typeof obj.reply === 'string' && obj.reply.trim().length > 0
-  const reply = typeof obj.reply === 'string' && obj.reply.trim()
-    ? obj.reply.trim()
+  const modelReply = typeof obj.reply === 'string' ? cleanReplyText(obj.reply) : ''
+  const hasModelReply = modelReply.length > 0
+  const reply = hasModelReply
+    ? modelReply
     : (needsDisambiguation ? FALLBACK_REPLY_ASK : FALLBACK_REPLY)
 
   // degraded 的语义是"这次的结果不是模型老实给的"：

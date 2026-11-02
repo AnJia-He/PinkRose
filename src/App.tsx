@@ -2256,6 +2256,8 @@ export default function App() {
       //   （模型只回名字，前端自己赋值），30 的截断在服务端做（请求可以伪造）。
       const decision = await postRoute({
         imageDataUrl: preview.dataUrl, text, params,
+        // 单会话记忆由服务端按这个 id 读取已落盘的历史；历史不在前端重复拼装。
+        ...(sidAt !== null ? { sessionId: sidAt } : {}),
         luts: lutsApi.luts.map((l) => ({ id: l.id, name: l.name })),
         lut,
         presets: myPresets.map((p) => ({ name: p.label, params: p.adjustments })),

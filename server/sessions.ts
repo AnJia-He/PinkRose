@@ -9,6 +9,7 @@ import { assertRoomFor } from './quota.ts'
 //   "这个 id 存不存在、是不是他的"，认不出来回 null。**只有这一份**，别在这里
 //   另写一个查 luts 表的 SELECT。
 import { resolveLutRef } from './luts.ts'
+import { invalidateSessionSummaryIfChanged } from './memory.ts'
 import { ZERO, applyDeltas, type Adjustments } from '../shared/adjustments.ts'
 import { normalizeLutRef, type LutRef } from '../shared/lut.ts'
 import { normalizeEditLayers, type EditLayer } from '../shared/layers.ts'
@@ -506,6 +507,11 @@ export async function handleUpdateSession(
     //    不这样写的话，一个把 messages 送成对象的客户端 bug 会把用户的整段对话
     //    **静默**清成 `[]` —— 正是"错了不会报错，只会静静地错"那一类。
     messages = Array.isArray(o.messages) ? JSON.stringify(readMessages(o.messages)) : row.messages
+    // 内部摘要只对它覆盖到的那段历史负责。被覆盖的消息一旦被删或改写，
+    // 旧摘要必须当场作废；单纯追加新消息不会清掉它。
+    if (Array.isArray(o.messages)) {
+      invalidateSessionSummaryIfChanged(deps.db, id, row.messages, messages)
+    }
 
     // ★ 2026-10-02（安全审计）：**乐观锁**。
     //

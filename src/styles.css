@@ -500,7 +500,9 @@ b, strong { font-weight: 600; }
 .nav-item:hover {
   background: var(--glass-hover); color: var(--text);
 }
-/* 亮着的那一颗：**一片压着主色的药丸**，不是一块平蓝。
+/* 亮着的那一颗：**一小片带主色信号的暗面**，不是整块高饱和色。
+   ★ 2026-11-02（操作界面视觉）：桌面端改成极淡强调底 + 顶边高光 +
+   左缘 2px 主色刻度。彩色面积收小之后，导航仍一眼能读，照片周边也更安静。
    ★ 2026-10-07：删掉了原来那三件里的两件 —— 上半那道**渐隐的白高光**
    （`linear-gradient(…, rgba(255,255,255,.26), …)`）和底下一层**彩色柔影**，
    只留顶边一条几乎看不见的内高光。理由是评审 RC3：那是全站唯一一处在
@@ -508,10 +510,10 @@ b, strong { font-weight: 600; }
    读起来不是"讲究"是"另一个年代"。悬停同理，只剩底色那一档
    （和「个人设置」那些行 `.account-row:hover` 一个做法）。 */
 .nav-item.on {
-  background-color: var(--accent);
-  border-color: var(--accent);
-  box-shadow: inset 0 1px 0 var(--glass-hi);
-  color: var(--accent-ink); font-weight: 600;
+  background-color: var(--accent-tint);
+  border-color: var(--line-2);
+  box-shadow: inset 2px 0 0 var(--accent), inset 0 1px 0 var(--glass-hi);
+  color: var(--accent-300); font-weight: 600;
 }
 /* ★ 2026-10-03：左栏最底下那两颗（回门面的「产品介绍」和「个人设置」，见 Nav.tsx）。
    `margin-top: auto` 把它们推到底 —— `.nav` 是一列 flex，上面三支排完剩下的
@@ -878,7 +880,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      名字：`ui/CompareSplit` 那层罩在照片区的底也要**同一套语言** ——
      两个地方各写一遍，漂了谁都不报错。（它定在 `.stage` 上、靠继承往下走：
      对比那一层就住在舞台里面。） */
-  --stage-light: radial-gradient(120% 70% at 50% 0%, light-dark(rgba(255, 255, 255, .55), rgba(255, 255, 255, .05)), transparent 72%);
+  --stage-light:
+    radial-gradient(68% 56% at 50% 47%,
+      light-dark(rgba(255, 255, 255, .58), rgba(255, 255, 255, .035)),
+      transparent 78%),
+    linear-gradient(180deg, light-dark(rgba(255, 255, 255, .3), rgba(255, 255, 255, .018)), transparent 24%);
   background: var(--stage-light);
 }
 /* ⚠️ 2026-10-05：这条 `prefers-color-scheme` 媒体查询**删了** —— 深色那半（.05）
@@ -949,8 +955,23 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   height: 56px;
   margin: var(--stage-gap) calc(-1 * var(--sp-5)) 0;
   padding: 0 var(--sp-5);
-  background: var(--raised);
-  border-top: 1px solid var(--line);
+  background: var(--bg);
+  border-top: 1px solid var(--line-2);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+.actions.stage-bar > button:not(.btn-primary) {
+  background: transparent; border-color: transparent; color: var(--muted);
+}
+.actions.stage-bar > button:not(.btn-primary):hover:not(:disabled) {
+  background: var(--hover); border-color: var(--line-2); color: var(--text);
+}
+.actions.stage-bar > .btn-primary {
+  border-radius: var(--r-pill);
+  padding-inline: 20px;
+  box-shadow: 0 10px 24px -18px var(--accent);
+}
+.actions.stage-bar .export-settings > summary {
+  padding-inline: 10px; border-radius: var(--r-sm);
 }
 
 
@@ -969,7 +990,11 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   scrollbar-width: thin;
 }
 .rail-head {
+  display: flex; align-items: center; gap: var(--sp-2);
   margin: 0 0 16px; color: var(--text); font-weight: 600; font-size: 13px;
+}
+.rail-head::after {
+  content: ''; flex: 1; height: 1px; background: var(--line);
 }
 /* 「我的预设」那一段的分区头（★ 2026-10-10）：它上面是一排格子（不是头），
    所以自己带一截**组间距**（24 —— 节奏表里"组间 24·16"的那个 24）。
@@ -1018,7 +1043,12 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    `--photo-edge` 而不是写死 `--panel` —— 理由写在令牌那两处。 */
 .canvas {
   max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--r-sm);
-  box-shadow: 0 0 0 1px var(--photo-edge), var(--photo-shadow);
+  /* 1px 相纸边 + 8px 中性卡纸 + 下偏柔影：让照片像放在暗房工作台上，
+     又不让亮色包边影响对照片明暗和色温的判断。 */
+  box-shadow:
+    0 0 0 1px var(--photo-edge),
+    0 0 0 8px var(--panel),
+    0 24px 46px -22px light-dark(rgba(18, 20, 28, .28), rgba(0, 0, 0, .82));
   /* ★ 2026-10-17（透明抠图）：透明像素底下露出的棋盘格。不透明的照片完全盖住它。 */
   background-color: #f1f1f3;
   background-image:
@@ -1053,6 +1083,21 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      原生的页面捏合 / 滚动让开；单指拖动也由同一套 pointer 事件处理。 */
   touch-action: none;
 }
+.workspace .stage > .canvas-wrap::before {
+  content: ''; position: absolute; pointer-events: none;
+  inset: var(--sp-4) var(--sp-4) 60px;
+  opacity: .55;
+  background:
+    linear-gradient(var(--line-3), var(--line-3)) left top / 28px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) left top / 1px 28px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right top / 28px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right top / 1px 28px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) left bottom / 28px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) left bottom / 1px 28px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right bottom / 28px 1px no-repeat,
+    linear-gradient(var(--line-3), var(--line-3)) right bottom / 1px 28px no-repeat;
+}
+.workspace .stage > .canvas-wrap.focused::before { display: none; }
 
 /* ★ 专注看图：不依赖系统 Fullscreen API —— iOS Safari 对任意元素的全屏支持
    并不统一。这里让照片区本身临时成为全屏层，现有画布、缩放、对比和原图预览
@@ -1110,7 +1155,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   border-radius: var(--r-sm);
   /* 和 .canvas 那道白边**和影子**同一套 —— 它们是同一张位置上的两张图（按住看原图时
      上面那张顶掉下面那张），少一层的话"按住"的那一下照片的边会**跳一下**。 */
-  box-shadow: 0 0 0 1px var(--photo-edge), var(--photo-shadow);
+  box-shadow:
+    0 0 0 1px var(--photo-edge),
+    0 0 0 8px var(--panel),
+    0 24px 46px -22px light-dark(rgba(18, 20, 28, .28), rgba(0, 0, 0, .82));
   /* 它只是给人看的，不接收指针事件：事件全落到下面的 wrapper 上，
      系统也就没有"这张图"可存、可复制了（Android Chrome 长按 <img>
      会弹"下载图片"）。指针事件照旧冒泡到 wrapper，松手收得到。 */
@@ -1712,6 +1760,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    ⚠️ 窄屏（≤640）**不走转盘**：文件末尾那条媒体查询把这一整套 3D 中和掉、
    塌回"平铺可滑的一条"（那一档转盘会挤掉照片的高度，量过）。 */
 .strip {
+  position: relative;
   flex: none;
   height: 130px;
   display: flex; align-items: center; justify-content: center;
@@ -1726,6 +1775,20 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   user-select: none;
   touch-action: none;
 }
+.strip::before,
+.strip::after {
+  /* 上下两排断续齿孔把这一格读成“胶片带”，而不是一条普通工具栏。 */
+  content: ''; position: absolute; z-index: 1; left: 16px; right: 16px; height: 6px;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 8px,
+    var(--bg) 8px 16px
+  );
+  opacity: .66;
+}
+.strip::before { top: 9px; }
+.strip::after { bottom: 9px; }
 .strip:active { cursor: grabbing; }
 /* ★ 2026-10-06（更晚）第二版：它得**铺满舞台** —— 第一版只给了底色和一条线，
    真机一看四周全是留白，读起来还是"悬在中间的一块矩形"，不像"上下分成两块"。
@@ -2328,6 +2391,25 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .composer-camera:hover { border-color: var(--accent); color: var(--accent-300); background: var(--accent-tint); }
 /* 那颗按钮的**长相**来自 `<Btn>`（全站只有一份），这里只管它的尺寸和圆角。 */
 .composer-go { flex: none; border-radius: var(--r-pill); padding: 9px 20px; font-size: 14px; }
+@media (min-width: 641px) {
+  .welcome {
+    width: min(100%, 620px); max-width: 620px; min-width: 0;
+    padding: clamp(28px, 6vh, 48px) clamp(24px, 5vw, 48px);
+  }
+  .welcome::before,
+  .welcome::after {
+    content: ''; position: absolute; width: 28px; height: 28px; pointer-events: none;
+    border-color: rgba(255, 255, 255, .28); border-style: solid;
+  }
+  .welcome::before { top: 0; left: 0; border-width: 1px 0 0 1px; }
+  .welcome::after { right: 0; bottom: 0; border-width: 0 1px 1px 0; }
+  .composer {
+    border: 1px solid var(--line-3); border-radius: 20px;
+    background: var(--raised);
+    box-shadow: 0 18px 44px -30px rgba(0, 0, 0, .85);
+  }
+  .composer-go { border-radius: 14px; }
+}
 
 /* 「选一张照片，这句话会一起带过去」—— 打了字却没选照片时冒一句。
    **不是报错**（不红、不抖），只是告诉他这句话不会白打。 */
@@ -2988,8 +3070,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      钉住时文字不贴边。⚠️ 底色只准用 `var(--panel)` 这一个值：面板自己就是
      这个色，任何别的色都会在"没钉住"的时候显出一块补丁。 */
   flex: 1; min-width: 0;
-  background: transparent; border: 0; border-radius: 0; padding: 7px 0 6px; color: var(--muted);
-  font-size: 12px; letter-spacing: .06em; transform: none;
+  background: transparent; border: 0; border-radius: 0; padding: 7px 0 6px; color: var(--text);
+  font-size: 12px; font-weight: 600; letter-spacing: .02em; transform: none;
 }
 .panel-group-head:hover { color: var(--text); }
 .panel-group-reset {
@@ -3074,7 +3156,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      之后它变成了一条"缝"（行会从缝里露出来），挪到这里：观感一样、缝没了。
      滚动容器不折叠外边距，所以它稳稳地待在滚动内容的顶上。 */
   margin-top: 20px;
-  margin-bottom: 12px; color: var(--text); font-weight: 600; font-size: 13px;
+  margin-bottom: 12px; color: var(--text); font-weight: 600; font-size: 15px;
+  letter-spacing: -.01em;
 }
 .panel-head > span { margin-right: auto; }
 /* 「重置」是这一栏里的次要动作：它不该和预设抢眼，所以是一个没有框的文字钮。
@@ -3540,6 +3623,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .chat-log {
   flex: 1; overflow-y: auto; padding: 20px;
   display: flex; flex-direction: column; gap: 16px;
+  background: var(--bg);
 }
 /* ★ 2026-10-09：**对话栏顶上那条**（这条会话叫什么 + 一颗铅笔）。
    用户截图 + 原话：「这一块设计像豆包一样显示当前会话名称并且用铅笔图标表示可编辑」。
@@ -3553,8 +3637,14 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    它**不参与滚动**（`.chat-log` 才是滚的那一格）：翻历史时名字一直看得见，
    那正是它存在的意义。 */
 .chat-head {
+  position: relative;
   flex: none; display: flex; align-items: center; gap: var(--sp-2);
   padding: 14px 18px; border-bottom: 1px solid var(--line);
+  background: var(--panel); box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+.chat-head::before {
+  content: ''; position: absolute; left: 0; top: 50%; width: 2px; height: 18px;
+  border-radius: 0 2px 2px 0; background: var(--accent); transform: translateY(-50%);
 }
 /* 名字。字号比气泡（14）高一档、和 `.detail-name` 的 20 不同 —— 这一栏最窄只有
    360px，20px 的长照片名会把铅笔挤出去。
@@ -3640,6 +3730,15 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   border-radius: var(--r-md); padding: 11px 15px;
   font-size: 14px; line-height: 1.65;
 }
+.linkified-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble-text a {
+  color: var(--accent-300);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.bubble-text a:hover { color: var(--accent-500); }
+.bubble.user .bubble-text a { color: inherit; }
 .bubble.user {
   /* ★ 2026-10-05 深夜：主色换薄荷，气泡跟着换**薄荷深档**（#0f766e，白字
      5.48:1）—— 它是大面积的"面"，吃主色的**深档**而不是按钮那种亮档
@@ -3971,11 +4070,15 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .chat-plus svg { transition: transform var(--dur-2) var(--ease); }
 .chat-plus[aria-expanded="true"] svg { transform: rotate(45deg); }
 
-.chat-input { display: flex; gap: var(--sp-2); padding: 14px 18px; border-top: 1px solid var(--line); }
+.chat-input {
+  display: flex; gap: var(--sp-2); padding: 14px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--panel); box-shadow: inset 0 1px 0 var(--glass-hi);
+}
 .chat-input input {
   flex: 1; min-width: 0;
   background: var(--bg); color: var(--text); font: inherit; font-size: 14px;
-  border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 9px 12px;
+  border: 1px solid var(--line-2); border-radius: var(--r-md); padding: 9px 12px;
   transition: border-color var(--dur-1) ease, box-shadow var(--dur-1) ease;
 }
 /* 聚焦时给一道很淡的外圈，而不是只把边框染粉 —— 一像素的描边在深色底上
@@ -3985,6 +4088,20 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   box-shadow: var(--ring);
 }
 .chat-input input::placeholder { color: var(--muted-2); }
+.chat-input button[type="submit"] {
+  min-width: 58px; border-radius: var(--r-md);
+  transition: background-color var(--dur-1) ease, border-color var(--dur-1) ease,
+              color var(--dur-1) ease, transform var(--dur-1) var(--ease);
+}
+/* 输入为空时「发送」保持安静；一旦有内容，它就在同一位置亮成主按钮。
+   这是纯 CSS 的状态反馈，不新增一个会与输入框失步的 JS 状态。 */
+.chat-input:has(input:not(:placeholder-shown)) button[type="submit"]:not(:disabled) {
+  background: var(--accent); border-color: var(--accent);
+  color: var(--accent-ink); font-weight: 600;
+}
+.chat-input:has(input:not(:placeholder-shown)) button[type="submit"]:not(:disabled):hover {
+  background: var(--accent-500); border-color: var(--accent-500);
+}
 
 /* ★ 2026-10-06 下午：**选择模式底下那条操作条**（输入框在这一档让位）。
    尺寸照 `.chat-input` 抄（同一圈内边距、同一条顶上的发丝线）—— 切换时
@@ -4271,13 +4388,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    var(--bg)、边框 var(--line-2)），主按钮照 `button.primary`（--accent）。
    错误文案那个红是这份文件里唯一一处"文字用的红"—— 画布上那个 #ff3b30
    是画在照片上的圈，不是给字用的。 */
-/* ⚠️ 2026-09-30：这一屏原来是一列 320px 的裸文字**飘在一整片黑里**
-   （标志、标题、几个框、一颗按钮，左右什么都没有）。它现在坐在一张卡上，
-   底下一层很淡的品牌粉光晕 —— 不添一个字，靠版面把"这是产品，不是一张表单"
-   说出来。（用户明确删掉过标题下面那两行字，所以**不许再加副标题** ——
-   见 LoginPage.tsx 里那段注释。这一轮一个字的文案都没动。）
-   ⚠️ 高度从 `height: 100vh` 改成 `min-height: 100vh`：卡片比一屏高的时候
-   （手机竖屏 + 注册那三格）要能撑开让页面滚，写死 height 会把下面截掉。 */
+/* The login is a threshold, not a floating form. A photographic contact sheet
+   carries the product's subject on the left; the form keeps the right side
+   quiet enough to read. The existing card copy remains intentionally sparse:
+   the image does the storytelling, so no subtitle or feature claim is added. */
 .login {
   /* ★ 2026-10-05 深夜：App 那边主色换成了薄荷，**登录页钉回蓝** —— 它和落地页
      同属门面侧（访客区、跟随系统），而落地页那边的账写得清楚：「强调色两个模式
@@ -4299,7 +4413,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
      ⚠️ 和其它几行同理：`var()` 在**声明它的那个元素上**就代换完，
      不会因为下游覆盖了 `--accent` 而自动变蓝 —— 所以这条必须单独写。 */
   --ring: 0 0 0 3px light-dark(rgba(27, 98, 214, .28), rgba(59, 130, 246, .35));
-  display: flex; align-items: center; justify-content: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(420px, .82fr);
   /* 同 `.shell`：两行是有意的，老的退回 vh（见那一段的理由）。 */
   min-height: 100vh; min-height: 100dvh;
   padding:
@@ -4307,29 +4422,87 @@ button:where(:disabled) { opacity: .45; cursor: default; }
     calc(var(--sp-5) + env(safe-area-inset-right, 0px))
     calc(var(--sp-5) + env(safe-area-inset-bottom, 0px))
     calc(var(--sp-5) + env(safe-area-inset-left, 0px));
-  /* ⚠️ 2026-10-01 翻粉底时这两层光晕**换了角色**：粉底上再加粉光是看不见的
-     （原来深底上"加一层粉"才看得见），所以顶上那层改成白光（把卡片上方提亮），
-     底下那层留一点品牌玫瑰压住角落。位置、大小一个字没动。
-     ⚠️ 2026-10-04：两个色值**收进令牌**（`--login-glow-top` / `--login-glow-corner`，
-     见文件头玻璃面那段）—— 原来是裸值 + 一句"主色改了就跟着改"的口头约定。 */
-  background:
-    radial-gradient(58% 42% at 50% 0%, var(--login-glow-top), transparent 72%),
-    radial-gradient(46% 34% at 8% 100%, var(--login-glow-corner), transparent 72%),
-    var(--bg);
+  background: var(--bg);
 }
-/* ⚠️ 深色模式下这两层光晕**又要换回来**：顶上那层白光在深底上太亮
-   （.72 会糊成一片灰雾），底下那层强调色反而是深底上唯一看得见的一层。
-   这不是"两份配置各自为政"—— 是同一个意思在两种底上**要用不同的做法**。
-   （2026-10-04：两个值进了 `:root` 的令牌；2026-10-05：深色那半改成和浅色
-     配对写在 `--login-glow-*` 的 `light-dark()` 里，这条媒体查询删了。） */
+
+.login-scene {
+  position: relative; min-height: 0; overflow: hidden;
+  background: #151517; color: #fff;
+}
+.login-scene-photo {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; object-position: 54% 50%;
+  transform: scale(1.02);
+  animation: login-scene-settle 1.4s var(--ease) both;
+}
+.login-scene::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(7, 8, 10, .18), transparent 48%),
+    linear-gradient(0deg, rgba(7, 8, 10, .72), transparent 44%),
+    linear-gradient(180deg, rgba(7, 8, 10, .48), transparent 28%);
+}
+.login-scene-brand {
+  position: absolute; z-index: 1; top: clamp(28px, 5vw, 64px); left: clamp(28px, 5vw, 72px);
+  display: flex; align-items: center; gap: var(--sp-4); color: #fff;
+}
+.login-scene-index {
+  font-family: 'PinkRose Wordmark', var(--font);
+  font-size: 15px; font-weight: 600; letter-spacing: .16em;
+}
+.login-scene-rule { width: 56px; height: 1px; background: rgba(255, 255, 255, .5); }
+.login-scene-loupe {
+  position: absolute; z-index: 1; right: clamp(28px, 6vw, 80px); bottom: clamp(28px, 8vh, 76px);
+  width: clamp(220px, 34%, 420px); padding: 7px;
+  background: #f5f5f7;
+  box-shadow: 0 30px 64px -32px rgba(0, 0, 0, .82);
+}
+.login-scene-compare {
+  position: relative; aspect-ratio: 1.45 / 1; overflow: hidden; background: #111;
+}
+.login-scene-compare img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+}
+.login-scene-compare .login-scene-after { clip-path: inset(0 0 0 58%); }
+.login-scene-compare::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 58%; width: 1px;
+  background: rgba(255, 255, 255, .92); box-shadow: 0 0 12px rgba(0, 0, 0, .5);
+}
+.login-scene-loupe::before,
+.login-scene-loupe::after {
+  content: ''; position: absolute; width: 18px; height: 18px; pointer-events: none;
+  border-color: rgba(255, 255, 255, .64); border-style: solid;
+}
+.login-scene-loupe::before { top: -15px; left: -15px; border-width: 1px 0 0 1px; }
+.login-scene-loupe::after { right: -15px; bottom: -15px; border-width: 0 1px 1px 0; }
+@keyframes login-scene-settle {
+  from { opacity: 0; transform: scale(1.055); }
+}
+
+.login-panel {
+  position: relative; display: grid; place-items: center;
+  min-width: 0; padding: clamp(32px, 6vw, 96px);
+  background: var(--bg);
+}
+.login-panel::before {
+  content: ''; position: absolute; top: 12%; right: 9%; width: 120px; height: 1px;
+  background: var(--line-2);
+}
 .login-box {
+  position: relative;
   display: flex; flex-direction: column; gap: var(--sp-4);
-  width: 100%; max-width: 380px;
-  padding: var(--sp-6);
+  width: 100%; max-width: 400px;
+  padding: clamp(28px, 4vw, 40px);
   background: var(--panel);
-  border: 1px solid var(--line); border-radius: var(--r-lg);
-  box-shadow: var(--shadow-3);
+  border: 0; border-radius: var(--r-lg);
+  box-shadow: 0 28px 72px -42px rgba(18, 20, 28, .42);
   animation: welcome-in .45s var(--ease) both;
+}
+.login-box::before {
+  content: ''; position: absolute; top: -1px; left: -1px;
+  width: 34px; height: 34px; pointer-events: none;
+  border-top: 2px solid var(--accent); border-left: 2px solid var(--accent);
+  border-top-left-radius: var(--r-lg);
 }
 .login-title { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -.02em; }
 /* 登录页顶上那朵玫瑰。
@@ -4337,7 +4510,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    单把标志居中会看着像摆歪了。`align-self: flex-start` 是必须的：`.login-box` 是
    `flex-direction: column`，子项默认 `stretch` —— 不给的话这张方图会被拉成整行宽。
    （`.login-box` 那条 14px 的 gap 顺带给图和标题之间留出距离，不用再加 margin。） */
-.login-mark { align-self: flex-start; display: block; }
+.login-mark {
+  align-self: flex-start; display: block;
+  filter: drop-shadow(0 8px 18px rgba(18, 20, 28, .18));
+}
 /* `.login-sub`（副标题）和 `.login-hint`（"打 * 的都得填"）两条规则在
    **2026-09-25 被一起删掉**了：用户看过页面之后说这两句都不要，两个元素整个
    不渲染了（见 `LoginPage.tsx` 标题下面那处注释 —— 那里记着这件事的代价）。
@@ -4432,6 +4608,29 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .login-submit { padding: 12px; border-radius: var(--r-sm); border: 0; font-size: 15px; cursor: pointer; transition: background-color var(--dur-1) ease; }
 .login-switch { border: 0; background: none; color: inherit; opacity: .7; font-size: 13px; cursor: pointer; padding: 6px; border-radius: var(--r-sm); }
 .login-switch:hover:not(:disabled) { opacity: 1; background: var(--hover); }
+@media (max-width: 860px) {
+  .login {
+    display: flex; align-items: center; justify-content: center;
+    padding:
+      calc(var(--sp-5) + env(safe-area-inset-top, 0px))
+      calc(var(--sp-5) + env(safe-area-inset-right, 0px))
+      calc(var(--sp-5) + env(safe-area-inset-bottom, 0px))
+      calc(var(--sp-5) + env(safe-area-inset-left, 0px));
+    background:
+      radial-gradient(58% 42% at 50% 0%, var(--login-glow-top), transparent 72%),
+      radial-gradient(46% 34% at 8% 100%, var(--login-glow-corner), transparent 72%),
+      var(--bg);
+  }
+  .login-scene { display: none; }
+  .login-panel { display: contents; }
+  .login-panel::before { display: none; }
+  .login-box {
+    max-width: 380px; margin-top: 0; padding: var(--sp-6);
+    border: 1px solid var(--line); box-shadow: var(--shadow-3);
+  }
+  .login-box::before { display: none; }
+  .login-mark { filter: none; }
+}
 /* ★ 忙的时候那颗切换按钮**看得见地**挡住（2026-09-26 加，和 `disabled={busy}` 是一对）。
    原来它只有上面那一条 `.7`，禁用之后连"淡一点"都没有 —— 屏上能说出"现在点不动"
    的只剩光标形状那一处，而光标只在鼠标已经挪上去之后才说话。
@@ -6351,6 +6550,46 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .account-appearance-row { gap: 8px; }
 .account-appearance-choices { display: flex; gap: 6px; flex: none; }
 .account-appearance-choices .crop-chip { flex: none; }
+.account-memory-row { cursor: default; }
+.account-memory-row .crop-chip { flex: none; }
+.account-memory-summary,
+.account-memory-empty {
+  margin: 0;
+  padding: 2px 18px 16px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+.account-memory-empty { color: var(--muted-2); }
+.account-memory-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  padding: 0 18px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.account-memory-actions .account-cancel,
+.account-memory-actions .account-danger-submit { margin-left: auto; }
+.account-memory-actions .account-danger-submit + .account-cancel { margin-left: 0; }
+.account-memory-clear {
+  margin-left: auto;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: underline;
+  transform: none;
+}
+.account-memory-clear:where(:hover):where(:not(:disabled)) {
+  background: none;
+  color: var(--danger);
+}
 .account-hint {
   margin: -4px 2px 0;
   font-size: 12px;
@@ -6662,6 +6901,62 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   .collage-quality { grid-template-columns: auto minmax(80px, 1fr) auto; gap: 8px; }
 }
 
+/* Scope the workspace art direction to the desktop editing surface. Mobile
+   keeps the incumbent composition until that surface is explicitly scheduled. */
+@media (max-width: 640px) {
+  .nav-item.on {
+    background-color: var(--accent);
+    border-color: var(--accent);
+    box-shadow: inset 0 1px 0 var(--glass-hi);
+    color: var(--accent-ink);
+  }
+  .stage {
+    --stage-light: radial-gradient(
+      120% 70% at 50% 0%,
+      light-dark(rgba(255, 255, 255, .55), rgba(255, 255, 255, .05)),
+      transparent 72%
+    );
+  }
+  .workspace .stage > .canvas-wrap::before { display: none; }
+  .canvas,
+  .canvas-peek,
+  .compare-img {
+    box-shadow: 0 0 0 1px var(--photo-edge), var(--photo-shadow);
+  }
+  .strip::before,
+  .strip::after { display: none; }
+  .rail-head::after { display: none; }
+  .panel-head { font-size: 13px; letter-spacing: normal; }
+  .panel-group-head {
+    color: var(--muted); font-weight: 400; letter-spacing: .06em;
+  }
+  .chat-log { background: transparent; }
+  .chat-head {
+    position: static; background: transparent; box-shadow: none;
+  }
+  .chat-head::before { display: none; }
+  .chat-input { background: transparent; box-shadow: none; }
+  .chat-input input { border-radius: var(--r-sm); }
+  .chat-input button[type="submit"] {
+    min-width: auto; border-radius: var(--r-sm);
+    background: var(--raised); border-color: var(--line-2);
+    color: var(--text); font-weight: 400;
+  }
+  .chat-input:has(input:not(:placeholder-shown)) button[type="submit"]:not(:disabled) {
+    background: var(--raised); border-color: var(--line-2); color: var(--text);
+    font-weight: 400;
+  }
+  .actions.stage-bar > button:not(.btn-primary) {
+    background: var(--raised); border-color: var(--line-2); color: var(--text);
+  }
+  .actions.stage-bar > .btn-primary {
+    border-radius: var(--r-sm); padding-inline: 14px; box-shadow: none;
+  }
+  .actions.stage-bar .export-settings > summary {
+    padding-inline: 10px; border-radius: var(--r-pill);
+  }
+}
+
 /* ── 动效总闸 ────────────────────────────────────────────────────────
    这一版加了好几处动效（入场位移、悬停放大、卡片错开出现、沙漏转圈）。
    系统里开了"减少动态效果"的人**不是在挑剔审美** —— 前庭功能、偏头痛、
@@ -6921,4 +7216,260 @@ button:where(:disabled) { opacity: .45; cursor: default; }
     width: auto; max-height: none;
     border-top: 0; border-left: 1px solid var(--line);
   }
+}
+
+/* ── 作品工作台：把“功能按钮墙”收成可扫读的工具盘 ─────────────────────
+   2026-11-02：用户给的作品页截图里，十四个同权重按钮挤在页头，搜索、筛选、
+   排序又混在同一行，照片反而退到最后。这里只重排桌面端的呈现：
+     ① 标题 / 搜索是第一层；
+     ② 筛选 / 排序是第二层；
+     ③ 创作入口按“批处理 / 版式 / 合成 / 动态”分组；
+     ④ 作品墙恢复为主角。
+   手机端没有新布局：下面 max-width: 640px 的规则把新包层压回 display:contents，
+   并恢复原来的按钮顺序和间距。 */
+.gallery-head-main,
+.gallery-title-block,
+.gallery-workbench,
+.gallery-tool-group,
+.gallery-tool-list,
+.gallery-view-tools { display: contents; }
+.gallery-title-meta,
+.gallery-tool-group-title { display: none; }
+
+@media (min-width: 641px) {
+  .gallery > .gallery-head,
+  .sessions > .gallery-head {
+    align-items: stretch;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 10px;
+    padding: 20px 0 16px;
+    background: var(--panel);
+    box-shadow:
+      inset 0 1px 0 var(--glass-hi),
+      0 18px 30px -30px rgba(0, 0, 0, .9);
+  }
+  .gallery-head-main {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    order: 0;
+    min-width: 0;
+  }
+  .gallery-title-block {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex: none;
+  }
+  .gallery > .gallery-head .gallery-title,
+  .sessions > .gallery-head .gallery-title {
+    /* 桌面页标题用 26px 这一档；24px 不在项目的九档字号尺上。 */
+    font-size: 26px;
+    letter-spacing: -.025em;
+  }
+  .gallery-title-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted-2);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .gallery-title-meta::before {
+    content: '';
+    width: 18px;
+    height: 1px;
+    background: var(--line-3);
+  }
+  .gallery > .gallery-head .gallery-search,
+  .sessions > .gallery-head .gallery-search {
+    flex: 1;
+    width: auto;
+    max-width: none;
+    min-width: 220px;
+    padding: 10px 13px;
+    border-color: transparent;
+    background: var(--bg);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .gallery > .gallery-head .gallery-search:hover,
+  .sessions > .gallery-head .gallery-search:hover {
+    border-color: var(--line-3);
+  }
+
+  .gallery-view-tools {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    order: 1;
+    min-width: 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--hair);
+  }
+  .gallery-view-tools .gallery-rating-filter {
+    gap: 4px;
+    padding-right: 6px;
+  }
+  .gallery-view-tools .gallery-rating-filter select,
+  .gallery-view-tools .gallery-sort,
+  .gallery-view-tools .gallery-time-basis,
+  .gallery-view-tools .gallery-bursts,
+  .gallery-view-tools .gallery-multi {
+    min-height: 30px;
+    padding: 5px 9px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .gallery-view-tools .gallery-rating-filter select:hover,
+  .gallery-view-tools .gallery-sort:hover,
+  .gallery-view-tools .gallery-time-basis:hover,
+  .gallery-view-tools .gallery-bursts:hover,
+  .gallery-view-tools .gallery-multi:hover {
+    color: var(--text);
+    border-color: var(--line-2);
+    background: var(--hover);
+  }
+  .gallery-view-tools .gallery-multi {
+    margin-left: auto;
+    color: var(--text);
+  }
+
+  .gallery-workbench {
+    display: grid;
+    grid-template-columns: .72fr 1.08fr 1.3fr 1fr;
+    order: 2;
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--line);
+  }
+  .gallery-tool-group {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 13px 15px 15px;
+    background: var(--panel);
+  }
+  .gallery-tool-group-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .gallery-tool-group-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--hair);
+  }
+  .gallery-tool-list {
+    display: flex;
+    align-content: flex-start;
+    flex-wrap: wrap;
+    gap: 2px;
+    margin-top: 8px;
+  }
+  .gallery-workbench .gallery-tool-list button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    padding: 5px 7px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.35;
+    text-align: left;
+  }
+  .gallery-workbench .gallery-tool-list button:hover {
+    border-color: var(--line-2);
+    background: var(--hover);
+  }
+  .gallery-workbench .gallery-tool-list button:active {
+    background: var(--raised);
+  }
+  .gallery-workbench .gallery-tool-list button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .gallery-tool-group:first-child .gallery-tool-list button {
+    border-color: var(--line-3);
+    background: var(--accent-tint);
+    color: var(--accent-300);
+    font-weight: 600;
+  }
+
+  .gallery {
+    padding-inline: 28px;
+  }
+  .gallery-day {
+    margin-top: 28px;
+  }
+  .gallery-grid {
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: 20px 18px;
+  }
+  .gallery-thumb,
+  .gallery-stack-cover {
+    box-shadow:
+      0 0 0 1px var(--line),
+      0 12px 28px -24px rgba(0, 0, 0, .86);
+  }
+  .gallery-cell:hover .gallery-thumb,
+  .gallery-stack-trigger:hover .gallery-stack-cover {
+    transform: translateY(-3px);
+    box-shadow:
+      0 0 0 1px var(--accent),
+      0 20px 32px -24px rgba(0, 0, 0, .92);
+  }
+  .gallery-name {
+    margin-top: 9px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 640px) {
+  .gallery-head-main,
+  .gallery-title-block,
+  .gallery-workbench,
+  .gallery-tool-group,
+  .gallery-tool-list,
+  .gallery-view-tools { display: contents; }
+  .gallery-title-meta,
+  .gallery-tool-group-title { display: none; }
+
+  /* 新分组只服务桌面。手机仍按原来的顺序出现在页头，避免顺手改掉未排期的手机版面。 */
+  .gallery-collage { order: 2; }
+  .gallery-idphoto { order: 3; }
+  .gallery-grid { order: 4; }
+  .gallery-longimage { order: 5; }
+  .gallery-batch { order: 6; }
+  .gallery-print { order: 7; }
+  .gallery-gif { order: 8; }
+  .gallery-video { order: 9; }
+  .gallery-movie { order: 10; }
+  .gallery-poster { order: 11; }
+  .gallery-panorama { order: 12; }
+  .gallery-hdr { order: 13; }
+  .gallery-long { order: 14; }
+  .gallery-focus { order: 15; }
+  .gallery-rating-filter { order: 16; }
+  .gallery-sort { order: 17; }
+  .gallery-time-basis { order: 18; }
+  .gallery-bursts { order: 19; }
+  .gallery-multi { order: 20; }
 }

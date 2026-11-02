@@ -59,6 +59,11 @@ export type RouteRequest = {
   /** 缩略预览图（长边 <= 1024 的 JPEG data URL）。路由不需要全分辨率。 */
   imageDataUrl: string
   text: string
+  /**
+   * 当前会话 id。服务端据此读取**自己的**会话历史，不信任客户端另行拼装的历史。
+   * 上传后建会话尚未返回时可以为空；此时本轮仍可正常路由，只是没有单会话记忆。
+   */
+  sessionId?: number
   /** 用户当前参数。给 LLM 当上下文，让它在写生成 prompt 时补偿（spec §3.5）。 */
   params: Adjustments
   /**

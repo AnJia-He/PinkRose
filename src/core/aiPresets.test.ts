@@ -67,3 +67,27 @@ describe('AI_PRESETS 的新市场能力', () => {
     expect(aiPreset('product-white').prompt).toContain('product shape')
   })
 })
+
+describe('AI_PRESETS 的固定回复话术', () => {
+  it('不再用“好，这就…”的机械开场', () => {
+    for (const preset of AI_PRESETS) {
+      expect(preset.reply.startsWith('好，')).toBe(false)
+    }
+  })
+
+  it('先说清看到了什么，再说会保留什么', () => {
+    expect(aiPreset('restore').reply).toContain('时间留下的痕迹')
+    expect(aiPreset('restore').reply).toContain('原来的质感都留住')
+    expect(aiPreset('enhance').reply).toContain('画面本身的内容已经在了')
+    expect(aiPreset('erase').reply).toContain('抢走了一些视线')
+    expect(aiPreset('erase').reply).toContain('主体、构图和海岸线都保持不动')
+  })
+
+  it('不把结果说成完美，也不承诺看不出来', () => {
+    for (const preset of AI_PRESETS) {
+      expect(preset.reply).not.toContain('完美')
+      expect(preset.reply).not.toContain('看不出来')
+      expect(preset.reply).not.toContain('绝了')
+    }
+  })
+})

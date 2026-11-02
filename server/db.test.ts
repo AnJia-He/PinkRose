@@ -107,6 +107,10 @@ describe('openDb', () => {
     '540e83a430c944f41fef72502298100dccbe3ba1df673483dd48d9fe0bdb81f3',
     // 18 - works camera / lens metadata (2026-10-21)
     '2ef06937643b908b9d2ec1094ce9413cc872358ada0344d8d864f4492d3badf6',
+    // 19 - session_memory (2026-11-02)
+    'd4a4b1c97af124c95b52cfddfb4afc3e02de90af467ff2b75c3dd0f715c6fea9',
+    // 20 - user_memory (2026-11-02)
+    '1236c583061bb327efd9ddae338abd41bfc5be291beabbb3307db6c457b49a80',
   ]
 
   it('★ 已发布的迁移一个字都不许改 —— 指纹对不上 = "老库和新库从此是两个形状"', () => {

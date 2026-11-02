@@ -594,6 +594,12 @@ export let meUser: {
  * `null` = 这一版响应里没有 usage（老后端 / 半坏的响应）。
  */
 export let meUsage: { count: number; bytes: number; limit: number } | null = null
+/** 用户可管理的跨会话长期偏好。单会话内部摘要不会出现在这里。 */
+export let memoryProfile: {
+  enabled: boolean
+  summary: string | null
+  updatedAt: number | null
+} = { enabled: true, summary: null, updatedAt: null }
 /** 数过几次 `/api/me` —— 用户管理页挂载时那一次要能单独认出来（挂住它用）。 */
 export let meCalls = 0
 /** 把**用户管理页那一次**（第 2 次起的）`/api/me` 挂住不回，演"用量还在路上"。 */
@@ -694,6 +700,12 @@ export function withUsageError(message: string) {
     }
     return inner(url, init)
   })
+}
+
+export function withMemoryProfile(
+  value: Partial<{ enabled: boolean; summary: string | null; updatedAt: number | null }>,
+) {
+  memoryProfile = { ...memoryProfile, ...value }
 }
 
 /** 一套模型配置的**公共形状**（Task 9，§7.4）。
@@ -1140,6 +1152,7 @@ beforeEach(() => {
   // ★ 2026-10-04：用量默认"什么都没存"（0 张 / 0 字节，上限 5 GB）——
   //   和下面 `/api/works` 默认空列表是同一个口径：绝大多数用例从零开始。
   meUsage = { count: 0, bytes: 0, limit: 5 * 1024 ** 3 }
+  memoryProfile = { enabled: true, summary: null, updatedAt: null }
   meCalls = 0
   meUsageGate = null
   fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -1179,6 +1192,19 @@ beforeEach(() => {
     // 各用例自己用 withModels 盖上一条真的。
     if (url === '/api/models' && (init?.method ?? 'GET') === 'GET') {
       return jsonResponse({ configs: [] })
+    }
+    if (url === '/api/memory') {
+      const method = init?.method ?? 'GET'
+      if (method === 'GET') return jsonResponse({ memory: memoryProfile })
+      if (method === 'PATCH') {
+        const body = JSON.parse(String(init?.body)) as { enabled: boolean }
+        memoryProfile = { ...memoryProfile, enabled: body.enabled, updatedAt: 1 }
+        return jsonResponse({ memory: memoryProfile })
+      }
+      if (method === 'DELETE') {
+        memoryProfile = { ...memoryProfile, summary: null, updatedAt: 1 }
+        return jsonResponse({ memory: memoryProfile })
+      }
     }
     // ★ 2026-10-10（「我的预设」T3）：App 挂载时 `usePresets` 会问一次清单。
     //   默认**一套都没有**（和作品 / 模型同口径：绝大多数用例从零开始）——

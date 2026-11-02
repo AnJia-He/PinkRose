@@ -5,7 +5,11 @@ import {
   type AccountUser,
 } from '../api/account.ts'
 import { errorText } from '../api/client'
+import {
+  clearMemoryProfile, getMemoryProfile, setMemoryEnabled,
+} from '../api/memory.ts'
 import { listModels, type PublicConfig } from '../api/models.ts'
+import type { MemoryProfile } from '../../shared/memory.ts'
 import { Btn } from './kit/Btn.tsx'
 import { Field, TextInput } from './kit/Field.tsx'
 import type { View } from './view.ts'
@@ -43,6 +47,11 @@ import type { Appearance } from '../app/appearance.ts'
 type Usage =
   | { state: 'loading' }
   | { state: 'ready'; count: number; bytes: number; limit: number }
+  | { state: 'unavailable' }
+
+type MemoryState =
+  | { state: 'loading' }
+  | { state: 'ready'; value: MemoryProfile }
   | { state: 'unavailable' }
 
 export function AccountPage({
@@ -85,6 +94,10 @@ export function AccountPage({
    * `null` = 还没拿到 / 拿不到 —— 两种情况**都整格不出现**，见下面对应的注释。
    */
   const [models, setModels] = useState<PublicConfig[] | null>(null)
+  const [memory, setMemory] = useState<MemoryState>({ state: 'loading' })
+  const [memoryBusy, setMemoryBusy] = useState(false)
+  const [memoryMsg, setMemoryMsg] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null)
+  const [memoryClearAsk, setMemoryClearAsk] = useState(false)
 
   // 改密码那一段（§6.5）、改用户名那一段（★ 2026-10-09）、注销那一段（§5）
   // 各自的开合与状态
@@ -117,6 +130,23 @@ export function AccountPage({
         if (!alive) return
         setUsage(u ? { state: 'ready', ...u } : { state: 'unavailable' })
       },
+    )
+    return () => { alive = false }
+  }, [])
+
+  const loadMemory = () => {
+    setMemory({ state: 'loading' })
+    getMemoryProfile().then(
+      (value) => setMemory({ state: 'ready', value }),
+      () => setMemory({ state: 'unavailable' }),
+    )
+  }
+
+  useEffect(() => {
+    let alive = true
+    getMemoryProfile().then(
+      (value) => { if (alive) setMemory({ state: 'ready', value }) },
+      () => { if (alive) setMemory({ state: 'unavailable' }) },
     )
     return () => { alive = false }
   }, [])
@@ -208,6 +238,40 @@ export function AccountPage({
         : `已切到${next === 'light' ? '浅色' : '深色'}界面；账号同步没成功，下次联网再试。`),
       (e) => setAppearanceMsg(errorText(e, '没切成功，再试一次。')),
     ).finally(() => setAppearanceBusy(false))
+  }
+
+  const chooseMemoryEnabled = () => {
+    if (memoryBusy || memory.state !== 'ready') return
+    const next = !memory.value.enabled
+    setMemoryBusy(true)
+    setMemoryMsg(null)
+    setMemoryClearAsk(false)
+    setMemoryEnabled(next).then(
+      (value) => {
+        setMemory({ state: 'ready', value })
+        setMemoryMsg({
+          tone: 'ok',
+          text: next
+            ? '长期偏好已开启，以后会按你明确说过的稳定习惯来配合。'
+            : '长期偏好已关闭，不再读取或更新。',
+        })
+      },
+      (e) => setMemoryMsg({ tone: 'err', text: errorText(e, '没改成，再试一次。') }),
+    ).finally(() => setMemoryBusy(false))
+  }
+
+  const confirmClearMemory = () => {
+    if (memoryBusy) return
+    setMemoryBusy(true)
+    setMemoryMsg(null)
+    clearMemoryProfile().then(
+      (value) => {
+        setMemory({ state: 'ready', value })
+        setMemoryClearAsk(false)
+        setMemoryMsg({ tone: 'ok', text: '长期偏好已清除。' })
+      },
+      (e) => setMemoryMsg({ tone: 'err', text: errorText(e, '没清掉，再试一次。') }),
+    ).finally(() => setMemoryBusy(false))
   }
 
   const confirmDelete = () => {
@@ -455,6 +519,73 @@ export function AccountPage({
             </p>
             {styleMsg && <p className="account-msg ok">{styleMsg}</p>}
             {appearanceMsg && <p className="account-msg ok">{appearanceMsg}</p>}
+          </section>
+
+          <section className="account-tile">
+            <h2 className="account-tile-title">长期偏好</h2>
+            <div className="account-card">
+              <div className="account-row account-memory-row">
+                <span className="account-row-label">跨会话记忆</span>
+                {memory.state === 'ready' ? (
+                  <button
+                    type="button"
+                    className={`crop-chip${memory.value.enabled ? ' on' : ''}`}
+                    aria-pressed={memory.value.enabled}
+                    disabled={memoryBusy}
+                    onClick={chooseMemoryEnabled}
+                  >
+                    {memory.value.enabled ? '已开启' : '已关闭'}
+                  </button>
+                ) : (
+                  <span className="account-row-value">
+                    {memory.state === 'loading' ? '正在读取…' : '没读到'}
+                  </span>
+                )}
+              </div>
+              {memory.state === 'ready' && memory.value.summary && (
+                <p className="account-memory-summary">{memory.value.summary}</p>
+              )}
+              {memory.state === 'ready' && !memory.value.summary && (
+                <p className="account-memory-empty">还没有记下长期偏好。</p>
+              )}
+              {memory.state === 'unavailable' && (
+                <div className="account-memory-actions">
+                  <span>没读到长期偏好。</span>
+                  <button type="button" className="account-cancel" onClick={loadMemory}>再试一次</button>
+                </div>
+              )}
+              {memory.state === 'ready' && memory.value.summary && !memoryClearAsk && (
+                <div className="account-memory-actions">
+                  <button
+                    type="button"
+                    className="account-memory-clear"
+                    disabled={memoryBusy}
+                    onClick={() => setMemoryClearAsk(true)}
+                  >
+                    清除长期偏好
+                  </button>
+                </div>
+              )}
+              {memoryClearAsk && (
+                <div className="account-memory-actions">
+                  <span>清除后，以后不会再按这些习惯配合。</span>
+                  <button type="button" className="account-cancel" onClick={() => setMemoryClearAsk(false)}>
+                    先不清
+                  </button>
+                  <Btn className="account-danger-submit" disabled={memoryBusy} onClick={confirmClearMemory}>
+                    {memoryBusy ? '正在清除…' : '确认清除'}
+                  </Btn>
+                </div>
+              )}
+            </div>
+            <p className="account-hint">
+              只记录你明确要求以后长期遵守的修图偏好；可随时关闭或清除。
+            </p>
+            {memoryMsg && (
+              <p className={memoryMsg.tone === 'ok' ? 'account-msg ok' : 'account-msg'}>
+                {memoryMsg.text}
+              </p>
+            )}
           </section>
 
           {/* ④ 「作品空间用量」框（§3.6 / §6.6）。**拿不到就整个框不出现** ——

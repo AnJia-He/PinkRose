@@ -109,6 +109,16 @@ describe('parseDecision', () => {
     expect(parseDecision({ ...GOOD, reply: 123 }).reply.length).toBeGreaterThan(0)
   })
 
+  it('模型偶尔加回的机械开场会在返回前清掉', () => {
+    const d = parseDecision({ ...GOOD, reply: '好嘞，我把海面压暗一点，天空会更稳。' })
+    expect(d.reply).toBe('我把海面压暗一点，天空会更稳。')
+  })
+
+  it('正常句子里以“好”开头的内容不会被误删', () => {
+    const reply = '好看的不是构图，是人物和夕阳之间的关系。'
+    expect(parseDecision({ ...GOOD, reply }).reply).toBe(reply)
+  })
+
   it('★ 需要点选澄清时，兜底**不许说"先按你说的试了一下"** —— 那一支什么都没做', () => {
     // 2026-10-04 修（spec 第 1275 行早写下的毛病）：模型说"我不确定"但没给自己的
     // 回复时，兜底原来吐「我没太看明白，先按你说的试了一下。」—— 而这一路
@@ -117,13 +127,16 @@ describe('parseDecision', () => {
     const d = parseDecision({ needs_disambiguation: true, param_deltas: {} }, '把那个去掉')
     expect(d.reply.length).toBeGreaterThan(0)
     expect(d.reply).not.toContain('试')
+    expect(d.reply).toContain('先在图上点一下')
+    expect(d.reply).toContain('照着那里改')
   })
 
   it('对照：普通兜底**仍然**说"试了一下"（降级那条路是真的试了）', () => {
     // 上面那条的另一半 —— 少了它，一个"把 FALLBACK_REPLY 直接删掉"的改法照样绿，
     // 而 §4.7 降级那条路（拿用户原话真的跑了一次）就丢了它该说的话。
     const d = parseDecision({ route: 'params', param_deltas: {} })
-    expect(d.reply).toContain('试了一下')
+    expect(d.reply).toContain('试了一版')
+    expect(d.reply).toContain('再说得具体一点')
   })
 
   it('needs_disambiguation 非布尔时一律 false（宁可少问，不要卡住）', () => {

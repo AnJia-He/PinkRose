@@ -25,7 +25,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'restore',
     label: '修复老照片',
-    reply: '好，这就修复这张老照片。',
+    reply: '这张旧照片有时间留下的痕迹，我先把划痕和噪点修干净，原来的质感都留住。',
     prompt:
       'Restore this old photograph: remove scratches, dust spots, creases, stains and mold; '
       + 'repair small missing details; reduce blur and noise; keep the original composition, '
@@ -35,7 +35,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'enhance',
     label: '画质增强',
-    reply: '好，这就把清晰度和噪点修一下。',
+    reply: '画面本身的内容已经在了，我把模糊、压缩噪点和小瑕疵收一收，不重画五官。',
     prompt:
       'Enhance image quality without changing the scene: reduce compression artifacts and noise, '
       + 'recover fine detail, improve edge sharpness and correct slight blur while preserving natural '
@@ -46,7 +46,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'colorize',
     label: '黑白上色',
-    reply: '好，这就给这张黑白照片上色。',
+    reply: '这张的轮廓和细节都还在，我按自然的肤色和环境光去上色，不凭空加东西。',
     prompt:
       'Colorize this black-and-white or faded historical photograph with natural colors: preserve '
       + 'the same person, facial features, expression, clothing, background, composition and all '
@@ -56,7 +56,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'erase',
     label: '消除路人',
-    reply: '好，这就把画面里的路人去掉。',
+    reply: '后面的人抢走了一些视线，我只清掉背景里的路人，主体、构图和海岸线都保持不动。',
     prompt:
       'Remove only incidental people, tourists and photobombers in the background of this photograph. '
       + 'Fill the vacated areas naturally from the surrounding background and lighting. Keep the main subject '
@@ -67,7 +67,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'sky',
     label: '换天空',
-    reply: '好，这就把天空换成傍晚的。',
+    reply: '天空有点压住画面，我换成傍晚的柔和云层，前景和人物身上的光保持连贯。',
     prompt:
       'Replace only the sky in this photograph with a natural golden-hour sky and soft clouds. '
       + 'Keep the foreground, people, buildings, trees, ground and water completely unchanged, '
@@ -78,7 +78,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'anime',
     label: '动漫化',
-    reply: '好，这就换成动漫风。',
+    reply: '这张的构图适合动画化，我保留人物和场景，只换线条和上色方式。',
     prompt:
       'Turn this photograph into a clean anime illustration: keep the same person, pose, '
       + 'facial identity, hairstyle, clothing and background composition; use crisp line art '
@@ -87,7 +87,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'sketch',
     label: '手绘化',
-    reply: '好，这就换手绘风。',
+    reply: '这张的氛围适合手绘，我保留人物和构图，只换笔触和纸张质感。',
     prompt:
       'Turn this photograph into a soft hand-painted watercolor illustration: preserve the '
       + 'same person, pose, facial identity, clothing and background composition; use gentle '
@@ -96,7 +96,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'studio',
     label: 'AI 写真',
-    reply: '好，这就给你做一张干净的人像写真。',
+    reply: '人像本身已经很完整，我只把背景收干净、把光理顺，脸和轮廓不动。',
     prompt:
       'Create a polished professional studio portrait from this photograph. Keep the same person, '
       + 'facial identity, pose, expression, hairstyle, body shape and clothing; replace only the '
@@ -107,7 +107,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'outfit',
     label: 'AI 换装',
-    reply: '好，这就把衣服换成一套干净的深蓝西装。',
+    reply: '衣服这部分我来换，脸、姿态、发型和背景都保持原样。',
     prompt:
       'Change the clothing in this photograph to a tailored navy business suit with a white shirt. '
       + 'Keep the same person, facial identity, pose, body shape, hairstyle, background, camera angle '
@@ -117,7 +117,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'dewatermark',
     label: '去水印',
-    reply: '好，这就把画面上的水印、Logo 和叠加文字去掉。',
+    reply: '水印确实容易分散注意，我把它和叠加文字清掉，画面里的主体不动。',
     prompt:
       'Remove only watermarks, logos, date stamps and overlaid text from this photograph. '
       + 'Fill the removed areas naturally from the surrounding texture and lighting. Keep the same '
@@ -127,7 +127,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'hair',
     label: 'AI 发型',
-    reply: '好，这就换成自然的齐肩层次发型。',
+    reply: '发型这块我来调整，脸、姿态和背景都保持原样。',
     prompt:
       'Change only the hairstyle in this photograph to a natural shoulder-length layered cut. '
       + 'Keep the same person, facial identity, pose, expression, clothing, background, camera angle '
@@ -137,7 +137,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'beach',
     label: '海边背景',
-    reply: '好，这就把背景换成自然的海边。',
+    reply: '海边的光线更松弛，我只换背景，并把人物边缘和光向接上。',
     prompt:
       'Replace only the background behind the main subject with a natural sunny beach scene, '
       + 'including soft ocean waves, warm sand and a clear sky. Keep the same person, facial identity, '
@@ -148,7 +148,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'city-night',
     label: '城市夜景',
-    reply: '好，这就把背景换成城市夜景。',
+    reply: '城市夜景更安静，我只换背景，人物的脸、衣服和现有机位不动。',
     prompt:
       'Replace only the background behind the main subject with a realistic city night scene, '
       + 'with distant buildings, warm street lights and soft bokeh. Keep the same person, facial '
@@ -159,7 +159,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'snow',
     label: '雪景',
-    reply: '好，这就把背景换成安静的雪景。',
+    reply: '雪景会让画面安静下来，我只换背景，人物和前景边缘都留着。',
     prompt:
       'Replace only the background behind the main subject with a quiet winter snow scene, '
       + 'with soft falling snow, distant trees and cool natural daylight. Keep the same person, '
@@ -170,7 +170,7 @@ export const AI_PRESETS: readonly AiPreset[] = [
   {
     id: 'product-white',
     label: '商品白底',
-    reply: '好，这就把商品背景换成干净的纯白棚拍。',
+    reply: '我把商品放进干净的白底里，商品本身的形状、材质和标签不动。',
     prompt:
       'Replace only the background behind the main product with a clean seamless white studio '
       + 'backdrop. Keep the product shape, color, material, labels, logo, reflections and fine '

@@ -1237,60 +1237,85 @@ export function GalleryPage({
   return (
     <section className="gallery">
       <header className="gallery-head">
-        <h1 className="gallery-title">我的作品</h1>
-        {/* ⚠️ 2026-10-01：这一格**故意没过 `<Field>`**。它没有标签、没有注解、也没有
-            错误提示，包一层只为了给它一个名字的话，`.gallery-search` 身上那条
-            `flex: 1` 就得从输入框挪到外层那个 div 上（`.gallery-head` 是 flex 行，
-            孩子换人了整行就得重量）—— 换不到任何东西。
-            可访问的名字**直接给在输入框上**：placeholder 只是提示，读屏软件不保证念它。 */}
-        <input className="gallery-search" value={q} placeholder="找一张…（名字、日期、文件名、相机或镜头）"
-               aria-label="找一张作品"
-               onChange={e => { setQ(e.target.value); resetLimit() }} />
+        <div className="gallery-head-main">
+          <div className="gallery-title-block">
+            <h1 className="gallery-title">我的作品</h1>
+            {works && <span className="gallery-title-meta">{works.length} 张作品</span>}
+          </div>
+          {/* ⚠️ 2026-10-01：这一格**故意没过 `<Field>`**。它没有标签、没有注解、也没有
+              错误提示，包一层只为了给它一个名字的话，`.gallery-search` 身上那条
+              `flex: 1` 就得从输入框挪到外层那个 div 上（`.gallery-head` 是 flex 行，
+              孩子换人了整行就得重量）—— 换不到任何东西。
+              可访问的名字**直接给在输入框上**：placeholder 只是提示，读屏软件不保证念它。 */}
+          <input className="gallery-search" value={q} placeholder="找一张…（名字、日期、文件名、相机或镜头）"
+                 aria-label="找一张作品"
+                 onChange={e => { setQ(e.target.value); resetLimit() }} />
+        </div>
         {!selecting && (
-          <>
-            <button className="gallery-collage" onClick={() => setIdPhotoOpen(true)}>
-              证件照
-            </button>
-            <button className="gallery-idphoto" onClick={() => setCollageOpen(true)}>
-              拼图
-            </button>
-            <button className="gallery-grid" onClick={() => setGridOpen(true)}>
-              九宫格
-            </button>
-            <button className="gallery-longimage" onClick={() => setLongImageOpen(true)}>
-              长图
-            </button>
-            <button className="gallery-batch" onClick={() => setBatchOpen(true)}>
-              批量处理
-            </button>
-            <button className="gallery-print" onClick={() => setPrintOpen(true)}>
-              打印排版
-            </button>
-            <button className="gallery-gif" onClick={() => setGifOpen(true)}>
-              照片动图
-            </button>
-            <button className="gallery-video" onClick={() => setVideoOpen(true)}>
-              短片调色
-            </button>
-            <button className="gallery-movie" onClick={() => setMovieOpen(true)}>
-              照片电影
-            </button>
-            <button className="gallery-poster" onClick={() => setPosterOpen(true)}>
-              社交封面
-            </button>
-            <button className="gallery-panorama" onClick={() => setPanoramaOpen(true)}>
-              全景
-            </button>
-            <button className="gallery-hdr" onClick={() => setHdrOpen(true)}>
-              HDR 合成
-            </button>
-            <button className="gallery-long" onClick={() => setLongExposureOpen(true)}>
-              长曝光
-            </button>
-            <button className="gallery-focus" onClick={() => setFocusOpen(true)}>
-              焦点堆栈
-            </button>
-          </>
+          <section className="gallery-workbench" aria-label="创作工具">
+            <div className="gallery-tool-group">
+              <h2 className="gallery-tool-group-title">批处理</h2>
+              <div className="gallery-tool-list">
+                <button className="gallery-batch" onClick={() => setBatchOpen(true)}>
+                  批量处理
+                </button>
+              </div>
+            </div>
+            <div className="gallery-tool-group">
+              <h2 className="gallery-tool-group-title">版式</h2>
+              <div className="gallery-tool-list">
+                <button className="gallery-collage" onClick={() => setIdPhotoOpen(true)}>
+                  证件照
+                </button>
+                <button className="gallery-idphoto" onClick={() => setCollageOpen(true)}>
+                  拼图
+                </button>
+                <button className="gallery-print" onClick={() => setPrintOpen(true)}>
+                  打印排版
+                </button>
+                <button className="gallery-poster" onClick={() => setPosterOpen(true)}>
+                  社交封面
+                </button>
+              </div>
+            </div>
+            <div className="gallery-tool-group">
+              <h2 className="gallery-tool-group-title">合成</h2>
+              <div className="gallery-tool-list">
+                <button className="gallery-grid" onClick={() => setGridOpen(true)}>
+                  九宫格
+                </button>
+                <button className="gallery-longimage" onClick={() => setLongImageOpen(true)}>
+                  长图
+                </button>
+                <button className="gallery-panorama" onClick={() => setPanoramaOpen(true)}>
+                  全景
+                </button>
+                <button className="gallery-hdr" onClick={() => setHdrOpen(true)}>
+                  HDR 合成
+                </button>
+                <button className="gallery-long" onClick={() => setLongExposureOpen(true)}>
+                  长曝光
+                </button>
+                <button className="gallery-focus" onClick={() => setFocusOpen(true)}>
+                  焦点堆栈
+                </button>
+              </div>
+            </div>
+            <div className="gallery-tool-group">
+              <h2 className="gallery-tool-group-title">动态</h2>
+              <div className="gallery-tool-list">
+                <button className="gallery-gif" onClick={() => setGifOpen(true)}>
+                  照片动图
+                </button>
+                <button className="gallery-video" onClick={() => setVideoOpen(true)}>
+                  短片调色
+                </button>
+                <button className="gallery-movie" onClick={() => setMovieOpen(true)}>
+                  照片电影
+                </button>
+              </div>
+            </div>
+          </section>
         )}
         {/* ★ 2026-10-10：排序切换 + 「多选」。
             · 排序那颗写的是**目标**（现在是按时间的，它写「按大小」）——
@@ -1298,7 +1323,7 @@ export function GalleryPage({
             · 选择模式开着、或者压根没有作品时两颗都收掉（不留点了没用的按钮，
               和对话列表"那一档里辅助条全收"同一条规矩）。 */}
         {!selecting && works && works.length > 0 && (
-          <>
+          <div className="gallery-view-tools" role="group" aria-label="筛选和排序">
             <label className="gallery-rating-filter">
               <span>星级</span>
               <select
@@ -1417,7 +1442,7 @@ export function GalleryPage({
             )}
             <button className="gallery-multi"
                     onClick={() => beginSelect()}>多选</button>
-          </>
+          </div>
         )}
       </header>
 

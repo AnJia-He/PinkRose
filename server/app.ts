@@ -25,10 +25,15 @@ import { createLut, deleteLut, handleLutFile, listLuts, lutUsage, renameLut } fr
 import { createPreset, deletePreset, listPresets, renamePreset } from './presets.ts'
 import { QUOTA_BYTES, storedBytes } from './quota.ts'
 import { readPreferences, writePreferences } from './prefs.ts'
+import {
+  clearUserMemory, readUserMemory, setUserMemoryEnabled,
+} from './memory.ts'
 import { createLimiter, type Limiter } from './ratelimit.ts'
 import { probeConnection } from './modeltest.ts'
 import type { SerialQueue } from './queue.ts'
 import { handleRoute } from './route.ts'
+import { McpWebSearchClient } from './searchMcpClient.ts'
+import type { WebSearchClient } from './webSearch.ts'
 import {
   clearSessionCookie, daysLeft, expiryOf, parseCookies, RENEW_WITHIN_DAYS,
   sessionCookie, sessionExpiry, signSession, SESSION_COOKIE,
@@ -111,6 +116,8 @@ export type AppDeps = {
    * 测试注入用。
    */
   maxInFlight?: number
+  /** 测试注入内置联网搜索；生产默认启动本地 MCP 子进程。 */
+  webSearch?: WebSearchClient
 }
 
 const MIME: Record<string, string> = {
@@ -224,6 +231,7 @@ function assertAiGate(lim: Limiter, key: string): void {
 
 export function createApp(deps: AppDeps): Server {
   const gates = newGates(deps.aiPerMinute)
+  const webSearch = deps.webSearch ?? new McpWebSearchClient()
   // ★ 2026-10-04（审计 F2）：**全局在途上限**。`http.ts` 只限单个请求体
   //   （12 MB），不限"同时有几个" —— 每人几个 12 MB 的并发就能把内存吃光，
   //   而且它们还得在串行队列里排队（body 整份留在内存）。超了当场 503：
@@ -237,7 +245,7 @@ export function createApp(deps: AppDeps): Server {
       return
     }
     inFlight++
-    handle(deps, req, res, gates)
+    handle(deps, req, res, gates, webSearch)
       .catch(e => sendError(res, e))
       .finally(() => { inFlight-- })
   })
@@ -338,7 +346,13 @@ function renewSessionIfStale(
   ))
 }
 
-async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, gates: Gates): Promise<void> {
+async function handle(
+  deps: AppDeps,
+  req: IncomingMessage,
+  res: ServerResponse,
+  gates: Gates,
+  webSearch: WebSearchClient,
+): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost')
   const path = url.pathname
 
@@ -478,6 +492,31 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       const preferences = writePreferences(deps.auth.db, user.id, body.preferences)
       sendJson(res, 200, { user: { ...user, preferences } })
       return
+    }
+    if (path === '/api/memory') {
+      const user = requireUser(deps, req, res)
+      if (req.method === 'GET') {
+        sendJson(res, 200, { memory: readUserMemory(deps.auth.db, user.id) })
+        return
+      }
+      if (req.method === 'PATCH') {
+        const body = asObject(await readJsonBody(req))
+        if (typeof body.enabled !== 'boolean') {
+          throw new HttpError('BAD_REQUEST', 'enabled 得是 true 或 false', 400)
+        }
+        sendJson(res, 200, {
+          memory: setUserMemoryEnabled(
+            deps.auth.db, user.id, body.enabled, { now: deps.auth.now },
+          ),
+        })
+        return
+      }
+      if (req.method === 'DELETE') {
+        sendJson(res, 200, {
+          memory: clearUserMemory(deps.auth.db, user.id, { now: deps.auth.now }),
+        })
+        return
+      }
     }
     if (req.method === 'DELETE' && path === '/api/account') {
       // ★ 2026-10-04（spec §5）：注销 = 作品全删（记录 + 文件），会话和模型配置
@@ -1008,7 +1047,12 @@ async function handle(deps: AppDeps, req: IncomingMessage, res: ServerResponse, 
       //   而"该用谁的钥匙"在那一刻之前就已经定了。顺序反过来只是白等。
       //   路由/建议这一路要用**聊天**那一套（§7.4：chat 管 route/suggest）。
       const { chat } = await resolveClients(user, deps.clients)
-      sendJson(res, 200, await handleRoute(body, { client: chat, queue: deps.queue }))
+      sendJson(res, 200, await handleRoute(body, {
+        client: chat,
+        queue: deps.queue,
+        memory: { db: deps.auth.db, userId: user.id, now: deps.auth.now },
+        webSearch,
+      }))
       return
     }
     if (req.method === 'POST' && path === '/api/suggest') {

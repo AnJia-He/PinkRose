@@ -73,6 +73,16 @@ describe('会话落盘：上传建会话、每一步更新', () => {
     expect(body.name).toBe('p.jpg')
   })
 
+  it('★ 说话路由时把当前 sessionId 交给服务端，历史由后端读取', async () => {
+    await renderApp()
+    await uploadPhoto()
+    vi.mocked(api.postRoute).mockResolvedValueOnce(decision({ reply: '接着上一版来。' }))
+    await say('再暖一点')
+
+    const request = vi.mocked(api.postRoute).mock.calls[0]![0] as { sessionId?: number }
+    expect(request.sessionId).toBe(1)
+  })
+
   it('★ 服务端没建成就**不能假装在存** —— 说一声，修图照常', async () => {
     // 建会话是"锦上添花"：它没成，**本地修图一点都不该受影响**（调色是免费的、
     // 本地的）。但不许静默 —— 用户以为在存、其实什么都没存，是这个项目最恨的

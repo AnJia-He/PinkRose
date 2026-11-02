@@ -232,6 +232,32 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE works ADD COLUMN camera_model TEXT;
   ALTER TABLE works ADD COLUMN lens_model TEXT;
   `,
+  // #19 单会话内部记忆（2026-11-02）。设计：
+  // docs/superpowers/specs/2026-11-02-agent-memory-design.md
+  //
+  // 摘要故意不写进 `sessions.messages`：那里是用户可见的对话，也是会话详情接口
+  // 原样返回的那一份。内部压缩摘要单独放，删会话时随外键一起清掉。
+  // `summary_until_message_id` 标明摘要覆盖到哪条消息；之后的消息仍按原文进入上下文。
+  `
+  CREATE TABLE session_memory (
+    session_id               INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    summary                  TEXT NOT NULL,
+    summary_until_message_id INTEGER NOT NULL CHECK (summary_until_message_id > 0),
+    updated_at               INTEGER NOT NULL
+  );
+  `,
+  // #20 跨会话稳定偏好（2026-11-02）。
+  //
+  // 只记用户明确要求长期遵守的偏好。`enabled = 0` 时既不读摘要、也不接受新摘要；
+  // 清除只把 summary 置空，不删行，用户重新开启后还能继续积累新的长期偏好。
+  `
+  CREATE TABLE user_memory (
+    user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    summary    TEXT,
+    enabled    INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    updated_at INTEGER NOT NULL
+  );
+  `,
 ]
 
 /**

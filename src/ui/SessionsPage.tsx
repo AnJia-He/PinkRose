@@ -223,11 +223,16 @@ export function SessionsPage({ onOpen, onNew, onDeleted, generating }: {
      全站一份长相，两页各写一份迟早会长歪。 */
   const head = (
     <header className="gallery-head">
-      <h1 className="gallery-title">我的对话</h1>
-      <input className="gallery-search" value={q}
-             placeholder="找一条…（名字，或者 9月25 这样的日期）"
-             aria-label="找一条对话"
-             onChange={e => { setQ(e.target.value); resetLimit() }} />
+      <div className="gallery-head-main">
+        <div className="gallery-title-block">
+          <h1 className="gallery-title">我的对话</h1>
+          {rows && <span className="gallery-title-meta">{rows.length} 条对话</span>}
+        </div>
+        <input className="gallery-search" value={q}
+               placeholder="找一条…（名字，或者 9月25 这样的日期）"
+               aria-label="找一条对话"
+               onChange={e => { setQ(e.target.value); resetLimit() }} />
+      </div>
     </header>
   )
 

@@ -3,6 +3,9 @@ import { Eye, EyeOff } from 'lucide-react'
 import { login, signup } from '../api/account'
 import { errorText } from '../api/client'
 import logoMark from '../assets/logo/emperor-badge.svg'
+import seaRoad from '../assets/landing/sea-road.jpg'
+import beforeShot from '../assets/landing/before.jpg'
+import afterShot from '../assets/landing/after.jpg'
 import { Field, TextInput } from './kit/Field.tsx'
 import { Btn } from './kit/Btn.tsx'
 import { normalizeUsername, checkUsername, checkEmail, checkPassword } from '../../shared/account.ts'
@@ -190,7 +193,25 @@ export function LoginPage({ onDone }: Props) {
 
   return (
     <div className="login">
-      <form className="login-box" onSubmit={submit}>
+      {/* The login is the threshold between the photographic landing page and
+          the editing workspace. This contact-sheet composition keeps the
+          product's imagery present without turning the form into a hero. */}
+      <aside className="login-scene" aria-hidden="true">
+        <img className="login-scene-photo" src={seaRoad} alt="" />
+        <div className="login-scene-brand">
+          <span className="login-scene-index">PINKROSE</span>
+          <span className="login-scene-rule" />
+        </div>
+        <div className="login-scene-loupe">
+          <div className="login-scene-compare">
+            <img src={beforeShot} alt="" />
+            <img className="login-scene-after" src={afterShot} alt="" />
+          </div>
+        </div>
+      </aside>
+
+      <main className="login-panel">
+        <form className="login-box" onSubmit={submit}>
         {/* ★ 标题**跟着模式走**（2026-09-25 用户拍板，原话：「登录页显示登录，注册页显示注册」）。
 
             这里原来写死的是「随心」—— 那个中文名是**写账号那一段的计划时自己起的**，
@@ -378,7 +399,8 @@ export function LoginPage({ onDone }: Props) {
                 }}>
           {mode === 'login' ? '还没有账号？注册一个' : '已经有账号了？去登录'}
         </button>
-      </form>
+        </form>
+      </main>
     </div>
   )
 }

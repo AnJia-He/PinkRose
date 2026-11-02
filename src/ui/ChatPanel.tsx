@@ -16,6 +16,7 @@ import { expandDeleteIds } from '../core/messages'
 //   那个常量** —— "是不是真生成"这一半由 App 算好（`generating` prop）传进来，
 //   两处各判一次的话，哪天判据变了两处会不一致。
 import { busyText } from '../app/useGeneration'
+import LinkifiedText from './LinkifiedText.tsx'
 
 export type ChatMessage = {
   id: number
@@ -489,7 +490,9 @@ export default function ChatPanel({
                   文字要读——真要读字就不会开着选择模式），别的入口照旧。 */}
               <div className={`bubble ${m.role}${selecting && delable ? ' pickable' : ''}`}
                 onClick={selecting && delable ? () => togglePick(m.id) : undefined}>
-                <div className="bubble-text">{m.text}</div>
+                <div className="bubble-text">
+                  <LinkifiedText text={m.text} interactive={!selecting} />
+                </div>
               </div>
               {/* ② 末尾那一排：再来一版 / 「…」。
                   ★ 2026-10-06：它不再套在 `.shot` 里了 —— 这一排是**每一轮
