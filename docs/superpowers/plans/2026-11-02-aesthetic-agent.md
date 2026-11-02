@@ -40,7 +40,7 @@
   - `STYLE_RECIPES`
   - `styleRecipe(id: string): StyleRecipe | null`
 
-- [ ] **Step 1: Write the failing registry tests**
+- [x] **Step 1: Write the failing registry tests**
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -73,13 +73,13 @@ describe('审美能力注册表', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test and confirm it fails**
+- [x] **Step 2: Run the test and confirm it fails**
 
 Run: `npx vitest run server/aesthetic/capabilities.test.ts`
 
 Expected: FAIL because `server/aesthetic/capabilities.ts` does not exist.
 
-- [ ] **Step 3: Implement the registry**
+- [x] **Step 3: Implement the registry**
 
 ```ts
 import type { ParamDeltas } from '../../shared/protocol.ts'
@@ -213,13 +213,13 @@ export function styleRecipe(id: string): StyleRecipe | null {
 }
 ```
 
-- [ ] **Step 4: Run the test and confirm it passes**
+- [x] **Step 4: Run the test and confirm it passes**
 
 Run: `npx vitest run server/aesthetic/capabilities.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add server/aesthetic/capabilities.ts server/aesthetic/capabilities.test.ts
@@ -245,7 +245,7 @@ git commit -m "feat: add aesthetic capability registry"
   - `parseDirectorPlan(raw, options): ParsedDirectorPlan`
   - `compileDirectorPlan(plan): RouteDecision`
 
-- [ ] **Step 1: Write failing parser and compiler tests**
+- [x] **Step 1: Write failing parser and compiler tests**
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -325,13 +325,13 @@ describe('创作计划解析', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests and confirm they fail**
+- [x] **Step 2: Run the tests and confirm they fail**
 
 Run: `npx vitest run server/aesthetic/plan.test.ts`
 
 Expected: FAIL because `plan.ts` does not exist.
 
-- [ ] **Step 3: Implement normalized plan types**
+- [x] **Step 3: Implement normalized plan types**
 
 ```ts
 export type DirectorIntent = 'edit' | 'advise' | 'hybrid' | 'chat'
@@ -371,7 +371,7 @@ export type ParsedDirectorPlan = {
 }
 ```
 
-- [ ] **Step 4: Implement parsing with legacy fallback**
+- [x] **Step 4: Implement parsing with legacy fallback**
 
 ```ts
 export function parseDirectorPlan(
@@ -432,7 +432,7 @@ export function parseDirectorPlan(
 
 `legacyActions` must map the current route/param/lut/preset/edit fields into actions using the current semantics, including `route='params'` suppressing `edit_prompt`.
 
-- [ ] **Step 5: Implement deterministic compilation**
+- [x] **Step 5: Implement deterministic compilation**
 
 ```ts
 export function compileDirectorPlan(plan: DirectorPlan): RouteDecision {
@@ -488,13 +488,13 @@ export function compileDirectorPlan(plan: DirectorPlan): RouteDecision {
 
 `mergeDeltas` must sum each `PARAM_KEYS` field and clamp with `PARAM_MIN` / `PARAM_MAX`.
 
-- [ ] **Step 6: Run plan tests and existing validator tests**
+- [x] **Step 6: Run plan tests and existing validator tests**
 
 Run: `npx vitest run server/aesthetic/plan.test.ts server/validate.test.ts`
 
 Expected: PASS, including all existing preroll tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add server/aesthetic/plan.ts server/aesthetic/plan.test.ts server/validate.ts
@@ -515,7 +515,7 @@ git commit -m "feat: compile aesthetic director plans"
   - `reviewDirectorPlan(plan, userText): { plan: DirectorPlan; blocked: boolean }`
   - `guardVisibleReply(plan, decision): { reply: string; blocked: boolean }`
 
-- [ ] **Step 1: Write failing review tests**
+- [x] **Step 1: Write failing review tests**
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -571,13 +571,13 @@ describe('审美计划复核', () => {
 })
 ```
 
-- [ ] **Step 2: Run the tests and confirm they fail**
+- [x] **Step 2: Run the tests and confirm they fail**
 
 Run: `npx vitest run server/aesthetic/review.test.ts`
 
 Expected: FAIL because `review.ts` does not exist.
 
-- [ ] **Step 3: Implement deterministic review**
+- [x] **Step 3: Implement deterministic review**
 
 ```ts
 const SOFT_CUE = /轻一点|轻些|自然一点|自然些|别太重|不要过度|收着点/iu
@@ -621,7 +621,7 @@ export function reviewDirectorPlan(plan: DirectorPlan, userText: string) {
 `skinSmooth` at 35 and combined positive saturation/vibrance at 40 unless the
 user used a strong cue.
 
-- [ ] **Step 4: Implement the visible reply guard**
+- [x] **Step 4: Implement the visible reply guard**
 
 ```ts
 const FORBIDDEN = /(?:Agent|Skill|MCP|Plugin|插件|能力注册表|能力编号|上下文|压缩|摘要|检索失败|搜索失败|置信度|近似)/iu
@@ -641,13 +641,13 @@ export function guardVisibleReply(plan: DirectorPlan, decision: RouteDecision) {
 }
 ```
 
-- [ ] **Step 5: Run review tests and compiler tests**
+- [x] **Step 5: Run review tests and compiler tests**
 
 Run: `npx vitest run server/aesthetic/review.test.ts server/aesthetic/plan.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add server/aesthetic/review.ts server/aesthetic/review.test.ts
@@ -671,7 +671,7 @@ git commit -m "feat: review aesthetic plans and visible replies"
   - `reviewDirectorPlan`, `guardVisibleReply`
 - Produces: unchanged public `RouteResponse`.
 
-- [ ] **Step 1: Add failing prompt assertions**
+- [x] **Step 1: Add failing prompt assertions**
 
 ```ts
 it('导演协议要求先判断画面，再从能力清单选择动作', () => {
@@ -690,7 +690,7 @@ it('没有明确修改授权时只给方向，不自动生成', () => {
 })
 ```
 
-- [ ] **Step 2: Add failing route integration tests**
+- [x] **Step 2: Add failing route integration tests**
 
 ```ts
 it('新导演协议输出合并成本地调色与一次生成', async () => {
@@ -739,13 +739,13 @@ it('咨询请求返回正常思路但不执行行动', async () => {
 })
 ```
 
-- [ ] **Step 3: Run the new tests and confirm they fail**
+- [x] **Step 3: Run the new tests and confirm they fail**
 
 Run: `npx vitest run server/prompt.test.ts server/route.test.ts`
 
 Expected: FAIL because the current prompt and route use the old top-level route fields.
 
-- [ ] **Step 4: Add the aesthetic director contract**
+- [x] **Step 4: Add the aesthetic director contract**
 
 Update `ROUTER_SYSTEM` so its JSON example is:
 
@@ -778,7 +778,7 @@ all existing rules about local-first routing, preserve clauses, Lut/preset names
 memory secrecy, search privacy and reply tone, adapting field references to the
 new `actions` shape.
 
-- [ ] **Step 5: Integrate parsing and review into `handleRoute`**
+- [x] **Step 5: Integrate parsing and review into `handleRoute`**
 
 Replace the final `parseDecision` call with:
 
@@ -809,13 +809,13 @@ semantics. Update `fallbackAfterSearch` to parse and compile a legacy or new
 director response with the same pipeline rather than calling `parseDecision`
 directly.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run: `npx vitest run server/prompt.test.ts server/route.test.ts server/validate.test.ts`
 
 Expected: PASS, including all memory and search cases.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add server/prompt.ts server/route.ts server/prompt.test.ts server/route.test.ts
@@ -836,7 +836,7 @@ git commit -m "feat: route requests through aesthetic director"
 - Consumes: existing `RouterMemoryInput`, `RouterWebContext`, `parseMemoryUpdate`.
 - Produces: unchanged public session/memory APIs.
 
-- [ ] **Step 1: Add failing continuity tests**
+- [x] **Step 1: Add failing continuity tests**
 
 ```ts
 it('旧摘要和本轮新方向冲突时，新方向优先', async () => {
@@ -872,13 +872,13 @@ it('搜索结果仍作为不可信资料，不进入审美动作理由', async (
 })
 ```
 
-- [ ] **Step 2: Run and confirm failure**
+- [x] **Step 2: Run and confirm failure**
 
 Run: `npx vitest run server/route.test.ts server/memory.test.ts`
 
 Expected: FAIL until the new director shape reaches memory and search helpers.
 
-- [ ] **Step 3: Add aesthetic trajectory wording**
+- [x] **Step 3: Add aesthetic trajectory wording**
 
 In the hidden compaction instructions, require the summary to include:
 
@@ -889,7 +889,7 @@ In the hidden compaction instructions, require the summary to include:
 
 Keep the existing 800-character limit and never write these labels into `reply`.
 
-- [ ] **Step 4: Preserve search behavior**
+- [x] **Step 4: Preserve search behavior**
 
 Ensure:
 
@@ -900,13 +900,13 @@ Ensure:
 - if the second model response is unusable, the first response is parsed through
   the same director compiler and only its safe local/generation actions survive.
 
-- [ ] **Step 5: Run focused route, prompt, memory and search tests**
+- [x] **Step 5: Run focused route, prompt, memory and search tests**
 
 Run: `npx vitest run server/route.test.ts server/prompt.test.ts server/memory.test.ts server/searchIntent.test.ts server/webSearch.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add server/prompt.ts server/route.ts server/route.test.ts server/memory.test.ts
@@ -926,7 +926,7 @@ git commit -m "feat: preserve aesthetic context across safe routing"
 - Consumes: completed director chain.
 - Produces: user-facing capability description and verified evidence.
 
-- [ ] **Step 1: Add a focused regression test**
+- [x] **Step 1: Add a focused regression test**
 
 Create `server/aesthetic/integration.test.ts` with four mocked model outputs:
 
@@ -945,7 +945,7 @@ it.each([
 })
 ```
 
-- [ ] **Step 2: Run focused and full verification**
+- [x] **Step 2: Run focused and full verification**
 
 Run:
 
@@ -965,7 +965,7 @@ Expected:
 - production build succeeds;
 - first bundle remains under 1 MB.
 
-- [ ] **Step 3: Verify desktop behavior**
+- [x] **Step 3: Verify desktop behavior**
 
 Use the local dev server and desktop Chromium to check:
 
@@ -976,13 +976,13 @@ Use the local dev server and desktop Chromium to check:
 - source links still open safely;
 - mobile layout files are unchanged.
 
-- [ ] **Step 4: Update capability evidence**
+- [x] **Step 4: Update capability evidence**
 
 Add the implemented aesthetic director row to the capability matrix with exact
 test names and browser evidence. Update README with a short user-facing paragraph
 that never mentions internal implementation terms.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add README.md docs/superpowers/specs/2026-10-20-capability-matrix.md \
@@ -990,3 +990,15 @@ git add README.md docs/superpowers/specs/2026-10-20-capability-matrix.md \
   server/aesthetic/integration.test.ts
 git commit -m "feat: complete aesthetic director chain"
 ```
+
+## 实施结果
+
+- 受控能力注册表、导演计划解析、计划编译、参数边界、强度缩放、确定性复核和可见回复守卫已接入。
+- 新版 `actions` 协议与旧版 `route / param_deltas / edit_prompt` 协议并存，旧会话和旧模型输出继续可用。
+- 搜索失败、内部实现词和兑现不了的承诺不会进入用户可见回复。
+- 单会话整理提示已加入当前视觉方向、认可 / 不认可的修改、保留项和未解决事项。
+- 窄范围验证：审美能力、计划、复核、端到端、路由、提示词、记忆、搜索和校验共 215 项通过。
+- 全量 `npm test` 2952 项通过；`npm run typecheck` 通过。
+- `npm run build` 通过；`npm run check:bundle` 通过，首包 751.8 KB。
+- 桌面 Chromium 模拟登录态加载修图首页：无横向溢出、控制台 0 错误。
+- 手机布局未修改。

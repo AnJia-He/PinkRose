@@ -104,6 +104,20 @@ describe('创作计划解析', () => {
     expect(compileDirectorPlan(parsed.plan).degraded).toBe(true)
   })
 
+  it('能力只接受自己的参数边界，人像动作不能偷改整张曝光', () => {
+    const parsed = parseDirectorPlan({
+      intent: 'edit',
+      actions: [{
+        capability: 'local.portrait',
+        param_deltas: { skinSmooth: 15, exposure: 60 },
+      }],
+      reply: '皮肤保持真实质感，只轻收一点。',
+    }, options)
+    const decision = compileDirectorPlan(parsed.plan)
+    expect(decision.paramDeltas).toEqual({ skinSmooth: 15 })
+    expect(decision.degraded).toBe(true)
+  })
+
   it('受控配方和用户 Lut 会合并进同一份本地决策', () => {
     const parsed = parseDirectorPlan({
       intent: 'edit',

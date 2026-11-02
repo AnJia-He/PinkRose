@@ -4,6 +4,12 @@
 
 **想启动它**：双击 `启动.cmd`，浏览器打开 http://localhost:5173
 
+**长期记忆**：当前会话会记住最近修改、审美方向和未解决事项；历史较长时，服务端在内部自动整理上下文，用户的对话里不会出现摘要或“正在压缩”之类的提示。跨会话只记录你明确要求以后长期遵守的稳定偏好，可在「个人设置 → 长期偏好」查看、关闭或清除。设计与实现边界见 [长期记忆设计](docs/superpowers/specs/2026-11-02-agent-memory-design.md)。
+
+**创作搭子**：PinkRose 会先看照片里的主体、光线、构图、色彩、质感和真实性边界，再决定怎么改。直接指令会优先用免费、可逆的本地调整；需要去物、换天或换背景时才调用图片生成，而且每轮只生成一版。用户没想好时，会给两条方向清楚、能直接执行的修图思路；用户只是想聊聊照片时，也会根据画面里真实成立的地方接话，不套固定安慰句。内部能力清单、价格与隐私边界、验收集见 [审美创作 Agent 设计](docs/superpowers/specs/2026-11-02-aesthetic-agent-design.md)。
+
+**联网搜索 MCP**：遇到照片之外、可能变化或无法确认的事实时，会通过与官方 MCP TypeScript SDK 连接的内置 `pinkrose_web_search` 工具搜索公开资料；照片、账号和长期偏好不会发给搜索源。搜到结果时附来源链接；搜不到时仍以摄影搭子的正常身份，根据当前照片、会话和已有修改继续处理，不解释搜索失败或内部步骤，也不要求用户自行核实或补充资料。设计见 [内置搜索 MCP](docs/superpowers/specs/2026-11-02-search-mcp-design.md)。
+
 **Apple / Safari**：首次先装 WebKit（`npx playwright install webkit`），起开发服务器后跑 `npm run check:safari`；它会用 iPhone 390px 的 WebKit 走一遍上传、调色、直方图、文字，以及真实正脸的人像磨皮 / 去斑控件。磨皮本身另有一条像素级验收 `npm run check:smooth`：在 WebKit 里把全局磨皮推到 100，比对脸颊纹理是否下降、虹膜 / 睫毛边缘是否保住，再走一遍「磨皮」画笔的涂抹和提交。色彩分级与色调跑 `npm run check:grading`：确认冷暖和绿—洋红两条白平衡轴、三段分级和归零复原。自动透视跑 `npm run check:perspective`：用合成透视建筑图确认识别、四角预览、应用换图和 390px 布局，再用真实正脸照确认不会误判。移轴虚化跑 `npm run check:tilt-shift`：在 WebKit 里切到移轴，确认带外纹理下降、清晰带中心保持、角度真的旋转，并检查 390px 布局。裁切警告跑 `npm run check:clipping`：确认高光变红、暗部变蓝、关闭恢复，且提示层不会污染导出字节。相连区域选择跑 `npm run check:connected-select`：确认点左侧红块只改左侧，右侧同色但不相连的块保持不变。作品页连拍组跑 `npm run check:bursts`：真实创建 5 张相邻作品，确认作品接口保存原文件名与拍摄时间、连拍收起和展开、整组多选，以及 390px 不溢出。合影与手动圈脸跑 `npm run check:portrait`：合成双人测试图，确认识别出两张脸、「全部」同时标出两张脸框、直接点照片里的脸框可选中「脸 2」、预览与成片跟随；再用无肤色噪声图验证自动失败后手动拖脸框仍能完成磨皮，并检查 390px 布局。HEIC 导出跑 `npm run check:heic`：先问服务端真实编码器能力，再确认网页只展示可用的 HEIC 选项。HEIC / RAW / TIFF 上传兜底跑 `npm run check:import`：在 Chromium 里验证原生解码失败后确实请求本机转换器，Mac 上还会生成真实 HEIC 并确认能进入编辑器；RAW 预览兜底另跑 `npm run check:raw-preview`，在 WebKit 390px 里确认真实 DNG 容器能提取内嵌 JPEG 并说明不是完整解档。实况照片配对跑 `npm run check:live-photo`：在 390px WebKit 里选择同名 JPG + MOV，确认出现“修照片 / 调动作”选择并继续进入编辑器。镜头配置另跑 `npm run check:lens`：上传一张带 Sony EXIF 的 JPEG，确认镜头被认出、三根校正滑杆写入配置值、画面真的变化，并检查 390px 布局。LUT 导出另跑 `npm run check:lut-export`：在 WebKit 里生成、下载并解析 `.cube`，确认恒等、色温和色调三种结果都对。ICC 色彩配置跑 `npm run check:color`：生成 JPG / PNG / WebP，并用 Pillow / LittleCMS 独立解析内嵌 profile；源照片色域另跑 `npm run check:source-profile`，确认 WebKit 能识别 Display P3 并明确提示转成 sRGB。iPad 竖屏 / 横屏再跑 `npm run check:tablet`，会在 768 / 834 / 1024 / 1194 宽度下确认照片、预设条、调色面板和磨皮工具都不被挤没。
 
 **加到主屏幕**：iPhone / iPad / Mac 的 Safari 可用「分享 → 加到主屏幕」；产品提供 standalone 启动配置、稳定主屏图标和 `PinkRose` 主屏名称，不依赖浏览器标签栏。页面使用 `viewport-fit=cover` 并避开刘海、灵动岛、侧边安全区和底部 Home Indicator。

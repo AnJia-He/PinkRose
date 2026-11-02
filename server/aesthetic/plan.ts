@@ -100,11 +100,13 @@ export function parseDirectorPlan(raw: unknown, options: ParseOptions): ParsedDi
   const counts = new Map<string, number>()
   const actions: DirectorAction[] = []
   for (const item of rawActions) {
-    const action = normalizeAction(item, options)
-    if (!action) {
+    const normalized = normalizeAction(item, options)
+    if (!normalized) {
       dropped = true
       continue
     }
+    const { action } = normalized
+    if (normalized.dropped) dropped = true
     const descriptor = CAPABILITIES.find((entry) => entry.id === action.capability)
     const count = counts.get(action.capability) ?? 0
     if (!descriptor || count >= descriptor.maxPerTurn) {
@@ -210,7 +212,10 @@ function legacyActions(obj: Record<string, unknown>): unknown[] {
   return actions
 }
 
-function normalizeAction(item: unknown, options: ParseOptions): DirectorAction | null {
+function normalizeAction(
+  item: unknown,
+  options: ParseOptions,
+): { action: DirectorAction; dropped: boolean } | null {
   if (typeof item !== 'object' || item === null || Array.isArray(item)) return null
   const action = item as Record<string, unknown>
   if (typeof action.capability !== 'string' || !isCapabilityId(action.capability)) return null
@@ -221,14 +226,20 @@ function normalizeAction(item: unknown, options: ParseOptions): DirectorAction |
     const paramDeltas = normalizeDeltas(action.param_deltas ?? action.paramDeltas)
     const localCapability = capability as
       'local.tone_color' | 'local.portrait' | 'local.geometry' | 'local.lens_focus'
-    return Object.values(paramDeltas).some((value) => value !== 0)
-      ? { capability: localCapability, paramDeltas, reason }
+    const restricted = restrictLocalDeltas(localCapability, paramDeltas)
+    return Object.values(restricted.deltas).some((value) => value !== 0)
+      ? {
+        action: { capability: localCapability, paramDeltas: restricted.deltas, reason },
+        dropped: restricted.dropped,
+      }
       : null
   }
 
   if (capability === 'local.style_recipe') {
     const recipe = typeof action.recipe === 'string' ? action.recipe.trim() : ''
-    return styleRecipe(recipe) ? { capability, recipe, reason } : null
+    return styleRecipe(recipe)
+      ? { action: { capability, recipe, reason }, dropped: false }
+      : null
   }
 
   if (capability === 'local.user_preset') {
@@ -238,7 +249,7 @@ function normalizeAction(item: unknown, options: ParseOptions): DirectorAction |
     const hit = requested
       ? options.presetNames.find((name) => samePresetName(name, requested))
       : null
-    return hit ? { capability, preset: hit, reason } : null
+    return hit ? { action: { capability, preset: hit, reason }, dropped: false } : null
   }
 
   if (capability === 'local.lut') {
@@ -248,7 +259,10 @@ function normalizeAction(item: unknown, options: ParseOptions): DirectorAction |
     const requested = typeof value.name === 'string' ? value.name.trim() : ''
     if (requested === '') {
       return action.remove === true || action.lut === ''
-        ? { capability, lut: { name: '', amount: 0 }, reason }
+        ? {
+          action: { capability, lut: { name: '', amount: 0 }, reason },
+          dropped: false,
+        }
         : null
     }
     const hit = options.lutNames.find((name) => sameLutName(name, requested))
@@ -257,7 +271,7 @@ function normalizeAction(item: unknown, options: ParseOptions): DirectorAction |
     const amount = Number.isFinite(rawAmount)
       ? Math.max(0, Math.min(100, Math.round(rawAmount)))
       : 100
-    return { capability, lut: { name: hit, amount }, reason }
+    return { action: { capability, lut: { name: hit, amount }, reason }, dropped: false }
   }
 
   if (capability === 'generation.photo_edit') {
@@ -265,14 +279,59 @@ function normalizeAction(item: unknown, options: ParseOptions): DirectorAction |
       ? action.edit_prompt
       : typeof action.editPrompt === 'string' ? action.editPrompt : ''
     const clean = editPrompt.replace(/\s+/g, ' ').trim().slice(0, MAX_EDIT_PROMPT)
-    return clean ? { capability, editPrompt: clean, reason } : null
+    return clean
+      ? { action: { capability, editPrompt: clean, reason }, dropped: false }
+      : null
   }
 
   if (capability === 'workflow.idea_brief' || capability === 'provider.web_search') {
-    return { capability, reason }
+    return { action: { capability, reason }, dropped: false }
   }
 
   return null
+}
+
+const PORTRAIT_KEYS = new Set<keyof ParamDeltas>(['skinSmooth', 'skinBrighten', 'skinRosy'])
+const GEOMETRY_KEYS = new Set<keyof ParamDeltas>([
+  'perspectiveV', 'perspectiveH', 'lensDistortion', 'lensChromatic', 'lensVignette',
+])
+const LENS_FOCUS_KEYS = new Set<keyof ParamDeltas>([
+  'lensBlur', 'lensRange', 'lensFeather',
+  'lensFocusX', 'lensFocusY', 'lensShape', 'lensAngle',
+])
+
+function restrictLocalDeltas(
+  capability: 'local.tone_color' | 'local.portrait' | 'local.geometry' | 'local.lens_focus',
+  deltas: ParamDeltas,
+): { deltas: ParamDeltas; dropped: boolean } {
+  if (capability === 'local.tone_color') {
+    const out: ParamDeltas = {}
+    let dropped = false
+    for (const [rawKey, value] of Object.entries(deltas)) {
+      const key = rawKey as keyof ParamDeltas
+      if (PORTRAIT_KEYS.has(key) || GEOMETRY_KEYS.has(key) || LENS_FOCUS_KEYS.has(key)) {
+        dropped = true
+        continue
+      }
+      out[key] = value
+    }
+    return { deltas: out, dropped }
+  }
+
+  const allowed = capability === 'local.portrait'
+    ? PORTRAIT_KEYS
+    : capability === 'local.geometry' ? GEOMETRY_KEYS : LENS_FOCUS_KEYS
+  const out: ParamDeltas = {}
+  let dropped = false
+  for (const [rawKey, value] of Object.entries(deltas)) {
+    const key = rawKey as keyof ParamDeltas
+    if (!allowed.has(key)) {
+      dropped = true
+      continue
+    }
+    out[key] = value
+  }
+  return { deltas: out, dropped }
 }
 
 function presetName(value: unknown): string {

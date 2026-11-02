@@ -405,6 +405,8 @@ describe('ROUTER_SYSTEM · 情绪价值与参考意见', () => {
     expect(ROUTER_SYSTEM).toContain('这张底子不差，先别大动')
     expect(ROUTER_SYSTEM).toContain('先从暗部和高光入手')
     expect(ROUTER_SYSTEM).toContain('明确指令优先')
+    expect(ROUTER_SYSTEM).toContain('可以给两条方向明显不同的思路')
+    expect(ROUTER_SYSTEM).toContain('最后只推荐其中更稳的一条')
   })
 
   it('打招呼也能接住照片里的具体氛围，并给一个二选一的起点', () => {
