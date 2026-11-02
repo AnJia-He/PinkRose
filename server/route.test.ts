@@ -6,6 +6,10 @@ import { ROUTER_SYSTEM } from './prompt.ts'
 import { fallbackDecision } from './validate.ts'
 import { ZERO } from '../shared/adjustments.ts'
 import type { Config } from './config.ts'
+import { openDb, type Db } from './db.ts'
+import { saveProfileSummary, setUserMemoryEnabled } from './memory.ts'
+import type { SessionMessage } from '../shared/sessions.ts'
+import type { WebSearchClient, WebSearchResult } from './webSearch.ts'
 
 const cfg: Config = {
   // ★ 2026-10-03：两条通道分开之后各有自己的默认连接（chat 走 Agnes、image 走商汤）。
@@ -40,7 +44,58 @@ function clientReplying(content: string | null, status = 200) {
   return { client: new SenseNovaClient(conn, impl), calls }
 }
 
+function clientSequence(contents: readonly string[]) {
+  const calls: any[] = []
+  let i = 0
+  const impl = (async (_u: any, init: any) => {
+    calls.push(JSON.parse(init.body))
+    const content = contents[Math.min(i++, contents.length - 1)]!
+    return new Response(JSON.stringify({ choices: [{ message: { content } }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } })
+  }) as unknown as typeof fetch
+  return { client: new SenseNovaClient(conn, impl), calls }
+}
+
 const deps = (client: SenseNovaClient) => ({ client, queue: new SerialQueue({ sleep: async () => {} }) })
+
+function memoryFixture(messageCount = 0): {
+  db: Db
+  sessionId: number
+  deps: (client: SenseNovaClient) => {
+    client: SenseNovaClient
+    queue: SerialQueue
+    memory: { db: Db; userId: number; now: () => number }
+  }
+} {
+  const db = openDb(':memory:')
+  db.raw.prepare(
+    'INSERT INTO users (id, username, email, password_hash, created_at) VALUES (?,?,?,?,?)',
+  ).run(1, '小明', 'a@b.c', 'x', 0)
+  const history: SessionMessage[] = Array.from({ length: messageCount }, (_, i) => ({
+    id: i + 1,
+    role: i % 2 === 0 ? 'user' : 'assistant',
+    text: i === 0
+      ? '先把人物提亮一点'
+      : i === 1
+        ? '已经只提亮了人物，黄昏背景保留'
+        : `历史消息 ${i + 1}`,
+    at: 0,
+  }))
+  const created = db.raw.prepare(
+    `INSERT INTO sessions
+       (user_id, created_at, updated_at, title, original, original_name, base, thumb, messages, steps, files, bytes)
+     VALUES (1, 0, 0, NULL, 'o.jpg', NULL, 'o.jpg', NULL, ?, '[]', '["o.jpg"]', 1)`,
+  ).run(JSON.stringify(history))
+  const sessionId = Number(created.lastInsertRowid)
+  return {
+    db,
+    sessionId,
+    deps: (client) => ({
+      ...deps(client),
+      memory: { db, userId: 1, now: () => 1234 },
+    }),
+  }
+}
 
 describe('handleRoute', () => {
   it('把模型的 JSON 解成决策', async () => {
@@ -63,6 +118,57 @@ describe('handleRoute', () => {
     // ROUTER_SYSTEM 和 SUGGEST_SYSTEM——后者也含这个词（实测：把系统提示
     // 换成 SUGGEST_SYSTEM，弱断言照样绿）。
     expect(sent.messages[0].content).toBe(ROUTER_SYSTEM)
+  })
+
+  it('新导演协议输出合并成本地调色与一次生成', async () => {
+    const { client } = clientReplying(JSON.stringify({
+      intent: 'hybrid',
+      assessment: {
+        scene: '海边人像',
+        subject: '人物',
+        strength: '逆光氛围成立',
+        primary_issue: '人物暗、背景有人抢视线',
+        protect: ['身份', '黄昏'],
+      },
+      direction: { name: '自然安静', intensity: 'subtle' },
+      actions: [
+        { capability: 'local.tone_color', param_deltas: { exposure: 10, highlights: -7 } },
+        {
+          capability: 'generation.photo_edit',
+          edit_prompt: 'Remove only the incidental tourists from the background.',
+        },
+      ],
+      alternatives: [],
+      reply: '人物提亮了，背景的人清掉，黄昏留着。',
+    }))
+    const res = await handleRoute(body, deps(client))
+    expect(res.decision.route).toBe('both')
+    expect(res.decision.paramDeltas).toEqual({ exposure: 10, highlights: -7 })
+    expect(res.decision.editPrompt).toContain('incidental tourists')
+  })
+
+  it('咨询请求返回正常思路但不执行行动', async () => {
+    const { client } = clientReplying(JSON.stringify({
+      intent: 'advise',
+      assessment: {
+        scene: '街拍',
+        subject: '人物',
+        strength: '现场光有故事',
+        primary_issue: '背景略杂',
+        protect: ['人物状态'],
+      },
+      direction: { name: '纪实', intensity: 'subtle' },
+      actions: [],
+      alternatives: [
+        { title: '只提人物', effect: '保留现场', tradeoff: '背景仍然热闹' },
+        { title: '压暗背景', effect: '主体更集中', tradeoff: '夜色会更重' },
+      ],
+      reply: '这张的现场感成立；可以只提亮人物，或压暗背景再冷一点。',
+    }))
+    const res = await handleRoute({ ...body, text: '不知道该怎么修' }, deps(client))
+    expect(res.decision.route).toBe('params')
+    expect(res.decision.paramDeltas).toEqual({})
+    expect(res.decision.editPrompt).toBe('')
   })
 
   it('degraded 时把模型的原始输出打出来 —— 这个信号原来算完就扔，bug 就是这么藏住的', async () => {
@@ -182,6 +288,504 @@ describe('handleRoute', () => {
   it('缺图抛 BAD_REQUEST', async () => {
     const { client } = clientReplying('{}')
     await expect(handleRoute({ ...body, imageDataUrl: '' }, deps(client))).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('★ 带上会话 id 后，服务端把已存历史送进模型；公开响应不带内部摘要字段', async () => {
+    const fixture = memoryFixture(6)
+    const { client, calls } = clientReplying(JSON.stringify({
+      route: 'params', param_deltas: { temperature: 12 },
+      reply: '我在刚才的暖调上再收一点。', edit_prompt: '',
+    }))
+    const r = await handleRoute(
+      { ...body, text: '再暖一点', sessionId: fixture.sessionId },
+      fixture.deps(client),
+    )
+    const sent: string = calls[0].messages[1].content[1].text
+    expect(sent).toContain('本会话最近原文')
+    expect(sent).toContain('用户：先把人物提亮一点')
+    expect(sent).toContain('助手：已经只提亮了人物，黄昏背景保留')
+    expect(sent).toContain('用户的话：')
+    expect(sent).toContain('再暖一点')
+    expect(r.decision).not.toHaveProperty('sessionMemory')
+    expect(r.decision).not.toHaveProperty('profileMemory')
+    fixture.db.close()
+  })
+
+  it('★ 超过阈值时同一轮生成隐藏摘要，下一轮能读到；最近原文仍保留', async () => {
+    const fixture = memoryFixture(18)
+    const { client, calls } = clientReplying(JSON.stringify({
+      route: 'params', param_deltas: { exposure: 8 },
+      reply: '接着刚才的方向微调。', edit_prompt: '',
+      session_memory: '用户目标：保留黄昏并提亮人物；已确认：暖调、人物提亮；不要误改背景。',
+    }))
+    await handleRoute(
+      { ...body, text: '再亮一点', sessionId: fixture.sessionId },
+      fixture.deps(client),
+    )
+    const sent: string = calls[0].messages[1].content[1].text
+    expect(sent).toContain('本轮内部整理任务')
+    expect(sent).toContain('待整理旧内容')
+    expect(sent).toContain('历史消息 18')
+
+    const stored = fixture.db.raw.prepare(
+      'SELECT summary, summary_until_message_id FROM session_memory WHERE session_id = ?',
+    ).get(fixture.sessionId) as { summary: string; summary_until_message_id: number }
+    expect(stored.summary).toContain('保留黄昏')
+    // 18 条里最近 8 条保留为原文，所以最早这轮只整理到第 10 条。
+    expect(stored.summary_until_message_id).toBe(10)
+  })
+
+  it('★ 隐藏摘要返回坏形状时不影响本轮决策和修图', async () => {
+    const fixture = memoryFixture(18)
+    const { client } = clientReplying(JSON.stringify({
+      route: 'params', param_deltas: { exposure: 8 },
+      reply: '只提一点。', edit_prompt: '',
+      session_memory: { bad: true },
+    }))
+    const r = await handleRoute(
+      { ...body, text: '亮一点', sessionId: fixture.sessionId },
+      fixture.deps(client),
+    )
+    expect(r.decision.route).toBe('params')
+    expect(r.decision.paramDeltas).toEqual({ exposure: 8 })
+    expect(fixture.db.raw.prepare(
+      'SELECT * FROM session_memory WHERE session_id = ?',
+    ).get(fixture.sessionId)).toBeUndefined()
+    fixture.db.close()
+  })
+
+  it('★ 记忆库读取失败时仍正常路由，不把修图卡死', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { client } = clientReplying(JSON.stringify({
+        route: 'params', param_deltas: { exposure: 6 },
+        reply: '先提一点亮度。', edit_prompt: '',
+      }))
+      const brokenDb = {
+        raw: { prepare: () => { throw new Error('memory db down') } },
+      } as unknown as Db
+      const r = await handleRoute(
+        { ...body, sessionId: 1 },
+        { ...deps(client), memory: { db: brokenDb, userId: 1 } },
+      )
+      expect(r.decision.route).toBe('params')
+      expect(r.decision.paramDeltas).toEqual({ exposure: 6 })
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n'))
+        .toContain('本轮按无记忆继续')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('★ 跨会话偏好默认进入上下文；关闭后不送也不保存', async () => {
+    const fixture = memoryFixture(2)
+    saveProfileSummary(fixture.db, 1, '喜欢自然肤色和 4:5 画幅。')
+    const { client, calls } = clientReplying(JSON.stringify({
+      route: 'params', param_deltas: { saturation: -5 },
+      reply: '按你偏好的自然肤色收一点。', edit_prompt: '',
+      profile_memory: '喜欢自然肤色、低调对比和 4:5 画幅。',
+    }))
+    await handleRoute(
+      { ...body, text: '以后都自然一点', sessionId: fixture.sessionId },
+      fixture.deps(client),
+    )
+    expect(calls[0].messages[1].content[1].text).toContain('自然肤色和 4:5')
+
+    setUserMemoryEnabled(fixture.db, 1, false)
+    const off = clientReplying(JSON.stringify({
+      route: 'params', param_deltas: {},
+      reply: '这张先不动。', edit_prompt: '',
+      profile_memory: '不该被保存的新偏好',
+    }))
+    await handleRoute(
+      { ...body, text: '以后都自然一点', sessionId: fixture.sessionId },
+      fixture.deps(off.client),
+    )
+    expect(off.calls[0].messages[1].content[1].text).not.toContain('自然肤色和 4:5')
+    expect(off.calls[0].messages[1].content[1].text).toContain('不读取也不更新跨会话偏好')
+    const row = fixture.db.raw.prepare(
+      'SELECT summary FROM user_memory WHERE user_id = 1',
+    ).get() as { summary: string }
+    expect(row.summary).not.toContain('不该被保存')
+    fixture.db.close()
+  })
+
+  it('★ 遇到外部知识盲区：先通过 MCP 搜索，再把结果交给第二次路由', async () => {
+    const results: WebSearchResult[] = [{
+      title: 'Sony A7 IV 规格',
+      url: 'https://example.com/a7iv',
+      domain: 'example.com',
+      snippet: '发布日期与规格摘要',
+    }]
+    const webSearch: WebSearchClient = { search: vi.fn(async () => results) }
+    const { client, calls } = clientSequence([
+      JSON.stringify({
+        route: 'params', param_deltas: {},
+        reply: '我查一下。', edit_prompt: '',
+        web_search: { query: 'Sony A7 IV 发布时间' },
+      }),
+      JSON.stringify({
+        route: 'params', param_deltas: {},
+        reply: 'Sony A7 IV 的资料可以继续核对。',
+        edit_prompt: '', web_search: null,
+      }),
+    ])
+    const r = await handleRoute({ ...body, text: 'A7 IV 什么时候发布？' }, {
+      ...deps(client),
+      webSearch,
+    })
+
+    expect(webSearch.search).toHaveBeenCalledWith('Sony A7 IV 发布时间', 5)
+    expect(calls).toHaveLength(2)
+    const second: string = calls[1].messages[1].content[1].text
+    expect(second).toContain('联网检索结果')
+    expect(second).toContain('Sony A7 IV 规格')
+    expect(second).toContain('https://example.com/a7iv')
+    expect(second).toContain('不可信外部资料')
+    expect(r.decision.reply).toContain('来源：https://example.com/a7iv')
+    expect(r.decision).not.toHaveProperty('web_search')
+  })
+
+  it('★ 明确的匿名公开事实问题先搜索，只调用一次模型就能带上来源', async () => {
+    const results: WebSearchResult[] = [{
+      title: 'Sony E 卡口近期机型',
+      url: 'https://example.com/sony-latest',
+      domain: 'example.com',
+      snippet: '近期公开机型资料',
+    }]
+    const { client, calls } = clientReplying(JSON.stringify({
+      route: 'params', param_deltas: {},
+      reply: '根据公开资料，近期机型信息如下。',
+      edit_prompt: '', web_search: null,
+    }))
+    const webSearch: WebSearchClient = {
+      search: vi.fn(async () => {
+        expect(calls).toHaveLength(0)
+        return results
+      }),
+    }
+    const r = await handleRoute({
+      ...body,
+      text: 'Sony A7 IV 的价格是多少？',
+    }, {
+      ...deps(client),
+      webSearch,
+    })
+
+    expect(webSearch.search).toHaveBeenCalledWith('Sony A7 IV', 5)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].messages[1].content[1].text).toContain('近期公开机型资料')
+    expect(r.decision.reply).toContain('来源：https://example.com/sony-latest')
+  })
+
+  it('★ 模型已经引用搜索结果时，不再追加额外二手来源', async () => {
+    const results: WebSearchResult[] = [
+      {
+        title: '官方产品页',
+        url: 'https://official.example.com/product',
+        domain: 'official.example.com',
+        snippet: '官方规格与价格',
+      },
+      {
+        title: '二手讨论',
+        url: 'https://forum.example.com/thread',
+        domain: 'forum.example.com',
+        snippet: '用户讨论',
+      },
+    ]
+    const webSearch: WebSearchClient = { search: vi.fn(async () => results) }
+    const reply = '具体价格以官方页面为准：https://official.example.com/product'
+    const { client } = clientReplying(JSON.stringify({
+      route: 'params', param_deltas: {}, reply,
+      edit_prompt: '', web_search: null,
+    }))
+    const r = await handleRoute({
+      ...body,
+      text: 'Sony A7 IV 的价格是多少？',
+    }, {
+      ...deps(client),
+      webSearch,
+    })
+
+    expect(r.decision.reply).toBe(reply)
+    expect(r.decision.reply.split('https://official.example.com/product')).toHaveLength(2)
+    expect(r.decision.reply).not.toContain('forum.example.com')
+  })
+
+  it('★ 模型没引用链接时，兜底只补搜索结果第一条', async () => {
+    const results: WebSearchResult[] = [
+      {
+        title: '官方产品页',
+        url: 'https://official.example.com/product',
+        domain: 'official.example.com',
+        snippet: '官方规格与价格',
+      },
+      {
+        title: '二手讨论',
+        url: 'https://forum.example.com/thread',
+        domain: 'forum.example.com',
+        snippet: '用户讨论',
+      },
+    ]
+    const webSearch: WebSearchClient = { search: vi.fn(async () => results) }
+    const { client } = clientReplying(JSON.stringify({
+      route: 'params', param_deltas: {},
+      reply: '具体到手价会随渠道和活动浮动。',
+      edit_prompt: '', web_search: null,
+    }))
+    const r = await handleRoute({
+      ...body,
+      text: 'Sony A7 IV 的价格是多少？',
+    }, {
+      ...deps(client),
+      webSearch,
+    })
+
+    expect(r.decision.reply).toContain('来源：https://official.example.com/product')
+    expect(r.decision.reply).not.toContain('forum.example.com')
+  })
+
+  it('★ 搜索失败不向用户交代内部过程：照片修改照常按上下文处理', async () => {
+    const webSearch: WebSearchClient = {
+      search: vi.fn(async () => { throw new Error('offline') }),
+    }
+    const { client, calls } = clientSequence([
+      JSON.stringify({
+        route: 'params', param_deltas: { exposure: 15 },
+        reply: '先提亮。', edit_prompt: '',
+        web_search: { query: '某种相机的发布信息' },
+      }),
+      JSON.stringify({
+        route: 'params', param_deltas: { exposure: 15 },
+        reply: '先把这张提亮一点，人物和暗部都保持自然。',
+        edit_prompt: '', web_search: null,
+      }),
+    ])
+    const r = await handleRoute({ ...body, text: '按这个相机的风格再亮一点' }, {
+      ...deps(client),
+      webSearch,
+    })
+
+    expect(calls).toHaveLength(2)
+    expect(calls[1].messages[1].content[1].text).toContain('联网检索没有取得可靠资料')
+    expect(r.decision.paramDeltas).toEqual({ exposure: 15 })
+    expect(r.decision.reply).toBe('先把这张提亮一点，人物和暗部都保持自然。')
+    expect(r.decision.reply).not.toMatch(/搜索|MCP|近似|自行|请你/)
+  })
+
+  it('★ 搜索失败后模型若说出内部词，换回第一轮正常身份的话，不把确认任务甩给用户', async () => {
+    const webSearch: WebSearchClient = {
+      search: vi.fn(async () => { throw new Error('offline') }),
+    }
+    const { client } = clientSequence([
+      JSON.stringify({
+        route: 'params', param_deltas: { exposure: 12 },
+        reply: '先把人物提亮一点，背景的冷暖先留着。', edit_prompt: '',
+        web_search: { query: '某个型号的发布信息' },
+      }),
+      JSON.stringify({
+        route: 'params', param_deltas: { exposure: 12 },
+        reply: '搜索不到，我先按近似效果处理，你可以自行核实一下。',
+        edit_prompt: '', web_search: null,
+      }),
+    ])
+    const r = await handleRoute({ ...body, text: '按这个相机的风格调一下' }, {
+      ...deps(client),
+      webSearch,
+    })
+
+    expect(r.decision.route).toBe('params')
+    expect(r.decision.paramDeltas).toEqual({ exposure: 12 })
+    expect(r.decision.reply).toBe('先把人物提亮一点，背景的冷暖先留着。')
+    expect(r.decision.reply).not.toMatch(/搜索|MCP|近似|自行|核实|请你/)
+  })
+
+  it('★ 搜索后第二轮格式坏掉时，保留第一轮可执行的修图动作，不编外部事实', async () => {
+    const webSearch: WebSearchClient = {
+      search: vi.fn(async () => { throw new Error('offline') }),
+    }
+    const { client } = clientSequence([
+      JSON.stringify({
+        route: 'params', param_deltas: { exposure: 12 },
+        reply: '先把人物提亮一点，暗部别压死。', edit_prompt: '',
+        web_search: { query: '某个型号的资料' },
+      }),
+      '这不是 JSON',
+    ])
+    const r = await handleRoute({ ...body, text: '按这个风格调一下' }, {
+      ...deps(client),
+      webSearch,
+    })
+
+    expect(r.decision.route).toBe('params')
+    expect(r.decision.paramDeltas).toEqual({ exposure: 12 })
+    expect(r.decision.reply).toBe('先把人物提亮一点，暗部别压死。')
+    expect(r.decision.reply).not.toMatch(/搜索|MCP|近似|自行|核实|请你/)
+  })
+
+  it('★ 搜索成功但第二轮格式坏掉时，也不能退成盲生成或硬贴不相关来源', async () => {
+    const results: WebSearchResult[] = [{
+      title: '公开资料',
+      url: 'https://example.com/fact',
+      domain: 'example.com',
+      snippet: '当前可确认的信息',
+    }]
+    const webSearch: WebSearchClient = { search: vi.fn(async () => results) }
+    const firstReply = '这个信息我按公开资料核对后再回答，先把能确定的部分说清楚。'
+    const { client } = clientSequence([
+      JSON.stringify({
+        route: 'params', param_deltas: {}, reply: firstReply,
+        edit_prompt: '', web_search: { query: '最新公开信息' },
+      }),
+      '这不是 JSON',
+    ])
+    const r = await handleRoute({ ...body, text: '把这张照片调得更像 Sony A7 IV 的色彩' }, {
+      ...deps(client),
+      webSearch,
+    })
+
+    expect(r.decision.route).toBe('params')
+    expect(r.decision.paramDeltas).toEqual({})
+    expect(r.decision.reply).toBe(firstReply)
+    expect(r.decision.reply).not.toContain('我直接按你说的试了一下')
+    expect(r.decision.reply).not.toContain('https://example.com/fact')
+  })
+
+  it('★ 没有修图动作时也只按正常身份回应用户，不把查资料变成用户任务', async () => {
+    const webSearch: WebSearchClient = {
+      search: vi.fn(async () => []),
+    }
+    const firstReply =
+      'A7 IV 的具体日期我现在没有可靠依据；想按它那种干净、偏冷的风格来调，我可以先从这张的冷暖入手。'
+    const { client } = clientSequence([
+      JSON.stringify({
+        route: 'params', param_deltas: {}, reply: firstReply,
+        edit_prompt: '', web_search: { query: 'Sony A7 IV 发布时间' },
+      }),
+      '这不是 JSON',
+    ])
+    const r = await handleRoute({ ...body, text: 'A7 IV 什么时候发布？' }, {
+      ...deps(client),
+      webSearch,
+    })
+
+    expect(r.decision.route).toBe('params')
+    expect(r.decision.paramDeltas).toEqual({})
+    expect(r.decision.reply).toBe(firstReply)
+    expect(r.decision.reply).not.toMatch(/搜索|MCP|近似|自行|核实|请你/)
+  })
+
+  it('★ 新导演协议也能先搜索，再把结果作为不可信资料交给最终回答', async () => {
+    const webSearch: WebSearchClient = {
+      search: vi.fn(async () => [{
+        title: '官方发布页',
+        url: 'https://official.example.com/a7m5',
+        domain: 'official.example.com',
+        snippet: 'A7M5 已发布',
+      }]),
+    }
+    const { client, calls } = clientSequence([
+      JSON.stringify({
+        intent: 'chat',
+        assessment: {
+          scene: '',
+          subject: '',
+          strength: '',
+          primary_issue: '',
+          protect: [],
+        },
+        direction: { name: '摄影搭子', intensity: 'subtle' },
+        actions: [],
+        alternatives: [],
+        reply: '我先结合这条信息看。',
+        web_search: { query: 'Sony A7M5 release' },
+      }),
+      JSON.stringify({
+        intent: 'chat',
+        assessment: {
+          scene: '',
+          subject: '',
+          strength: '',
+          primary_issue: '',
+          protect: [],
+        },
+        direction: { name: '摄影搭子', intensity: 'subtle' },
+        actions: [],
+        alternatives: [],
+        reply: '官方发布页可以确认这条信息。https://official.example.com/a7m5',
+        web_search: null,
+      }),
+    ])
+    const r = await handleRoute(
+      { ...body, text: '这台 Sony A7M5 最近发布了吗' },
+      { ...deps(client), webSearch },
+    )
+    expect(calls).toHaveLength(2)
+    expect(calls[1].messages[1].content[1].text).toContain('不可信外部资料')
+    expect(r.decision.reply).toContain('https://official.example.com/a7m5')
+  })
+
+  it('★ 新导演协议搜索失败时也不把内部词或核实任务交给用户', async () => {
+    const webSearch: WebSearchClient = {
+      search: vi.fn(async () => { throw new Error('offline') }),
+    }
+    const { client } = clientSequence([
+      JSON.stringify({
+        intent: 'edit',
+        assessment: {
+          scene: '人像',
+          subject: '人物',
+          strength: '现场光成立',
+          primary_issue: '人物略暗',
+          protect: ['人物', '背景'],
+        },
+        direction: { name: '自然', intensity: 'subtle' },
+        actions: [
+          { capability: 'local.tone_color', param_deltas: { exposure: 12 } },
+        ],
+        alternatives: [],
+        reply: '先把人物提亮一点，背景留着。',
+        web_search: { query: '某个型号的资料' },
+      }),
+      JSON.stringify({
+        intent: 'edit',
+        assessment: {
+          scene: '人像',
+          subject: '人物',
+          strength: '现场光成立',
+          primary_issue: '人物略暗',
+          protect: ['人物', '背景'],
+        },
+        direction: { name: '自然', intensity: 'subtle' },
+        actions: [
+          { capability: 'local.tone_color', param_deltas: { exposure: 12 } },
+        ],
+        alternatives: [],
+        reply: 'MCP 搜索失败，你可以自行核实一下。',
+        web_search: null,
+      }),
+    ])
+    const r = await handleRoute(
+      { ...body, text: '按这台相机的风格调一点' },
+      { ...deps(client), webSearch },
+    )
+    expect(r.decision.paramDeltas).toEqual({ exposure: 12 })
+    expect(r.decision.reply).not.toMatch(/MCP|搜索|核实|自行|Agent|Skill|Plugin/iu)
+  })
+
+  it('★ 纯照片修图不问外部知识，不调用搜索', async () => {
+    const webSearch: WebSearchClient = {
+      search: vi.fn(async () => []),
+    }
+    const { client, calls } = clientSequence([
+      JSON.stringify({
+        route: 'params', param_deltas: { temperature: 12 },
+        reply: '再暖一点。', edit_prompt: '', web_search: null,
+      }),
+    ])
+    await handleRoute({ ...body, text: '再暖一点' }, { ...deps(client), webSearch })
+    expect(webSearch.search).not.toHaveBeenCalled()
+    expect(calls).toHaveLength(1)
   })
 
   it('图不是 data URL 就拒掉 —— 别把任意字符串当图送上去', async () => {

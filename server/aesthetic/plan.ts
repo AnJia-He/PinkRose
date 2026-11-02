@@ -85,12 +85,18 @@ export function parseDirectorPlan(raw: unknown, options: ParseOptions): ParsedDi
   }
 
   const hasActions = Array.isArray(obj.actions)
-  const legacy = !hasActions
+  const legacy = !hasActions && (
+    obj.route !== undefined
+    || obj.param_deltas !== undefined
+    || obj.paramDeltas !== undefined
+    || obj.edit_prompt !== undefined
+    || obj.editPrompt !== undefined
+  )
   const rawActions: unknown[] = hasActions
     ? obj.actions as unknown[]
-    : legacyActions(obj)
+    : legacy ? legacyActions(obj) : []
 
-  let dropped = hasActions && !Array.isArray(obj.actions)
+  let dropped = false
   const counts = new Map<string, number>()
   const actions: DirectorAction[] = []
   for (const item of rawActions) {
@@ -147,7 +153,7 @@ export function compileDirectorPlan(plan: DirectorPlan): RouteDecision {
           dropped = true
           continue
         }
-        params = mergeDeltas(params, recipe.deltas)
+        params = mergeDeltas(params, scaleDeltas(recipe.deltas, recipeScale(plan.direction.intensity)))
         break
       }
       case 'local.user_preset':
@@ -283,6 +289,22 @@ function mergeDeltas(left: ParamDeltas, right: ParamDeltas): ParamDeltas {
     out[key] = Math.max(PARAM_MIN, Math.min(PARAM_MAX, value))
   }
   return out
+}
+
+function scaleDeltas(deltas: ParamDeltas, scale: number): ParamDeltas {
+  const out: ParamDeltas = {}
+  for (const key of PARAM_KEYS) {
+    const value = deltas[key]
+    if (typeof value !== 'number' || value === 0) continue
+    out[key] = Math.round(value * scale)
+  }
+  return out
+}
+
+function recipeScale(intensity: DirectorPlan['direction']['intensity']): number {
+  if (intensity === 'subtle') return 0.65
+  if (intensity === 'bold') return 1.25
+  return 1
 }
 
 function normalizeIntent(raw: unknown, actions: readonly DirectorAction[]): DirectorIntent {

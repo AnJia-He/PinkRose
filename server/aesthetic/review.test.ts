@@ -35,6 +35,7 @@ describe('审美计划复核', () => {
 
     expect(result.plan.actions).toHaveLength(0)
     expect(result.blocked).toBe(true)
+    expect(result.changed).toBe(true)
   })
 
   it('用户说轻一点时，磨皮和色彩强度一起收口', () => {
@@ -53,7 +54,8 @@ describe('审美计划复核', () => {
       ],
     }), '自然一点，轻一点')
 
-    expect(result.blocked).toBe(true)
+    expect(result.blocked).toBe(false)
+    expect(result.changed).toBe(true)
     const decision = compileDirectorPlan(result.plan)
     expect(decision.paramDeltas.skinSmooth).toBeLessThanOrEqual(20)
     expect(
@@ -94,6 +96,7 @@ describe('审美计划复核', () => {
     const decision = compileDirectorPlan(result.plan)
     expect(decision.paramDeltas.skinSmooth).toBe(55)
     expect(result.blocked).toBe(false)
+    expect(result.changed).toBe(false)
   })
 
   it('内部词和失败说明不会进入用户可见回复', () => {

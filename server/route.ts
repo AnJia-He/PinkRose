@@ -2,16 +2,33 @@ import { ZERO, clampAdjustments, type Adjustments } from '../shared/adjustments.
 import { MAX_LUTS, MAX_LUT_NAME, normalizeLutRef, type LutRef } from '../shared/lut.ts'
 import { MAX_PRESETS, MAX_PRESET_NAME } from '../shared/preset.ts'
 import type { RouteRequest, RouteResponse } from '../shared/protocol.ts'
+import { parseDirectorPlan, compileDirectorPlan } from './aesthetic/plan.ts'
+import { guardVisibleReply, reviewDirectorPlan } from './aesthetic/review.ts'
 import { HttpError, asImageBody, CHECK_YOUR_KEY_TIP } from './http.ts'
-import { ROUTER_SYSTEM, buildRouterUser } from './prompt.ts'
+import {
+  loadRouteMemory, parseMemoryUpdate, saveProfileSummary, saveSessionSummary,
+  type MemoryDeps,
+} from './memory.ts'
+import {
+  ROUTER_SYSTEM, buildRouterUser, type RouterMemoryInput, type RouterWebContext,
+} from './prompt.ts'
 import type { SerialQueue } from './queue.ts'
+import { parsePublicSearchQuery, parseSearchIntent, type SearchIntent } from './searchIntent.ts'
 import { SnError, redactSecrets, type ModelClient } from './sn.ts'
-import { fallbackDecision, parseDecision } from './validate.ts'
+import type { WebSearchClient, WebSearchOutcome } from './webSearch.ts'
+import { coerceToObject, fallbackDecision, parseDecision } from './validate.ts'
 
 // client 用**接口**类型（★ 2026-10-05）：对话这一路两种协议形状都合法（§7.4），
 // 具体拿哪一类在 clientFor.ts 一处决定。原来这里钉着 SenseNovaClient ——
 // 加了 Anthropic 形状之后 app.ts 传 ModelClient 进来就通不过类型检查了。
-export type RouteDeps = { client: ModelClient; queue: SerialQueue }
+export type RouteDeps = {
+  client: ModelClient
+  queue: SerialQueue
+  /** 登录用户绑定在这一层；测试不接记忆时整块可以省略。 */
+  memory?: MemoryDeps & { userId: number }
+  /** 内置 MCP 联网搜索；不接时仍按当前照片和会话正常路由。 */
+  webSearch?: WebSearchClient
+}
 
 /** 用户输入的字符上限。超过就截断——prompt 长度也是钱。 */
 export const MAX_USER_TEXT = 500
@@ -39,21 +56,64 @@ const AUTH_REPLY = '模型服务商不认这把钥匙，这次先直接按你说
 
 export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteResponse> {
   const req = parseRequest(raw)
+  let memory: ReturnType<typeof loadRouteMemory> | undefined
+  if (deps.memory) {
+    try {
+      memory = loadRouteMemory(deps.memory.db, deps.memory.userId, req.sessionId)
+    } catch {
+      // 记忆是增强项：读取失败就按没有上下文继续，不让用户连话都说不了。
+      console.warn('[memory] 上下文没读到，本轮按无记忆继续')
+    }
+  }
   try {
-    const content = await deps.queue.run(() => deps.client.chatJson([
-      { role: 'system', content: ROUTER_SYSTEM },
-      {
-        role: 'user',
-        content: [
-          { type: 'image_url', image_url: { url: req.imageDataUrl } },
-          { type: 'text', text: buildRouterUser(req.text, req.params, req.luts, req.lut, req.presets) },
-        ],
-      },
-    ]), 'route')
+    let firstContent = ''
+    let content = ''
+    let web: RouterWebContext | undefined
+    let searchFailed = false
+    let searchIntent: SearchIntent | null = null
+
+    const eagerQuery = deps.webSearch ? parsePublicSearchQuery(req.text) : null
+    if (eagerQuery) {
+      searchIntent = { query: eagerQuery }
+      const searched = await searchForRouter(deps.webSearch!, eagerQuery)
+      web = searched.web
+      searchFailed = searched.failed
+      try {
+        content = await askRouter(req, memory, web, deps)
+      } catch {
+        content = ''
+      }
+    } else {
+      firstContent = await askRouter(req, memory, undefined, deps)
+      content = firstContent
+      searchIntent = deps.webSearch ? parseSearchIntent(firstContent) : null
+
+      if (searchIntent) {
+        const searched = await searchForRouter(deps.webSearch!, searchIntent.query)
+        web = searched.web
+        searchFailed = searched.failed
+        try {
+          content = await askRouter(req, memory, web, deps)
+        } catch {
+          // 第二轮模型失败时保留第一轮里已经能执行的修图动作，但不用它猜外部事实。
+          content = ''
+        }
+      }
+    }
+
     // ★ 2026-10-05（滤镜）：名字清单也交给 `parseDecision` —— 模型写了清单**外**
     //   的名字时，它要能判出来（归 null + degraded），别把库里没有的东西放进决策。
     // ★ 2026-10-10（预设）：用户自己的预设名单同理（同一个理由，一字不差）。
-    const decision = parseDecision(content, req.text, req.luts.map((l) => l.name), req.presets.map((p) => p.name))
+    const directed = compileDirectorResponse(content, req)
+    let decision = directed.decision
+    if (searchIntent &&
+        (!content || decision.degraded ||
+          (searchFailed && hasInternalSearchReply(decision.reply)))) {
+      decision = fallbackAfterSearch(firstContent, req)
+      content = firstContent
+    } else if (web?.status === 'ready') {
+      decision = withSearchSources(decision, web.results)
+    }
     // `degraded` 的意思见 validate.ts 里那段注释：**这次的结果不是模型老实给的**。
     // 它必须打出来。2026-09-29 查"同一件事做两遍"那个 bug 时，`/api/route` 的响应里
     // 明明每条都带 degraded:true，但服务端一个字都不留、前端也不消费 ——
@@ -64,6 +124,33 @@ export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteR
     if (decision.degraded) {
       console.warn('[route] degraded=true（模型没老实给） route=' +
         decision.route + ' 原始输出=' + content.slice(0, 700))
+    }
+    // 记忆整理和本轮路由共用这一次模型调用。保存失败绝不影响已经得到的决策，
+    // 也绝不打摘要内容 —— 这里只留一条没有正文的告警。
+    if (deps.memory && memory) {
+      const update = parseMemoryUpdate(content, {
+        session: memory.compact !== null,
+        profile: memory.profileEnabled,
+      })
+      try {
+        if (update.sessionSummary && req.sessionId !== null && memory.compact) {
+          saveSessionSummary(
+            deps.memory.db, deps.memory.userId, req.sessionId,
+            update.sessionSummary, memory.compact.throughMessageId, deps.memory,
+          )
+        }
+      } catch {
+        console.warn('[memory] 会话摘要没保存，继续使用原有上下文')
+      }
+      try {
+        if (update.profileSummary) {
+          saveProfileSummary(
+            deps.memory.db, deps.memory.userId, update.profileSummary, deps.memory,
+          )
+        }
+      } catch {
+        console.warn('[memory] 长期偏好没保存，继续使用原有偏好')
+      }
     }
     return { decision }
   } catch (e) {
@@ -84,15 +171,188 @@ export async function handleRoute(raw: unknown, deps: RouteDeps): Promise<RouteR
   }
 }
 
+function askRouter(
+  req: ParsedRouteRequest,
+  memory: RouterMemoryInput | undefined,
+  web: RouterWebContext | undefined,
+  deps: RouteDeps,
+): Promise<string> {
+  return deps.queue.run(() => deps.client.chatJson([
+    { role: 'system', content: ROUTER_SYSTEM },
+    {
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: req.imageDataUrl } },
+        {
+          type: 'text',
+          text: buildRouterUser(
+            req.text, req.params, req.luts, req.lut, req.presets, memory, web,
+          ),
+        },
+      ],
+    },
+  ]), 'route')
+}
+
+function compileDirectorResponse(content: string, req: ParsedRouteRequest) {
+  const object = coerceToObject(content)
+  const legacyShape = !!object && (
+    object.route !== undefined
+    || object.param_deltas !== undefined
+    || object.paramDeltas !== undefined
+    || object.edit_prompt !== undefined
+    || object.editPrompt !== undefined
+  )
+  const directorShape = !!object && (
+    object.intent !== undefined
+    || object.assessment !== undefined
+    || object.actions !== undefined
+    || object.direction !== undefined
+    || object.alternatives !== undefined
+  )
+  if (!object || (!legacyShape && !directorShape)) {
+    return {
+      decision: fallbackDecision(req.text),
+      plan: null,
+      blocked: false,
+      dropped: true,
+      legacy: false,
+    }
+  }
+
+  const parsed = parseDirectorPlan(content, {
+    lutNames: req.luts.map((item) => item.name),
+    presetNames: req.presets.map((item) => item.name),
+    userText: req.text,
+  })
+  if (parsed.legacy) {
+    const decision = parseDecision(
+      content,
+      req.text,
+      req.luts.map((item) => item.name),
+      req.presets.map((item) => item.name),
+    )
+    return {
+      decision,
+      plan: parsed.plan,
+      blocked: false,
+      dropped: decision.degraded,
+      legacy: true,
+    }
+  }
+
+  const reviewed = reviewDirectorPlan(parsed.plan, req.text)
+  const compiled = compileDirectorPlan(reviewed.plan)
+  const guarded = guardVisibleReply(reviewed.plan, compiled)
+  return {
+    decision: {
+      ...compiled,
+      reply: guarded.reply || compiled.reply,
+      degraded: compiled.degraded || parsed.dropped || reviewed.blocked || guarded.blocked,
+    },
+    plan: reviewed.plan,
+    blocked: reviewed.blocked || guarded.blocked,
+    dropped: parsed.dropped,
+    legacy: false,
+  }
+}
+
+async function searchForRouter(
+  client: WebSearchClient,
+  query: string,
+): Promise<{ web: RouterWebContext; failed: boolean }> {
+  let outcome: WebSearchOutcome
+  try {
+    const results = await client.search(query, 5)
+    outcome = results.length > 0
+      ? { status: 'ready', query, results }
+      : { status: 'empty', query }
+  } catch {
+    outcome = { status: 'unavailable', query }
+  }
+  const failed = outcome.status !== 'ready'
+  if (failed) console.warn('[search] 本轮没有取得可靠结果，按当前上下文继续')
+  return {
+    web: {
+      status: outcome.status,
+      query: outcome.query,
+      results: outcome.status === 'ready' ? outcome.results : [],
+    },
+    failed,
+  }
+}
+
+/**
+ * 联网没结果时继续用摄影搭子的正常身份说话，不猜外部事实，也不把核实工作交给用户。
+ * 第一轮已经给出的自然回复和可执行修改优先保留；只有它自己也泄漏了内部流程时才换一句
+ * 普通回应。
+ */
+function fallbackAfterSearch(firstContent: string, req: ParsedRouteRequest) {
+  const first = compileDirectorResponse(firstContent, req).decision
+  const hasAction = Object.values(first.paramDeltas).some((v) => v !== 0)
+    || !!first.editPrompt
+    || first.lut !== null
+    || first.preset !== null
+  if (first.degraded) {
+    return {
+      route: 'params' as const,
+      paramDeltas: {},
+      reply: naturalSearchFallback(hasAction),
+      editPrompt: '',
+      needsDisambiguation: false,
+      degraded: false,
+      lut: null,
+      preset: null,
+    }
+  }
+  return {
+    ...first,
+    reply: hasInternalSearchReply(first.reply)
+      ? naturalSearchFallback(hasAction)
+      : first.reply,
+    degraded: false,
+  }
+}
+
+/** 搜索失败后只拦内部流程词和把核实甩给用户的说法，不限制正常的摄影判断。 */
+function hasInternalSearchReply(reply: string): boolean {
+  return /搜索|检索|MCP|近似|自行|请你[^。！？]{0,12}(查|核实|确认)|你可以[^。！？]{0,12}(查|核实|确认)|我查一下|查一下|稍等/iu
+    .test(reply)
+}
+
+function naturalSearchFallback(hasAction: boolean): string {
+  return hasAction
+    ? '先把这张顺着刚才的方向调一点，人物和背景都保持自然。'
+    : '这个具体信息我现在没有可靠依据，先不随口说。'
+}
+
+function withSearchSources(
+  decision: ReturnType<typeof parseDecision>,
+  results: RouterWebContext['results'],
+) {
+  const urls = results
+    .map((result) => result.url)
+    .filter((url, index, all) => all.indexOf(url) === index)
+  // 模型已经引用结果里的链接时，不再补二手来源；只有完全没链接时才兜底。
+  if (urls.some((url) => decision.reply.includes(url))) return decision
+  const missing = urls
+    .slice(0, 1)
+  return {
+    ...decision,
+    reply: `${decision.reply}\n来源：${missing.join(' · ')}`,
+  }
+}
+
 /**
  * `parseRequest` 的出口。比 `RouteRequest` 里那几个可选字段更紧：**到了这里
  * 就一定有值**（缺的/坏的都归一化成空清单和 null）—— 下游不必到处判 undefined。
  * （协议里的 `luts?`/`lut?`/`presets?` 是留给**发送方**的自由，两道不再是一个东西。）
  */
-type ParsedRouteRequest = RouteRequest & {
+type ParsedRouteRequest = Omit<RouteRequest, 'sessionId'> & {
   luts: { id: number; name: string }[]
   lut: LutRef | null
   presets: { name: string; params: Adjustments }[]
+  sessionId: number | null
 }
 
 function parseRequest(raw: unknown): ParsedRouteRequest {
@@ -105,9 +365,13 @@ function parseRequest(raw: unknown): ParsedRouteRequest {
   const text = textRaw.slice(0, MAX_USER_TEXT)
 
   const params = normalizeParams(o.params)
+  const rawSessionId = Number(o.sessionId)
+  const sessionId = Number.isInteger(rawSessionId) && rawSessionId > 0
+    ? rawSessionId
+    : null
 
   return {
-    imageDataUrl, text, params,
+    imageDataUrl, text, params, sessionId,
     // ★ 2026-10-05（滤镜）：清单只给名字（模型靠它认名字），当前那个只当上下文。
     luts: normalizeLutList(o.luts),
     lut: normalizeLutRef(o.lut),

@@ -26,15 +26,20 @@ const PROMISE = /(?:完美|看不出来|不会被发现|保证一致)/iu
 export function reviewDirectorPlan(
   plan: DirectorPlan,
   userText: string,
-): { plan: DirectorPlan; blocked: boolean } {
+): { plan: DirectorPlan; blocked: boolean; changed: boolean } {
   if (plan.intent === 'advise') {
     const blocked = plan.actions.length > 0
-    return { plan: { ...plan, actions: [], degraded: plan.degraded || blocked }, blocked }
+    return {
+      plan: { ...plan, actions: [], degraded: plan.degraded || blocked },
+      blocked,
+      changed: blocked,
+    }
   }
 
   const strong = STRONG_CUE.test(userText)
   const soft = SOFT_CUE.test(userText)
   let blocked = false
+  let changed = false
   let seenGeneration = false
   const actions: DirectorAction[] = []
   for (const action of plan.actions) {
@@ -58,12 +63,12 @@ export function reviewDirectorPlan(
       : strong
         ? action.paramDeltas
         : defaultSafeDeltas(action.paramDeltas)
-    if (JSON.stringify(paramDeltas) !== before) blocked = true
+    if (JSON.stringify(paramDeltas) !== before) changed = true
     actions.push({ ...action, paramDeltas })
   }
 
   const normalized = capCombinedColor(actions, soft ? SOFT_COLOR_TOTAL : strong ? null : DEFAULT_COLOR_TOTAL)
-  if (normalized.changed) blocked = true
+  if (normalized.changed) changed = true
   return {
     plan: {
       ...plan,
@@ -71,6 +76,7 @@ export function reviewDirectorPlan(
       degraded: plan.degraded || blocked,
     },
     blocked,
+    changed,
   }
 }
 

@@ -70,6 +70,26 @@ describe('创作计划解析', () => {
     expect(compileDirectorPlan(parsed.plan).paramDeltas).toEqual({ temperature: 8 })
   })
 
+  it('新协议只是给出建议、漏了 actions 时，不能误判成旧版降级生成', () => {
+    const parsed = parseDirectorPlan({
+      intent: 'advise',
+      assessment: {
+        scene: '人像',
+        subject: '人物',
+        strength: '侧光成立',
+        primary_issue: '脸部略暗',
+        protect: ['身份'],
+      },
+      direction: { name: '自然', intensity: 'subtle' },
+      alternatives: [],
+      reply: '可以先只提亮人物，背景不要跟着亮。',
+    }, { ...options, userText: '怎么修' })
+
+    expect(parsed.legacy).toBe(false)
+    expect(compileDirectorPlan(parsed.plan).route).toBe('params')
+    expect(compileDirectorPlan(parsed.plan).editPrompt).toBe('')
+  })
+
   it('未知能力和清单外名称被丢弃，并留下 degraded', () => {
     const parsed = parseDirectorPlan({
       intent: 'edit',
@@ -97,6 +117,18 @@ describe('创作计划解析', () => {
     expect(decision.route).toBe('params')
     expect(decision.paramDeltas.contrast).toBe(12)
     expect(decision.lut).toEqual({ name: 'dusk', amount: 65 })
+  })
+
+  it('受控配方跟随导演强度缩放，轻柔方向不会直接拉满', () => {
+    const parsed = parseDirectorPlan({
+      intent: 'edit',
+      direction: { name: '自然电影感', intensity: 'subtle' },
+      actions: [{ capability: 'local.style_recipe', recipe: 'quiet-cinema' }],
+      reply: '只收一点电影感。',
+    }, options)
+    const decision = compileDirectorPlan(parsed.plan)
+    expect(decision.paramDeltas.contrast).toBe(8)
+    expect(decision.paramDeltas.highlights).toBe(-8)
   })
 
   it('第二轮图片生成会被丢弃，只保留一次', () => {
