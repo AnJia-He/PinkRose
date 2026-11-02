@@ -255,12 +255,22 @@ export function SessionsPage({ onOpen, onNew, onDeleted, generating }: {
   }
   if (rows.length === 0) {
     return (
-      <section className="sessions">
+      <section className="sessions sessions-empty-mode">
         {head}
         <div className="sessions-empty empty-state">
-          {/* 空态那两句话的分工照作品页：主句说现状，下面那句（或者那颗按钮）说"那怎么办"（§3.7） */}
-          <p className="sessions-empty-title empty-state-title">还没改过照片。</p>
-          <Btn onClick={onNew}>去改一张</Btn>
+          <div className="sessions-empty-visual" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="sessions-empty-copy">
+            {/* 空态那两句话的分工照作品页：主句说现状，下面那句（或者那颗按钮）说"那怎么办"（§3.7） */}
+            <p className="sessions-empty-title empty-state-title">还没改过照片。</p>
+            <p className="sessions-empty-note">
+              从一张照片开始，你说过的话和每一步修改都会留在对话里。
+            </p>
+            <Btn onClick={onNew}>去改一张</Btn>
+          </div>
         </div>
       </section>
     )

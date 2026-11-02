@@ -2395,6 +2395,10 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 .composer-import-menu button:focus-visible {
   background: var(--hover);
 }
+.composer-import-menu button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 /* 焦点落在这一格里 → 整条框亮起来（`.focus-within`，不用 JS）。
    拖照片进来时（`.over`）也是同一套反馈 —— 用户松手前得知道"这里收不收"。 */
 .composer:focus-within, .composer.over {
@@ -5649,6 +5653,7 @@ button:where(:disabled) { opacity: .45; cursor: default; }
    于是整屏看上去只是"没加载出来"。两句拉开档次才读得出"这是一句结论"。 */
 .gallery-empty-title { margin: 0; font-size: 17px; }
 .gallery-empty-note {
+  display: none;
   margin: 8px 0 0;
   color: var(--muted);
   font-size: 13px;
@@ -6133,6 +6138,14 @@ button:where(:disabled) { opacity: .45; cursor: default; }
 /* 那 18vh 只有**列表页**要：它是从顶上往下排的一条长列；
    调色那一屏的舞台自己就是居中的（`.stage` 是 flex 居中），不要再叠一层。 */
 .sessions-empty { margin-top: 18vh; }
+.sessions-empty-note {
+  display: none;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.sessions-empty-visual { display: none; }
 /* `.adjust-empty` 只是个**锚点类**（探针 / 测试按它点名），长相全在上面那 3 条上。 */
 
 /* ★ 2026-10-11（设计跟进 Task 2）：「打不开」标准件（`ui/kit/ErrorState`）。
@@ -7353,7 +7366,8 @@ button:where(:disabled) { opacity: .45; cursor: default; }
     border-color: var(--line-3);
   }
   .gallery-empty-mode .gallery-head .gallery-search,
-  .gallery-empty-mode .gallery-albums {
+  .gallery-empty-mode .gallery-albums,
+  .sessions-empty-mode .gallery-head .gallery-search {
     display: none;
   }
 
@@ -7620,7 +7634,69 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   }
   .gallery-empty-mode .gallery-empty-title { font-size: 22px; }
   .gallery-empty-mode .gallery-empty-copy { min-width: 0; }
+  .gallery-empty-mode .gallery-empty-note { display: block; }
   .gallery-empty-mode .gallery-empty-copy .btn-primary { margin-top: 18px; }
+  .sessions-empty-mode .sessions-empty {
+    display: flex;
+    align-items: center;
+    gap: 26px;
+    max-width: 560px;
+    margin: 13vh auto 0;
+    padding: 26px 0;
+    text-align: left;
+  }
+  .sessions-empty-mode .sessions-empty-visual {
+    position: relative;
+    display: grid;
+    flex: none;
+    align-content: center;
+    gap: 7px;
+    width: 104px;
+    height: 82px;
+    padding: 14px 16px;
+    border: 1px solid var(--line-2);
+    border-radius: 12px;
+    background:
+      radial-gradient(circle at 72% 28%, var(--accent-tint), transparent 42%),
+      linear-gradient(145deg, var(--raised), var(--panel));
+    box-shadow:
+      inset 0 1px 0 var(--glass-hi),
+      0 18px 30px -28px rgba(0, 0, 0, .9);
+  }
+  .sessions-empty-mode .sessions-empty-visual::before {
+    content: '';
+    position: absolute;
+    top: 14px;
+    bottom: 14px;
+    left: 8px;
+    width: 1px;
+    background: var(--line-2);
+  }
+  .sessions-empty-mode .sessions-empty-visual span {
+    position: relative;
+    display: block;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--line-3);
+  }
+  .sessions-empty-mode .sessions-empty-visual span:nth-child(1) {
+    width: 62%;
+    margin-left: 8px;
+    background: var(--accent-300);
+    opacity: .76;
+  }
+  .sessions-empty-mode .sessions-empty-visual span:nth-child(2) {
+    width: 46%;
+    margin-left: 25px;
+  }
+  .sessions-empty-mode .sessions-empty-visual span:nth-child(3) {
+    width: 56%;
+    margin-left: 15px;
+  }
+  .sessions-empty-mode .sessions-empty-title { font-size: 22px; }
+  .sessions-empty-mode .sessions-empty-copy { min-width: 0; }
+  .sessions-empty-mode .sessions-empty-note { display: block; }
+  .sessions-empty-mode .sessions-empty-copy .btn-primary { margin-top: 18px; }
   .gallery-view-tools { order: 1; }
   .gallery-workbench { order: 2; }
   .gallery-tools-toggle { margin-left: auto; align-self: center; }

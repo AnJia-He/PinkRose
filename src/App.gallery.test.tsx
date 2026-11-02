@@ -2289,6 +2289,16 @@ describe('对话列表：页头与搜索', () => {
   /** 页头那格搜索框。和作品页同一个类名 —— 两页不会同时在屏上。 */
   const searchBox = () => container.querySelector('.gallery-search') as HTMLInputElement
 
+  it('一条对话都没有时进入专用空态，先说明对话会留下什么', async () => {
+    withSessions([])
+    await renderApp()
+    await goNav('对话')
+
+    expect(container.querySelector('.sessions')?.classList.contains('sessions-empty-mode')).toBe(true)
+    expect(container.querySelector('.sessions-empty-note')?.textContent)
+      .toBe('从一张照片开始，你说过的话和每一步修改都会留在对话里。')
+  })
+
   it('页头在：标题是「我的对话」，搜索框和作品页同一副长相（同一个类名）', async () => {
     withSessions([makeSession(7, 2, '把天调蓝一点', 'S7')])
     await renderApp()
