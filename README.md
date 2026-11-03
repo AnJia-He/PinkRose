@@ -1,6 +1,8 @@
 # PinkRose · 对话修图
 
-用聊天的方式修照片的网页产品（原名 RuiXing）。
+用聊天的方式修照片的 Web / PWA / 桌面应用（原名 RuiXing）。
+
+**桌面版**：从 [GitHub Releases](https://github.com/AnJia-He/PinkRose/releases) 下载对应系统的安装包，安装后直接打开 `PinkRose`。Windows 提供安装版和免安装版，macOS 提供 Intel / Apple 芯片安装包，Linux 提供 AppImage / deb。首次启动会询问专用数据文件夹；以后可在「个人设置 → 文件保存位置」查看、打开或更换。构建、数据目录、安全边界和发布步骤见 [桌面版说明](docs/desktop-release.md)。
 
 **想启动它**：双击 `启动.cmd`，浏览器打开 http://localhost:5173
 

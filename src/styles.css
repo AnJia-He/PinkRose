@@ -6598,6 +6598,13 @@ button:where(:disabled) { opacity: .45; cursor: default; }
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .account-row-go { color: var(--muted-2); }
+.account-storage-row { cursor: default; }
+.account-storage-row .account-storage-path {
+  max-width: 72%;
+  direction: ltr;
+  text-align: right;
+  user-select: text;
+}
 /* 默认风格那一行：左边标签、右边原生下拉。下拉自己截断长预设名，
    不让「我的预设」里 30 个字的标题把整行撑破（同一个 min-width 坑）。 */
 .account-style-row { cursor: default; }

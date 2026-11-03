@@ -157,6 +157,40 @@ const MIME: Record<string, string> = {
 type Gates = { login: Limiter; signup: Limiter; probe: Limiter; edit: Limiter; ai: Limiter }
 
 /**
+ * 桌面版把同一份 Web 资源放在本机回环地址上运行，因此也需要浏览器级的
+ * 纵深防御。CSP 允许本机相机桥所需的 http/https 连接，但禁止嵌入页、
+ * 插件、外域脚本和把本页当框架使用。
+ */
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "media-src 'self' data: blob:",
+  "connect-src 'self' http: https: ws: wss:",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+].join('; ')
+
+function setSecurityHeaders(res: ServerResponse): void {
+  res.setHeader('content-security-policy', CONTENT_SECURITY_POLICY)
+  res.setHeader('x-content-type-options', 'nosniff')
+  res.setHeader('x-frame-options', 'DENY')
+  res.setHeader('referrer-policy', 'no-referrer')
+  res.setHeader('cross-origin-opener-policy', 'same-origin')
+  res.setHeader('cross-origin-resource-policy', 'same-origin')
+  res.setHeader(
+    'permissions-policy',
+    'camera=(self), microphone=(self), geolocation=(), payment=(), usb=()',
+  )
+}
+
+/**
  * 每人每天能**花几次生成**（spec §6.6）。
  *
  * ⚠️ **数字和那句 429 共用这一个常量。** 各写一份的话，哪天调了上限度、另一处
@@ -240,6 +274,7 @@ export function createApp(deps: AppDeps): Server {
   let inFlight = 0
   const maxInFlight = deps.maxInFlight ?? 64
   return createServer((req, res) => {
+    setSecurityHeaders(res)
     if (inFlight >= maxInFlight) {
       sendError(res, new HttpError('INTERNAL', '现在人有点多，等一会儿再试。', 503))
       return

@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import { chmodSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createApp } from './app.ts'
 import { describeConfig, loadConfig } from './config.ts'
@@ -21,6 +22,10 @@ const config = loadConfig()
 // 生产库是进程级单例：同一个文件开两个句柄一点好处都没有（写照样要排队），
 // 而"谁是当前用户"这种问题一旦有两个答案，排查起来很贵。
 const db = openDb(config.dbPath)
+if (process.platform !== 'win32') {
+  // 账号、加密后的模型密钥和作品索引只在当前系统用户可读写。
+  chmodSync(config.dbPath, 0o600)
+}
 
 // 图片文件那一层。和上面的库同理：**全仓库只有这一处**建它 ——
 // 谁自己再造一个（哪怕用同一个目录），"这张图是怎么存的"就有了第二种说法。
@@ -89,8 +94,37 @@ server.listen(config.port, '127.0.0.1', () => {
   console.log(`  （只听本机。手机要访问的话，从前端的 ${'5173'} 端口走代理进来）`)
 })
 
+let closing = false
+function shutdown(): void {
+  if (closing) return
+  closing = true
+  server.close(() => {
+    db.close()
+    process.exit(0)
+  })
+  // 一个坏连接不应该把退出拖成“点了关闭但进程还在”。
+  setTimeout(() => {
+    try { db.close() } catch { /* 已经关过 */ }
+    process.exit(0)
+  }, 3_000).unref()
+}
+
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   // 库也要一起关：退出前把 sqlite 的 journal 收拾干净，
   // 不留一个"要靠下次启动自己恢复"的状态。
-  process.on(sig, () => server.close(() => { db.close(); process.exit(0) }))
+  process.on(sig, shutdown)
+}
+
+// Electron 主进程用 IPC 通知子进程退出，让 SQLite 和 HTTP 连接先收干净。
+// 从普通 Node 启动时没有 process.send，这段不会参与任何行为。
+if (typeof process.send === 'function') {
+  process.on('message', (message: unknown) => {
+    if (message && typeof message === 'object' && 'type' in message
+      && (message as { type?: unknown }).type === 'shutdown') {
+      shutdown()
+    }
+  })
+  // Electron 主进程崩溃或被杀时，IPC 会断开；本地服务跟着退出，
+  // 不留一个用户看不见、也无法从界面关闭的孤儿进程。
+  process.on('disconnect', shutdown)
 }

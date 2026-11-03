@@ -1,0 +1,77 @@
+appId: com.pinkrose.desktop
+productName: PinkRose
+copyright: Copyright © 2026 PinkRose
+
+directories:
+  output: release
+
+files:
+  - electron/**/*
+  - package.json
+
+extraResources:
+  - from: dist
+    to: dist
+  - from: build-server
+    to: build-server
+  - from: public/app-icon-512.png
+    to: app-icon-512.png
+
+asar: true
+npmRebuild: false
+buildDependenciesFromSource: false
+
+artifactName: PinkRose-${version}-${os}-${arch}.${ext}
+
+win:
+  icon: public/app-icon-512.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: PinkRose
+
+mac:
+  icon: public/app-icon-512.png
+  category: public.app-category.photography
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  extendInfo:
+    NSCameraUsageDescription: PinkRose 需要使用相机进行拍摄和实时取景。
+    NSMicrophoneUsageDescription: PinkRose 录制视频时可由你选择是否录入声音。
+
+linux:
+  icon: public/app-icon-512.png
+  category: Graphics
+  synopsis: 本地优先的 AI 对话式修图应用
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+
+publish:
+  provider: github
+  owner: AnJia-He
+  repo: PinkRose

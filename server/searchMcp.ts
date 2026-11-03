@@ -1,6 +1,4 @@
 import { McpServer } from '@modelcontextprotocol/server'
-import { serveStdio } from '@modelcontextprotocol/server/stdio'
-import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import { searchBing, type WebSearchResult } from './webSearch.ts'
 
@@ -65,15 +63,4 @@ export function createWebSearchMcpServer(
     },
   )
   return server
-}
-
-function isMain(): boolean {
-  const entry = process.argv[1]
-  return !!entry && import.meta.url === pathToFileURL(entry).href
-}
-
-if (isMain()) {
-  serveStdio(() => createWebSearchMcpServer(), {
-    onerror: () => console.error('[search-mcp] 连接异常'),
-  })
 }

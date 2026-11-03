@@ -190,4 +190,19 @@ describe('按用户取客户端', () => {
     await resolveClients(USER, d)   // 什么都没配 → 两条都走默认
     expect(called).toBe(0)
   })
+
+  it('★ 桌面版没有默认 key 也没配用户模型 → 给出可操作的中文提示', async () => {
+    const d = fresh()
+    const desktopOnly: ClientDeps = {
+      ...d,
+      config: {
+        ...CONFIG,
+        chat: { ...CONFIG.chat, apiKey: '' },
+        image: { ...CONFIG.image, apiKey: '' },
+      },
+    }
+    await expect(resolveClients(USER, desktopOnly)).rejects.toThrow(
+      '个人设置 → 模型配置',
+    )
+  })
 })

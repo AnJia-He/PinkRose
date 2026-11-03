@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
-import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import { z } from 'zod'
 import type { WebSearchClient, WebSearchResult } from './webSearch.ts'
 
@@ -18,10 +18,13 @@ const SearchOutput = z.object({
 type TransportFactory = () => Promise<import('@modelcontextprotocol/client').Transport>
 
 function stdioTransport(): StdioClientTransport {
+  const searchEntry = process.env.PINKROSE_SEARCH_MCP_PATH?.trim()
+    || resolve(process.cwd(), 'server', 'searchMcp.ts')
   return new StdioClientTransport({
     command: process.execPath,
-    args: [fileURLToPath(new URL('./searchMcp.ts', import.meta.url))],
-    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    args: [searchEntry],
+    // Web 开发、桌面子进程和 CI 都从仓库根 / 安装资源根启动。
+    cwd: process.cwd(),
     stderr: 'inherit',
   })
 }

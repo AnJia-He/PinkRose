@@ -59,10 +59,23 @@ type ChannelEnv = { key: string; base: string; model: string }
  * （这个错误信息会被打日志）。
  */
 function readChannel(
-  env: NodeJS.ProcessEnv, names: ChannelEnv, fallback: { base: string; model: string },
+  env: NodeJS.ProcessEnv,
+  names: ChannelEnv,
+  fallback: { base: string; model: string },
+  allowMissing: boolean,
 ): Channel {
   const apiKey = env[names.key]?.trim()
   if (!apiKey) {
+    // 桌面安装包不能再依赖开发机里的 .env，也绝不能把服务端密钥打进安装包。
+    // 桌面模式允许先空着启动；真正调用 AI 时由 clientFor.ts 提醒用户到
+    //「个人设置 → 模型配置」接自己的模型。Web 部署仍保持缺 key 即拒绝启动。
+    if (allowMissing) {
+      return {
+        apiKey: '',
+        baseUrl: (env[names.base]?.trim() || fallback.base).replace(/\/+$/, ''),
+        model: env[names.model]?.trim() || fallback.model,
+      }
+    }
     throw new Error(`缺少环境变量 ${names.key}，请复制 .env.example 为 .env 并填入`)
   }
   return {
@@ -76,12 +89,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // ★ **两条通道都要有钥匙才起得来。** 少哪一条，产品就缺一半：chat 缺了路由
   //   直接废掉，image 缺了点「生成」就废掉。宁可启动时把话说清楚，也不要等用户
   //   按下去、才在上游那边变成一个看不懂的 401。
+  const desktopMode = env.PINKROSE_DESKTOP === '1'
   const chat = readChannel(env,
     { key: 'AGNES_API_KEY', base: 'AGNES_BASE_URL', model: 'AGNES_CHAT_MODEL' },
-    { base: DEFAULT_CHAT_BASE_URL, model: DEFAULT_CHAT_MODEL })
+    { base: DEFAULT_CHAT_BASE_URL, model: DEFAULT_CHAT_MODEL },
+    desktopMode)
   const image = readChannel(env,
     { key: 'SN_API_KEY', base: 'SN_BASE_URL', model: 'SN_IMAGE_MODEL' },
-    { base: DEFAULT_IMAGE_BASE_URL, model: DEFAULT_IMAGE_MODEL })
+    { base: DEFAULT_IMAGE_BASE_URL, model: DEFAULT_IMAGE_MODEL },
+    desktopMode)
 
   const sessionSecret = env.SESSION_SECRET?.trim()
   if (!sessionSecret) {

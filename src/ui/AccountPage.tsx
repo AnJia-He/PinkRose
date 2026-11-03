@@ -54,6 +54,11 @@ type MemoryState =
   | { state: 'ready'; value: MemoryProfile }
   | { state: 'unavailable' }
 
+type DesktopStorageState =
+  | { state: 'loading' }
+  | { state: 'ready'; path: string; version: string }
+  | { state: 'unavailable' }
+
 export function AccountPage({
   user, onGo, onSignedOut, onUserChanged,
   defaultStyleId, styleOptions, styleOptionsKnown = true, onDefaultStyleChange,
@@ -117,6 +122,8 @@ export function AccountPage({
   const [styleMsg, setStyleMsg] = useState<string | null>(null)
   const [appearanceBusy, setAppearanceBusy] = useState(false)
   const [appearanceMsg, setAppearanceMsg] = useState<string | null>(null)
+  const [desktopStorage, setDesktopStorage] = useState<DesktopStorageState>({ state: 'loading' })
+  const [desktopMsg, setDesktopMsg] = useState<string | null>(null)
 
   useEffect(() => {
     // ★ 2026-10-04：改走 `GET /api/me` 的 usage（作品张数 / 占的空间 / 上限）。
@@ -129,6 +136,21 @@ export function AccountPage({
       (u) => {
         if (!alive) return
         setUsage(u ? { state: 'ready', ...u } : { state: 'unavailable' })
+      },
+    )
+    return () => { alive = false }
+  }, [])
+
+  useEffect(() => {
+    const bridge = window.pinkroseDesktop
+    if (!bridge) return
+    let alive = true
+    bridge.getStorageInfo().then(
+      ({ dataDir, version }) => {
+        if (alive) setDesktopStorage({ state: 'ready', path: dataDir, version })
+      },
+      () => {
+        if (alive) setDesktopStorage({ state: 'unavailable' })
       },
     )
     return () => { alive = false }
@@ -299,6 +321,11 @@ export function AccountPage({
       （同上面 `Usage` 那段）。⚠️ 判 `=== 'ready'`（不能写 `!== 'loading'`）：剩下那一支
       还带着 `unavailable`，`bytes` 在它身上不存在 —— 那是 typecheck 才能看见的红。 */
   const restLabel = usage.state === 'ready' ? restPctLabel(usage.bytes / usage.limit) : ''
+  const modelSummary = models === null
+    ? null
+    : window.pinkroseDesktop && !models.some(model => model.active)
+      ? '未配置'
+      : modelValue(models)
 
   return (
     <div className="account">
@@ -432,6 +459,59 @@ export function AccountPage({
             )}
           </section>
 
+          {window.pinkroseDesktop && (
+            <section className="account-tile account-storage-tile">
+              <h2 className="account-tile-title">文件保存位置</h2>
+              <div className="account-card">
+                <div className="account-row account-storage-row">
+                  <span className="account-row-label">数据文件夹</span>
+                  <span className="account-row-value account-storage-path">
+                    {desktopStorage.state === 'ready'
+                      ? desktopStorage.path
+                      : desktopStorage.state === 'loading' ? '正在读取…' : '没读到'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="account-row"
+                  onClick={() => {
+                    setDesktopMsg(null)
+                    window.pinkroseDesktop?.openStorageFolder().catch(() => {
+                      setDesktopMsg('文件夹打不开，请从系统文件管理器里打开。')
+                    })
+                  }}
+                >
+                  <span className="account-row-label">打开文件夹</span>
+                  <span className="account-row-go" aria-hidden="true">
+                    <ChevronRight size={16} strokeWidth={1.5} />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="account-row"
+                  onClick={() => {
+                    setDesktopMsg(null)
+                    window.pinkroseDesktop?.chooseStorageFolder().catch(() => {
+                      setDesktopMsg('没有切换成功，原来的数据仍在原位置。')
+                    })
+                  }}
+                >
+                  <span className="account-row-label">更改保存位置</span>
+                  <span className="account-row-go" aria-hidden="true">
+                    <ChevronRight size={16} strokeWidth={1.5} />
+                  </span>
+                </button>
+              </div>
+              <p className="account-hint">
+                账号、作品、原片和调色文件都在这里。更换位置时可选择复制现有数据，旧文件夹不会被自动删除。
+              </p>
+              {desktopStorage.state === 'unavailable' && (
+                <p className="account-msg">没读到当前保存位置。</p>
+              )}
+              {desktopMsg && <p className="account-msg">{desktopMsg}</p>}
+            </section>
+          )}
+
           {/* ② 「模型配置」框：接自己模型那件事的入口（§7.4）。
               显示的是**别名或者「默认」**，绝不是型号（§7.3）——
               点进去是模型设置那一页（`{ kind: 'models' }`）。
@@ -444,7 +524,7 @@ export function AccountPage({
                 <span className="account-row-label">模型</span>
                 {/* 拿不到名单时这一格整个不出现（见上面那个 effect 的注释）——
                     「默认」两个字在那种情况下是一句没根据的话。 */}
-                {models !== null && <span className="account-row-value">{modelValue(models)}</span>}
+                {modelSummary !== null && <span className="account-row-value">{modelSummary}</span>}
                 <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
               </button>
             </div>

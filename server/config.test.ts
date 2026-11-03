@@ -57,6 +57,17 @@ describe('loadConfig', () => {
     }
   })
 
+  it('★ 桌面模式允许不带默认模型 key 启动，留给用户自己配置', () => {
+    const c = loadConfig({
+      SESSION_SECRET: 'desktop-session-secret',
+      PINKROSE_DESKTOP: '1',
+    })
+    expect(c.chat.apiKey).toBe('')
+    expect(c.image.apiKey).toBe('')
+    expect(c.chat.baseUrl).toBe('https://apihub.agnes-ai.com/v1')
+    expect(c.image.baseUrl).toBe('https://token.sensenova.cn/v1')
+  })
+
   it('★ 缺 SESSION_SECRET 就抛错 —— 绝不给一个写死在代码里的默认值', () => {
     // ⚠️ 为什么这条必须存在：这个默认值一旦被"顺手"补上，等于**没有签名** ——
     // 谁都能自己造一张票进来，冒充任何人。而它补上去之后，**全仓测试照样全绿**

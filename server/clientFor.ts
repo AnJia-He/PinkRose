@@ -4,6 +4,7 @@ import type { Db } from './db.ts'
 import type { Vault } from './keyvault.ts'
 import { resolveSecret, type ModelConfigDeps } from './models.ts'
 import { assertModelHostAllowed, assertResolvedHostAllowed, type HostLookup } from './hostGuard.ts'
+import { HttpError } from './http.ts'
 import { SenseNovaClient, type ModelClient, type ModelConnection } from './sn.ts'
 import { AnthropicClient } from './anthropic.ts'
 
@@ -79,6 +80,13 @@ async function clientOf(kind: 'chat' | 'image', user: PublicUser, deps: ClientDe
   //    不是"一份默认 + 两个模型名" —— 写成后者的话，两个类别会一起串到同一家去，
   //    而且**不报错**，只是悄悄换了个模型在干活。
   const fallback = kind === 'chat' ? deps.config.chat : deps.config.image
+  if (!secret && !fallback.apiKey) {
+    throw new HttpError(
+      'BAD_REQUEST',
+      '还没有可用于 AI 对话和改图的模型。请先到「个人设置 → 模型配置」添加并启用自己的一套。',
+      400,
+    )
+  }
   const conn: ModelConnection = secret
     ? { apiKey: secret.apiKey, baseUrl: secret.baseUrl, modelId: secret.modelId }
     : { apiKey: fallback.apiKey, baseUrl: fallback.baseUrl, modelId: fallback.model }

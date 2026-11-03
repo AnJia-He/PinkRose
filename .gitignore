@@ -65,6 +65,8 @@ venv/
 # Node
 node_modules/
 dist/
+build-server/
+release/
 # 预渲染的 SSR 构建临时目录（prerender.mjs 正常跑完会自己删；
 # 中断时会留下残骸——2026-10-10 之前它一直脏在 git status 里）
 dist-prerender/
