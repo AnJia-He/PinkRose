@@ -29,11 +29,13 @@ const dataRoot = await mkdtemp(join(tmpdir(), 'pinkrose-desktop-check-'))
 await mkdir(join(dataRoot, 'photos'), { recursive: true })
 await mkdir(join(dataRoot, 'luts'), { recursive: true })
 const port = 47991
+const desktopToken = 'desktop-check-local-token'
 const child = spawn(process.execPath, [join(root, 'build-server', 'server.cjs')], {
   cwd: root,
   env: {
     ...process.env,
     PINKROSE_DESKTOP: '1',
+    PINKROSE_DESKTOP_TOKEN: desktopToken,
     PORT: String(port),
     SESSION_SECRET: 'desktop-check-only-not-production',
     DB_PATH: join(dataRoot, 'pinkrose.db'),
@@ -78,6 +80,16 @@ try {
   const csp = app.headers.get('content-security-policy') ?? ''
   if (!csp.includes("default-src 'self'") || !csp.includes("object-src 'none'")) {
     throw new Error('安全响应头没有生效')
+  }
+  const me = await fetch(`http://127.0.0.1:${port}/api/me`, {
+    headers: { 'x-pinkrose-desktop-token': desktopToken },
+  })
+  if (!me.ok || (await me.json()).user?.username !== '本机用户') {
+    throw new Error('桌面版没有建立无需登录的本机资料')
+  }
+  const noToken = await fetch(`http://127.0.0.1:${port}/api/me`)
+  if (noToken.status !== 401) {
+    throw new Error('没有桌面令牌时本地资料接口应为 401')
   }
   const entries = await readdir(dataRoot)
   if (!entries.some(name => name.endsWith('.db'))) {

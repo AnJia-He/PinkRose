@@ -3147,6 +3147,13 @@ export default function App() {
   // 「稍等…」盖住**整个**跟随请求 —— 否则 `/api/me` 还在半路时按钮就变回可点，
   // 用户看到"点完什么都没发生"，那正是最容易诱发再点一下的形状。
   // `me()` 的契约是永不抛（401 → null），所以这个 promise 不会 reject。
+  if (!user && window.pinkroseDesktop) {
+    return (
+      <div className="app-loading">
+        本机资料没有打开。请完全退出 PinkRose 后重新打开；如果仍然这样，数据目录可能暂时不可用。
+      </div>
+    )
+  }
   if (!user) return <LoginPage onDone={() => me().then(setUser)} />
 
   return (

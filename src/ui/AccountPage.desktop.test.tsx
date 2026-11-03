@@ -74,9 +74,14 @@ describe('桌面版文件保存位置', () => {
   it('只在桌面桥存在时显示，并能打开或更改数据文件夹', async () => {
     await mount()
     await act(async () => { await Promise.resolve() })
+    expect(container.textContent).toContain('无需登录')
+    expect(container.textContent).toContain('AI 与数据说明')
     expect(container.textContent).toContain('文件保存位置')
     expect(container.textContent).toContain('D:\\PinkRoseData')
     expect(container.textContent).toContain('未配置')
+    expect(container.textContent).not.toContain('改密码')
+    expect(container.textContent).not.toContain('注销账号')
+    expect(container.querySelector('.account-signout')).toBeNull()
 
     const rows = [...container.querySelectorAll<HTMLButtonElement>('.account-storage-tile .account-row')]
     const open = rows.find(row => row.textContent?.includes('打开文件夹'))

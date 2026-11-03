@@ -2,7 +2,9 @@
 
 用聊天的方式修照片的 Web / PWA / 桌面应用（原名 RuiXing）。
 
-**桌面版**：从 [GitHub Releases](https://github.com/AnJia-He/PinkRose/releases) 下载对应系统的安装包，安装后直接打开 `PinkRose`。Windows 提供安装版和免安装版，macOS 提供 Intel / Apple 芯片安装包，Linux 提供 AppImage / deb。首次启动会询问专用数据文件夹；以后可在「个人设置 → 文件保存位置」查看、打开或更换。构建、数据目录、安全边界和发布步骤见 [桌面版说明](docs/desktop-release.md)。
+**桌面版**：从 [GitHub Releases](https://github.com/AnJia-He/PinkRose/releases) 下载对应系统的安装包，安装后直接打开 `PinkRose`。Windows 提供安装版和免安装版，macOS 提供 Intel / Apple 芯片安装包，Linux 提供 AppImage / deb。桌面版不需要登录，作品、会话、偏好和模型配置只放进你选择的本机数据文件夹；每份安装和数据目录彼此独立，软件不会替维护者收集或汇总这些资料。首次启动会询问专用数据文件夹；以后可在「个人设置 → 文件保存位置」查看、打开或更换。构建、数据目录、安全边界和发布步骤见 [桌面版说明](docs/desktop-release.md)。
+
+桌面版不内置共享模型密钥。AI 对话和生成式改图需要在「个人设置 → 模型配置」接入你自己的模型服务；本地调色、裁剪、超清放大和导出不需要模型。具体的数据去向写在「个人设置 → AI 与数据说明」。
 
 **想启动它**：双击 `启动.cmd`，浏览器打开 http://localhost:5173
 

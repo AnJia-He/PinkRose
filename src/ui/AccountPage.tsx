@@ -362,7 +362,9 @@ export function AccountPage({
         <div className="account-grid">
           {/* ① 「账号」框：我是谁 + 账号安全那两件 */}
           <section className="account-tile">
-            <h2 className="account-tile-title">账号</h2>
+            <h2 className="account-tile-title">
+              {window.pinkroseDesktop ? '本机资料' : '账号'}
+            </h2>
             <div className="account-card">
               {/* 用户名：设置页的第一行十有八九就是"你是谁"，所以它排在最上面。
 
@@ -377,31 +379,47 @@ export function AccountPage({
                   「用户名这三个字在」和「`.account-name` 恰好等于用户名」
                   （后者是防"标签被塞进名字里"的那种错法）。
                   ⚠️ 标签和名字必须**还是两个 `<span>`** —— 合成一句就撞上第二条。 */}
-              <button className="account-row" aria-expanded={nameOpen}
-                onClick={() => setNameOpen((o) => !o)}>
-                <span className="account-row-label account-label">用户名</span>
-                <span className="account-row-value account-name">{user.username}</span>
-                <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
-              </button>
+              {window.pinkroseDesktop ? (
+                <div className="account-row-static">
+                  <span className="account-row-label">使用方式</span>
+                  <span className="account-row-value">无需登录</span>
+                </div>
+              ) : (
+                <button className="account-row" aria-expanded={nameOpen}
+                  onClick={() => setNameOpen((o) => !o)}>
+                  <span className="account-row-label account-label">用户名</span>
+                  <span className="account-row-value account-name">{user.username}</span>
+                  <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
+                </button>
+              )}
 
               {/* 账号那三件（§3.6 那张图上的 改密码／注销账号，★ 加上改名）。
                   ⚠️ 「退出登录」**不在这张卡里**（见下面那颗按钮的注释）—— 它是"离开这一页"，
                   不是这一页上的一项设置，收进来就把两种东西混成一种了。 */}
-              <button className="account-row" aria-expanded={pwOpen}
-                onClick={() => setPwOpen((o) => !o)}>
-                <span className="account-row-label">改密码</span>
-                <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
-              </button>
-              <button className="account-row account-row-danger" aria-expanded={delOpen}
-                onClick={() => setDelOpen((o) => !o)}>
-                <span className="account-row-label">注销账号</span>
-                <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
-              </button>
+              {!window.pinkroseDesktop && (
+                <>
+                  <button className="account-row" aria-expanded={pwOpen}
+                    onClick={() => setPwOpen((o) => !o)}>
+                    <span className="account-row-label">改密码</span>
+                    <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
+                  </button>
+                  <button className="account-row account-row-danger" aria-expanded={delOpen}
+                    onClick={() => setDelOpen((o) => !o)}>
+                    <span className="account-row-label">注销账号</span>
+                    <span className="account-row-go" aria-hidden="true"><ChevronRight size={16} strokeWidth={1.5} /></span>
+                  </button>
+                </>
+              )}
             </div>
+            {window.pinkroseDesktop && (
+              <p className="account-hint">
+                软件直接打开本机资料，不需要登录。作品、会话和偏好由这份数据目录自己管理。
+              </p>
+            )}
 
             {/* 改用户名的表单（★ 2026-10-09）。⚠️ 和改密码那趟**不一样**：这一改
                 **不影响登录态**（票里没有用户名），所以别在界面上写"其他设备要重新登录"。 */}
-            {nameOpen && (
+            {!window.pinkroseDesktop && nameOpen && (
               <form className="account-form" onSubmit={(e) => { e.preventDefault(); submitUsername() }}>
                 {/* ⚠️ 提示**只写长度这一条**：字数是最猜不到的那条规矩，而字符类
                     写全会很长（中文、字母、数字、下划线、·）—— 长到在这一格里
@@ -422,7 +440,7 @@ export function AccountPage({
 
             {/* 改密码的表单（§6.5）。⚠️ 服务端改完会发一张新票 —— 所以这一改等于把
                 **所有设备**踢下线；当前这台拿到新票、不会掉，别在界面里吓唬人。 */}
-            {pwOpen && (
+            {!window.pinkroseDesktop && pwOpen && (
               <form className="account-form" onSubmit={(e) => { e.preventDefault(); submitPassword() }}>
                 <Field className="account-field" label="原来的密码">
                   <TextInput name="oldPassword" type="password" autoComplete="current-password"
@@ -442,7 +460,7 @@ export function AccountPage({
             {/* 注销的确认（§5）。⚠️ **不许只点一下就注销**：它删的是全部作品和照片。
                 这句话把"删什么、能不能后悔"说全 —— 这页原来迟迟不做它，
                 卡的就是这两件事没定（见 git 历史里那句「不留一个点了会出事的按钮」）。 */}
-            {delOpen && (
+            {!window.pinkroseDesktop && delOpen && (
               <div className="account-danger">
                 <p>
                   注销之后：<b>作品和照片会一起删掉</b>，账号也没了。
@@ -503,7 +521,7 @@ export function AccountPage({
                 </button>
               </div>
               <p className="account-hint">
-                账号、作品、原片和调色文件都在这里。更换位置时可选择复制现有数据，旧文件夹不会被自动删除。
+                作品、会话、原片和调色文件都在这里。更换位置时可选择复制现有数据，旧文件夹不会被自动删除。
               </p>
               {desktopStorage.state === 'unavailable' && (
                 <p className="account-msg">没读到当前保存位置。</p>
@@ -529,6 +547,27 @@ export function AccountPage({
               </button>
             </div>
           </section>
+
+          {window.pinkroseDesktop && (
+            <section className="account-tile">
+              <h2 className="account-tile-title">AI 与数据说明</h2>
+              <div className="account-card">
+                <div className="account-row-static">
+                  <span className="account-row-label">数据归属</span>
+                  <span className="account-row-value">只保存在你的电脑</span>
+                </div>
+              </div>
+              <p className="account-hint">
+                PinkRose 不内置共享模型密钥，也不接收、汇总或查看你的作品和对话。AI 对话和生成式改图需要你自己接入模型服务。
+              </p>
+              <p className="account-hint">
+                使用 AI 时，当前照片的必要预览、文字指令和必要上下文会直接发送给你配置的模型服务商；本地调色、裁剪、超清放大和导出不会上传照片。
+              </p>
+              <p className="account-hint">
+                一次下载对应一份本机数据目录。换一台电脑或换一个数据目录时，软件不会自动带走或读取另一边的作品；请不要把自己的数据目录交给别人。
+              </p>
+            </section>
+          )}
 
           {/*
             ③ 「修图偏好」（★ 2026-10-19）：默认风格 = 下一张新照片从哪套预设起手。
@@ -740,19 +779,21 @@ export function AccountPage({
                  「你在这里」那两颗提示同一个道理）。 */}
         </div>
 
-        <button
-          className="account-signout"
-          disabled={leaving}
-          onClick={() => {
-            setLeaving(true)
-            // 退出用 `api/account.ts` 里那个现成的 `logout()` —— 「会话在 cookie 里、
-            // 由哪一条路去清」只有那一处说了算，别在界面里再拼一次同样的请求。
-            // 失败也放人走：退出是幂等的、服务端只清一个 cookie，而用户要的是离开。
-            // 变异：删掉这个 `.catch` → 「请求失败也要放人走」那条测试会红
-            //      （`.then(onSignedOut)` 挂在一条已经 reject 的链上，永远不会执行）。
-            logout().catch(() => {}).then(onSignedOut)
-          }}
-        >{leaving ? '正在退出…' : '退出登录'}</button>
+        {!window.pinkroseDesktop && (
+          <button
+            className="account-signout"
+            disabled={leaving}
+            onClick={() => {
+              setLeaving(true)
+              // 退出用 `api/account.ts` 里那个现成的 `logout()` —— 「会话在 cookie 里、
+              // 由哪一条路去清」只有那一处说了算，别在界面里再拼一次同样的请求。
+              // 失败也放人走：退出是幂等的、服务端只清一个 cookie，而用户要的是离开。
+              // 变异：删掉这个 `.catch` → 「请求失败也要放人走」那条测试会红
+              //      （`.then(onSignedOut)` 挂在一条已经 reject 的链上，永远不会执行）。
+              logout().catch(() => {}).then(onSignedOut)
+            }}
+          >{leaving ? '正在退出…' : '退出登录'}</button>
+        )}
       </div>
     </div>
   )

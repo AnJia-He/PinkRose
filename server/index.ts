@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { createApp } from './app.ts'
 import { describeConfig, loadConfig } from './config.ts'
 import { openDb } from './db.ts'
+import { ensureDesktopProfile } from './desktopProfile.ts'
 import { createVault } from './keyvault.ts'
 import { SerialQueue } from './queue.ts'
 import { backfillSessionBytes } from './sessions.ts'
@@ -58,6 +59,14 @@ const queue = new SerialQueue({
 //   主钥匙"这件事应当看得出来。
 const vault = createVault(config.sessionSecret)
 
+const desktopToken = process.env.PINKROSE_DESKTOP_TOKEN?.trim() ?? ''
+if (process.env.PINKROSE_DESKTOP === '1' && !desktopToken) {
+  throw new Error('缺少桌面版本机访问令牌')
+}
+const desktop = desktopToken
+  ? { user: ensureDesktopProfile(db), token: desktopToken }
+  : undefined
+
 const server = createApp({  config,
   staticDir: resolve(process.cwd(), 'dist'),
   // ★ 三个 AI 接口要的**默认那一套**（§7）。客户端**不在这里造** ——
@@ -70,6 +79,7 @@ const server = createApp({  config,
   // 签票的钥匙来自 .env（SESSION_SECRET）。config.ts 里少了它就拒绝启动 ——
   // 这里拿到的必然是配置好的那一把，没有"默认值"这条退路。
   auth: { db, secret: config.sessionSecret },
+  desktop,
   storage,
   lutStorage,
   models: { db, vault },

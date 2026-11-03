@@ -107,6 +107,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  delete (window as Window & { pinkroseDesktop?: unknown }).pinkroseDesktop
 })
 
 // ── 三个"用户动作" ─────────────────────────────────────────────────
@@ -181,6 +182,21 @@ async function openEdit(alias: string) {
 // ── 测试 ─────────────────────────────────────────────────────────
 
 describe('模型设置', () => {
+  it('★ 桌面版不虚构内置模型：未配置就直说，不让用户以为本服务会兜底', async () => {
+    Object.defineProperty(window, 'pinkroseDesktop', {
+      configurable: true,
+      value: { isDesktop: true, platform: 'win32' },
+    })
+    await show()
+
+    expect(container.querySelector('.models-lede')?.textContent)
+      .toBe('不配置模型时，本地修图和导出仍可使用；AI 对话与生成式改图需要先接入自己的模型服务。')
+    expect(container.querySelector('.models-privacy')?.textContent)
+      .toBe('使用 AI 时，照片和你说的话会从本机转发给你选择的第三方模型服务商；PinkRose 不集中接收或训练这些数据。')
+    expect(nowLines()).toEqual(['当前：未配置', '当前：未配置'])
+    expect(container.textContent).not.toContain('本服务提供')
+  })
+
   it('★ 空的时候说的是「用默认」，不是「没配置」', async () => {
     await show()
     // 两栏各说一句 —— 两个类别各自独立（§7.4），只画一句就成了"合在一起"的谎

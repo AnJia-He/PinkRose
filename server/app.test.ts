@@ -10,6 +10,7 @@ import { createApp, type AppDeps } from './app.ts'
 import type { ClientDeps } from './clientFor.ts'
 import type { Config } from './config.ts'
 import { openDb, type Db } from './db.ts'
+import { DESKTOP_AUTH_HEADER, ensureDesktopProfile } from './desktopProfile.ts'
 import { createVault } from './keyvault.ts'
 import { SerialQueue } from './queue.ts'
 import { SESSION_COOKIE } from './session.ts'
@@ -268,6 +269,32 @@ describe('createApp', () => {
     const r = await fetch(`${base}/api/health`)
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual({ ok: true })
+  })
+
+  it('桌面版拿内部令牌直接进入本机资料，不需要登录 cookie', async () => {
+    const auth = newAuth()
+    const desktopUser = ensureDesktopProfile(auth.db)
+    const base = await boot({
+      auth,
+      desktop: { user: desktopUser, token: 'desktop-local-token' },
+    })
+
+    const noToken = await fetch(`${base}/api/me`)
+    expect(noToken.status).toBe(401)
+
+    const wrongToken = await fetch(`${base}/api/me`, {
+      headers: { [DESKTOP_AUTH_HEADER]: 'wrong-local-token' },
+    })
+    expect(wrongToken.status).toBe(401)
+
+    const response = await fetch(`${base}/api/me`, {
+      headers: { [DESKTOP_AUTH_HEADER]: 'desktop-local-token' },
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      user: { id: desktopUser.id, username: '本机用户' },
+    })
+    expect(response.headers.get('set-cookie')).toBeNull()
   })
 
   it('未知 /api 路径返回 404 的 JSON 错误，不是 HTML', async () => {

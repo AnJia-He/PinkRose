@@ -14,6 +14,7 @@ const APP_NAME = 'PinkRose'
 const APP_PORT = 47831
 const DATA_MARKER = '.pinkrose-data.json'
 const CONFIG_VERSION = 1
+const DESKTOP_AUTH_HEADER = 'x-pinkrose-desktop-token'
 const ALLOWED_PERMISSIONS = new Set([
   'clipboard-sanitized-write',
   'fullscreen',
@@ -30,6 +31,7 @@ let quitting = false
 let appOrigin = ''
 let runtimeRoot = ''
 let serverEntry = ''
+let desktopToken = ''
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -79,8 +81,8 @@ function writeState(state) {
   if (process.platform !== 'win32') chmodSync(path, 0o600)
 }
 
-function sessionSecretFor(state) {
-  const current = state.sessionSecret
+function storedSecretFor(state, field) {
+  const current = state[field]
   if (current?.kind === 'safe' && typeof current.value === 'string') {
     try {
       const plaintext = safeStorage.decryptString(Buffer.from(current.value, 'base64'))
@@ -96,15 +98,23 @@ function sessionSecretFor(state) {
 
   const secret = randomBytes(48).toString('base64url')
   if (safeStorage.isEncryptionAvailable()) {
-    state.sessionSecret = {
+    state[field] = {
       kind: 'safe',
       value: safeStorage.encryptString(secret).toString('base64'),
     }
   } else {
     // Linux 没有可用的 Secret Service 时仍保留 0600 权限，而不是拒绝启动。
-    state.sessionSecret = { kind: 'plain', value: secret }
+    state[field] = { kind: 'plain', value: secret }
   }
   return secret
+}
+
+function sessionSecretFor(state) {
+  return storedSecretFor(state, 'sessionSecret')
+}
+
+function desktopTokenFor(state) {
+  return storedSecretFor(state, 'desktopToken')
 }
 
 function assertUsableRoot(root) {
@@ -256,6 +266,7 @@ async function startBackend(state) {
   }
 
   const sessionSecret = sessionSecretFor(state)
+  desktopToken = desktopTokenFor(state)
   writeState(state)
   const dataRoot = state.dataDir
   const env = {
@@ -263,6 +274,7 @@ async function startBackend(state) {
     ELECTRON_RUN_AS_NODE: '1',
     NODE_OPTIONS: '',
     PINKROSE_DESKTOP: '1',
+    PINKROSE_DESKTOP_TOKEN: desktopToken,
     PORT: String(APP_PORT),
     SESSION_SECRET: sessionSecret,
     DB_PATH: join(dataRoot, 'pinkrose.db'),
@@ -369,8 +381,19 @@ function secureWebContents(contents) {
   contents.on('will-attach-webview', event => event.preventDefault())
 }
 
-function secureSession() {
+function secureSession(token) {
   const ses = session.fromPartition('persist:pinkrose')
+  ses.webRequest.onBeforeSendHeaders(
+    { urls: [`${appOrigin}/*`] },
+    (details, callback) => {
+      callback({
+        requestHeaders: {
+          ...details.requestHeaders,
+          [DESKTOP_AUTH_HEADER]: token,
+        },
+      })
+    },
+  )
   ses.setPermissionRequestHandler((_contents, permission, callback, details) => {
     const requestingUrl = details.requestingUrl || appOrigin
     callback(trustedOrigin(requestingUrl) && ALLOWED_PERMISSIONS.has(permission))
@@ -570,6 +593,7 @@ async function switchDataRoot(current, { target, copy }) {
     })
     const state = readState()
     await startBackend(state)
+    secureSession(desktopToken)
     if (mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadURL(`${appOrigin}/app`)
   }
 }
@@ -609,8 +633,8 @@ app.whenReady().then(async () => {
       return
     }
     state.dataDir = dataRoot
-    secureSession()
     await startBackend(state)
+    secureSession(desktopToken)
     Menu.setApplicationMenu(buildMenu(state))
     await createWindow()
   } catch (error) {

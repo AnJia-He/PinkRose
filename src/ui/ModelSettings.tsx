@@ -160,6 +160,8 @@ export function ModelSettings({ onBack }: {
     }
   }, [reload])
 
+  const desktop = Boolean(window.pinkroseDesktop)
+
   return (
     <section className="models">
       {/* ★ 2026-10-11（设计跟进 T5）：面包屑 —— 这一页是「个人设置」的里面一格，
@@ -179,14 +181,22 @@ export function ModelSettings({ onBack }: {
             回默认，同一栏两行之下的「当前：」正写着"用默认（本服务提供）"，
             页面自己跟自己打架。最终审查（2026-10-01）指出，改成如今这句：
             **每种配置状态下都真**（《文案规范》第三条）。 */}
-      <p className="models-lede">不配就用我们准备的；正在用的那一类，花的是你自己的额度。</p>
+      <p className="models-lede">
+        {desktop
+          ? '不配置模型时，本地修图和导出仍可使用；AI 对话与生成式改图需要先接入自己的模型服务。'
+          : '不配就用我们准备的；正在用的那一类，花的是你自己的额度。'}
+      </p>
       {/* 隐私那一句（§7.3 明写「但隐私那一句照说」，三条见 §7.8）：
           发给谁 / 经不经过我们（**经过** —— 所以不许说"我们看不见"）/ 我们拿它干嘛。
           ⚠️ 两个措辞上的讲究，动它之前先看明白：
           · **不点名具体哪家**（§7.3）：写"第三方模型服务商"，不写我们用的是谁；
           · **不能带"你配的模型……"这种前提** —— 什么都没配的人（走的是我们准备的
             那一家）也要读到同一句真话，所以主语只能是"照片和你说的话"。 */}
-      <p className="models-privacy">照片和你说的话会经过我们的服务器转给第三方模型服务商；我们只转发，不拿去训练。</p>
+      <p className="models-privacy">
+        {desktop
+          ? '使用 AI 时，照片和你说的话会从本机转发给你选择的第三方模型服务商；PinkRose 不集中接收或训练这些数据。'
+          : '照片和你说的话会经过我们的服务器转给第三方模型服务商；我们只转发，不拿去训练。'}
+      </p>
 
       {/* ★ 拉不到名单：说出来 + 给下一步。**不许**画成空名单（见文件头那段）。
           ★ 2026-10-11（设计跟进 T5）：下一步是**一颗真的重跑这一趟请求的按钮**
@@ -239,7 +249,7 @@ export function ModelSettings({ onBack }: {
               <div className="models-warn">
                 <p>
                   <span className="models-warn-mark" aria-hidden="true"><TriangleAlert size={15} strokeWidth={1.5} /></span>{' '}
-                  你删掉的这套，正是你现在在用的{noun}。已经切回默认模型了。
+                  你删掉的这套，正是你现在在用的{noun}。{desktop ? '现在处于未配置状态。' : '已经切回默认模型了。'}
                 </p>
                 <div className="models-warn-actions">
                   <button type="button" onClick={() => { setWarn(null); setForm({ kind, config: null }) }}>
@@ -269,11 +279,13 @@ export function ModelSettings({ onBack }: {
             )}
 
             <p className="models-now">
-              当前：{active ? active.alias : '用默认（本服务提供）'}
+              当前：{active ? active.alias : desktop ? '未配置' : '用默认（本服务提供）'}
               {active && (
                 // §9：得有一条回默认的路。没有它，想回默认只能把这套删掉 ——
                 // 拿删除当开关用，配置也跟着丢了。
-                <button type="button" onClick={() => void onActivate(kind, null)}>用回默认</button>
+                <button type="button" onClick={() => void onActivate(kind, null)}>
+                  {desktop ? '取消使用' : '用回默认'}
+                </button>
               )}
             </p>
           </section>

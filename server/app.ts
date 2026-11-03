@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { timingSafeEqual } from 'node:crypto'
 import { existsSync, createReadStream, statSync } from 'node:fs'
 import { extname, join, normalize, resolve, sep } from 'node:path'
 import { KEY_REQUIRED } from '../shared/copy.ts'
@@ -11,6 +12,7 @@ import {
 import { resolveClients, type ClientDeps } from './clientFor.ts'
 import { nowMs } from './clock.ts'
 import type { Config } from './config.ts'
+import { DESKTOP_AUTH_HEADER } from './desktopProfile.ts'
 import { handleEdit } from './edit.ts'
 import {
   HttpError, asObject, readJsonBody, readRequestBytes,
@@ -88,6 +90,13 @@ export type AppDeps = {
    * **编译错误**，而不是运行时一个 503。静默降级在这里的代价是"谁都能拿你的额度出图"。
    */
   auth: AccountDeps
+  /**
+   * Electron 桌面版的不可见本机身份。
+   *
+   * `user` 是当前数据目录唯一可见的本机资料，`token` 由 Electron 主进程自动
+   * 注入请求头。只有两者同时存在时才启用；Web 端继续走原来的登录 cookie。
+   */
+  desktop?: { user: PublicUser; token: string }
   /**
    * 图片文件那一层（Task 1）。**同样必填。**
    *
@@ -321,6 +330,12 @@ function sessionTokenOf(
  * 三个 AI 接口 + /api/me + /api/password 都从这儿过，续期就不必在五个地方各接一次线。
  */
 function requireUser(deps: AppDeps, req: IncomingMessage, res: ServerResponse): PublicUser {
+  const desktop = deps.desktop
+  if (desktop) {
+    const header = req.headers[DESKTOP_AUTH_HEADER]
+    const provided = Array.isArray(header) ? header[0] : header
+    if (provided && sameToken(provided, desktop.token)) return desktop.user
+  }
   const cookie = req.headers.cookie
   const auth = req.headers.authorization
   const token = sessionTokenOf(cookie, auth)
@@ -331,6 +346,12 @@ function requireUser(deps: AppDeps, req: IncomingMessage, res: ServerResponse): 
   if (!u) throw new HttpError('UNAUTHORIZED', '先登录一下', 401)
   renewSessionIfStale(deps, cookie, auth, u, res)
   return { id: u.id, username: u.username, email: u.email }
+}
+
+function sameToken(actual: string, expected: string): boolean {
+  const a = Buffer.from(actual)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
 }
 
 /**
