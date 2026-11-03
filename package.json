@@ -1,7 +1,7 @@
 {
   "name": "ruixing",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "PinkRose 本地优先的 AI 对话式修图应用",
   "author": {
     "name": "PinkRose",
