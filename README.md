@@ -179,9 +179,7 @@ npm run desktop:smoke
 - [产品定位与边界](PRODUCT.md)
 - [桌面版安装、数据目录与发布](docs/desktop-release.md)
 - [能力矩阵](docs/superpowers/specs/2026-10-20-capability-matrix.md)
-- [长期记忆设计](docs/superpowers/specs/2026-11-02-agent-memory-design.md)
-- [审美创作 Agent](docs/superpowers/specs/2026-11-02-aesthetic-agent-design.md)
-- [联网搜索 MCP](docs/superpowers/specs/2026-11-02-search-mcp-design.md)
+- [设计与实现文档目录](docs/superpowers/specs)
 - [开发入口](CLAUDE.md)
 - [第三方组件说明](THIRD_PARTY_NOTICES.md)
 
