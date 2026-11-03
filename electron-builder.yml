@@ -62,6 +62,7 @@ mac:
 linux:
   icon: public/app-icon-512.png
   category: Graphics
+  syncDesktopName: true
   synopsis: 本地优先的 AI 对话式修图应用
   target:
     - target: AppImage

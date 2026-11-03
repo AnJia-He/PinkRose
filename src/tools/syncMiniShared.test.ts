@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-// @ts-expect-error —— scripts/*.mjs 不在任何 tsconfig 的 include 里（allowJs 关着），没有类型声明。
+// @ts-expect-error scripts/*.mjs are outside every tsconfig include and have no type declaration.
 // 这里只借运行时的导出；路径写错的话 vitest 会当场红，不会假绿。
 import { rewriteImports } from '../../scripts/sync-mini-shared.mjs'
 

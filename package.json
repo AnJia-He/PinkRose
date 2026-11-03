@@ -3,7 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "description": "PinkRose 本地优先的 AI 对话式修图应用",
-  "author": "PinkRose",
+  "author": {
+    "name": "PinkRose",
+    "email": "maintainers@pinkrose.app"
+  },
+  "desktopName": "pinkrose.desktop",
   "main": "electron/main.mjs",
   "type": "module",
   "scripts": {

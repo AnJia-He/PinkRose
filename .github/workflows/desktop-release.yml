@@ -16,11 +16,11 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            command: npm run desktop:package -- --win
+            command: npm run desktop:package -- --win --publish never
           - os: macos-latest
-            command: npm run desktop:package -- --mac
+            command: npm run desktop:package -- --mac --publish never
           - os: ubuntu-latest
-            command: npm run desktop:package -- --linux
+            command: npm run desktop:package -- --linux --publish never
     runs-on: ${{ matrix.os }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
