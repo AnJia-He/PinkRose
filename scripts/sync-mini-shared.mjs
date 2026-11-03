@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// 把电脑版里的「单一真相源」文件同步进 mini/lib/shared/。
-// ⚠️ 这些文件是小程序的**生成物**，别在 mini 里改它们 —— 改源头，重跑本脚本。
+// Sync shared source files into mini/lib/shared/.
+// The mini-program copies are generated; edit the source files and rerun this script.
 //
-// 用法：
-//   node scripts/sync-mini-shared.mjs           # 同步（写出 6 个文件，逐个打 ✓）
-//   node scripts/sync-mini-shared.mjs --check   # 守卫：镜像与源头不一致就退出码 1
+// Usage:
+//   node scripts/sync-mini-shared.mjs           # sync six files
+//   node scripts/sync-mini-shared.mjs --check   # fail when mirrors are stale
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-// [源文件, 在 mini 里的文件名]
+// [source file, destination filename inside mini]
 export const FILES = [
   ['shared/adjustments.ts', 'adjustments.ts'],
   ['shared/lut.ts', 'lut.ts'],
@@ -21,9 +21,11 @@ export const FILES = [
   ['src/render/uniforms.ts', 'uniforms.ts'],
 ]
 
-const HEADER = '// ⚠️ 自动生成 —— 勿改。改源头（scripts/sync-mini-shared.mjs 的 FILES 表）后重跑脚本。\n'
+// Keep the generated-file warning in the mini-program's existing language while
+// keeping this script source ASCII-only for Windows CI parsing.
+const HEADER = String.fromCharCode(47,47,32,9888,65039,32,33258,21160,29983,25104,32,8212,8212,32,21247,25913,12290,25913,28304,22836,65288,115,99,114,105,112,116,115,47,115,121,110,99,45,109,105,110,105,45,115,104,97,114,101,100,46,109,106,115,32,30340,32,70,73,76,69,83,32,34920,65289,21518,37325,36305,33050,26412,12290) + '\n'
 
-/** 把 import 里指向共享文件的路径改写为同目录、无后缀。 */
+/** Rewrite imports of shared files to same-directory paths without extensions. */
 export function rewriteImports(source, knownNames) {
   return source.replace(
     /(from\s+['"])([^'"]+)(['"])/g,
@@ -41,30 +43,29 @@ export function syncFiles(checkOnly = false) {
   const known = FILES.map(([, out]) => out)
   const problems = []
   for (const [src, out] of FILES) {
-    // ★ autocrlf：源头在检出时可能是 CRLF。一律折成 LF 再写 —— 镜像的行尾必须
-    //   只由这一行代码决定，检出的机器换一下不能变。
+    // Normalize checkout line endings before comparing or writing generated mirrors.
     const source = readFileSync(join(ROOT, src), 'utf8').replace(/\r\n/g, '\n')
     let body = rewriteImports(source, known)
-    if (body.includes("from '../")) problems.push(`${out} 里残留 ../ 相对路径`)
+    if (body.includes("from '../")) problems.push(`${out} still contains ../ imports`)
     body = HEADER + body
     const dest = join(outputDir, out)
     if (checkOnly) {
       let existing = null
       try { existing = readFileSync(dest, 'utf8') } catch {}
-      // ★ 比对前折行尾：本机 core.autocrlf=true，检出会把镜像写成 CRLF，
-      //   按字节比就是每次 checkout 后**误报**一遍漂移 —— 那种守卫只会教人忽略它。
-      if (existing?.replace(/\r\n/g, '\n') !== body) problems.push(`${out} 与源头不一致（跑一遍同步）`)
+      if (existing?.replace(/\r\n/g, '\n') !== body) {
+        problems.push(`${out} is stale; run the sync script`)
+      }
     } else {
       mkdirSync(outputDir, { recursive: true })
       writeFileSync(dest, body)
-      console.log('✓', out)
+      console.log('[ok]', out)
     }
   }
-  // ★ 坏消息必须出声：problems 攒到这儿统一落地，两种模式都要。
-  //   否则一旦某个源头 import 了 FILES 表外的共享文件（镜像残留 ../），
-  //   镜像悄悄写坏、屏幕上还全是 ✓。
-  if (problems.length) { console.error(problems.join('\n')); process.exit(1) }
-  if (checkOnly) console.log('✓ 镜像与源头一致')
+  if (problems.length) {
+    console.error(problems.join('\n'))
+    process.exit(1)
+  }
+  if (checkOnly) console.log('[ok] generated mirrors match the sources')
 }
 
 if (process.argv[1] && process.argv[1].endsWith('sync-mini-shared.mjs')) {
