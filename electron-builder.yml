@@ -34,12 +34,16 @@ win:
         - x64
 
 nsis:
+  artifactName: PinkRose-${version}-windows-${arch}-setup.${ext}
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: PinkRose
+
+portable:
+  artifactName: PinkRose-${version}-windows-${arch}-portable.${ext}
 
 mac:
   icon: public/app-icon-512.png
