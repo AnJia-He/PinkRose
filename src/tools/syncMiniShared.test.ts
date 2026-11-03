@@ -1,7 +1,5 @@
 import { describe, it, expect } from 'vitest'
-// @ts-expect-error scripts/*.mjs are outside every tsconfig include and have no type declaration.
-// 这里只借运行时的导出；路径写错的话 vitest 会当场红，不会假绿。
-import { rewriteImports } from '../../scripts/sync-mini-shared.mjs'
+import { rewriteImports } from './syncMiniShared.ts'
 
 /**
  * 同步脚本是「共享文件的唯一真相源」的可执行形式：小程序侧的 `mini/lib/shared/`
